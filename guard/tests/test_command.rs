@@ -129,6 +129,19 @@ mod test_command_tests {
         }
     }
 
+    /// A data file whose input carries a YAML shorthand tag (`!Ref`) is read, and its expectations
+    /// are checked.
+    ///
+    /// The second half is new. This paired `s3_bucket_logging_enabled_tests` against
+    /// `s3_bucket_server_side_encryption_enabled.guard`, so all five expectations named a rule that
+    /// file does not have and none of them was consulted: the recorded output was five cases of
+    /// `No Test expectation was set for Rule S3_BUCKET_SERVER_SIDE_ENCRYPTION_ENABLED` and exit 0.
+    /// The test proved the file parsed and nothing else, which is half of what its name claims.
+    ///
+    /// Fixed by pairing the data file with the rules file it was written for rather than by relaxing
+    /// the check that caught it. `S3_BUCKET_LOGGING_ENABLED` is in
+    /// `resources/validate/rules-dir/s3_bucket_logging_enabled.guard`, and against that the five
+    /// expectations -- SKIP, SKIP, PASS, FAIL, SKIP -- are assertions.
     #[rstest]
     #[case("json")]
     #[case("yaml")]
@@ -141,7 +154,7 @@ mod test_command_tests {
                 file_type
             )))
             .rules(Some(
-                "resources/validate/rules-dir/s3_bucket_server_side_encryption_enabled.guard",
+                "resources/validate/rules-dir/s3_bucket_logging_enabled.guard",
             ))
             .run(&mut writer, &mut reader);
 
@@ -241,8 +254,13 @@ mod test_command_tests {
             .verbose()
             .run(&mut writer, &mut reader);
 
+        // Line 8 of that fixture is `%redshift_clusters.Properties.KmsKeyId == {"Fn::ImportValue":
+        // /{"Fn::Sub":"${pSecretKmsKey}"}}`, and the `/` in the middle of it opens a regular
+        // expression that never closes before the line ends. So the report names the unterminated
+        // regex alongside the alternation it was tried in. It used to name only the alternation,
+        // because the regex error was recoverable and its message was discarded.
         let expected_err_msg = String::from(
-            r#"Parse Error on ruleset file Parser Error when parsing `Parsing Error Error parsing file resources/test-command/rule-dir/invalid_rule.guard at line 8 at column 46, when handling expecting either a property access "engine.core" or value like "string" or ["this", "that"], fragment  {"Fn::ImportValue":/{"Fn::Sub":"${pSecretKmsKey}"}}
+            r#"Parse Error on ruleset file Parser Error when parsing `Parsing Error Error parsing file resources/test-command/rule-dir/invalid_rule.guard at line 8 at column 46, when handling expecting either a property access "engine.core" or value like "string" or ["this", "that"]/Could not parse regular expression: no closing / before the end of the line, fragment  {"Fn::ImportValue":/{"Fn::Sub":"${pSecretKmsKey}"}}
 }
 `
 "#,
@@ -696,16 +714,19 @@ mod test_command_tests {
         assert_eq!(StatusCode::TEST_COMMAND_FAILURE, status_code);
     }
 
-    /// An expectation that names no rule in the file says so.
+    /// An expectation that names no rule in the file says so and fails the run.
     ///
     /// It used to be dropped in silence. Expectations are read per evaluated rule, so one whose name
-    /// matches nothing is never consulted, and the run exits 0 having checked less than the file
-    /// asked for. The fixture asserts FAIL twice on names that do not exist and the run still
-    /// succeeds, which is the whole defect: a misspelled rule name turns an assertion into nothing
-    /// without ever saying so.
+    /// matches nothing is never consulted, and the run exited 0 having checked less than the file
+    /// asked for. The fixture asserts FAIL twice on names that do not exist, which is the whole
+    /// defect: a misspelled rule name turns an assertion into nothing without ever saying so.
     ///
-    /// Still exit 0 here. Failing the run would break suites that pass today, so this reports rather
-    /// than enforces; the reporters already print the mirror case for a rule with no expectation.
+    /// `INCORRECT_STATUS_ERROR` and not `TEST_COMMAND_FAILURE`, for the reason this file already
+    /// gives where a rule cannot be evaluated: an expectation that could not be evaluated is a
+    /// different answer from an expectation that was not met, and an expectation whose rule produced
+    /// no verdict was not evaluated -- there was nothing to compare it against. A stale name in a
+    /// test file is the same class of authoring defect as an unreadable expectation string, which
+    /// this command already answers with the error code.
     ///
     /// Two cases in the fixture and two lines expected, not four.
     #[rstest]
@@ -734,9 +755,9 @@ mod test_command_tests {
         };
 
         assert_eq!(
-            StatusCode::SUCCESS,
+            StatusCode::INCORRECT_STATUS_ERROR,
             status_code,
-            "reporting an unchecked expectation must not change the verdict"
+            "an expectation with no rule to check it against must fail the run"
         );
 
         let stderr = writer.err_to_stripped().expect("failed to read stderr");
@@ -766,20 +787,21 @@ mod test_command_tests {
         );
     }
 
-    /// An unchecked expectation reaches json, yaml and junit.
+    /// An unchecked expectation reaches json, yaml and junit, and reddens all three.
     ///
     /// The plaintext reporter said so on stderr and no structured format said it at all. A consumer
     /// reading the report saw a clean suite over a file where nothing had been checked: with every
     /// expectation naming a rule that does not exist, the junit document was `tests="0"
     /// failures="0"` and the run exited 0.
     ///
-    /// A skip and not a failure. Escalating it would change the exit code of a shipped CLI for
-    /// everyone who has a typo in a test file, which is a decision for the maintainers; making the
-    /// fact visible is not. So the code asserted here is the one this fixture already returned.
+    /// The junit case is `status="error"` with an `<error>` body, counted into the suite's `errors`.
+    /// It was a `<skipped>`, which counts into `tests` and nowhere else -- so a CI step watching
+    /// `failures` and `errors`, which is what a junit step watches, saw a suite where every
+    /// expectation named a stale rule as entirely green.
     ///
-    /// The junit case carries a `<skipped>` element, which is what puts it in the `tests` count, so
-    /// a consumer reading only the attributes still sees that something went unchecked while
-    /// `failures` stays 0.
+    /// json and yaml carry the reason beside the name. There is more than one reason an expectation
+    /// can go unchecked and they call for different fixes, so the name alone would leave a consumer
+    /// to guess which one it had.
     ///
     /// Three expectations in the fixture and two unchecked ones per case, listed in sorted order
     /// rather than the order the expectations were read: they come from a `HashMap`.
@@ -801,9 +823,9 @@ mod test_command_tests {
             .run(&mut writer, &mut reader);
 
         assert_eq!(
-            StatusCode::SUCCESS,
+            StatusCode::INCORRECT_STATUS_ERROR,
             status_code,
-            "reporting an unchecked expectation must not change the verdict"
+            "an expectation with no rule to check it against must fail the run"
         );
 
         let writer = if output == "junit" {
@@ -826,7 +848,11 @@ mod test_command_tests {
     /// the first for the second would leave a consumer unable to tell which of the two had happened,
     /// so this fixture produces exactly one of each in one case and the report must keep them apart.
     ///
-    /// Neither is a failure, and the run exits 0.
+    /// They also differ in verdict, which is the second reason not to merge them: a rule the test
+    /// data did not mention is a gap the author can see in the report, while an expectation no rule
+    /// answers reads like coverage the author does not have. Only the second fails the run, so this
+    /// fixture exits with the error code on account of its one unchecked expectation while its one
+    /// unmentioned rule contributes nothing.
     #[test]
     fn an_unchecked_expectation_is_not_confused_with_a_rule_that_has_no_expectation() {
         let mut reader = Reader::default();
@@ -842,14 +868,127 @@ mod test_command_tests {
             .run(&mut writer, &mut reader);
 
         assert_eq!(
-            StatusCode::SUCCESS,
+            StatusCode::INCORRECT_STATUS_ERROR,
             status_code,
-            "a rule with no expectation and an expectation with no rule are both reports, not failures"
+            "the expectation with no rule fails the run; the rule with no expectation does not"
         );
 
         assert_output_from_file_eq!(
             "resources/test-command/output-dir/no_expectation_beside_unchecked_expectation_json.out",
             writer
+        );
+    }
+
+    /// An expectation for a parameterized rule is not told it names nothing.
+    ///
+    /// It does name something. `eval_rules_file` walks `guard_rules` only, and a parameterized rule
+    /// is evaluated where a clause invokes it, so it is recorded under the invoking rule rather than
+    /// under the file and never appears among the rules an expectation can be matched against. The
+    /// expectation is as inert as one naming a rule that does not exist -- so it fails the run the
+    /// same way -- but `No rule named encryption_is_on is in this file` was false, and the sentence
+    /// is now the stated reason for a failing run rather than a note beside a passing one.
+    ///
+    /// This is why the two cases are separated by what the file declares rather than by what ran.
+    /// The other reason is that the fixes differ: this one wants the expectation moved to whatever
+    /// invokes the rule, a stale name wants the test file corrected.
+    #[test]
+    fn an_expectation_for_a_parameterized_rule_says_it_is_parameterized() {
+        let mut reader = Reader::default();
+        let mut writer =
+            Writer::new_with_err(WBVec(vec![]), WBVec(vec![])).expect("Failed to create writer.");
+        let status_code = TestCommandTestRunner::default()
+            .test_data(Option::from(
+                "resources/test-command/data-dir/expectation_for_a_parameterized_rule.yaml",
+            ))
+            .rules(Some(
+                "resources/test-command/parameterized-rule/encryption.guard",
+            ))
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(
+            StatusCode::INCORRECT_STATUS_ERROR,
+            status_code,
+            "an expectation a parameterized rule can never answer must fail the run"
+        );
+
+        let stderr = writer.err_to_stripped().expect("failed to read stderr");
+        assert!(
+            stderr.contains(
+                "encryption_is_on is a parameterized rule, which only gets a verdict where a clause invokes it, so its expectation was not checked"
+            ),
+            "the reason must name the rule and say it is parameterized:\n{}",
+            stderr
+        );
+        assert!(
+            !stderr.contains("No rule named encryption_is_on"),
+            "and must not claim a rule the file declares is missing from it:\n{}",
+            stderr
+        );
+    }
+
+    /// In directory mode, an expectation for a rule defined in a sibling rules file fails.
+    ///
+    /// The case that decides whether failing on an unmatched expectation is right at all: if one
+    /// test file could be run against several rules files, an expectation naming a sibling file's
+    /// rule would be legitimate and failing on it would break working setups.
+    ///
+    /// It cannot. `OrderedTestDirectory::from` filters the rules files whose stem prefixes the test
+    /// file name and then reduces them with `min_by_key`, which yields exactly one claimant, so a
+    /// test file is evaluated against one rules file and no other. The fixture proves it from the
+    /// outside: `tests/encryption_tests.yml` names `ENCRYPTION_ON` and `LOGGING_ON`, and the run
+    /// checks the first while reporting `logging.guard` as having no tests at all -- its rule was
+    /// never evaluated against this input, so `LOGGING_ON: PASS` asserted nothing.
+    ///
+    /// Both halves are asserted. Without the second, a future change that ran each test file against
+    /// every rules file in the directory would make this expectation real and the failure wrong, and
+    /// nothing here would notice.
+    #[test]
+    fn an_expectation_for_a_sibling_rules_files_rule_fails() {
+        const DIR: &str = "resources/test-command/expectation-for-a-sibling-rule";
+
+        // `stripped` and `err_to_stripped` each consume the writer, so one run cannot be read for
+        // both streams. The command is deterministic over these files.
+        let run = || {
+            let mut reader = Reader::default();
+            let mut writer = Writer::new_with_err(WBVec(vec![]), WBVec(vec![]))
+                .expect("Failed to create writer.");
+            let status_code = TestCommandTestRunner::default()
+                .directory(Option::from(DIR))
+                .run(&mut writer, &mut reader);
+
+            (status_code, writer)
+        };
+
+        let (status_code, err_writer) = run();
+        let (_, out_writer) = run();
+
+        assert_eq!(
+            StatusCode::INCORRECT_STATUS_ERROR,
+            status_code,
+            "the expectation for the sibling file's rule was never checked, so the run must say so"
+        );
+
+        let stderr = err_writer.err_to_stripped().expect("failed to read stderr");
+        assert!(
+            stderr.contains(
+                "No rule named LOGGING_ON is in this file, so its expectation was not checked"
+            ),
+            "the unchecked expectation must be named:\n{}",
+            stderr
+        );
+
+        let stdout = out_writer.stripped().expect("failed to read stdout");
+        assert!(
+            stdout.contains("ENCRYPTION_ON: Expected = PASS"),
+            "the expectation the paired rules file does answer must still be checked:\n{}",
+            stdout
+        );
+        assert!(
+            stdout.contains(&format!(
+                "Guard File {DIR}/logging.guard did not have any tests associated, skipping."
+            )),
+            "and the sibling file must be shown taking no part in the run:\n{}",
+            stdout
         );
     }
 

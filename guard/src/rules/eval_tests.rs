@@ -1664,6 +1664,646 @@ fn a_capture_name_that_appears_nowhere_is_still_an_unresolved_variable() -> Resu
     Ok(())
 }
 
+/// Two buckets whose enabled configs are named `alpha` and `beta`.
+const ALPHA_THEN_BETA: &str = r#"
+Resources:
+  BucketA:
+    Type: AWS::S3::Bucket
+    Properties:
+      Config:
+        alpha:
+          Enabled: true
+  BucketB:
+    Type: AWS::S3::Bucket
+    Properties:
+      Config:
+        beta:
+          Enabled: true
+"#;
+
+/// The same two resources as [`ALPHA_THEN_BETA`], in the other order.
+const BETA_THEN_ALPHA: &str = r#"
+Resources:
+  BucketB:
+    Type: AWS::S3::Bucket
+    Properties:
+      Config:
+        beta:
+          Enabled: true
+  BucketA:
+    Type: AWS::S3::Bucket
+    Properties:
+      Config:
+        alpha:
+          Enabled: true
+"#;
+
+/// Two buckets that both satisfy `some %cfg == "alpha"` on their own keys.
+const BOTH_ALPHA: &str = r#"
+Resources:
+  BucketA:
+    Type: AWS::S3::Bucket
+    Properties:
+      Config:
+        alpha:
+          Enabled: true
+  BucketC:
+    Type: AWS::S3::Bucket
+    Properties:
+      Config:
+        alpha:
+          Enabled: true
+"#;
+
+/// A block that only reads `%cfg` does not get the keys an earlier block captured.
+///
+/// The third instance of one family. The per-iteration `captured` map stopped iteration two of a block
+/// reading iteration one's key; `capture_names` stopped an iteration that captured nothing under a name
+/// its own block declares from reaching past itself. This is the shape neither covers: a *sibling* block
+/// that declares no capture at all, so its lookup defers, and what it reached was the union
+/// `merge_captures_into_parent` had already handed to the enclosing scope. `BucketB`, whose only enabled
+/// config is `beta`, satisfied `some %cfg == "alpha"` on `BucketA`'s key at exit 0 in either document
+/// order.
+///
+/// The two readings hold different values, which is what makes the verdict say which one was used: the
+/// union is `["alpha", "beta"]` and the second block's own iteration has nothing. Both document orders
+/// are asserted because order independence is the property -- a first-iteration-wins artifact would
+/// answer differently in the two.
+///
+/// The last arrangement is the discriminator, and it is why `BOTH_ALPHA` exists: on a document where
+/// every bucket has its own `alpha`, the same assertion inside a block that *declares* the capture
+/// passes. So the FAILs above are the read resolving to nothing, not the rule being unsatisfiable or
+/// the document being wrong.
+#[test]
+fn a_sibling_block_does_not_read_a_capture_merged_out_of_an_earlier_block() -> Result<()> {
+    let reads_only = RulesFile::try_from(
+        r#"
+    rule configs_named_alpha {
+        Resources.*[ Type == 'AWS::S3::Bucket' ] {
+            Properties.Config[ cfg | Enabled == true ] !empty
+        }
+        Resources.*[ Type == 'AWS::S3::Bucket' ] {
+            some %cfg == "alpha"
+        }
+    }
+    "#,
+    )?;
+
+    for (arrangement, document) in [
+        ("the bucket with alpha first", ALPHA_THEN_BETA),
+        ("the bucket with alpha second", BETA_THEN_ALPHA),
+        ("both buckets carrying alpha", BOTH_ALPHA),
+    ] {
+        let template =
+            PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(document)?)?;
+        let mut scope = root_scope(&reads_only, Rc::new(template));
+        assert_eq!(
+            eval_rules_file(&reads_only, &mut scope, None)?,
+            Status::FAIL,
+            "with {}, a block that captures nothing under `cfg` must not read the keys the earlier \
+             block captured",
+            arrangement
+        );
+    }
+
+    let declares_it_too = RulesFile::try_from(
+        r#"
+    rule configs_named_alpha {
+        Resources.*[ Type == 'AWS::S3::Bucket' ] {
+            Properties.Config[ cfg | Enabled == true ] !empty
+        }
+        Resources.*[ Type == 'AWS::S3::Bucket' ] {
+            Properties.Config[ cfg | Enabled == true ] !empty
+            some %cfg == "alpha"
+        }
+    }
+    "#,
+    )?;
+    let template =
+        PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(BOTH_ALPHA)?)?;
+    let mut scope = root_scope(&declares_it_too, Rc::new(template));
+    assert_eq!(
+        eval_rules_file(&declares_it_too, &mut scope, None)?,
+        Status::PASS,
+        "the same assertion over the same document passes when the reading block captures its own \
+         key, so the failures above are the empty selection rather than an unsatisfiable rule"
+    );
+
+    Ok(())
+}
+
+/// A clause after the block still reads every iteration's keys, and a clause inside a nested block
+/// still reads only its own iteration's.
+///
+/// The two readings that `merge_captures_into_parent` is there to give, asserted over one document so
+/// that they cannot both be the same thing. `alpha` and `beta` are keys of *different* buckets: the
+/// rule-level clause after the block passes on either of them because it means the union, and the
+/// clause inside the nested block fails on `alpha` because `BucketB`'s iteration only has `beta`.
+///
+/// Splitting merged keys out of `captured` had to keep both. Withholding the union from every lookup
+/// would break the first; offering it to a nested block is the defect the split is for.
+#[test]
+fn a_capture_reads_as_the_union_after_its_block_and_per_iteration_inside_a_nested_one() -> Result<()>
+{
+    let after_the_block = |expected_key: &str| {
+        format!(
+            r#"
+    rule configs_named {{
+        Resources.*[ Type == 'AWS::S3::Bucket' ] {{
+            Properties.Config[ cfg | Enabled == true ] !empty
+        }}
+        some %cfg == "{}"
+    }}
+    "#,
+            expected_key
+        )
+    };
+
+    for (key, expected) in [
+        ("alpha", Status::PASS),
+        ("beta", Status::PASS),
+        ("gamma", Status::FAIL),
+    ] {
+        let rules = after_the_block(key);
+        let rules_file = RulesFile::try_from(rules.as_str())?;
+        let template =
+            PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(ALPHA_THEN_BETA)?)?;
+        let mut scope = root_scope(&rules_file, Rc::new(template));
+        assert_eq!(
+            eval_rules_file(&rules_file, &mut scope, None)?,
+            expected,
+            "a clause after the block reads the union of both iterations, so `{}` must be {:?}",
+            key,
+            expected
+        );
+    }
+
+    let nested = RulesFile::try_from(
+        r#"
+    rule configs_named_alpha {
+        Resources.*[ Type == 'AWS::S3::Bucket' ] {
+            Properties.Config[ cfg | Enabled == true ] !empty
+            Properties {
+                some %cfg == "alpha"
+            }
+        }
+    }
+    "#,
+    )?;
+    let template =
+        PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(ALPHA_THEN_BETA)?)?;
+    let mut scope = root_scope(&nested, Rc::new(template));
+    assert_eq!(
+        eval_rules_file(&nested, &mut scope, None)?,
+        Status::FAIL,
+        "the same document and the same key: a nested block reads the iteration it is inside, so \
+         `BucketB` must not pass on `BucketA`'s alpha"
+    );
+
+    let template =
+        PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(BOTH_ALPHA)?)?;
+    let mut scope = root_scope(&nested, Rc::new(template));
+    assert_eq!(
+        eval_rules_file(&nested, &mut scope, None)?,
+        Status::PASS,
+        "a nested block still reads the key its own iteration captured"
+    );
+
+    Ok(())
+}
+
+/// A key captured at rule-body level is readable inside a block, and stays so.
+///
+/// The other half of the precision the split buys. `nm` here is not per-iteration data at all: one
+/// query at rule-body level bound it, the way a `let` would, and the block reading it is asking about
+/// the whole selection rather than about the resource it is iterating. Withholding it would have turned
+/// this rule from a pass into a failure, so the line the split draws is between a key that left the
+/// block that made it and a key no block made.
+#[test]
+fn a_capture_made_at_rule_level_is_still_readable_inside_a_block() -> Result<()> {
+    for (expected_name, expected) in [("BucketA", Status::PASS), ("BucketZ", Status::FAIL)] {
+        let rules = format!(
+            r#"
+    rule buckets_named {{
+        Resources[ nm | Type == 'AWS::S3::Bucket' ] !empty
+        Resources.*[ Type == 'AWS::S3::Bucket' ] {{
+            some %nm == "{}"
+        }}
+    }}
+    "#,
+            expected_name
+        );
+        let rules_file = RulesFile::try_from(rules.as_str())?;
+        let template =
+            PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(ALPHA_THEN_BETA)?)?;
+        let mut scope = root_scope(&rules_file, Rc::new(template));
+        assert_eq!(
+            eval_rules_file(&rules_file, &mut scope, None)?,
+            expected,
+            "`{}` read inside the block must be {:?}",
+            expected_name,
+            expected
+        );
+    }
+
+    Ok(())
+}
+
+/// A key captured in a nested block is readable after the block that contains it.
+///
+/// The chain the split has to preserve: the nested block hands its keys to the block around it, and
+/// that block hands them on when it ends. A first version of the split took only `captured` on the way
+/// out, so a key that arrived as a merged one stopped one level short. The clause after the outer block
+/// then read an empty selection -- `capture_names` on the rule body includes names the nested block
+/// declares, so it failed the clause instead of erroring, which is a wrong FAIL and quiet with it.
+#[test]
+fn a_capture_from_a_nested_block_travels_past_the_block_around_it() -> Result<()> {
+    let rules_file = RulesFile::try_from(
+        r#"
+    rule configs_named_alpha {
+        Resources.*[ Type == 'AWS::S3::Bucket' ] {
+            Properties {
+                Config[ cfg | Enabled == true ] !empty
+            }
+        }
+        some %cfg == "beta"
+    }
+    "#,
+    )?;
+    let template =
+        PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(ALPHA_THEN_BETA)?)?;
+    let mut scope = root_scope(&rules_file, Rc::new(template));
+    assert_eq!(
+        eval_rules_file(&rules_file, &mut scope, None)?,
+        Status::PASS,
+        "`beta` is BucketB's key, captured two blocks in, and the clause after the outer block reads \
+         the union"
+    );
+
+    Ok(())
+}
+
+/// A capture name a block declares does not hide an enclosing binding of the same name.
+///
+/// `capture_names` used to answer the lookup itself, before asking the parent, so an outer `let` or an
+/// enclosing parameterized rule's parameter became unreachable for the whole block -- in every
+/// iteration, and even where the capturing clause provably never ran. Each case here is paired with a
+/// control that differs only in the capture's name, and the control passed while the collision failed at
+/// exit 19, on a variable whose `let` sits at the top of the file.
+///
+/// Three shapes because they reach the same short-circuit by different routes: a `when` block whose
+/// condition failed, so the capturing clause did not run; a wildcard over a list, where `accumulate` has
+/// an index rather than a key and the name can *never* be populated on any input; and a rule parameter,
+/// which lives in `ResolvedParameterContext` and is reachable only through the parent chain, so the
+/// argument the call site passed was never read.
+///
+/// Every case is asserted with its mirror, which is what shows the outer binding was read rather than
+/// the clause being skipped: `"fromlet"` passes and `"other"` fails, and the failing one reports
+/// `Value="fromlet"` as what it found.
+#[rstest::rstest]
+#[case::when_condition_failed(
+    r#"
+    let allowed = "fromlet"
+    rule r {
+        Resources.*[ Type == 'AWS::S3::Bucket' ] {
+            when Properties.Missing exists {
+                Properties.Config[ allowed | Enabled == true ] !empty
+            }
+            %allowed == "EXPECTED"
+        }
+    }
+    "#,
+    "bucket"
+)]
+#[case::wildcard_over_a_list(
+    r#"
+    let allowed = "fromlet"
+    rule r {
+        Resources.*[ Type == 'AWS::S3::Bucket' ] {
+            Properties.Ports[ allowed ] > 0
+            %allowed == "EXPECTED"
+        }
+    }
+    "#,
+    "ports"
+)]
+#[case::rule_parameter(
+    r#"
+    rule inner(allowed) {
+        Resources.*[ Type == 'AWS::S3::Bucket' ] {
+            when Properties.Missing exists {
+                Properties.Config[ allowed | Enabled == true ] !empty
+            }
+            %allowed == "EXPECTED"
+        }
+    }
+    rule caller {
+        inner("fromlet")
+    }
+    "#,
+    "bucket"
+)]
+fn a_declared_capture_does_not_hide_an_enclosing_binding_of_the_same_name(
+    #[case] rules: &str,
+    #[case] document: &str,
+) -> Result<()> {
+    let template = match document {
+        "ports" => {
+            r#"
+        Resources:
+          BucketA:
+            Type: AWS::S3::Bucket
+            Properties:
+              Ports:
+                - 80
+                - 443
+        "#
+        }
+        _ => {
+            r#"
+        Resources:
+          BucketA:
+            Type: AWS::S3::Bucket
+            Properties:
+              Config:
+                alpha:
+                  Enabled: true
+        "#
+        }
+    };
+
+    for (expected_value, expected) in [("fromlet", Status::PASS), ("other", Status::FAIL)] {
+        let rules = rules.replace("EXPECTED", expected_value);
+        let rules_file = RulesFile::try_from(rules.as_str())?;
+        let value = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(template)?)?;
+        let mut scope = root_scope(&rules_file, Rc::new(value));
+        assert_eq!(
+            eval_rules_file(&rules_file, &mut scope, None)?,
+            expected,
+            "the block declares `allowed` as a capture and captured nothing, so `%allowed` is the \
+             enclosing binding: comparing it with {:?} must be {:?}",
+            expected_value,
+            expected
+        );
+    }
+
+    Ok(())
+}
+
+/// A capture shadows a same-named assignment in an *enclosing* scope, and the parser accepts that.
+///
+/// The half of the assigned-and-captured collision that is left alone, and it needs asserting because
+/// the parser now refuses the other half: a name assigned and captured in one scope is rejected, since
+/// there the winner is decided by the kind of the assigned value. Across scopes the more local
+/// declaration wins, which is the one rule an author can carry between every other pair of nested
+/// bindings, so this file is accepted and `%cfg` reads the captured key.
+///
+/// Asserted with its mirror, because the two candidate values differ: the capture holds `alpha` and the
+/// file-level assignment holds `"fromlet"`, and only one of the two clauses can pass.
+#[rstest::rstest]
+#[case::the_capture_wins("alpha", Status::PASS)]
+#[case::the_enclosing_assignment_does_not("fromlet", Status::FAIL)]
+fn a_capture_shadows_an_enclosing_assignment_of_the_same_name(
+    #[case] expected_key: &str,
+    #[case] expected: Status,
+) -> Result<()> {
+    let rules = format!(
+        r#"
+    let cfg = "fromlet"
+
+    rule configs_named {{
+        Resources.*[ Type == 'AWS::S3::Bucket' ] {{
+            Properties.Config[ cfg | Enabled == true ] !empty
+            some %cfg == "{}"
+        }}
+    }}
+    "#,
+        expected_key
+    );
+    let rules_file = RulesFile::try_from(rules.as_str())?;
+    let template =
+        PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(BOTH_ALPHA)?)?;
+    let mut scope = root_scope(&rules_file, Rc::new(template));
+    assert_eq!(
+        eval_rules_file(&rules_file, &mut scope, None)?,
+        expected,
+        "`%cfg` inside the block is the captured key, so `{}` must be {:?}",
+        expected_key,
+        expected
+    );
+
+    Ok(())
+}
+
+/// One bucket and one instance, so that two filters over `Resources` select different keys.
+const BUCKET_AND_INSTANCE: &str = r#"
+Resources:
+  Alpha:
+    Type: AWS::S3::Bucket
+  Inst:
+    Type: AWS::EC2::Instance
+"#;
+
+/// A capture in a file-level assignment's query reads the same in every rule and at any clause
+/// position.
+///
+/// Two rules with the same two clauses used to give PASS and then an unresolved-variable error at exit
+/// 255, and swapping the two clauses in one rule did the same. The assignment's result is memoised for
+/// the file and never invalidated, so the second read of `%names` did not re-run the query and made no
+/// capture, while `reset_captures` had already discarded the keys the first read produced. A verdict
+/// that depends on which rule you are in, or on the order of two clauses that do not mention each
+/// other, is not one an author can reason about.
+///
+/// Reading the capture name now resolves the assignment that declares it, and the keys are kept for the
+/// file rather than for the rule. Each case below is asserted with its mirror, so the PASSes are the
+/// key `Alpha` being read rather than a clause that could not fail.
+#[rstest::rstest]
+#[case::assignment_then_capture("%names !empty\n        %nm == \"Alpha\"", Status::PASS)]
+#[case::capture_then_assignment("%nm == \"Alpha\"\n        %names !empty", Status::PASS)]
+#[case::assignment_then_capture_mirror("%names !empty\n        %nm == \"Inst\"", Status::FAIL)]
+#[case::capture_then_assignment_mirror("%nm == \"Inst\"\n        %names !empty", Status::FAIL)]
+#[case::capture_alone("%nm == \"Alpha\"", Status::PASS)]
+#[case::capture_alone_mirror("%nm == \"Inst\"", Status::FAIL)]
+fn a_file_level_capture_reads_the_same_in_every_rule_and_at_any_clause_position(
+    #[case] clauses: &str,
+    #[case] expected: Status,
+) -> Result<()> {
+    // Two rules with the same body, so that a capture bound only in the rule that first forced the
+    // assignment shows up as the two rules disagreeing.
+    let rules = format!(
+        r#"
+    let names = Resources[ nm | Type == 'AWS::S3::Bucket' ]
+
+    rule first {{
+        {clauses}
+    }}
+
+    rule second {{
+        {clauses}
+    }}
+    "#,
+        clauses = clauses
+    );
+    let rules_file = RulesFile::try_from(rules.as_str())?;
+    let template = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(
+        BUCKET_AND_INSTANCE,
+    )?)?;
+    let mut scope = root_scope(&rules_file, Rc::new(template));
+    assert_eq!(
+        eval_rules_file(&rules_file, &mut scope, None)?,
+        expected,
+        "both rules run the clauses `{}` and must agree",
+        clauses
+    );
+
+    Ok(())
+}
+
+/// A clause that mentions neither the capture nor anything it touches does not change what it holds.
+///
+/// Two assignments spelling their capture `nm` appended into one root-level list, so `%nm` held the keys
+/// of whichever assignments some clause had forced. Adding `%b_names !empty` -- which names nothing the
+/// assertion reads -- turned a PASS into a FAIL at exit 19, and nothing in the file says the two `nm`s
+/// are one binding.
+///
+/// Reading `%nm` now resolves every assignment that declares it, so the answer is the union either way.
+/// `some %nm == "Inst"` is the discriminator: it is false if only the bucket assignment contributed and
+/// true if both did, and it has to give the same answer with the extra clause and without it. The
+/// `all` spelling is asserted alongside because that is the shape that changed verdict.
+///
+/// The file declares one name twice in one scope, which `docs/QUERY_AND_FILTERING.md` forbids and the
+/// parser ought to refuse. The union is what makes the verdict independent of the clause list until it
+/// does; a parse rejection would supersede this test rather than contradict it.
+#[rstest::rstest]
+#[case::one_assignment_forced("%a_names !empty", "some %nm == \"Inst\"", Status::PASS)]
+#[case::both_assignments_forced(
+    "%a_names !empty\n        %b_names !empty",
+    "some %nm == \"Inst\"",
+    Status::PASS
+)]
+#[case::one_assignment_forced_all("%a_names !empty", "%nm == \"Alpha\"", Status::FAIL)]
+#[case::both_assignments_forced_all(
+    "%a_names !empty\n        %b_names !empty",
+    "%nm == \"Alpha\"",
+    Status::FAIL
+)]
+fn a_capture_two_file_level_assignments_declare_reads_as_the_union_of_both(
+    #[case] preamble: &str,
+    #[case] assertion: &str,
+    #[case] expected: Status,
+) -> Result<()> {
+    let rules = format!(
+        r#"
+    let a_names = Resources[ nm | Type == 'AWS::S3::Bucket' ]
+    let b_names = Resources[ nm | Type == 'AWS::EC2::Instance' ]
+
+    rule r {{
+        {preamble}
+        {assertion}
+    }}
+    "#,
+        preamble = preamble,
+        assertion = assertion
+    );
+    let rules_file = RulesFile::try_from(rules.as_str())?;
+    let template = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(
+        BUCKET_AND_INSTANCE,
+    )?)?;
+    let mut scope = root_scope(&rules_file, Rc::new(template));
+    assert_eq!(
+        eval_rules_file(&rules_file, &mut scope, None)?,
+        expected,
+        "`{}` must not answer differently for the clauses that ran before it",
+        assertion
+    );
+
+    Ok(())
+}
+
+/// A file-level capture whose query matched nothing fails its clause; a name declared nowhere is still
+/// an error.
+///
+/// The same split `BlockScope::lookup` makes for a name a block declares, applied at file level, and it
+/// is the reason the split has to be made twice: `%nm` resolved when the query matched and ended the
+/// run at exit 255 when it did not, so whether the file produced a report depended on the template it
+/// was run against.
+#[test]
+fn a_file_level_capture_that_matched_nothing_fails_its_clause_rather_than_the_file() -> Result<()> {
+    let matched_nothing = RulesFile::try_from(
+        r#"
+    let functions = Resources[ nm | Type == 'AWS::Lambda::Function' ]
+
+    rule r {
+        %nm == "Alpha"
+    }
+    "#,
+    )?;
+    let template = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(
+        BUCKET_AND_INSTANCE,
+    )?)?;
+    let mut scope = root_scope(&matched_nothing, Rc::new(template));
+    assert_eq!(
+        eval_rules_file(&matched_nothing, &mut scope, None)?,
+        Status::FAIL,
+        "no resource is a Lambda function, so `nm` has no keys and the clause reading it fails"
+    );
+
+    let declared_nowhere = RulesFile::try_from(
+        r#"
+    let names = Resources[ nm | Type == 'AWS::S3::Bucket' ]
+
+    rule r {
+        %absent == "Alpha"
+    }
+    "#,
+    )?;
+    let template = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(
+        BUCKET_AND_INSTANCE,
+    )?)?;
+    let mut scope = root_scope(&declared_nowhere, Rc::new(template));
+    let error = eval_rules_file(&declared_nowhere, &mut scope, None)
+        .expect_err("a name no assignment declares must not resolve to an empty selection");
+    assert!(
+        error.to_string().contains("absent"),
+        "the error has to name the variable it could not resolve, got: {}",
+        error
+    );
+
+    Ok(())
+}
+
+/// A filter predicate reading the capture its own filter declares terminates.
+///
+/// Resolving a capture name now resolves the assignment declaring it, which is a new way for one
+/// resolution to ask for another, so the loop it closes has to be checked rather than assumed absent.
+/// `Type == %nm` asks for `nm` while the assignment binding `nm` is the one being resolved. The
+/// in-progress set answers that inner ask by declining to resolve the assignment a second time, the
+/// predicate selects nothing, and the clause fails. Returning a verdict at all is the property; a
+/// stack overflow is not a verdict, and this rule text reaches the recursion in one line.
+#[test]
+fn a_filter_predicate_reading_its_own_capture_does_not_recurse() -> Result<()> {
+    let rules_file = RulesFile::try_from(
+        r#"
+    let names = Resources[ nm | Type == %nm ]
+
+    rule r {
+        %nm !empty
+    }
+    "#,
+    )?;
+    let template = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(
+        BUCKET_AND_INSTANCE,
+    )?)?;
+    let mut scope = root_scope(&rules_file, Rc::new(template));
+    assert_eq!(
+        eval_rules_file(&rules_file, &mut scope, None)?,
+        Status::FAIL,
+        "the filter selected nothing, so `nm` has no keys and `!empty` over it fails"
+    );
+
+    Ok(())
+}
+
 #[test]
 fn variable_projections_failures() -> Result<()> {
     let path_value = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(
@@ -6356,14 +6996,27 @@ fn negation_composes_with_operator_not_flag() -> Result<()> {
 //
 // `not <rule>` where the dependent rule SKIPped.
 //
-// In a rule BODY this is an assertion, and a SKIPped rule is not evidence, so it
-// must not report compliance. It previously returned PASS -- and because the
-// enclosing rule then reported PASS rather than SKIP, the output gave no hint that
-// the check had never run.
+// In a rule BODY this is an assertion, and a SKIPped rule is not evidence, so it must not
+// report compliance. It once returned PASS -- and because the enclosing rule then reported
+// PASS rather than SKIP, the output gave no hint that the check had never run.
 //
-// In a `when` CONDITION the same shape is intentional ("apply this rule when that
-// other rule did not apply") and is covered by cross_rule_clause_when_checks, so
-// that behavior is deliberately preserved here.
+// This asserted FAIL for a while, on the reasoning that only failing closed prevents the
+// bypass. That over-corrected: FAIL does not merely withhold compliance, it reports a
+// violation, and there is none -- the input below holds one S3 bucket and no KMS key, so
+// `inner` is about nothing. Reporting a violation for an absent resource type is the same
+// false positive that `an_inapplicable_dependent_rule_does_not_fail_the_reference` covers
+// for the non-negated spelling, and it is the reason the assertion here is now SKIP.
+//
+// SKIP is not compliance, which is the property the FAIL was reaching for: the enclosing
+// rule reports SKIP rather than PASS, so the omission is still visible in the output, and
+// `find_skip_reason` names the rule that did not apply. What SKIP gives up is the exit code
+// -- 0 rather than 19 -- and that is the deliberate trade. A dependent rule that did not
+// apply is not applicable in either polarity, which is what makes it the identity of a
+// conjunction rather than something a rule can fail on.
+//
+// In a `when` CONDITION the same shape is intentional ("apply this rule when that other
+// rule did not apply"), is covered by cross_rule_clause_when_checks, and is deliberately
+// preserved -- see the test immediately below.
 //
 #[test]
 fn negated_reference_to_skipped_rule_does_not_pass_in_rule_body() -> Result<()> {
@@ -6394,11 +7047,11 @@ fn negated_reference_to_skipped_rule_does_not_pass_in_rule_body() -> Result<()> 
     let mut root = root_scope(&rules_file, Rc::new(resources));
     let status = eval_rules_file(&rules_file, &mut root, None)?;
 
-    // FAIL specifically. Before the fix this was PASS, manufactured from a dependent
-    // rule that never ran. "Not PASS" would also admit SKIP, and a SKIP would mean
-    // the negated reference had been made merely inert rather than fail-closed --
-    // still exit 0, so still a gate bypass. FAIL is the property that matters.
-    assert_eq!(status, Status::FAIL);
+    // SKIP specifically, asserted rather than "not PASS". PASS is the original defect --
+    // compliance manufactured from a dependent rule that never ran. FAIL is the
+    // over-correction -- a violation reported against a template that has no KMS key to
+    // violate anything. SKIP is the only answer that is neither.
+    assert_eq!(status, Status::SKIP);
 
     Ok(())
 }
@@ -8152,6 +8805,72 @@ fn an_index_after_an_interpolated_key_is_not_applied_twice() -> Result<()> {
             expected,
             "{}",
             label
+        );
+    }
+
+    Ok(())
+}
+
+/// An index after an interpolated key counts the keys the variable names, not the results it resolved
+/// to.
+///
+/// The two differ when one result holds a list. `let k = Cfg.KeyList` over `KeyList: [Name, Owner]`
+/// resolves to a single result holding the whole list, and the expansion of that list into one key per
+/// element happens after the index has already been applied. So the length was one: `[0]` selected the
+/// list and then used *every* key in it, and `[1]` was out of bounds. Over
+/// `Tags: {Name: alpha, Owner: bob}`, `some Cfg.Tags.%k[0] == "bob"` passed at exit 0 although the 0th
+/// key is `Name` and names `alpha`.
+///
+/// The index was inert rather than off by one, which is what `list_bound_without_an_index` shows: the
+/// same rule with no index at all answers the same way, so `[0]` was selecting nothing. Under either
+/// reading of `[N]` -- the Nth key, or the Nth resolved value -- exactly one key must come back, and two
+/// came back.
+///
+/// Every clause is run against both spellings of the binding because the defect was that they
+/// disagreed. `Cfg.KeyList[*]` was always right: the projection makes one result per key, so there was
+/// nothing left to flatten. The pair is also why this survived, since the two spellings look
+/// interchangeable and only one of them was.
+///
+/// The `alpha` and negative cases matter even though their verdict did not move. Both passed before for
+/// the wrong reason -- every key was in play, so `alpha` was among the values and `[-1]` offset into a
+/// length of one and landed back on the whole list. They pin which key the index now selects, which a
+/// verdict that was already right cannot.
+#[rstest::rstest]
+#[case::zeroth_key_is_not_the_last_value("%k[0]", "\"bob\"", Status::FAIL)]
+#[case::zeroth_key_names_alpha("%k[0]", "\"alpha\"", Status::PASS)]
+#[case::first_key_names_bob("%k[1]", "\"bob\"", Status::PASS)]
+#[case::last_key_names_bob("%k[-1]", "\"bob\"", Status::PASS)]
+#[case::past_the_last_key("%k[2]", "\"bob\"", Status::FAIL)]
+#[case::without_an_index("%k", "\"bob\"", Status::PASS)]
+fn an_index_after_an_interpolated_key_counts_keys_not_results(
+    #[case] selection: &str,
+    #[case] expected_value: &str,
+    #[case] expected: Status,
+) -> Result<()> {
+    const CONFIG: &str = r#"
+Cfg:
+  KeyList: [Name, Owner]
+  Tags:
+    Name: alpha
+    Owner: bob
+"#;
+
+    // The same two keys reached two ways: bound as the list itself, and bound as its elements.
+    for preamble in ["let k = Cfg.KeyList", "let k = Cfg.KeyList[*]"] {
+        let rules = format!(
+            "{}\nrule tag_is_bob {{ some Cfg.Tags.{} == {} }}",
+            preamble, selection, expected_value
+        );
+        let rules_file = RulesFile::try_from(rules.as_str())?;
+        let config = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(CONFIG)?)?;
+
+        let mut scope = root_scope(&rules_file, Rc::new(config));
+        assert_eq!(
+            eval_rules_file(&rules_file, &mut scope, None)?,
+            expected,
+            "`{}` under `{}` must not answer differently from the other spelling of the same keys",
+            selection,
+            preamble
         );
     }
 
@@ -10674,3 +11393,117 @@ const THIRTY_AS: &str = r#"
     }
 }
 "#;
+
+/// A reference to a rule that did not apply must not fail the referencing rule.
+///
+/// Decomposing a ruleset over disjoint resource types is the natural way to write one: a helper
+/// per type, each guarded by a `when` on its own type, and an aggregate that references them all.
+/// On any real template most helpers do not apply, and the aggregate used to fail once for every
+/// one of them -- exit 19, reason "dependent rule [H_B] did not PASS", against a template that
+/// violates nothing. That made the decomposition unusable, and neither workaround is
+/// behaviour-preserving: `H_A H_B` fails whenever any type is absent, and `H_A OR H_B` passes as
+/// soon as any single helper passes, which is a false negative in a compliance rule.
+///
+/// The clause path already answered this correctly -- a clause whose query selects nothing SKIPs,
+/// and `eval_conjunction_clauses` absorbs a SKIP. The reference path asked instead whether the
+/// dependent rule's status was PASS, and SKIP is not PASS.
+///
+/// All four combinations are asserted, not just the one that changed. The three unchanged ones are
+/// the point: a fix that made an inapplicable reference inert must not also make a *violated* one
+/// inert, or a reference would guarantee nothing at all.
+///
+/// Both spellings are asserted for the same reason as
+/// `a_named_rule_gate_on_a_skipped_rule_does_not_disarm_the_block`:
+/// `eval_parameterized_rule_call` carries its own copy of this arm, the two have drifted apart
+/// before, and a single-spelling test would pass against half a fix. The parameterized helpers
+/// reach inapplicability through their body rather than a `when`, because the parser does not
+/// accept a condition on a parameterized rule.
+#[test]
+fn an_inapplicable_dependent_rule_does_not_fail_the_reference() -> Result<()> {
+    let plain = r###"
+    rule H_A when Resources.*[ Type == 'AWS::IAM::Role' ] !empty {
+        Resources.*[ Type == 'AWS::IAM::Role' ].Properties.RoleName not exists
+    }
+    rule H_B when Resources.*[ Type == 'AWS::DynamoDB::Table' ] !empty {
+        Resources.*[ Type == 'AWS::DynamoDB::Table' ].Properties.TableName not exists
+    }
+    rule MAIN {
+        H_A
+        H_B
+    }
+    "###;
+
+    let parameterized = r###"
+    rule H_A(kind) {
+        Resources.*[ Type == %kind ].Properties.RoleName not exists
+    }
+    rule H_B(kind) {
+        Resources.*[ Type == %kind ].Properties.TableName not exists
+    }
+    rule MAIN {
+        H_A('AWS::IAM::Role')
+        H_B('AWS::DynamoDB::Table')
+    }
+    "###;
+
+    const CLEAN_ROLE: &str = r#"{ "Resources": {
+        "r": { "Type": "AWS::IAM::Role", "Properties": { "Path": "/" } } } }"#;
+    const NAMED_ROLE: &str = r#"{ "Resources": {
+        "r": { "Type": "AWS::IAM::Role", "Properties": { "RoleName": "static" } } } }"#;
+    const NAMED_ROLE_CLEAN_TABLE: &str = r#"{ "Resources": {
+        "r": { "Type": "AWS::IAM::Role", "Properties": { "RoleName": "static" } },
+        "t": { "Type": "AWS::DynamoDB::Table", "Properties": { "BillingMode": "PAY_PER_REQUEST" } } } }"#;
+    const CLEAN_BOTH: &str = r#"{ "Resources": {
+        "r": { "Type": "AWS::IAM::Role", "Properties": { "Path": "/" } },
+        "t": { "Type": "AWS::DynamoDB::Table", "Properties": { "BillingMode": "PAY_PER_REQUEST" } } } }"#;
+
+    let scenarios = [
+        (
+            "H_A holds and H_B does not apply",
+            CLEAN_ROLE,
+            Status::PASS,
+            "the reference to an inapplicable H_B contributes nothing, so MAIN is decided by \
+             H_A alone -- this is the case that used to FAIL with nothing violated",
+        ),
+        (
+            "H_A is violated and H_B does not apply",
+            NAMED_ROLE,
+            Status::FAIL,
+            "an inapplicable H_B must not rescue a violated H_A",
+        ),
+        (
+            "H_A is violated and H_B holds",
+            NAMED_ROLE_CLEAN_TABLE,
+            Status::FAIL,
+            "a reference to a rule that FAILs must still fail, which is the whole point of a \
+             reference",
+        ),
+        (
+            "both hold",
+            CLEAN_BOTH,
+            Status::PASS,
+            "unchanged, and the control for the other three",
+        ),
+    ];
+
+    for (spelling, rules) in [
+        ("plain reference", plain),
+        ("parameterized call", parameterized),
+    ] {
+        for (scenario, input, expected, why) in &scenarios {
+            let rules_file = RulesFile::try_from(rules)?;
+            let value = PathAwareValue::try_from(*input)?;
+            let mut root = root_scope(&rules_file, Rc::new(value));
+            assert_eq!(
+                eval_rules_file(&rules_file, &mut root, None)?,
+                *expected,
+                "{}, {}: {}",
+                spelling,
+                scenario,
+                why
+            );
+        }
+    }
+
+    Ok(())
+}

@@ -184,7 +184,13 @@ mod validate_tests {
         vec!["rules-dir/s3_bucket_public_read_prohibited.guard"],
         StatusCode::VALIDATION_ERROR
     )]
-    #[case(vec!["s3-server-side-encryption-template-non-compliant-2.yaml"], vec!["malformed-rule.guard"], StatusCode::INTERNAL_FAILURE)]
+    // `malformed-rule.guard` parses; every clause reads `%s3_buckets_server_side_encryption_2` and
+    // nothing declares it with a `let`. That is the rules author's mistake, so it is `PARSING_ERROR`
+    // -- the name this repository gives 5 -- and not `INTERNAL_FAILURE`, which is -1 and means
+    // cfn-guard broke. This case asserted -1, so it encoded the defect rather than the requirement:
+    // forgetting a `let` is a common mistake, and being told the tool is broken sends the author
+    // looking in the wrong place.
+    #[case(vec!["s3-server-side-encryption-template-non-compliant-2.yaml"], vec!["malformed-rule.guard"], StatusCode::PARSING_ERROR)]
     #[case(vec!["malformed-template.yaml"], vec!["s3_bucket_server_side_encryption_enabled_2.guard"], StatusCode::INTERNAL_FAILURE)]
     #[case(vec!["s3-server-side-encryption-template-non-compliant-2.yaml"], vec!["blank-rule.guard"], StatusCode::SUCCESS)]
     #[case(
@@ -283,6 +289,172 @@ mod validate_tests {
         assert_eq!(
             "Error occurred Parser Error when parsing `Unable to parse a template from data file: STDIN is empty`\n",
             writer.err_to_stripped().expect("failed to read stderr")
+        );
+    }
+
+    /// A data file the user named is read whatever it is called.
+    ///
+    /// `--data` fed every argument through `walk_dir` and then through the extension filter, and
+    /// `walkdir` on a plain file yields that one file, so a file named as an argument was filtered
+    /// as though a walk had discovered it. A name outside the five recognised suffixes was dropped,
+    /// the run had no data left, `evaluate_against_data_input` iterated an empty list and returned
+    /// PASS, and the process exited 0 having written nothing to any channel. A template that
+    /// violates the rule reported compliance because of what it was called.
+    ///
+    /// Exit code is the assertion that matters, because 0 is what a CI gate reads. The output checks
+    /// are here so that a run exiting 19 for an unrelated reason cannot satisfy this.
+    #[test]
+    fn an_explicitly_named_data_file_is_read_whatever_its_extension() {
+        let mut reader = Reader::default();
+        let mut writer = Writer::new(WBVec(vec![])).expect("Failed to create writer.");
+
+        let status_code = ValidateTestRunner::default()
+            .data(vec!["unsupported-extension-template.txt"])
+            .rules(vec!["encrypted_is_true.guard"])
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(
+            StatusCode::VALIDATION_ERROR,
+            status_code,
+            "the template violates the rule, and naming the file is the user asking for it to be read"
+        );
+
+        let output = writer.stripped().expect("failed to read the writer");
+        assert!(
+            output.contains("unsupported-extension-template.txt"),
+            "the file that was read is named in the report:\n{}",
+            output
+        );
+        assert!(
+            output.contains("encrypted_is_true"),
+            "and the rule it violated is reported:\n{}",
+            output
+        );
+    }
+
+    /// A directory walk evaluates the data files it recognises and passes over the rest.
+    ///
+    /// The counterpart to the test above. The extension filter is a discovery heuristic and it still
+    /// governs directory arguments, which is what `--data`'s help text documents and what the
+    /// `dummy.txt` fixtures in data-dir/ and rules-dir/ exist to pin. Without this half, the fix for
+    /// explicitly-named files is also satisfied by reading every file a walk finds, which would try
+    /// to load every README and lockfile sitting in a data directory.
+    ///
+    /// `mixed-extension-dir/README.md` is deliberately not loadable as YAML, so a walk that stopped
+    /// skipping it would fail this test outright rather than merely add a line to the output.
+    #[test]
+    fn a_directory_walk_evaluates_the_templates_and_passes_over_unrelated_files() {
+        let mut reader = Reader::default();
+        let mut writer = Writer::new(WBVec(vec![])).expect("Failed to create writer.");
+
+        let status_code = ValidateTestRunner::default()
+            .data(vec!["mixed-extension-dir"])
+            .rules(vec!["encrypted_is_true.guard"])
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(
+            StatusCode::VALIDATION_ERROR,
+            status_code,
+            "both templates in the directory violate the rule"
+        );
+
+        assert_output_from_str_eq!(
+            indoc! {r#"
+                template.json Status = FAIL
+                FAILED rules
+                encrypted_is_true.guard/encrypted_is_true    FAIL
+                ---
+                Evaluation of rules encrypted_is_true.guard against data template.json
+                --
+                Property [/Resources/B/Properties/Encrypted] in data [template.json] is not compliant with [encrypted_is_true] because provided value [false] did not match expected value [true]. Error Message []
+                --
+                template.yaml Status = FAIL
+                FAILED rules
+                encrypted_is_true.guard/encrypted_is_true    FAIL
+                ---
+                Evaluation of rules encrypted_is_true.guard against data template.yaml
+                --
+                Property [/Resources/B/Properties/Encrypted] in data [template.yaml] is not compliant with [encrypted_is_true] because provided value [false] did not match expected value [true]. Error Message []
+                --
+            "#},
+            writer
+        );
+    }
+
+    /// A file whose extension is recognised but whose content will not load still fails loudly.
+    ///
+    /// Reading explicitly-named files widened what reaches the loader, so the loud path has to stay
+    /// loud: a data file that cannot be parsed aborts the run with the parse error rather than being
+    /// treated as absent. This pins the message as well as the exit code, because a run that failed
+    /// for some other reason would satisfy the code on its own.
+    #[test]
+    fn a_recognised_extension_with_unloadable_content_still_fails_loudly() {
+        let mut reader = Reader::default();
+        let mut writer =
+            Writer::new_with_err(WBVec(vec![]), WBVec(vec![])).expect("Failed to create writer.");
+
+        let status_code = ValidateTestRunner::default()
+            .data(vec!["malformed-template.yaml"])
+            .rules(vec!["encrypted_is_true.guard"])
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(
+            StatusCode::INTERNAL_FAILURE,
+            status_code,
+            "a data file that will not load aborts the run"
+        );
+
+        let err = writer.err_to_stripped().expect("failed to read stderr");
+        assert!(
+            err.contains("Error encountered while parsing data file"),
+            "and says on stderr that it could not parse the file:\n{}",
+            err
+        );
+        assert!(
+            err.contains("malformed-template.yaml"),
+            "naming the file it could not parse:\n{}",
+            err
+        );
+    }
+
+    /// A run that evaluated no data at all says so on stderr.
+    ///
+    /// A directory holding nothing a walk recognises leaves the run with an empty data list, and an
+    /// empty list yields no findings, no output and exit 0 -- indistinguishable from a run in which
+    /// every file complied. The notice names each file passed over and states that nothing was
+    /// checked.
+    ///
+    /// The exit code is still 0. Whether a run that checked nothing should fail is a separate
+    /// question, because changing it moves the result for everyone pointing `--data` at a directory
+    /// of mixed content. Asserting 0 here records that the current answer is deliberate rather than
+    /// overlooked, so that changing it has to change this test too.
+    #[test]
+    fn a_run_that_evaluates_no_data_says_so() {
+        let mut reader = Reader::default();
+        let mut writer =
+            Writer::new_with_err(WBVec(vec![]), WBVec(vec![])).expect("Failed to create writer.");
+
+        let status_code = ValidateTestRunner::default()
+            .data(vec!["only-unrelated-files-dir"])
+            .rules(vec!["encrypted_is_true.guard"])
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(
+            StatusCode::SUCCESS,
+            status_code,
+            "the exit code for a run that evaluated nothing is unchanged by this commit"
+        );
+
+        let err = writer.err_to_stripped().expect("failed to read stderr");
+        assert!(
+            err.contains("no data files were evaluated"),
+            "a run that checked nothing has to say so:\n{}",
+            err
+        );
+        assert!(
+            err.contains("README.md"),
+            "and name what it passed over, so the reader can tell why:\n{}",
+            err
         );
     }
 
@@ -603,9 +775,16 @@ mod validate_tests {
             data_file,
             output
         );
+        // The explanation has to reach its last sentence, which is the one that says what the `!empty`
+        // guard would do. It used to name that guard as the *remedy*, and it is not one: the gate's own
+        // `!empty` check fails when the reference is empty, so the block is skipped and the comparison
+        // never runs. An author following the old advice replaced a check that was failing with a check
+        // that does not run, at exit 0. The message is also the longest one the console section prints,
+        // so asserting the tail here is what catches the truncation cap being outgrown.
         assert!(
-            output.contains("!empty"),
-            "the explanation should name the `!empty` guard as the remedy, got:\n{}",
+            output.contains("skips the clause rather than satisfying it"),
+            "the explanation should say what the `!empty` guard does rather than offer it as the \
+             remedy, and should not be cut off before saying it, got:\n{}",
             output
         );
     }
@@ -2291,11 +2470,97 @@ mod validate_tests {
         );
     }
 
+    /// A rules file that will not parse must be visible in the document, not only in the exit code.
+    ///
+    /// `StructuredEvaluator::evaluate` wrote the parse error to stderr, set the exit code, and dropped
+    /// the file from `rules`. No reporter ever saw it, so stdout carried what a clean run carries:
+    /// three empty verdict lists in json and yaml, `tests="0" failures="0" errors="0"` in junit, an
+    /// empty `results` array in sarif. The all-pass sarif document and the parse-error sarif document
+    /// were identical.
+    ///
+    /// Exit 5 is not a sufficient defence, because the CI steps that consume these files run
+    /// regardless of exit status -- a junit test reporter, or `upload-sarif` under `if: always()`. A
+    /// junit file reading zero tests renders as a green run, and uploading an empty sarif `results`
+    /// array resolves the alerts the previous run raised. So a typo in a rules file read as "all
+    /// policies now pass".
+    ///
+    /// Each format says it in its own vocabulary, and none of them reuses a verdict: `errors` in
+    /// junit, a `rule_file_errors` field in json and yaml, and `invocations[].executionSuccessful`
+    /// with a `toolConfigurationNotifications` entry in sarif. Reusing `status: SKIP` or one of the
+    /// three verdict lists is what the defect already did.
+    #[rstest::rstest]
+    #[case("json", "rule_file_errors")]
+    #[case("yaml", "rule_file_errors")]
+    #[case("junit", "errors=\"1\"")]
+    #[case::sarif("sarif", "\"executionSuccessful\": false")]
+    fn a_rules_file_that_cannot_be_parsed_is_reported_in_the_document(
+        #[case] output: &str,
+        #[case] expected_marker: &str,
+    ) {
+        let mut reader = Reader::default();
+        let mut writer = Writer::new(WBVec(vec![])).expect("Failed to create writer.");
+
+        let status_code = ValidateTestRunner::default()
+            .data(vec![
+                "s3-server-side-encryption-template-non-compliant-2.yaml",
+            ])
+            .rules(vec!["unparsable-rule.guard"])
+            .output_format(Some(output))
+            .structured()
+            .show_summary(vec!["none"])
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(
+            StatusCode::PARSING_ERROR,
+            status_code,
+            "the exit code for a rules-file parse error is unchanged; only the document is new"
+        );
+
+        let out = writer.stripped().expect("failed to read the writer");
+
+        assert!(
+            out.contains(expected_marker),
+            "{} must carry {} so a consumer can tell this from a clean run:\n{}",
+            output,
+            expected_marker,
+            out
+        );
+        assert!(
+            out.contains("unparsable-rule.guard"),
+            "{} must name the rules file that could not be read:\n{}",
+            output,
+            out
+        );
+        assert!(
+            out.contains("Unable to find a closing >> tag for message")
+                || out.contains("Unable to find a closing &gt;&gt; tag for message"),
+            "{} must carry the parser's reason, not just the fact of failure:\n{}",
+            output,
+            out
+        );
+
+        // The verdict vocabulary is not borrowed to say this. A rules file that failed to parse is
+        // not a rule that skipped, and it is not a finding about the template either.
+        if output == "sarif" {
+            assert!(
+                out.contains("\"results\": []"),
+                "a tool failure is not a finding about the code under analysis:\n{}",
+                out
+            );
+        }
+    }
+
     /// The same for the JSON, YAML and SARIF path, which shares one evaluator.
     ///
     /// `CommonStructuredReporter` propagated too, so the document a machine reads was replaced by a
-    /// single error line for a file whose other rules had findings. Here the error is still returned
-    /// after the document is written, so the exit code is unchanged and the document is gained.
+    /// single error line for a file whose other rules had findings. The error is still returned after
+    /// the document is written, so the document is gained either way.
+    ///
+    /// This asserted `INTERNAL_FAILURE`, described as "unchanged". It was unchanged *by that commit*,
+    /// which is not the same as correct, and it left this path disagreeing with `-o junit` on the same
+    /// input: `JunitReporter` folds the error into the suite's `errors` total and reaches
+    /// `PARSING_ERROR`, while json, yaml and sarif returned `Err` and exited -1. Now all four formats
+    /// give one answer.
     #[test]
     fn a_rule_that_cannot_be_evaluated_does_not_discard_the_structured_document() {
         let mut reader = Reader::default();
@@ -2310,9 +2575,9 @@ mod validate_tests {
             .run(&mut writer, &mut reader);
 
         assert_eq!(
-            StatusCode::INTERNAL_FAILURE,
+            StatusCode::PARSING_ERROR,
             status_code,
-            "the exit code for this path is unchanged; only the document is new"
+            "the structured formats must agree with -o junit on one rules file"
         );
 
         let output = writer.stripped().expect("failed to read the writer");
@@ -2416,9 +2681,13 @@ mod validate_tests {
     /// broken one went unevaluated, and the run printed a single error line: five real findings from a
     /// third rule, discarded because a second rule read a variable that does not exist in it.
     ///
-    /// The exit code is deliberately unchanged. A variable that resolves nowhere is a broken ruleset
-    /// rather than a non-compliant template, and 255 rather than 19 is what says so; the fix is that
-    /// there is now a report to read beside it.
+    /// A variable that resolves nowhere is a broken ruleset rather than a non-compliant template, and
+    /// the exit code has to keep saying so. This asserted `INTERNAL_FAILURE` for that, on the reasoning
+    /// that "255 rather than 19 is what says so" -- true as far as it went, and the wrong half of the
+    /// distinction. `PARSING_ERROR` is also not 19, and unlike 255 it does not additionally claim
+    /// cfn-guard broke: 5 is the code this repository gives a ruleset it cannot use, and -1 is the one
+    /// it gives itself. The requirement that commit was protecting is unchanged and still asserted
+    /// below; only the code that expresses it moves.
     #[test]
     fn a_rule_that_cannot_be_evaluated_does_not_discard_the_other_rules_findings() {
         let mut reader = Reader::default();
@@ -2431,8 +2700,13 @@ mod validate_tests {
             .run(&mut writer, &mut reader);
 
         assert_eq!(
-            StatusCode::INTERNAL_FAILURE, status_code,
+            StatusCode::PARSING_ERROR, status_code,
             "a ruleset that cannot be evaluated stays distinguishable from a non-compliant template"
+        );
+        assert_ne!(
+            StatusCode::VALIDATION_ERROR,
+            status_code,
+            "and must not be reported as the template merely failing a rule"
         );
 
         let output = writer.stripped().expect("failed to read the writer");
@@ -2546,6 +2820,52 @@ mod validate_tests {
         assert!(
             output.contains("Parameters"),
             "a run that exits 19 has to say which query it could not resolve:\n{}",
+            output
+        );
+        assert!(
+            output.contains("parameters_are_constrained:"),
+            "and which rule asked for it, since the entry names the file and line but not the rule:\n{}",
+            output
+        );
+    }
+
+    /// Two rules spelling the same failing block clause are told apart.
+    ///
+    /// The section labelled a clause entry with its rule and a block entry with nothing, so a block whose
+    /// context is the same text as another's produced the same line twice: two rules reported FAIL in the
+    /// summary and one entry, repeated, in the detail. Across the fixture cross product it also left seven
+    /// (rules file, rule) pairs reporting FAIL with the rule named nowhere below the summary at all, because
+    /// a block entry's context is `GuardAccessClause#block ...` or `GuardBlockAccessClause#Location[...]`,
+    /// which names the rules file and the line but never the rule.
+    ///
+    /// Labelled rather than deduplicated, for the reason the clause path already gives: that two rules
+    /// failed is the fact the reader is here for, and collapsing the repeat would hide it.
+    #[test]
+    fn two_rules_sharing_a_block_clause_are_told_apart() {
+        let mut reader = Reader::default();
+        let mut writer = Writer::new(WBVec(vec![])).expect("Failed to create writer.");
+
+        let status_code = ValidateTestRunner::default()
+            .data(vec!["bucket-with-no-kms-keys-template.yaml"])
+            .rules(vec!["two_rules_that_share_a_block_clause.guard"])
+            .show_summary(vec!["none"])
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(
+            StatusCode::VALIDATION_ERROR,
+            status_code,
+            "the denylist resolves to no values, so both rules fail"
+        );
+
+        let output = writer.stripped().expect("failed to read the writer");
+        assert!(
+            output.contains("first_reader_of_the_denylist: GuardAccessClause#block"),
+            "each entry names the rule it came from:\n{}",
+            output
+        );
+        assert!(
+            output.contains("second_reader_of_the_denylist: GuardAccessClause#block"),
+            "including the second, whose clause text is the first's:\n{}",
             output
         );
     }
@@ -3294,6 +3614,210 @@ mod validate_tests {
         assert_output_from_file_eq!(
             &format!("resources/validate/output-dir/structured.{output}"),
             writer
+        );
+    }
+
+    /// The junit `<failure message>` names every failing rule, not whichever one came last.
+    ///
+    /// `test_case.name` was assigned once per message rather than accumulated, so the attribute held
+    /// whichever rule was visited last while the element body held every rule's messages. Against
+    /// `three-failing-rules.guard` the attribute read `b_second` for a body containing all three
+    /// rules' violations, so a reader who trusted it attributed `c_third`'s and `a_first`'s failures to
+    /// `b_second`.
+    ///
+    /// `test_structured_output`'s golden cannot catch this and needed no update for the fix: every
+    /// rules file in the golden directory declares at most one rule, and last-rule-wins is always
+    /// right when there is one rule to win. This fixture declares three, named out of declaration
+    /// order, so neither sorted order nor last-wins can pass by coincidence.
+    ///
+    /// Full per-message attribution is not what this establishes -- one attribute cannot label four
+    /// messages individually. That belongs to junit reporting one test case per rule instead of one per
+    /// rules file, which is a separate defect.
+    #[test]
+    fn the_junit_failure_message_names_every_failing_rule() {
+        let mut reader = Reader::default();
+        let mut writer = Writer::new(WBVec(vec![])).expect("Failed to create writer.");
+
+        let status_code = ValidateTestRunner::default()
+            .data(vec!["regional-metadata-template.yaml"])
+            .rules(vec!["three-failing-rules.guard"])
+            .output_format(Option::from("junit"))
+            .structured()
+            .show_summary(vec!["none"])
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(StatusCode::VALIDATION_ERROR, status_code);
+
+        let output = writer.stripped().expect("failed to read the writer");
+        assert!(
+            output.contains(r#"<failure message="c_third, a_first, b_second">"#),
+            "the attribute must name all three failing rules in the order they are reported:\n{}",
+            output
+        );
+    }
+
+    /// junit separates the messages inside one `<failure>` instead of running them together.
+    ///
+    /// `serialize_text_events` wrote one XML text event per message, and adjacent text events
+    /// concatenate with nothing between them. A custom message ending `...must be Enabled` followed by
+    /// `Check was not compliant...` came out as the non-word `must be EnabledCheck`, and the committed
+    /// junit golden carried `].Check` five times over. With several failing rules in one test case
+    /// there was no boundary a consumer could split on either, so which message belonged to which rule
+    /// was not recoverable from the document.
+    ///
+    /// The sibling `Skipped` arm already joined its reasons for exactly this reason, with a comment
+    /// saying so. Only the `Failure` arm was left.
+    ///
+    /// Not fixed here, and measured as unchanged: junit orders the pair custom-then-error while sarif
+    /// orders it error-then-custom, so the two still render the same finding's text differently. There
+    /// is no correctness argument for either order, so picking one would churn a golden for nothing.
+    #[test]
+    fn junit_separates_the_messages_inside_one_failure() {
+        let mut reader = Reader::default();
+        let mut writer = Writer::new(WBVec(vec![])).expect("Failed to create writer.");
+
+        let status_code = ValidateTestRunner::default()
+            .rules(vec!["rules-dir"])
+            .data(vec![
+                "data-dir/s3-public-read-prohibited-template-non-compliant.yaml",
+            ])
+            .show_summary(vec!["none"])
+            .output_format(Option::from("junit"))
+            .structured()
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(StatusCode::VALIDATION_ERROR, status_code);
+
+        let output = writer.stripped().expect("failed to read the writer");
+        assert!(
+            output.contains("].\nCheck was not compliant"),
+            "consecutive messages must be separated:\n{}",
+            output
+        );
+        assert!(
+            !output.contains("].Check was not compliant"),
+            "and must not run together, which is what produced `].Check`:\n{}",
+            output
+        );
+        // The messages are joined, not merely emitted one after another, so an empty custom message --
+        // which is `Some("")` for most clauses rather than `None` -- must not become a blank line or a
+        // newline straight after the opening tag.
+        assert!(
+            !output.contains("\">\nCheck was not compliant"),
+            "a dropped empty message must not leave a newline after the <failure> tag:\n{}",
+            output
+        );
+        assert!(
+            !output.contains("].\n\nCheck was not compliant"),
+            "nor a blank line between two error messages:\n{}",
+            output
+        );
+    }
+
+    /// sarif omits `region` for a finding whose position it does not have, rather than reporting
+    /// line 1.
+    ///
+    /// The reporter read a missing position as `(0, 0)` and then raised both numbers to 1, because the
+    /// schema puts `"minimum": 1` on `startLine` and `startColumn`. That converts "unknown" into
+    /// "line 1, column 1", which a code-scanning consumer renders as a real position and annotates the
+    /// first line of the template.
+    ///
+    /// `region` is optional: it is not in `physicalLocation`'s required set, whose only constraint is
+    /// an `anyOf` demanding `address` or `artifactLocation`. So omitting it is well formed and says
+    /// "somewhere in this artifact", which is what is known.
+    ///
+    /// `no-resources-template.yaml` puts `Resources` well down the file behind a header, so line 1 is
+    /// demonstrably not where the finding is. Positions the reporter does have are unaffected, which
+    /// `test_structured_output`'s golden covers -- it still carries `startLine` 4 and 13.
+    #[test]
+    fn sarif_omits_the_region_it_does_not_have_rather_than_reporting_line_one() {
+        let mut reader = Reader::default();
+        let mut writer = Writer::new(WBVec(vec![])).expect("Failed to create writer.");
+
+        let status_code = ValidateTestRunner::default()
+            .rules(vec!["denied_names_from_empty_reference.guard"])
+            .data(vec!["bucket-with-no-kms-keys-template.yaml"])
+            .show_summary(vec!["none"])
+            .output_format(Option::from("sarif"))
+            .structured()
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(StatusCode::VALIDATION_ERROR, status_code);
+
+        let output = writer.stripped().expect("failed to read the writer");
+        assert!(
+            output.contains("\"results\": [") && !output.contains("\"results\": []"),
+            "the case has to produce a result for the region assertion to mean anything:\n{}",
+            output
+        );
+        assert!(
+            !output.contains("\"startLine\": 1"),
+            "a position the reporter does not have must be omitted, not reported as line 1:\n{}",
+            output
+        );
+        assert!(
+            !output.contains("\"startColumn\": 1"),
+            "and a column it does not have must not be reported as column 1:\n{}",
+            output
+        );
+    }
+
+    /// Every sarif `artifactLocation.uri` is a resolvable `file://` URI.
+    ///
+    /// This has its own test because `test_structured_output` cannot have one: `sanitize_sarif_writer`
+    /// rewrites every `"uri"` in the document to `"some/path"` before comparing, which is why all
+    /// eight sites in the committed golden read that. The sanitiser is defensible -- the path depends
+    /// on where the repository is checked out -- but it leaves the URI with no coverage at all rather
+    /// than with correct coverage, and the value it was hiding was wrong.
+    ///
+    /// `validate` canonicalises every data-file path, so `report.name` is always absolute. Removing
+    /// its leading `/` produced a relative reference with no `uriBaseId` to resolve it against, which
+    /// named nothing at a code-scanning consumer's repository root.
+    ///
+    /// Skipped on Windows for the reason `compare_write_buffer_with_file` skips there: the paths are
+    /// not POSIX-absolute and this assertion is about POSIX path-to-URI conversion.
+    #[test]
+    fn sarif_artifact_locations_are_resolvable_file_uris() {
+        if cfg!(windows) {
+            return;
+        }
+
+        let mut reader = Reader::default();
+        let mut writer = Writer::new(WBVec(vec![])).expect("Failed to create writer.");
+
+        let status_code = ValidateTestRunner::default()
+            .rules(vec!["rules-dir"])
+            .data(vec![
+                "data-dir/s3-public-read-prohibited-template-non-compliant.yaml",
+            ])
+            .show_summary(vec!["none"])
+            .output_format(Option::from("sarif"))
+            .structured()
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(StatusCode::VALIDATION_ERROR, status_code);
+
+        let output = writer.stripped().expect("failed to read the writer");
+        let expected = format!(
+            "\"uri\": \"file://{}\"",
+            get_full_path_for_resource_file(
+                "resources/validate/data-dir/s3-public-read-prohibited-template-non-compliant.yaml"
+            )
+        );
+
+        assert!(
+            output.contains(&expected),
+            "every artifact location must be a file:// URI naming the real file; expected to find\n\
+             {}\nin\n{}",
+            expected,
+            output
+        );
+        assert!(
+            !output.contains("\"uri\": \"local/")
+                && !output.contains("\"uri\": \"home/")
+                && !output.contains("\"uri\": \"github/"),
+            "no location may be an absolute path with its leading slash removed:\n{}",
+            output
         );
     }
 

@@ -81,6 +81,83 @@ fn test_embedded_string_parsing() {
     );
 }
 
+/// What a backslash means inside a string literal, at every position it can appear in.
+///
+/// The escapes that existed before this were the quote alone, decided by whether the text in front of a
+/// quote ended in a backslash. `\\` was read backwards by that test -- as one backslash plus an escaped
+/// quote -- so every spelling of a string ending in a backslash was rejected. `\\` resolves to one
+/// backslash now, which is the change that makes those spellings mean something, and which changes
+/// `"a\\b"` from two backslashes to one.
+#[test]
+fn test_parse_string_backslash_escapes() {
+    for (source, expected) in [
+        // The escapes that existed before, unchanged.
+        (r"'it\'s'", "it's"),
+        (r#""say \"hi\"""#, r#"say "hi""#),
+        // A backslash before anything that is not the active delimiter or another backslash is not an
+        // escape and stays in the value, so a regex written as a string keeps its own escapes.
+        (r#""a\bc""#, r"a\bc"),
+        (r#""^arn:(\w+):(\d+)$""#, r"^arn:(\w+):(\d+)$"),
+        // Only the quote that opened the literal is escapable; the other one needs no escape and a
+        // backslash in front of it is retained.
+        (r#""it\'s""#, r"it\'s"),
+        (r#"'say \"hi\"'"#, r#"say \"hi\""#),
+        // `\\` is one backslash. Each of these was rejected outright before.
+        (r"'x\\'", r"x\"),
+        (r#""x\\""#, r"x\"),
+        (r#""C:\\""#, r"C:\"),
+        (r#""x\\\\""#, r"x\\"),
+        (r#""a\\b""#, r"a\b"),
+        // A `#` in a string is part of the string, not the start of a comment.
+        (r"'a # b'", "a # b"),
+    ] {
+        let cmp = unsafe { Span::new_from_raw_offset(source.len(), 1, "", "") };
+        assert_eq!(
+            parse_string(from_str2(source)),
+            Ok((cmp, Value::String(expected.to_string()))),
+            "{source} is the string {expected}"
+        );
+    }
+}
+
+/// A string with no closing quote on its line is an error, and the error says so.
+///
+/// This is the half of the defect that silently deleted rules. `'x\'` escapes its own closing quote, so
+/// the literal had the rest of the file to look through for another one, and it ended at an apostrophe in
+/// a comment two lines down. Every clause in between was absorbed into the value -- not evaluated and not
+/// reported -- and the run exited 0. Ending the literal at the line ending keeps the mistake where the
+/// author made it. `'x\\'` is the spelling that means `x` followed by a backslash.
+#[test]
+fn test_parse_string_does_not_cross_a_line_ending() {
+    let swallow = "'x\\' }\nrule b { Encrypted == true  # don'\n}";
+    let result = parse_string(from_str2(swallow));
+    assert!(
+        result.is_err(),
+        "an escaped closing quote leaves the literal unterminated, got {:?}",
+        result
+    );
+    if let Err(nom::Err::Failure(e)) = &result {
+        assert!(
+            e.context.contains("not terminated"),
+            "the error names the problem, got {}",
+            e.context
+        );
+    } else {
+        panic!(
+            "expected a Failure so the value alternation cannot report someone else's complaint, got {:?}",
+            result
+        );
+    }
+
+    for unterminated in [r"'abc", r"'C:\'", r#""C:\""#, "'abc\n'"] {
+        assert!(
+            parse_string(from_str2(unterminated)).is_err(),
+            "{} is unterminated",
+            unterminated
+        );
+    }
+}
+
 #[test]
 fn test_parse_string_rest() {
     let hi = "\"Hi there\"";
@@ -254,29 +331,45 @@ fn test_parse_regex() {
         Ok((cmp, Value::Regex(".*PROD.*".to_string())))
     );
 
+    // A pattern the engine cannot compile. The variant is asserted once, because a recoverable error
+    // is swallowed by the alternation above `parse_regex` and the message below never reaches the
+    // author; the context is then matched by substring so this does not re-break if the variant moves
+    // again. Same shape as `a_float_literal_out_of_range_is_rejected`.
     let improperly_escaped_regular_expression =
         "/arn:[\\w+=/,.@-]+:[\\w+=/,.@-]+:[\\w+=/,.@-]*:[0-9]*:[\\w+=,.@-]+(/[\\w+=,.@-]+)*/";
-    let _cmp = unsafe {
+    let err = parse_regex(from_str2(improperly_escaped_regular_expression))
+        .expect_err("a pattern the engine cannot compile must not parse");
+
+    assert!(
+        matches!(err, nom::Err::Failure(_)),
+        "an uncompilable pattern must fail unrecoverably, or `alt` backtracks and reports something else: {:?}",
+        err
+    );
+
+    let context = match &err {
+        nom::Err::Failure(e) | nom::Err::Error(e) => e.context.clone(),
+        nom::Err::Incomplete(_) => String::new(),
+    };
+    assert!(
+        context.contains("Could not parse regular expression: ")
+            && context.contains("Invalid character class"),
+        "the engine's explanation must survive to the author, not merely a rejection: {:?}",
+        context
+    );
+
+    // The span is the pattern itself, taken after the opening delimiter.
+    let span = match &err {
+        nom::Err::Failure(e) | nom::Err::Error(e) => e.span,
+        nom::Err::Incomplete(_) => unreachable!(),
+    };
+    assert_eq!(span, unsafe {
         Span::new_from_raw_offset(
-            11,
             1,
-            ",.@-]+:[\\w+=/,.@-]+:[\\w+=/,.@-]*:[0-9]*:[\\w+=,.@-]+(/[\\w+=,.@-]+)*/",
+            1,
+            "arn:[\\w+=/,.@-]+:[\\w+=/,.@-]+:[\\w+=/,.@-]*:[0-9]*:[\\w+=,.@-]+(/[\\w+=,.@-]+)*/",
             "",
         )
-    };
-    assert_eq!(
-        parse_regex(from_str2(improperly_escaped_regular_expression)),
-        Err(nom::Err::Error(ParserError {
-                context: "Could not parse regular expression: Parsing error at position 9: Invalid character class".to_string(),
-                kind: ErrorKind::RegexpMatch,
-                span: unsafe { Span::new_from_raw_offset(
-                    1,
-                    1,
-                    "arn:[\\w+=/,.@-]+:[\\w+=/,.@-]+:[\\w+=/,.@-]*:[0-9]*:[\\w+=,.@-]+(/[\\w+=,.@-]+)*/",
-                    ""
-                ) },
-            }))
-    );
+    });
 
     let properly_escaped_regular_expression = "/arn:[\\w+=\\/,.@-]+:[\\w+=\\/,.@-]+:[\\w+=\\/,.@-]*:[0-9]*:[\\w+=,.@-]+(\\/[\\w+=,.@-]+)*/";
     let cmp =
@@ -615,6 +708,181 @@ fn test_range_type_failures() {
             context: "".to_string()
         }))
     );
+}
+
+/// A range whose lower bound is above its upper admits nothing, so a clause over it cannot fail for
+/// any input in one direction and cannot pass for any input in the other. Each of these parsed
+/// before, and the span is the literal rather than what follows it.
+#[test]
+fn test_range_type_rejects_reversed_bounds() {
+    for s in ["r[20,10]", "r(20,10)", "r[20,10)", "r(20,10]", "r[-1,-9]"] {
+        let err = parse_range(from_str2(s));
+        let span = unsafe { Span::new_from_raw_offset(0, 1, s, "") };
+        match err {
+            Err(nom::Err::Failure(e)) => {
+                assert_eq!(e.span, span, "span must be the literal for {}", s);
+                assert_eq!(e.kind, ErrorKind::IsNot);
+                assert!(
+                    e.context.contains("no value can satisfy it"),
+                    "{} gave {}",
+                    s,
+                    e.context
+                );
+                assert!(e.context.contains("20") || e.context.contains("-1"));
+            }
+            other => panic!("{} must be a Failure, got {:?}", s, other),
+        }
+    }
+
+    // The same emptiness through a float and through a char, with the bound named as written.
+    for (s, bounds) in [
+        ("r[2.0,1.0]", "2.0 is above the upper bound 1.0"),
+        ("r[z,a]", "'z' is above the upper bound 'a'"),
+    ] {
+        match parse_range(from_str2(s)) {
+            Err(nom::Err::Failure(e)) => {
+                assert!(e.context.contains(bounds), "{} gave {}", s, e.context)
+            }
+            other => panic!("{} must be a Failure, got {:?}", s, other),
+        }
+    }
+}
+
+/// Equal bounds split on whether the range admits its one value. `r[15,15]` is 15 and is kept; the
+/// three spellings that open an end of it admit nothing and go with the reversed ranges.
+#[test]
+fn test_range_type_equal_bounds() {
+    let s = "r[15,15]";
+    let cmp = unsafe { Span::new_from_raw_offset(s.len(), 1, "", "") };
+    let v = parse_range(from_str2(s));
+    assert_eq!(
+        v,
+        Ok((
+            cmp,
+            Value::RangeInt(RangeType {
+                upper: 15,
+                lower: 15,
+                inclusive: LOWER_INCLUSIVE | UPPER_INCLUSIVE
+            })
+        ))
+    );
+    let r = match v.unwrap().1 {
+        Value::RangeInt(val) => val,
+        _ => unreachable!(),
+    };
+    assert!(15.is_within(&r));
+    assert!(!14.is_within(&r));
+    assert!(!16.is_within(&r));
+
+    assert!(matches!(
+        parse_range(from_str2("r[1.5,1.5]")),
+        Ok((_, Value::RangeFloat(_)))
+    ));
+    assert!(matches!(
+        parse_range(from_str2("r[m,m]")),
+        Ok((_, Value::RangeChar(_)))
+    ));
+
+    for s in ["r(15,15)", "r[15,15)", "r(15,15]"] {
+        match parse_range(from_str2(s)) {
+            Err(nom::Err::Failure(e)) => assert!(
+                e.context.contains("both bounds are 15")
+                    && e.context.contains("no value can satisfy it"),
+                "{} gave {}",
+                s,
+                e.context
+            ),
+            other => panic!("{} must be a Failure, got {:?}", s, other),
+        }
+    }
+}
+
+/// One integer bound and one float bound widen to a float range, which is what the evaluator's
+/// `int_within_float_range` and `float_within_int_range` already check either kind of value against.
+/// Each of these was a parse error before.
+#[test]
+fn test_range_type_mixed_numeric_bounds() {
+    let s = "r[0,20.5]";
+    let cmp = unsafe { Span::new_from_raw_offset(s.len(), 1, "", "") };
+    assert_eq!(
+        parse_range(from_str2(s)),
+        Ok((
+            cmp,
+            Value::RangeFloat(RangeType {
+                upper: 20.5,
+                lower: 0.0,
+                inclusive: LOWER_INCLUSIVE | UPPER_INCLUSIVE
+            })
+        ))
+    );
+
+    let s = "r(0.5,20]";
+    let cmp = unsafe { Span::new_from_raw_offset(s.len(), 1, "", "") };
+    assert_eq!(
+        parse_range(from_str2(s)),
+        Ok((
+            cmp,
+            Value::RangeFloat(RangeType {
+                upper: 20.0,
+                lower: 0.5,
+                inclusive: UPPER_INCLUSIVE
+            })
+        ))
+    );
+
+    // Emptiness is still measured after the widening, so a mixed pair cannot smuggle a reversed
+    // range through.
+    for s in ["r[20.5,0]", "r[20,0.5]"] {
+        match parse_range(from_str2(s)) {
+            Err(nom::Err::Failure(e)) => assert!(
+                e.context.contains("no value can satisfy it"),
+                "{} gave {}",
+                s,
+                e.context
+            ),
+            other => panic!("{} must be a Failure, got {:?}", s, other),
+        }
+    }
+
+    // An integer bound above 2^53 does not fit a float exactly, and widening it would move the
+    // bound, so it is refused rather than silently shifted.
+    let s = "r[9007199254740993,1e300]";
+    match parse_range(from_str2(s)) {
+        Err(nom::Err::Failure(e)) => assert!(
+            e.context.contains("would move the bound"),
+            "{} gave {}",
+            s,
+            e.context
+        ),
+        other => panic!("{} must be a Failure, got {:?}", s, other),
+    }
+    // 2^53 itself is exact, and so is any smaller magnitude.
+    assert!(matches!(
+        parse_range(from_str2("r[9007199254740992,1e300]")),
+        Ok((_, Value::RangeFloat(_)))
+    ));
+    assert!(matches!(
+        parse_range(from_str2("r[-9007199254740992,1e300]")),
+        Ok((_, Value::RangeFloat(_)))
+    ));
+
+    // A pairing that is not two numbers still has no comparison, and the span is the literal rather
+    // than what follows it.
+    for s in ["r[0,z]", "r[a,2.5]", "r[a,5]"] {
+        let span = unsafe { Span::new_from_raw_offset(0, 1, s, "") };
+        match parse_range(from_str2(s)) {
+            Err(nom::Err::Failure(e)) => {
+                assert_eq!(e.span, span, "span must be the literal for {}", s);
+                assert!(
+                    e.context.contains("not both numbers"),
+                    "{} gave {}",
+                    s,
+                    e.context
+                );
+            }
+            other => panic!("{} must be a Failure, got {:?}", s, other),
+        }
+    }
 }
 
 //
@@ -4701,17 +4969,111 @@ fn test_builtin_function_call_expr() -> Result<(), Error> {
     Ok(())
 }
 
+/// The three ways a literal reaches the end of its line with no unescaped delimiter, each of which
+/// `scan_escaped_literal` answers with `None`. A lone backslash is the third: it has nothing to escape
+/// and no delimiter follows, so this is the unterminated case rather than the invalid-regex one.
+///
+/// `Failure` rather than `Error` for the reason on `parse_regex_inner`: the message names the missing
+/// delimiter, and a recoverable error means the author is told about a property access instead.
 #[test]
-fn test_parse_regex_inner_when_regex_is_not_valid() {
-    let invalid = r"\";
-    let invalid_cmp = unsafe { Span::new_from_raw_offset(invalid.len(), 1, invalid, "") };
-    let expected_invalid = Err(nom::Err::Error(ParserError {
-        context: "Could not parse regular expression".to_string(),
-        kind: ErrorKind::RegexpMatch,
-        span: invalid_cmp,
-    }));
+fn test_parse_regex_inner_when_regex_is_not_terminated() {
+    for invalid in [
+        // A backslash with nothing on its line to escape.
+        "\\",
+        // A line ending before any unescaped delimiter, which is the ordinary forgotten-slash typo.
+        "abc\n== 5",
+        "abc\r\n",
+        // End of input before any unescaped delimiter.
+        "abc",
+        // An escaped delimiter does not close, so this one runs to the end of input too.
+        "abc\\/",
+    ] {
+        let cmp = unsafe { Span::new_from_raw_offset(invalid.len(), 1, invalid, "") };
+        let err =
+            parse_regex_inner(cmp).expect_err("an unterminated regular expression must not parse");
 
-    assert_eq!(expected_invalid, parse_regex_inner(invalid_cmp));
+        assert!(
+            matches!(err, nom::Err::Failure(_)),
+            "{:?} must fail unrecoverably, or `alt` backtracks and reports something else: {:?}",
+            invalid,
+            err
+        );
+
+        let context = match &err {
+            nom::Err::Failure(e) | nom::Err::Error(e) => e.context.clone(),
+            nom::Err::Incomplete(_) => String::new(),
+        };
+        assert_eq!(
+            context, "Could not parse regular expression: no closing / before the end of the line",
+            "{:?} must be named as unterminated",
+            invalid
+        );
+    }
+}
+
+/// What a backslash means inside a regular expression.
+///
+/// `\/` stands for a plain `/`; every other backslash reaches the regex engine as written, because the
+/// engine has an escape layer of its own. `\\` is the case the old scan got backwards: it read the second
+/// backslash as escaping the delimiter behind it, so `/^x\\/` ran past its own closing slash and ended at
+/// the next `/` in the file. An escaped slash immediately before the delimiter was rejected for the
+/// opposite reason -- the old scan needed a character after the escape and there was none.
+#[test]
+fn test_parse_regex_backslash_escapes() {
+    for (source, expected) in [
+        // An escaped delimiter, including at the very end, where these were rejected before.
+        (r"/a\//", "a/"),
+        (r"/\//", "/"),
+        (r"/^\/dev\/ebs-/", "^/dev/ebs-"),
+        (r"/\/32/", "/32"),
+        // `\\` is two characters to the regex engine, and it closes, so the `/` behind it ends the regex.
+        (r"/^x\\/", r"^x\\"),
+        // Everything else arrives intact. All three of these are in the AWS rule registry.
+        (
+            r"/{{resolve\:secretsmanager\:.*}}/",
+            r"{{resolve\:secretsmanager\:.*}}",
+        ),
+        (r"/^\d{12}$/", r"^\d{12}$"),
+        (r"/^[a-zA-Z0-9]*:\*$/", r"^[a-zA-Z0-9]*:\*$"),
+        // A character class holding a `/` needs the slash escaped, since the scan does not know about
+        // classes. This is `advanced_regex_negative_lookbehind_rule.guard`, which was written `\\/` and
+        // only parsed because the old scan misread it.
+        (
+            r"/(?<![A-Za-z0-9\/+=])[A-Za-z0-9\/+=]{40}/",
+            "(?<![A-Za-z0-9/+=])[A-Za-z0-9/+=]{40}",
+        ),
+    ] {
+        let cmp = unsafe { Span::new_from_raw_offset(source.len(), 1, "", "") };
+        assert_eq!(
+            parse_regex(from_str2(source)),
+            Ok((cmp, Value::Regex(expected.to_string()))),
+            "{source} is the regex {expected}"
+        );
+    }
+}
+
+/// A regex stops at its own delimiter instead of reading on to the next one in the file.
+///
+/// `/^x\\/` followed by a comment containing a URL used to produce one clause where the author wrote two,
+/// and the run exited 0 with the second rule absorbed into the regex.
+#[test]
+fn test_parse_regex_does_not_run_past_its_delimiter() {
+    let source = "/^x\\\\/ }\nrule b { Encrypted == true  # see aws/ docs\n}";
+    let (rest, value) = parse_regex(from_str2(source)).unwrap();
+    assert_eq!(value, Value::Regex(r"^x\\".to_string()));
+    assert!(
+        rest.fragment().starts_with(" }"),
+        "the regex ends at its own slash, leaving {:?}",
+        rest.fragment()
+    );
+
+    for unterminated in [r"/abc", "/abc\n/"] {
+        assert!(
+            parse_regex(from_str2(unterminated)).is_err(),
+            "{} is unterminated",
+            unterminated
+        );
+    }
 }
 
 #[test]
@@ -5428,6 +5790,107 @@ fn a_variable_assigned_twice_in_one_scope_is_rejected() -> Result<(), Error> {
     .is_some());
     assert!(rules_file(from_str2(
         "rule one {\n  let v = 1\n  Resources.R.Properties.Size == %v\n}\nrule two {\n  let v = 2\n  Resources.R.Properties.Size == %v\n}"
+    ))?
+    .is_some());
+    Ok(())
+}
+
+/// A `let` whose right-hand side reads a name its own scope declares is rejected, and every spelling
+/// of it is.
+///
+/// It used to exhaust the stack and abort the process at exit 134 with a core dump. That is outside
+/// the documented exit codes -- 0, 5 and 19 -- so a caller saw neither a pass nor a failure it could
+/// report, and nothing in the output said which name was at fault. `resolve_variable` writes its memo
+/// after the query it is memoizing completes, so the second visit to the same name finds no
+/// in-progress marker and recurses again; both copies of it, root and block, have that shape.
+///
+/// The last two accepted spellings are the ones that make a depth limit the wrong instrument. An
+/// acyclic chain resolves however long it is, so a limit would have to guess a length no legal file
+/// exceeds; and `let a = json_parse(%a)` is a cycle at depth one, so no useful limit catches it.
+#[test]
+fn a_let_defined_in_terms_of_itself_is_rejected() -> Result<(), Error> {
+    for rules in [
+        // Both scopes, reached through the two copies of `resolve_variable`.
+        "let a = %a\nrule r {\n  %a == 1\n}",
+        "rule r {\n  let a = %a\n  %a == 1\n}",
+        // A ring rather than a self-reference, at two lengths.
+        "let a = %b\nlet b = %a\nrule r {\n  %a == 1\n}",
+        "let a = %b\nlet b = %c\nlet c = %a\nrule r {\n  %a == 1\n}",
+        // The reference does not have to be the whole right-hand side, or even in the first
+        // position: a filter clause, an interpolated key and a function argument all resolve
+        // through the same scope.
+        "let a = Resources.*[ Type == %a ]\nrule r {\n  %a !empty\n}",
+        "let a = Resources.Alpha.Properties.Config[ keys == %a ]\nrule r {\n  %a !empty\n}",
+        "let a = Resources.%a.Type\nrule r {\n  %a !empty\n}",
+        "let a = json_parse(%a)\nrule r {\n  %a !empty\n}",
+        // An inner declaration does not reach the outer one of the same name. The block reads its
+        // own `variable_queries` before deferring to the parent, so this is a cycle and not a read
+        // of the outer `x`, and it aborted like the rest.
+        "let x = 1\nrule r {\n  let x = %x\n  %x == 1\n}",
+        // A name that is a capture in the same block as well as a `let`. This one exited 0 on a
+        // document where the filter captured a key -- `captured` is consulted before
+        // `variable_queries`, so the `let` was never resolved -- and aborted at 134 on a document
+        // where it captured nothing. Rejected rather than left to the data: the file cannot resolve
+        // the name it declares, whichever document it is run against.
+        "rule r {\n  Resources.*[ Type == 'AWS::S3::Bucket' ] {\n    let cfg = %cfg\n    Properties.Config[ cfg | Enabled == true ] !empty\n    %cfg != 'nope'\n  }\n}",
+    ] {
+        assert!(
+            rules_file(from_str2(rules)).is_err(),
+            "a variable defined in terms of itself must be rejected: {}",
+            rules
+        );
+    }
+
+    // The message names every member of the ring, because either declaration is the one to edit and
+    // the author has to see both to choose.
+    let ring = rules_file(from_str2("let a = %b\nlet b = %a\nrule r {\n  %a == 1\n}"))
+        .expect_err("a ring is rejected")
+        .to_string();
+    assert!(
+        ring.contains("a -> b -> a"),
+        "the ring has to be spelled out: {}",
+        ring
+    );
+
+    let itself = rules_file(from_str2("let a = %a\nrule r {\n  %a == 1\n}"))
+        .expect_err("a self-reference is rejected")
+        .to_string();
+    assert!(
+        itself.contains("Variable a is defined in terms of itself"),
+        "a one-member cycle names the variable rather than a chain: {}",
+        itself
+    );
+
+    // An acyclic chain resolves at any length, in either scope. This is the control that separates a
+    // cycle check from a recursion depth limit: a limit low enough to catch the cycles above would
+    // reject one of these.
+    let mut chain = String::from("let a0 = 1\n");
+    for step in 1..=12 {
+        chain.push_str(&format!("let a{} = %a{}\n", step, step - 1));
+    }
+    chain.push_str("rule r {\n  Resources.R.Properties.Size == %a12\n}");
+    assert!(rules_file(from_str2(&chain))?.is_some(), "{}", chain);
+    assert!(rules_file(from_str2(
+        "rule r {\n  let b1 = 1\n  let b2 = %b1\n  let b3 = %b2\n  let b4 = %b3\n  Resources.R.Properties.Size == %b4\n}"
+    ))?
+    .is_some());
+
+    // A name reused in a nested scope is two declarations, not a cycle.
+    assert!(rules_file(from_str2(
+        "let x = 1\nrule r {\n  let x = 2\n  Resources.R.Properties.Size == %x\n}"
+    ))?
+    .is_some());
+
+    // A property that happens to be spelled like a declared variable is a key, not a reference to
+    // it. Only a leading `%` makes a query part a variable.
+    assert!(rules_file(from_str2(
+        "let alpha = Resources.Alpha.Properties.Config.alpha.Enabled\nrule r {\n  %alpha == true\n}"
+    ))?
+    .is_some());
+
+    // A nested block inside a right-hand side is walked, and walking it does not invent a cycle.
+    assert!(rules_file(from_str2(
+        "let a = Resources.*[ Properties { Size > 0 } ]\nrule r {\n  %a !empty\n}"
     ))?
     .is_some());
     Ok(())
@@ -6179,5 +6642,90 @@ fn let_still_declares_a_variable() -> Result<(), Error> {
     .expect("two assignments");
     assert_eq!(parsed.assignments[0].var, "outer");
     assert_eq!(parsed.guard_rules[0].block.assignments[0].var, "inner");
+    Ok(())
+}
+
+/// A name that one scope both assigns and declares as a filter capture is rejected, for the same reason
+/// as a name assigned twice there.
+///
+/// The check above compares assignment names to each other. A filter's capture name is a variable
+/// defined in the scope as well -- it is read back as `%name` like any other -- and a name that is both
+/// resolved by kind precedence in exactly the way that check refuses to guess at. The scope holds the
+/// assignment's value under its kind and the capture's keys in a map of their own, and
+/// `resolve_variable` reads the captures after the literals and before the queries, so over a bucket
+/// whose enabled config is named `alpha`, in one block:
+///
+///     let cfg = "fromlet"        + Properties.Config[ cfg | ... ]   ->  %cfg was "fromlet", exit 0
+///     let cfg = Properties.Name  + Properties.Config[ cfg | ... ]   ->  %cfg was "alpha",   exit 0
+///
+/// Both silent, and writing the `let` after the capturing clause changed neither -- so declaration
+/// order, the one cue an author would look for, carried nothing.
+///
+/// The line is lexical: a capture written inside a nested `{ ... }` belongs to that nested scope, so an
+/// assignment outside it and a capture inside it are ordinary shadowing and accepted. Drawing the line on
+/// where a block's keys land at runtime instead made two files an author cannot tell apart disagree -- a
+/// rule-body `let` with a capture in a block inside the rule was refused while the same capture with the
+/// `let` moved out to the file level was accepted, and both read as "assignment outside, capture inside".
+///
+/// A rule's `when` conditions are the one case the text does not settle, since they sit at the rule's
+/// head: outside the body's braces, but attached to the rule. Measured rather than reasoned about. With
+/// one bucket `Alpha` whose `Properties.Name` is `fromquery`, and the file
+///
+///     let cfg = <value>
+///     rule r when Resources[ cfg | Type == 'AWS::S3::Bucket' ] !EMPTY { %cfg == ... }
+///
+///     let cfg = "fromlet"                             -> %cfg was "fromlet", the assignment
+///     let cfg = Resources.Alpha.Properties.Name       -> %cfg was "Alpha",   the capture
+///
+/// Each was run in both polarities and the failing one named the value it read, so this is what `%cfg`
+/// held rather than a clause that could not fail. The literal winning and the query losing is kind
+/// precedence within one scope -- `resolve_variable` reads literals, then captures, then queries -- and
+/// two scopes could not produce it, because a more local capture would win against both. So the
+/// conditions are the file scope's and this stays rejected.
+#[test]
+fn a_name_both_assigned_and_captured_in_one_scope_is_rejected() -> Result<(), Error> {
+    for rules in [
+        // The literal spelling, where the assignment used to win.
+        "rule r {\n  Resources.*[ Type == 'AWS::S3::Bucket' ] {\n    let cfg = \"fromlet\"\n    Properties.Config[ cfg | Enabled == true ] !EMPTY\n    some %cfg == \"alpha\"\n  }\n}",
+        // The query spelling, where the capture used to win. Same position, opposite winner.
+        "rule r {\n  Resources.*[ Type == 'AWS::S3::Bucket' ] {\n    let cfg = Properties.Name\n    Properties.Config[ cfg | Enabled == true ] !EMPTY\n    some %cfg == \"alpha\"\n  }\n}",
+        // The assignment written after the capturing clause, which changed nothing.
+        "rule r {\n  Resources.*[ Type == 'AWS::S3::Bucket' ] {\n    Properties.Config[ cfg | Enabled == true ] !EMPTY\n    let cfg = \"fromlet\"\n    some %cfg == \"alpha\"\n  }\n}",
+        // A capture on a block clause's own query, which is evaluated in the scope the clause is written
+        // in rather than inside the braces it opens.
+        "rule r {\n  let cfg = \"fromlet\"\n  Resources.*[ cfg | Type == 'AWS::S3::Bucket' ] {\n    Properties.Size > 0\n  }\n}",
+        // The file level, against a capture in a rule's `when` condition. See the measurement above.
+        "let cfg = \"fromlet\"\nrule r when Resources[ cfg | Type == 'AWS::S3::Bucket' ] !EMPTY {\n  %cfg == \"fromlet\"\n}",
+        // One statement doing both.
+        "let cfg = Resources[ cfg | Type == 'AWS::S3::Bucket' ]\nrule r {\n  %cfg !EMPTY\n}",
+    ] {
+        let error = rules_file(from_str2(rules))
+            .expect_err("a name both assigned and captured in one scope must be rejected");
+        assert!(
+            error.to_string().contains("cfg"),
+            "the diagnostic has to name the variable, got: {} for {}",
+            error,
+            rules
+        );
+    }
+
+    // An assignment outside a block and a capture inside it are shadowing, at either depth, and the
+    // depth is what the earlier version of this check got wrong: it accepted the first of these and
+    // refused the second. `a_capture_shadows_an_enclosing_assignment_of_the_same_name` asserts which
+    // value the block reads.
+    for rules in [
+        // The assignment at the file level.
+        "let cfg = \"fromlet\"\nrule r {\n  Resources.*[ Type == 'AWS::S3::Bucket' ] {\n    Properties.Config[ cfg | Enabled == true ] !EMPTY\n    some %cfg == \"alpha\"\n  }\n}",
+        // The same, with the assignment in the rule body instead. Indistinguishable to an author.
+        "rule r {\n  let cfg = \"fromlet\"\n  Resources.*[ Type == 'AWS::S3::Bucket' ] {\n    Properties.Config[ cfg | Enabled == true ] !EMPTY\n    some %cfg == \"alpha\"\n  }\n}",
+        // No assignment at all.
+        "rule r {\n  Resources.*[ Type == 'AWS::S3::Bucket' ] {\n    Properties.Config[ cfg | Enabled == true ] !EMPTY\n    some %cfg == \"alpha\"\n  }\n}",
+    ] {
+        assert!(
+            rules_file(from_str2(rules))?.is_some(),
+            "a capture inside a block and a binding outside it are ordinary shadowing: {}",
+            rules
+        );
+    }
     Ok(())
 }

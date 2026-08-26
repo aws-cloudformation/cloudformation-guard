@@ -229,10 +229,12 @@ pub(super) enum EvaluationResult {
 /// Explanation attached to a clause that could not compare because its right-hand reference
 /// resolved to no values.
 ///
-/// Names the remedy as well as the cause. An author who genuinely expects a possibly-empty
-/// reference can wrap the clause in `when <reference> !empty { ... }`: the gate's own
-/// `!empty` check fails when the reference is empty, so the block is skipped rather than
-/// failed, and the comparison never runs.
+/// Points at what binds the reference, which is where the fault is. It used to name `when
+/// <reference> !empty { ... }` as the remedy, and that is not one: the gate's own `!empty` check
+/// fails when the reference is empty, so the block is skipped and the comparison never runs. An
+/// author following the advice turned a check that was failing for a reason into a check that does
+/// not run, at exit 0, which is the outcome this message exists to prevent. Saying so is worth the
+/// extra sentence, because the advice was there for two releases.
 fn empty_reference_message(negated: bool) -> String {
     let clause = if negated {
         "negated comparison"
@@ -240,9 +242,10 @@ fn empty_reference_message(negated: bool) -> String {
         "comparison"
     };
     format!(
-        "The {clause} could not be performed: the reference on the right-hand side resolved \
-         to no values. If an empty reference is expected here, guard the clause with `when \
-         <reference> !empty {{ ... }}` so it is skipped rather than failed."
+        "The {clause} could not be performed: the reference on the right-hand side resolved to no \
+         values, so the clause fails. Look at what binds the reference -- a `let` or a filter \
+         capture that selected nothing. `when <reference> !empty {{ ... }}` skips the clause rather \
+         than satisfying it."
     )
 }
 
@@ -375,14 +378,19 @@ fn incomparable_condition_notice(subject: &str, reason: &str) -> String {
 
 /// Explanation attached to a clause whose left-hand variable resolved to no values.
 ///
-/// Distinct from [`empty_reference_message`], which is about the right-hand side. Both say the same
-/// thing about enforcement -- nothing was compared -- but the remedy differs: the author has to decide
-/// whether an empty selection is expected, and if it is, guard the clause rather than rely on it
-/// silently passing.
+/// Distinct from [`empty_reference_message`] only in which side it is about; both point at what binds
+/// the name and both say what guarding the clause would actually do.
+///
+/// This is the message a capture that matched no entry produces, and the reason the old wording
+/// mattered so much: it told the author to write `when %name !empty { ... }`, which skips the block, so
+/// the reading that looks like "make the rule tolerate an empty selection" is "stop checking". The
+/// clause is failing because nothing was compared, and the thing to change is the query or filter that
+/// was supposed to bind the name.
 fn empty_lhs_message() -> String {
     "The comparison could not be performed: the variable on the left-hand side resolved to no \
-     values, so there was nothing to compare. If an empty selection is expected here, guard the \
-     clause with `when <variable> !empty { ... }` so it is skipped rather than failed."
+     values, so the clause fails. Look at what binds the variable -- a `let` or a filter capture \
+     that selected nothing. `when <variable> !empty { ... }` skips the clause rather than \
+     satisfying it."
         .to_string()
 }
 
@@ -2111,13 +2119,11 @@ pub(in crate::rules) fn eval_guard_access_clause<'value, 'loc: 'value>(
 
 /// Evaluates a reference to another rule by name.
 ///
-/// `role` distinguishes the two contexts this is reached from:
-///
-/// - [`ClauseRole::Assertion`] -- the reference is in a rule body, so a SKIPped
-///   dependent rule must not satisfy it in either polarity. Failing closed here is
-///   what stops `not <rule>` from reporting compliance for a check that never ran.
-/// - [`ClauseRole::Gate`] -- the reference is a `when` condition, where gating on a
-///   rule that did not apply is deliberate and covered by existing tests.
+/// A dependent rule that did not apply contributes nothing to the referencing rule's
+/// verdict: the reference answers SKIP and `eval_conjunction_clauses` absorbs it, which
+/// is what an inapplicable clause already does one level down. `role` changes that for
+/// exactly one shape -- a negated `when` condition -- and the `Status::SKIP` arm below
+/// says why.
 pub(in crate::rules) fn eval_guard_named_clause<'value, 'loc: 'value>(
     gnc: &'value GuardNamedRuleClause<'loc>,
     resolver: &mut dyn EvalContext<'value, 'loc>,
@@ -2144,22 +2150,45 @@ pub(in crate::rules) fn eval_guard_named_clause<'value, 'loc: 'value>(
                 // this branch reported it skipped.
                 (Outcome::Unevaluatable, _) => Outcome::Unevaluatable,
 
-                // A rule that did not apply never ran, so it is not evidence in either direction.
-                // Where the reference is an assertion in a rule body, a negated reference to it must
-                // not report compliance on the strength of a check that never happened.
-                (Outcome::NotApplicable, _) if role.is_strict() => Outcome::Violated,
+                // `rule r when not other { ... }` is how a ruleset says "apply this when that
+                // other rule did not apply", so the gate opens. A gate is not making a compliance
+                // claim, so it may read "did not apply" as a condition that is met; an assertion
+                // is, so it may not. This is the single carve-out below, and it is load-bearing: a
+                // gate that closes silently disables the rule it guards, and the one negated rule
+                // reference in the AWS rule registry is this idiom. Pinned by
+                // `negated_reference_to_skipped_rule_still_gates_a_when_condition` and
+                // `cross_rule_clause_when_checks`.
+                (Outcome::NotApplicable, true) if matches!(role, ClauseRole::Gate) => {
+                    Outcome::Satisfied
+                }
 
-                // A gate whose dependent rule did not apply stays inapplicable rather than becoming
-                // a violation, which one inapplicable condition would otherwise spread to a `when`
-                // its siblings would have decided. Pinned by
+                // Every other reference to a rule that did not apply contributes nothing. The rule
+                // never ran, so it is evidence in neither direction, and the answer to "no
+                // evidence" is no verdict rather than a violation: reporting `Violated` makes a
+                // claim, and it is a claim about a resource type the input does not contain.
+                // `rule MAIN { H_A H_B }`, with each helper gated by a `when` on its own type,
+                // exited 19 against a template holding one clean IAM role and no DynamoDB table.
+                // Pinned by `an_inapplicable_dependent_rule_does_not_fail_the_reference`.
+                //
+                // It is also the only answer consistent with `Outcome::and`, whose identity is
+                // `NotApplicable`: one level down, an inapplicable clause conjoined with a
+                // satisfied one yields satisfied. Mapping the same value to `and`'s *absorbing*
+                // element here would leave the type saying "not applicable is neutral" and this
+                // arm saying "not applicable is fatal", for one input.
+                //
+                // Negation does not change it. `not R` asks whether R does not hold; if R never
+                // ran then "R holds" is neither true nor false, so neither is its negation. Failing
+                // a negated assertion closed reasoned that `not R` must not report compliance for a
+                // check that never happened -- true, and `NotApplicable` is not compliance: the
+                // referencing rule reports SKIP, so the omission stays visible. Pinned by
+                // `negated_reference_to_skipped_rule_does_not_pass_in_rule_body`.
+                //
+                // A non-negated gate lands here for a second reason: `Outcome::and` absorbs
+                // `Violated`, so one inapplicable gate condition answering `Violated` would outrank
+                // the sibling conditions that passed and drop a body those siblings would have
+                // enforced. Pinned by
                 // `a_named_rule_gate_on_a_skipped_rule_does_not_disarm_the_block`.
-                (Outcome::NotApplicable, false) => Outcome::NotApplicable,
-
-                // `rule r when not other { ... }` is how a ruleset says "apply this when that other
-                // rule did not apply", so the gate opens. Pinned by
-                // `negated_reference_to_skipped_rule_still_gates_a_when_condition`. A negated
-                // assertion never reaches here, because the fail-closed arm above took it.
-                (Outcome::NotApplicable, true) => Outcome::Satisfied,
+                (Outcome::NotApplicable, _) => Outcome::NotApplicable,
 
                 (Outcome::Violated, false) => Outcome::Violated,
                 (Outcome::Violated, true) => Outcome::Satisfied,
@@ -2192,6 +2221,10 @@ pub(in crate::rules) fn eval_guard_named_clause<'value, 'loc: 'value>(
                 // reads the message off it, so the rule-level SKIP it produces is
                 // explained rather than bare. A `DependentRule` record would have been
                 // reported as a failing clause -- that arm has no status guard.
+                //
+                // The wording says "referenced" rather than "a condition referenced": this arm is
+                // now reached from a rule body as well as from a `when`, and naming the wrong one
+                // is worse than naming neither.
                 Status::SKIP => {
                     resolver.end_record(
                         &context,
@@ -2199,7 +2232,7 @@ pub(in crate::rules) fn eval_guard_named_clause<'value, 'loc: 'value>(
                             status: Status::SKIP,
                             at_least_one_matches: false,
                             message: Some(format!(
-                                "the rule did not apply because a condition referenced rule [{}], which did not apply to this input",
+                                "the rule did not apply because it referenced rule [{}], which did not apply to this input",
                                 gnc.dependent_rule
                             )),
                         }),
@@ -2548,12 +2581,39 @@ impl<'eval, 'value, 'loc: 'value> EvalContext<'value, 'loc>
         }
     }
 
+    /// An argument the call site passed is the same binding whichever depth of block reads it, so this
+    /// answers as `resolve_variable` does and only the onward deferral differs.
+    ///
+    /// Answering here is what makes the parameter half of the shadowing fix work: a block inside the
+    /// rule declaring a capture of the parameter's name used to end the lookup before it reached this
+    /// scope, so the argument the call site passed was unreadable for that whole block.
+    fn resolve_variable_from_nested_block(
+        &mut self,
+        variable_name: &'value str,
+        unbound: UnboundName,
+    ) -> Result<Vec<QueryResult>> {
+        match self.resolved_parameters.get(variable_name) {
+            Some(res) => Ok(res.clone()),
+            None => self
+                .parent
+                .resolve_variable_from_nested_block(variable_name, unbound),
+        }
+    }
+
     fn add_variable_capture_key(
         &mut self,
         variable_name: &'value str,
         key: Rc<PathAwareValue>,
     ) -> Result<()> {
         self.parent.add_variable_capture_key(variable_name, key)
+    }
+
+    fn add_merged_capture_key(
+        &mut self,
+        variable_name: &'value str,
+        key: Rc<PathAwareValue>,
+    ) -> Result<()> {
+        self.parent.add_merged_capture_key(variable_name, key)
     }
 }
 
@@ -2678,17 +2738,10 @@ pub(in crate::rules) fn eval_parameterized_rule_call<'value, 'loc: 'value>(
     // invoked rule's status unchanged, so the `not` was silently discarded and
     // `not r(...)` behaved identically to `r(...)`.
     //
-    // Mirrors eval_guard_named_clause so both spellings agree: PASS inverts to FAIL
-    // under negation, a SKIPped rule fails closed wherever the reference is an
-    // assertion, and otherwise the negation flips the outcome.
-    //
-    // The fail-closed arm has no negation guard, so it covers both polarities, and for a
-    // plain `r(...)` that is a change in outcome rather than a fix to the negation: main
-    // returned the invoked rule's SKIP and exited 0, this returns FAIL and exits 19. That
-    // is deliberate -- a rule body asserting `r(...)` claims that `r` holds, and a rule
-    // that never ran is not evidence that it does -- but it is the arm to look at first if
-    // a ruleset starts failing on a rule it used to skip. Gate references are unaffected;
-    // they take the SKIP arm below.
+    // Mirrors eval_guard_named_clause arm for arm, and the mirroring is the property: the two
+    // spellings of one reference must not disagree, and they have already drifted apart once (see
+    // `a_named_rule_gate_on_a_skipped_rule_does_not_disarm_the_block`). Read the `NotApplicable`
+    // arms in that function for the reasoning; only the differences are noted here.
     Ok(match (outcome, call_rule.named_rule.negation) {
         (Outcome::Satisfied, false) => Outcome::Satisfied,
         (Outcome::Satisfied, true) => Outcome::Violated,
@@ -2703,21 +2756,20 @@ pub(in crate::rules) fn eval_parameterized_rule_call<'value, 'loc: 'value>(
         // anything. Negating an undecided answer does not produce a decided one.
         (Outcome::Unevaluatable, _) => Outcome::Unevaluatable,
 
-        // A rule that did not apply is not evidence that it holds, so an assertion on it fails
-        // closed. Deliberate, and the arm to look at first if a ruleset starts failing on a rule it
-        // used to skip: `rule main { r(...) }` claims `r` holds, and `r` never ran.
-        (Outcome::NotApplicable, _) if role.is_strict() => Outcome::Violated,
+        // `when not r(...)` opens the gate when `r` did not apply, the same idiom as the
+        // unparameterized spelling.
+        (Outcome::NotApplicable, true) if matches!(role, ClauseRole::Gate) => Outcome::Satisfied,
 
-        // A gate whose invoked rule did not apply stays inapplicable rather than becoming a
-        // violation. With one condition the two are indistinguishable, since either way the guarded
-        // body is dropped; with more than one, `Outcome::and` absorbs `Violated` but treats
-        // `NotApplicable` as the identity, so one inapplicable gate condition would otherwise
-        // poison a `when` that its siblings would have decided.
-        (Outcome::NotApplicable, false) => Outcome::NotApplicable,
-
-        // `when not r(...)` opens the gate when `r` did not apply. A negated assertion never
-        // reaches here, because the fail-closed arm above already took it.
-        (Outcome::NotApplicable, true) => Outcome::Satisfied,
+        // An invoked rule that did not apply contributes nothing otherwise, in both polarities.
+        // The arm this replaces failed an assertion call closed, and its comment argued the case:
+        // "main returned the invoked rule's SKIP and exited 0, this returns FAIL and exits 19 ...
+        // that is deliberate". The premise held -- a rule that never ran is not evidence that it
+        // holds -- and the conclusion did not: the answer to "no evidence" is no verdict, not a
+        // violation. `rule MAIN { H_A skipper(1) }` on a template with a clean IAM role and no
+        // DynamoDB table exited 19 with nothing violated, the same false positive the plain
+        // spelling had. `an_inapplicable_dependent_rule_does_not_fail_the_reference` asserts both
+        // spellings, so a future change to one of them cannot pass on a single-spelling test.
+        (Outcome::NotApplicable, _) => Outcome::NotApplicable,
 
         (Outcome::Violated, false) => Outcome::Violated,
         (Outcome::Violated, true) => Outcome::Satisfied,

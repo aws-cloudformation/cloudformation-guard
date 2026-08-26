@@ -58,6 +58,32 @@ pub enum Error {
     InternalError(#[from] InternalError),
 }
 
+impl Error {
+    /// Whether this is a name a rules file uses but never declares -- the author's mistake, rather
+    /// than a failure of cfn-guard.
+    ///
+    /// It exists to pick an exit code. `ERROR_STATUS_CODE` (5) is what this repository assigns to "the
+    /// ruleset is broken", and `-1` -- which the table at `guard/tests/utils.rs` names
+    /// `INTERNAL_FAILURE` -- is what it assigns to the tool itself breaking. Returning `Err` out of a
+    /// command reaches `main`'s catch-all and therefore reports the second, which tells an author
+    /// their file is fine and cfn-guard is not.
+    ///
+    /// Both variants are produced only where a name has no declaration behind it. `MissingValue`
+    /// covers a variable with no `let` (`rules/eval_context.rs`, "the end of the chain, and the only
+    /// place the unresolved-variable error is produced"), a rule that does not exist, and a
+    /// parameterized rule that does not exist. `MissingVariable` is the same condition on the older
+    /// evaluation path in `rules/evaluate.rs`.
+    ///
+    /// Deliberately narrow, and `ParseError` is deliberately absent even though a syntax error is
+    /// equally the author's mistake: `ParseError` is also how an empty or unparsable *data* file is
+    /// reported (`validate::data_file_is_empty`), and that path exits `-1` today with a test pinning
+    /// both the code and the message. `parse_tree` classifies its own parse error at the single call
+    /// site where a parse error is the only thing that can come back.
+    pub(crate) fn is_undeclared_name(&self) -> bool {
+        matches!(self, Error::MissingValue(_) | Error::MissingVariable(_))
+    }
+}
+
 #[derive(Debug, Error)]
 pub enum InternalError {
     #[error("non string type detected for key in a map at {0}, cfn-guard only supports keys that are string types")]

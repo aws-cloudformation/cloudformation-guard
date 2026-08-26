@@ -1,11 +1,11 @@
 use fancy_regex::Regex;
 use std::convert::TryFrom;
-use std::fmt::{Display, Formatter, Result as FmtResult};
+use std::fmt::{Debug, Display, Formatter, Result as FmtResult};
 
 use indexmap::map::IndexMap;
 use nom::branch::alt;
-use nom::bytes::complete::{is_not, take_while, take_while1};
 use nom::bytes::complete::{tag, take_till};
+use nom::bytes::complete::{take_while, take_while1};
 use nom::character::complete::{alpha1, space1};
 use nom::character::complete::{anychar, digit1, one_of};
 use nom::character::complete::{char, multispace0, multispace1, space0};
@@ -20,7 +20,7 @@ use nom::number::complete::double;
 use nom::sequence::{delimited, preceded};
 use nom::sequence::{pair, terminated};
 use nom::sequence::{separated_pair, tuple};
-use nom::{InputTake, Slice};
+use nom::InputTake;
 use nom_locate::LocatedSpan;
 
 use crate::rules::errors::Error;
@@ -245,32 +245,94 @@ pub(in crate::rules) fn parse_int_value(input: Span) -> IResult<Span, Value> {
     Ok((remaining, value))
 }
 
+/// Walks a delimited literal and returns its body along with the number of bytes it occupies, closing
+/// delimiter included.
+///
+/// The question a scanner has to answer at every delimiter is whether that delimiter is escaped, and the
+/// last byte of the text in front of it cannot answer it: `\` and `\\` both end in a backslash and mean
+/// opposite things there. Both `parse_string_inner` and `parse_regex_inner` decided from that last byte,
+/// so they got `\\` backwards -- they read the second backslash as escaping the delimiter, pushed the
+/// delimiter into the value, and carried on reading from after it. The literal then ended at the next
+/// matching character anywhere in the file, which for a rules file means an apostrophe in a comment or a
+/// slash in a URL. Everything between was absorbed into a value, so the clauses and rules written there
+/// were not evaluated, not reported, and the run exited 0.
+///
+/// Walking forward settles it: a backslash consumes the character after it whichever character that is,
+/// so a delimiter inside such a pair can never close the literal and one outside every pair always does.
+///
+/// `resolve` is handed the character a backslash consumed and appends what the pair contributes to the
+/// body. That is the whole of the escape vocabulary, and it is where strings and regular expressions
+/// differ.
+///
+/// `None` means the literal is not terminated -- the text ran to the end of its line, or to the end of
+/// input, with no unescaped delimiter. A backslash immediately before a line ending is the same answer,
+/// because there is no character on that line for it to escape. Stopping at the line ending is what
+/// keeps one missing delimiter from reaching the rest of the file, and it is the only reason a runaway
+/// literal is now loud rather than silent: a literal free to cross lines has every following clause
+/// available to swallow.
+fn scan_escaped_literal(
+    input: Span,
+    delimiter: char,
+    mut resolve: impl FnMut(char, &mut String),
+) -> Option<(usize, String)> {
+    let mut body = String::new();
+    let mut chars = input.fragment().char_indices();
+    while let Some((at, c)) = chars.next() {
+        match c {
+            '\\' => match chars.next() {
+                Some((_, escaped)) if escaped != '\n' && escaped != '\r' => {
+                    resolve(escaped, &mut body)
+                }
+                _ => return None,
+            },
+            '\n' | '\r' => return None,
+            _ if c == delimiter => return Some((at + c.len_utf8(), body)),
+            _ => body.push(c),
+        }
+    }
+    None
+}
+
+/// A string literal understands two escapes: `\\` for a backslash, and a backslash before the quote that
+/// opened the literal for that quote. A backslash before anything else is not an escape and stays in the
+/// value, which is what lets a regular expression written as a string -- `"^arn:(\w+):(\d+)$"`, the shape
+/// of all three such literals in this repository -- keep its own escapes without doubling them.
+///
+/// `\\` is the addition. With the quote as the only escape, a backslash's meaning depended on what came
+/// after it: `"a\\b"` was two literal backslashes, while those same two characters in front of the
+/// closing quote were one backslash plus an escaped quote. So no spelling produced a string ending in a
+/// backslash. `"x\\"`, `'C:\'`, `"C:\"` and `"x\\\\"` were all rejected, and the diagnostic named the
+/// right-hand side rather than the quote, which is the least useful place to look. Resolving `\\` here
+/// makes `'x\\'` mean `x\`.
+///
+/// It also changes `"a\\b"` from two backslashes to one. That is deliberate and it is user-visible. It is
+/// the same trade every language with a backslash escape has made, and it is what makes a backslash's
+/// meaning independent of its position. No rules file in this repository or in the AWS rule registry
+/// writes `\\` inside a string literal, and none writes a backslash before a quote, so no existing file
+/// changes meaning.
 fn parse_string_inner(ch: char) -> impl Fn(Span) -> IResult<Span, Value> {
     move |input: Span| {
-        let mut completed = String::new();
         let (input, _begin) = char(ch)(input)?;
-        let mut span = input;
-        loop {
-            let (remainder, upto) = take_while(|c| c != ch)(span)?;
-            let frag = *upto.fragment();
-            if frag.ends_with('\\') {
-                completed.push_str(frag.slice(0..frag.len() - 1));
-                completed.push(ch);
-
-                if remainder.is_empty() {
-                    return Err(nom::Err::Error(ParserError {
-                        context: String::from("Could not parse string"),
-                        kind: ErrorKind::Char,
-                        span: input,
-                    }));
-                }
-
-                span = remainder.slice(1..);
-                continue;
+        match scan_escaped_literal(input, ch, |escaped, body| match escaped {
+            '\\' => body.push('\\'),
+            c if c == ch => body.push(ch),
+            c => {
+                body.push('\\');
+                body.push(c);
             }
-            completed.push_str(frag);
-            let (remainder, _end) = cut(char(ch))(remainder)?;
-            return Ok((remainder, Value::String(completed)));
+        }) {
+            Some((consumed, value)) => Ok((input.take_split(consumed).0, Value::String(value))),
+            // `Failure`, because `cut(char(ch))` already made an unterminated string one and nothing
+            // else in the value alternation starts with a quote. Falling through could only produce some
+            // later parser's complaint about text that is plainly a string, which is what the old
+            // diagnostic did.
+            None => Err(nom::Err::Failure(ParserError {
+                context: format!(
+                    "String literal is not terminated: no closing {ch} before the end of the line. A backslash escapes the character after it, so write \\\\ for a literal backslash"
+                ),
+                kind: ErrorKind::Char,
+                span: input,
+            })),
         }
     }
 }
@@ -386,47 +448,72 @@ fn parse_float(input: Span) -> IResult<Span, Value> {
     }))
 }
 
+/// A regular expression understands one escape: a backslash before the `/` delimiter, which stands for a
+/// plain `/`, since `fancy_regex` does not need that character escaped. A backslash before anything else
+/// is left exactly as written, backslash included, because the body is handed to a regex engine that has
+/// an escape layer of its own -- the `\d`, `\.`, `\-` and `\:` in the AWS rule registry have to arrive
+/// intact.
+///
+/// `\\` is left alone too, and reaches the engine as the two characters that mean one literal backslash
+/// there. What changes is that the pair now closes itself, so a `/` after it ends the regex instead of
+/// being read as one more escaped delimiter. `/^x\\/` used to run past its own closing slash.
+///
+/// The same reading makes `/a\//` and `/\//` parse. They were rejected -- `is_not("/")` needed at least
+/// one character and after the escape the cursor sat on the closing delimiter with none left -- so an
+/// escaped slash was writable everywhere in a regex except immediately before its end.
+///
+/// One construct in the corpus depended on the old misreading: `[A-Za-z0-9\\/+=]`, in this repository's
+/// `advanced_regex_negative_lookbehind_rule.guard` and a copy of it under `guard/ts-lib`, reached the
+/// engine as `[A-Za-z0-9\/+=]`. Under a scan that walks, the `\\` closes and the `/` behind it ends the
+/// regex early, which leaves an unterminated character class. That file is written `\/` now, which is the
+/// spelling that means what it always meant. There is no reading in which `\\/` both terminates in
+/// `/^x\\/` and does not terminate there -- the fixture and the swallow are one construct.
+///
+/// Both failures are `Failure`, not `Error`, for the reason `parse_float` gives above: a recoverable error
+/// sends `alt` back to the other value productions and the message never reaches the author. Neither of
+/// these did. `Hash == /a(/` reported the generic `expecting either a property access ... or value like
+/// ...` and the engine's `Opening parenthesis without closing parenthesis` appeared nowhere in the output,
+/// and `Hash == /abc` likewise said nothing about a missing delimiter. Both were formatted and discarded.
+///
+/// Nothing is given up by refusing to backtrack here. `parse_regex` is the last arm of
+/// `parse_scalar_value`, so no other value production was going to be tried, and none of them could match
+/// anyway: this function is only reached after `char('/')`, and every other production in the grammar
+/// starts a value with a quote, a digit, a sign, a keyword, `[`, or `{`, while a property access is
+/// alphanumeric or quoted. A literal beginning with `/` is a regular expression or it is nothing, so the
+/// recoverable error bought a worse diagnostic and no second chance.
 fn parse_regex_inner(input: Span) -> IResult<Span, Value> {
-    let mut regex = String::new();
-    let parser = is_not("/");
-    let mut span = input;
-    loop {
-        let (remainder, content) = parser(span)?;
-        let fragment = *content.fragment();
-
-        //
-        // if the last one has an escape, then we need to continue
-        //
-        if !fragment.is_empty() && fragment.ends_with('\\') {
-            regex.push_str(&fragment[0..fragment.len() - 1]);
-            regex.push('/');
-
-            if remainder.is_empty() {
-                return Err(nom::Err::Error(ParserError {
-                    context: "Could not parse regular expression".to_string(),
-                    kind: ErrorKind::RegexpMatch,
-                    span: input,
-                }));
+    let (consumed, regex) =
+        match scan_escaped_literal(input, '/', |escaped, body| match escaped {
+            '/' => body.push('/'),
+            c => {
+                body.push('\\');
+                body.push(c);
             }
-            span = remainder.take_split(1).0;
-            continue;
-        }
-
-        regex.push_str(fragment);
-
-        return match Regex::try_from(regex.as_str()) {
-            Ok(_) => Ok((remainder, Value::Regex(regex))),
-            Err(e) => Err(nom::Err::Error(ParserError {
-                context: format!("Could not parse regular expression: {}", e),
+        }) {
+            Some(found) => found,
+            None => return Err(nom::Err::Failure(ParserError {
+                context:
+                    "Could not parse regular expression: no closing / before the end of the line"
+                        .to_string(),
                 kind: ErrorKind::RegexpMatch,
                 span: input,
             })),
         };
+
+    match Regex::try_from(regex.as_str()) {
+        Ok(_) => Ok((input.take_split(consumed).0, Value::Regex(regex))),
+        Err(e) => Err(nom::Err::Failure(ParserError {
+            context: format!("Could not parse regular expression: {}", e),
+            kind: ErrorKind::RegexpMatch,
+            span: input,
+        })),
     }
 }
 
 fn parse_regex(input: Span) -> IResult<Span, Value> {
-    delimited(char('/'), parse_regex_inner, char('/'))(input)
+    // `preceded`, not `delimited`: the scan consumes the closing delimiter itself, because it is the
+    // thing that decided which delimiter closes the literal.
+    preceded(char('/'), parse_regex_inner)(input)
 }
 
 fn parse_char(input: Span) -> IResult<Span, Value> {
@@ -441,6 +528,111 @@ fn range_value(input: Span) -> IResult<Span, Value> {
     )(input)
 }
 
+/// Does the range admit any value at all?
+///
+/// A lower bound below the upper admits the values between them, whatever the two ends are. Equal
+/// bounds admit exactly that one value, and only when both ends are closed: `r[15,15]` is 15 and
+/// nothing else, while `r(15,15)`, `r[15,15)` and `r(15,15]` are empty. A lower bound above the
+/// upper is empty for every spelling.
+///
+/// Bounds that do not order against each other answer `false` and are therefore refused. No such
+/// bound reaches here today, because `parse_float` rejects the non-finite literals first, so this
+/// is the safe direction rather than a reachable case.
+fn range_admits_a_value<T: PartialOrd>(lower: &T, upper: &T, inclusive: u8) -> bool {
+    const BOTH_CLOSED: u8 = LOWER_INCLUSIVE | UPPER_INCLUSIVE;
+    if lower < upper {
+        return true;
+    }
+    lower == upper && inclusive & BOTH_CLOSED == BOTH_CLOSED
+}
+
+/// Refuse a range that no value can satisfy, naming both bounds.
+///
+/// `Failure`, not `Error`, for the reason given on `parse_float` above: a recoverable error sends
+/// `alt` back to the other value productions, and the author is told about a stray fragment instead
+/// of about the range they wrote.
+///
+/// The bounds are named through `Debug` rather than `Display`, so that a float keeps its point and a
+/// char is quoted. `Display` prints the `2.0` of `r[2.0,1.0]` as `2`, which does not match what the
+/// author wrote.
+fn reject_empty_range<'a, T: PartialOrd + Debug>(
+    lower: &T,
+    upper: &T,
+    inclusive: u8,
+    input: Span<'a>,
+) -> Result<(), nom::Err<ParserError<'a>>> {
+    if range_admits_a_value(lower, upper, inclusive) {
+        return Ok(());
+    }
+    let context = match lower == upper {
+        true => format!(
+            "Range literal is empty: both bounds are {lower:?} and at least one end is exclusive, so no value can satisfy it"
+        ),
+        false => format!(
+            "Range literal is empty: the lower bound {lower:?} is above the upper bound {upper:?}, so no value can satisfy it"
+        ),
+    };
+    Err(nom::Err::Failure(ParserError {
+        context,
+        kind: ErrorKind::IsNot,
+        span: input,
+    }))
+}
+
+/// Widen an integer bound so it can sit alongside a float bound in one `RangeType<f64>`.
+///
+/// `RangeType` holds a single type, so a range mixing the two kinds has to carry both bounds as
+/// floats, and the integer is the one that converts. `bound as f64` on its own is the conversion
+/// `compare_int_to_float` in `path_value.rs` refuses to make: above 2^53 an `i64` is not exactly
+/// representable, so the cast moves the bound, and on a range check a moved bound quietly admits or
+/// excludes a value at the edge. A bound that cannot be widened without moving is refused instead,
+/// which is what the surrounding parser already does with a number it cannot represent.
+fn widen_bound_to_float(bound: i64, input: Span<'_>) -> Result<f64, nom::Err<ParserError<'_>>> {
+    // 2^63. `i64::MAX as f64` rounds *up* to this value and casting it back saturates to
+    // `i64::MAX`, so a bare round-trip would report a bound it had moved as exact. Bound on 2^63
+    // itself, for the reason `compare_int_to_float` gives.
+    const TWO_POW_63: f64 = 9_223_372_036_854_775_808.0;
+    let widened = bound as f64;
+    if (-TWO_POW_63..TWO_POW_63).contains(&widened) && widened as i64 == bound {
+        return Ok(widened);
+    }
+    Err(nom::Err::Failure(ParserError {
+        context: format!(
+            "Range bound {bound} cannot be paired with a float bound: it does not fit a 64 bit float exactly, and widening it would move the bound"
+        ),
+        kind: ErrorKind::IsNot,
+        span: input,
+    }))
+}
+
+/// The four range forms, each over a lower and an upper bound.
+///
+/// Nothing compared the two bounds, so a transposed pair parsed and became a clause that no
+/// document can move. `Resources.SG.Properties.Size not in r[20,10]` exits 0 against every
+/// template, and the entire output at the default summary level is a two-line PASS banner: no
+/// clause, no range, nothing to notice. Turned around, `in r[20,10]` exits 19 against every
+/// template just as vacuously. Floats and chars transpose the same way, `r[2.0,1.0]` and `r[z,a]`,
+/// and `r(15,15)` reaches the same emptiness through equal bounds rather than through a swap.
+///
+/// The argument for refusing this rather than tolerating it is the one already made on
+/// `parse_float` above, where a non-finite literal is rejected because `Size < 1e999` cannot fail
+/// for any input and `Size > 1e999` cannot pass for any input. An empty range has that property,
+/// reached by a transposition typo instead of by an exponent. `docs/CLAUSES.md:189-192` defines all
+/// four forms in terms of a `<lower_limit>` and an `<upper_limit>` with the inequalities spelled
+/// out, so a range whose lower bound is above its upper is not one of the documented forms.
+///
+/// Equal bounds are treated on the same measure and split: `r[15,15]` admits exactly 15, which is a
+/// usable thing to write, and it is kept. The three spellings that put an open end on equal bounds
+/// admit nothing, so they go with the reversed ones. That line is drawn on purpose in
+/// `range_admits_a_value` rather than falling out of whichever comparison happened to be written.
+///
+/// The bound kinds pair off separately from that. A range mixing one integer bound and one float
+/// bound used to be refused here, while `docs/CLAUSES.md:201` promises that the two kinds "compare
+/// against each other as numbers. That includes range membership", and `path_value.rs` carries
+/// `int_within_float_range` and `float_within_int_range` to do exactly that. So `Size in r[1,2]`
+/// held for a `Size` of `1.5`, and `Size in r[0,20.5]` did not parse at all: the gate was narrower
+/// than the thing it was gating, the same shape of defect as the float shape test above. Both
+/// bounds widen to float when exactly one of them is a float.
 fn parse_range(input: Span) -> IResult<Span, Value> {
     let parsed = preceded(
         char('r'),
@@ -454,29 +646,68 @@ fn parse_range(input: Span) -> IResult<Span, Value> {
     let mut inclusive: u8 = if open == '[' { LOWER_INCLUSIVE } else { 0u8 };
     inclusive |= if close == ']' { UPPER_INCLUSIVE } else { 0u8 };
     let val = match (start, end) {
-        (Value::Int(s), Value::Int(e)) => Value::RangeInt(RangeType {
-            upper: e,
-            lower: s,
-            inclusive,
-        }),
+        (Value::Int(s), Value::Int(e)) => {
+            reject_empty_range(&s, &e, inclusive, input)?;
+            Value::RangeInt(RangeType {
+                upper: e,
+                lower: s,
+                inclusive,
+            })
+        }
 
-        (Value::Float(s), Value::Float(e)) => Value::RangeFloat(RangeType {
-            upper: e,
-            lower: s,
-            inclusive,
-        }),
+        (Value::Float(s), Value::Float(e)) => {
+            reject_empty_range(&s, &e, inclusive, input)?;
+            Value::RangeFloat(RangeType {
+                upper: e,
+                lower: s,
+                inclusive,
+            })
+        }
 
-        (Value::Char(s), Value::Char(e)) => Value::RangeChar(RangeType {
-            upper: e,
-            lower: s,
-            inclusive,
-        }),
+        (Value::Char(s), Value::Char(e)) => {
+            reject_empty_range(&s, &e, inclusive, input)?;
+            Value::RangeChar(RangeType {
+                upper: e,
+                lower: s,
+                inclusive,
+            })
+        }
 
+        // One integer bound and one float bound, widened to the float range the evaluator already
+        // knows how to check a value of either kind against.
+        (Value::Int(s), Value::Float(e)) => {
+            let s = widen_bound_to_float(s, input)?;
+            reject_empty_range(&s, &e, inclusive, input)?;
+            Value::RangeFloat(RangeType {
+                upper: e,
+                lower: s,
+                inclusive,
+            })
+        }
+
+        (Value::Float(s), Value::Int(e)) => {
+            let e = widen_bound_to_float(e, input)?;
+            reject_empty_range(&s, &e, inclusive, input)?;
+            Value::RangeFloat(RangeType {
+                upper: e,
+                lower: s,
+                inclusive,
+            })
+        }
+
+        // What is left is a bound pairing that is not two numbers, `r[0,z]` or `r[a,2.5]`, which no
+        // comparison decides.
+        //
+        // The span is `input` rather than the `parsed.0` it used to be. `parsed.0` is what follows
+        // the range, so the reporter put the caret one column past the closing bracket and quoted
+        // the lines after the offending literal instead of the literal: `let bounds = r[0,z]` puts
+        // the literal at column 16 and its `]` at column 21, and was reported at column 22 with an
+        // empty fragment. `parse_float` above already spans `input` for its equivalent failure.
         _ => {
             return Err(nom::Err::Failure(ParserError {
-                span: parsed.0,
+                span: input,
                 kind: ErrorKind::IsNot,
-                context: "Could not parse range".to_string(),
+                context: "Could not parse range: the bounds are not both numbers".to_string(),
             }))
         }
     };
@@ -681,9 +912,17 @@ pub(crate) fn parse_value(input: Span) -> IResult<Span, Value> {
 ///  key_part                   = string / var_name
 ///  value                      = primitives / map_type / list_type
 ///
-///  string                     = DQUOTE <any char not DQUOTE> DQUOTE /
-///                               "'" <any char not '> "'"
-///  regex                      = "/" <any char not / or escaped by \/> "/"
+///  ; This said `<any char not DQUOTE>` for a string and gave the escape to the regex alone. Both have
+///  ; had one all along, and the disagreement is what let two defects sit here: see
+///  ; `scan_escaped_literal`. A backslash consumes the character after it, so an escaped delimiter never
+///  ; closes the literal. In a string `\\` resolves to one backslash, and a backslash before the quote
+///  ; that opened the literal resolves to that quote; every other backslash stays in the value together
+///  ; with the character it escaped. In a regex only `\/` resolves, to `/`, and every other backslash
+///  ; reaches the regex engine as written. Neither literal may cross a line ending.
+///  string                     = DQUOTE *( <any char not DQUOTE, \, LF or CR> / escape ) DQUOTE /
+///                               "'" *( <any char not ', \, LF or CR> / escape ) "'"
+///  regex                      = "/" *( <any char not /, \, LF or CR> / escape ) "/"
+///  escape                     = "\" <any char not LF or CR>
 ///
 ///  comment                    =  "#" *CHAR (LF/CR)
 ///  assignment                 = "let" one_or_more_ws  var_name zero_or_more_ws
@@ -1929,6 +2168,35 @@ fn first_duplicate_assignment(assignments: &[LetExpr<'_>]) -> Option<String> {
         .map(|assignment| assignment.var.clone())
 }
 
+/// The diagnostic for a cycle among `let` right-hand sides, shared by the two scopes that look for
+/// one so they cannot drift apart.
+///
+/// The chain is spelled out because the name alone does not say what to change in a longer ring: with
+/// `let a = %b` and `let b = %a`, either declaration is the one to edit and the author has to see
+/// both to pick. No scope phrase, unlike the duplicate-assignment messages -- a duplicate is only a
+/// problem relative to a scope, while a cycle is unresolvable wherever it sits, and the block-level
+/// site carries a span that says where.
+fn let_cycle_message(cycle: &[&str]) -> String {
+    if let [only] = cycle {
+        return format!(
+            "Variable {} is defined in terms of itself. Resolving it recurses until the stack is \
+             exhausted, so the file is rejected rather than run.",
+            only
+        );
+    }
+
+    format!(
+        "Variables {} are defined in terms of each other. Resolving any of them recurses until the \
+         stack is exhausted, so the file is rejected rather than run.",
+        cycle
+            .iter()
+            .chain(cycle.first())
+            .copied()
+            .collect::<Vec<&str>>()
+            .join(" -> ")
+    )
+}
+
 /// The `when` keyword, and it has to be a keyword rather than a tag because what follows it is `cut`.
 ///
 /// `tag("when")` matched the first four characters of `whenever`, the whitespace `when_conditions` requires
@@ -2052,6 +2320,25 @@ where
                      rejected rather than guessed at.",
                     duplicate
                 ),
+            }));
+        }
+
+        // The same argument again, and a worse symptom than either duplicate case. A right-hand side
+        // that reads a name this scope declares recurses with nothing to stop it, and the process
+        // aborts on a stack overflow at exit 134 with a core dump -- outside the documented exit codes,
+        // so a caller checking for 0, 5 or 19 gets neither a pass nor a failure it can report. Both
+        // scopes reach it: `rule r { let a = %a ... }` and the file-level `let a = %a` took the same
+        // route through two copies of `resolve_variable`.
+        //
+        // A cycle check rather than a recursion depth limit, because the cycle is decidable from the
+        // text. This rejects exactly the files that cannot resolve and names the ring, where a depth
+        // limit would turn the crash into an arbitrary failure at an arbitrary depth and would still
+        // reject a legal chain that happened to be longer than the limit.
+        if let Some(cycle) = first_let_cycle(&assignments) {
+            return Err(nom::Err::Failure(ParserError {
+                span: input,
+                kind: ErrorKind::Tag,
+                context: let_cycle_message(&cycle),
             }));
         }
 
@@ -2535,6 +2822,11 @@ pub(crate) fn rules_file(input: Span) -> Result<Option<RulesFile>, Error> {
         )));
     }
 
+    // File-level cycles, for the reason given at the block-level check in `block`.
+    if let Some(cycle) = first_let_cycle(&global_assignments) {
+        return Err(Error::ParseError(let_cycle_message(&cycle)));
+    }
+
     let mut seen = std::collections::HashSet::new();
     for name in named_rules.iter().map(|r| r.rule_name.as_str()).chain(
         parameterized_rules
@@ -2550,11 +2842,30 @@ pub(crate) fn rules_file(input: Span) -> Result<Option<RulesFile>, Error> {
         }
     }
 
-    Ok(Some(RulesFile {
+    let rules_file = RulesFile {
         assignments: global_assignments,
         guard_rules: named_rules,
         parameterized_rules,
-    }))
+    };
+
+    // The same argument as the duplicate-assignment checks above, over the one namespace those two do
+    // not compare against. They match assignment names to each other; a filter's capture name is a
+    // variable defined in that scope as well -- it is read back as `%name` like any other -- and a name
+    // that is both resolves by kind precedence in exactly the way the check above refuses to guess at.
+    //
+    // Checked here rather than in `block`, because the scopes have to be enumerated one at a time and
+    // that function is generic over its clause type, which leaves it unable to walk them.
+    if let Some((name, scope)) = first_name_assigned_and_captured(&rules_file) {
+        return Err(Error::ParseError(format!(
+            "Variable {name} is both assigned and declared as a filter capture {scope}. Which one \
+             {name} resolves to depends on the kind of the assigned value rather than on their order, \
+             so the file is rejected rather than guessed at. Rename one of them.",
+            name = name,
+            scope = scope
+        )));
+    }
+
+    Ok(Some(rules_file))
 }
 
 //

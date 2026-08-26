@@ -63,9 +63,25 @@ impl TestResult {
         match self {
             TestResult::Err(Err { .. }) => TEST_ERROR_STATUS_CODE,
             TestResult::Ok(Ok { test_cases, .. }) => {
-                match test_cases.iter().any(|test_case| test_case.has_failures()) {
-                    true => TEST_FAILURE_STATUS_CODE,
-                    false => SUCCESS_STATUS_CODE,
+                // An unchecked expectation is the error code, not the failure code, and it is asked
+                // first so it wins over a failure elsewhere in the file. The command's own two codes
+                // already draw this line -- an expectation that could not be evaluated is a different
+                // answer from an expectation that was not met -- and an expectation whose rule
+                // produced no verdict could not be evaluated: there was nothing to compare it with.
+                //
+                // Not a `TestResult::Err`, which is the other way to reach this code. That replaces
+                // the whole document with a single error object, so every rule that did get a verdict
+                // would vanish from the report over one stale name in the test file. The result stays
+                // `Ok`, carrying both the verdicts and the expectations that got none.
+                if test_cases
+                    .iter()
+                    .any(|test_case| test_case.has_unchecked_expectations())
+                {
+                    TEST_ERROR_STATUS_CODE
+                } else if test_cases.iter().any(|test_case| test_case.has_failures()) {
+                    TEST_FAILURE_STATUS_CODE
+                } else {
+                    SUCCESS_STATUS_CODE
                 }
             }
         }
@@ -97,16 +113,20 @@ impl TestResult {
                 ..
             }) => {
                 let mut failures = 0;
+                // Counted into `errors` rather than `failures`, matching the code the run exits with
+                // and the arm above, which reports a rules file that could not be read the same way.
+                let mut errors = 0;
                 let mut time = 0;
                 let test_cases = test_cases.iter().fold(vec![], |mut acc, tc| {
                     let mut test_cases = tc.build_junit_test_cases();
                     failures += tc.number_of_failures();
+                    errors += tc.number_of_unchecked_expectations();
                     time += tc.time;
                     acc.append(&mut test_cases);
                     acc
                 });
 
-                TestSuite::new(rule_file.to_string(), test_cases, time, 0, failures)
+                TestSuite::new(rule_file.to_string(), test_cases, time, errors, failures)
             }
         }
     }
@@ -143,6 +163,14 @@ impl TestCase {
 
     fn number_of_failures(&self) -> usize {
         self.failed_rules.len()
+    }
+
+    fn has_unchecked_expectations(&self) -> bool {
+        !self.unchecked_expectations.is_empty()
+    }
+
+    fn number_of_unchecked_expectations(&self) -> usize {
+        self.unchecked_expectations.len()
     }
 
     fn build_junit_test_cases(&self) -> Vec<JunitTestCase> {
@@ -187,14 +215,16 @@ impl TestCase {
             })
         }
 
-        // A skip, not a failure: the run's verdict is the maintainers' to change, and a suite that
-        // passes today must keep passing. A case with a `<skipped>` element is counted in `tests`,
-        // so a consumer that reads only the counts still sees that something was not checked.
+        // `status="error"` with an `<error>` body, not the `<skipped>` it was. A skipped case counts
+        // into `tests` and nothing else, so a consumer watching `failures` and `errors` -- which is
+        // what a CI junit step watches -- read a suite where every expectation named a stale rule as
+        // entirely green. `errors` is the total this feeds, and it is the one the run's own exit code
+        // agrees with.
         for unchecked in &self.unchecked_expectations {
             test_cases.push(JunitTestCase {
                 id: Some(&self.name),
-                status: TestCaseStatus::Skip {
-                    reasons: vec![unchecked_expectation_message(&unchecked.name)],
+                status: TestCaseStatus::Error {
+                    error: unchecked.reason.clone(),
                 },
                 name: &unchecked.name,
                 time: self.time,
@@ -216,15 +246,21 @@ pub struct SkippedRule {
     name: String,
 }
 
-/// An expectation naming a rule the file does not define, so it was never consulted.
+/// An expectation no rule in the file answered, so it was never consulted.
 ///
 /// Deliberately not folded into `skipped_rules`. That array holds rules the file does define which
 /// the test data gave no expectation for; this holds expectations the test data gave which no rule
 /// answers. The two are opposite directions of the same mismatch, and a consumer that saw one array
 /// could not tell which had happened.
+///
+/// `reason` is carried in the report rather than left to the reader to infer from the name, because
+/// there is more than one reason and they call for different fixes: a name the file does not have
+/// wants the test file corrected, while a parameterized rule wants the expectation moved to whatever
+/// invokes it. It is also the text the junit `<error>` element uses, so the two cannot disagree.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct UncheckedExpectation {
     name: String,
+    reason: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -309,24 +345,25 @@ impl<'reporter> StructuredTestReporter<'reporter> {
 
                         let by_rules = get_by_rules(&top);
 
-                        // Decided once and used twice, so the note on stderr and the report cannot
-                        // disagree about which expectations went unchecked.
+                        // Decided once and used three times -- the note on stderr, the report, and the
+                        // exit code the caller reads off the report -- so they cannot disagree about
+                        // which expectations went unchecked or why.
                         let unchecked = unmatched_expectation_names(
                             &each.expectations.rules,
                             &by_rules.keys().copied().collect(),
-                        );
-                        diagnostics.extend(
-                            unchecked
-                                .iter()
-                                .map(|name| unchecked_expectation_message(name)),
-                        );
+                        )
+                        .into_iter()
+                        .map(|name| UncheckedExpectation {
+                            reason: unchecked_expectation_message(rule, &name),
+                            name,
+                        })
+                        .collect::<Vec<UncheckedExpectation>>();
+
+                        diagnostics.extend(unchecked.iter().map(|each| each.reason.clone()));
 
                         let mut test_case = TestCase {
                             name: each.name.to_string(),
-                            unchecked_expectations: unchecked
-                                .into_iter()
-                                .map(|name| UncheckedExpectation { name })
-                                .collect(),
+                            unchecked_expectations: unchecked,
                             ..Default::default()
                         };
 

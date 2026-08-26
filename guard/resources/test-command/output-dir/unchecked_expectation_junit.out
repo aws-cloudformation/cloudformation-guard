@@ -1,19 +1,19 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<testsuites name="cfn-guard test report" tests="6" failures="0" errors="0" time="0">
-    <testsuite name="resources/validate/rules-dir/s3_bucket_server_side_encryption_enabled.guard" errors="0" failures="0" time="0">
+<testsuites name="cfn-guard test report" tests="6" failures="0" errors="4" time="0">
+    <testsuite name="resources/validate/rules-dir/s3_bucket_server_side_encryption_enabled.guard" errors="4" failures="0" time="0">
         <testcase id="One real expectation and two that name nothing, first case" name="S3_BUCKET_SERVER_SIDE_ENCRYPTION_ENABLED" time="0" status="pass"/>
-        <testcase id="One real expectation and two that name nothing, first case" name="S3_BUCKET_ENCRYPTED" time="0" status="skip">
-            <skipped>No rule named S3_BUCKET_ENCRYPTED is in this file, so its expectation was not checked</skipped>
+        <testcase id="One real expectation and two that name nothing, first case" name="S3_BUCKET_ENCRYPTED" time="0" status="error">
+            <error>No rule named S3_BUCKET_ENCRYPTED is in this file, so its expectation was not checked</error>
         </testcase>
-        <testcase id="One real expectation and two that name nothing, first case" name="S3_BUCKET_SERVER_SIDE_ENCRYPTION_ENABLE" time="0" status="skip">
-            <skipped>No rule named S3_BUCKET_SERVER_SIDE_ENCRYPTION_ENABLE is in this file, so its expectation was not checked</skipped>
+        <testcase id="One real expectation and two that name nothing, first case" name="S3_BUCKET_SERVER_SIDE_ENCRYPTION_ENABLE" time="0" status="error">
+            <error>No rule named S3_BUCKET_SERVER_SIDE_ENCRYPTION_ENABLE is in this file, so its expectation was not checked</error>
         </testcase>
         <testcase id="One real expectation and two that name nothing, second case" name="S3_BUCKET_SERVER_SIDE_ENCRYPTION_ENABLED" time="0" status="pass"/>
-        <testcase id="One real expectation and two that name nothing, second case" name="S3_BUCKET_ENCRYPTED" time="0" status="skip">
-            <skipped>No rule named S3_BUCKET_ENCRYPTED is in this file, so its expectation was not checked</skipped>
+        <testcase id="One real expectation and two that name nothing, second case" name="S3_BUCKET_ENCRYPTED" time="0" status="error">
+            <error>No rule named S3_BUCKET_ENCRYPTED is in this file, so its expectation was not checked</error>
         </testcase>
-        <testcase id="One real expectation and two that name nothing, second case" name="S3_BUCKET_SERVER_SIDE_ENCRYPTION_ENABLE" time="0" status="skip">
-            <skipped>No rule named S3_BUCKET_SERVER_SIDE_ENCRYPTION_ENABLE is in this file, so its expectation was not checked</skipped>
+        <testcase id="One real expectation and two that name nothing, second case" name="S3_BUCKET_SERVER_SIDE_ENCRYPTION_ENABLE" time="0" status="error">
+            <error>No rule named S3_BUCKET_SERVER_SIDE_ENCRYPTION_ENABLE is in this file, so its expectation was not checked</error>
         </testcase>
     </testsuite>
 </testsuites>

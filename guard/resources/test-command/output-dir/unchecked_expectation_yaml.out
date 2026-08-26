@@ -8,7 +8,9 @@ test_cases:
   skipped_rules: []
   unchecked_expectations:
   - name: S3_BUCKET_ENCRYPTED
+    reason: No rule named S3_BUCKET_ENCRYPTED is in this file, so its expectation was not checked
   - name: S3_BUCKET_SERVER_SIDE_ENCRYPTION_ENABLE
+    reason: No rule named S3_BUCKET_SERVER_SIDE_ENCRYPTION_ENABLE is in this file, so its expectation was not checked
 - name: One real expectation and two that name nothing, second case
   passed_rules:
   - name: S3_BUCKET_SERVER_SIDE_ENCRYPTION_ENABLED
@@ -17,4 +19,6 @@ test_cases:
   skipped_rules: []
   unchecked_expectations:
   - name: S3_BUCKET_ENCRYPTED
+    reason: No rule named S3_BUCKET_ENCRYPTED is in this file, so its expectation was not checked
   - name: S3_BUCKET_SERVER_SIDE_ENCRYPTION_ENABLE
+    reason: No rule named S3_BUCKET_SERVER_SIDE_ENCRYPTION_ENABLE is in this file, so its expectation was not checked

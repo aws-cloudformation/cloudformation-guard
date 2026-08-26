@@ -273,30 +273,40 @@ impl Executable for Validate {
         let data_files = match self.data.is_empty() {
             false => {
                 let mut streams = Vec::new();
+                let mut skipped = Vec::new();
 
                 for file_or_dir in &self.data {
                     validate_path(file_or_dir)?;
                     let base = resolve_path(file_or_dir)?;
+
+                    // A file the user named is read whatever it is called. The extension list is
+                    // how a directory walk decides which of the files it found look like data, and
+                    // an argument naming one file is not a discovery problem -- `--data` documents
+                    // the filter as applying to directory arguments, and the `--rules` handling
+                    // below already draws this distinction. Filtering here dropped the file, left
+                    // nothing to evaluate, and reported PASS.
+                    if base.is_file() {
+                        let name = canonical_name(&base)?;
+                        streams.push(read_data_file(&base, name, writer)?);
+                        continue;
+                    }
+
                     for file in walk_dir(base, cmp) {
                         if file.path().is_file() {
-                            let name = file
-                                .path()
-                                // path output occasionally includes double slashes '//'
-                                // without calling canonicalize()
-                                .canonicalize()?
-                                .to_str()
-                                .map_or("".to_string(), String::from);
+                            let name = canonical_name(file.path())?;
                             if has_a_supported_extension(&name, &DATA_FILE_SUPPORTED_EXTENSIONS) {
-                                let mut content = String::new();
-                                let mut reader = BufReader::new(File::open(file.path())?);
-                                reader.read_to_string(&mut content)?;
-
-                                let data_file = build_data_file(content, name, writer)?;
-                                streams.push(data_file);
+                                streams.push(read_data_file(file.path(), name, writer)?);
+                            } else {
+                                skipped.push(name);
                             }
                         }
                     }
                 }
+
+                if streams.is_empty() {
+                    report_no_data_evaluated(writer, &skipped)?;
+                }
+
                 streams
             }
             true => {
@@ -321,27 +331,33 @@ impl Executable for Validate {
                     validate_path(file_or_dir)?;
                     let base = resolve_path(file_or_dir)?;
 
-                    for file in walk_dir(base, cmp) {
-                        if file.path().is_file() {
-                            let name = file
-                                .file_name()
-                                .to_str()
-                                .map_or("".to_string(), String::from);
+                    // Named explicitly, read whatever the extension, for the reason given for
+                    // `--data` above. `--input-parameters` documents the filter as applying to
+                    // directory arguments too, and a parameter file dropped by it changes what
+                    // every rule sees without saying so.
+                    let files: Vec<PathBuf> = if base.is_file() {
+                        vec![base]
+                    } else {
+                        walk_dir(base, cmp)
+                            .filter(|file| file.path().is_file())
+                            .map(|file| file.path().to_path_buf())
+                            .filter(|path| {
+                                has_a_supported_extension(
+                                    &file_name_of(path),
+                                    &DATA_FILE_SUPPORTED_EXTENSIONS,
+                                )
+                            })
+                            .collect()
+                    };
 
-                            if has_a_supported_extension(&name, &DATA_FILE_SUPPORTED_EXTENSIONS) {
-                                let mut content = String::new();
-                                let mut reader = BufReader::new(File::open(file.path())?);
-                                reader.read_to_string(&mut content)?;
+                    for path in files {
+                        let DataFile { path_value, .. } =
+                            read_data_file(&path, file_name_of(&path), writer)?;
 
-                                let DataFile { path_value, .. } =
-                                    build_data_file(content, name, writer)?;
-
-                                primary_path_value = match primary_path_value {
-                                    Some(current) => Some(current.merge(path_value)?),
-                                    None => Some(path_value),
-                                };
-                            }
-                        }
+                        primary_path_value = match primary_path_value {
+                            Some(current) => Some(current.merge(path_value)?),
+                            None => Some(path_value),
+                        };
                     }
                 }
                 primary_path_value
@@ -426,9 +442,7 @@ impl Executable for Validate {
                                     writer,
                                 )?;
 
-                                if status != SUCCESS_STATUS_CODE {
-                                    exit_code = status
-                                }
+                                exit_code = more_severe(exit_code, status);
                             }
                         }
                     }
@@ -489,9 +503,7 @@ impl Executable for Validate {
                             writer,
                         )?;
 
-                        if status != SUCCESS_STATUS_CODE {
-                            exit_code = status;
-                        }
+                        exit_code = more_severe(exit_code, status);
                     }
                     exit_code
                 }
@@ -548,6 +560,30 @@ const PAYLOAD_HELP: &str = "Provide rules and data in the following JSON format 
                 version of rules files as its value and\n- \"data\" takes a list of string version of data files as it value.\nWhen --payload is specified --rules and --data cannot be specified.";
 const STRUCTURED_HELP: &str = "Print out a list of structured and valid JSON/YAML. This argument conflicts with the following arguments: \nverbose \n print-json \n show-summary: all/fail/pass/skip \noutput-format: single-line-summary";
 
+/// Fold one rules file's exit code into the code for the run so far, keeping the more severe of the
+/// two.
+///
+/// `ERROR_STATUS_CODE` outranks `FAILURE_STATUS_CODE`: a ruleset that could not be evaluated is a
+/// different and worse answer than a template that failed a rule which *was* evaluated, and a
+/// consumer that treats the two alike will read a broken ruleset as a policy violation it can waive.
+/// `SUCCESS_STATUS_CODE` never lowers a code already set.
+///
+/// Saying this out loud became necessary when an undeclared name stopped returning `Err`. While it
+/// did, the first unevaluatable file ended the whole run, so no later file could overwrite its code
+/// and `exit_code = status` was sufficient. Now that such a file yields a code and the run continues
+/// to the remaining files, a later `FAILURE_STATUS_CODE` would have silently replaced it.
+///
+/// `JunitReporter::update_exit_code` applies the same rule; it delegates here so the two cannot drift.
+pub(crate) fn more_severe(current: i32, candidate: i32) -> i32 {
+    if candidate == ERROR_STATUS_CODE
+        || (candidate == FAILURE_STATUS_CODE && current != ERROR_STATUS_CODE)
+    {
+        candidate
+    } else {
+        current
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn evaluate_rule(
     data_type: Type,
@@ -572,7 +608,7 @@ fn evaluate_rule(
         }
 
         Ok(Some(rule)) => {
-            let status = evaluate_against_data_input(
+            let evaluated = evaluate_against_data_input(
                 data_type,
                 output,
                 extra_data,
@@ -583,7 +619,30 @@ fn evaluate_rule(
                 print_json,
                 summary_type,
                 writer,
-            )?;
+            );
+
+            let status = match evaluated {
+                Ok(status) => status,
+                // A rules file naming something it never declares -- a variable used without a `let`,
+                // most often -- is the author's mistake, and `ERROR_STATUS_CODE` is already what this
+                // function returns for the sibling case of a file the parser rejects, a few lines up.
+                // `?` here instead carried the error to `main` and exited -1, so forgetting a `let`
+                // reported that cfn-guard had broken. Forgetting a `let` is a common mistake, and the
+                // message does not name the variable as the thing to fix, so the exit code was the only
+                // signal and it pointed at the wrong party.
+                //
+                // Whatever the other rules found is already on stdout: `evaluate_against_data_input`
+                // reports before propagating, which is deliberate and explained there.
+                Err(e) if e.is_undeclared_name() => {
+                    writer.write_err(format!(
+                        "Error handling rule file = {}, Error = {e}\n---",
+                        file_name.underline(),
+                    ))?;
+
+                    return Ok(ERROR_STATUS_CODE);
+                }
+                Err(e) => return Err(e),
+            };
 
             if status == Status::FAIL {
                 return Ok(FAILURE_STATUS_CODE);
@@ -843,8 +902,72 @@ fn build_data_file(content: String, name: String, writer: &mut Writer) -> Result
     })
 }
 
+/// Whether a name ends in one of the extensions a directory walk recognises.
+///
+/// The comparison is a plain suffix match, so it is case sensitive: `.yaml` is recognised and
+/// `.YAML` is not. This decides only what a directory walk picks up. A file named as an argument is
+/// read without consulting it.
 fn has_a_supported_extension(name: &str, extensions: &[&str]) -> bool {
     extensions.iter().any(|extension| name.ends_with(extension))
+}
+
+/// The canonical path of a data file, which is the name its findings are reported under.
+///
+/// Canonicalising is what keeps doubled separators out of the report: `walkdir` output occasionally
+/// includes '//', and this name is printed verbatim.
+fn canonical_name(path: &Path) -> Result<String> {
+    Ok(path
+        .canonicalize()?
+        .to_str()
+        .map_or("".to_string(), String::from))
+}
+
+/// The final component of a path, or an empty string if it has none.
+pub(crate) fn file_name_of(path: &Path) -> String {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .map_or_else(String::new, String::from)
+}
+
+/// Reads one data file under the name its findings will be reported against.
+fn read_data_file(path: &Path, name: String, writer: &mut Writer) -> Result<DataFile> {
+    let mut content = String::new();
+    let mut reader = BufReader::new(File::open(path)?);
+    reader.read_to_string(&mut content)?;
+
+    build_data_file(content, name, writer)
+}
+
+/// Reports on stderr that the run had no data to evaluate, and names the files a directory walk
+/// passed over on the way to finding none.
+///
+/// A run that checked nothing is otherwise indistinguishable from a run in which everything
+/// complied: both print nothing to stdout and exit 0. In a pipeline that is a green build for data
+/// nobody looked at.
+///
+/// This fires only when the run evaluated nothing at all. Reporting every skipped file would emit a
+/// line for the README, the licence and the lockfile in any real directory, and a warning that
+/// fires on every run stops being read. What that leaves uncovered is a directory yielding some
+/// templates while skipping one the user expected to be checked; such a run does print findings, so
+/// it is not silent about having run, only about the omission.
+///
+/// The exit code is left alone. A run that evaluated nothing still returns PASS, because moving it
+/// would change the result for everyone pointing `--data` at a directory of mixed content, and that
+/// is a separate argument to make.
+fn report_no_data_evaluated(writer: &mut Writer, skipped: &[String]) -> Result<()> {
+    for name in skipped {
+        writer.write_err(format!(
+            "Warning: {name} was not evaluated because its extension is not one of: {}",
+            DATA_FILE_SUPPORTED_EXTENSIONS.join(", ")
+        ))?;
+    }
+
+    writer.write_err(String::from(
+        "Warning: no data files were evaluated. Nothing was checked, and the absence of findings \
+         does not mean the data complied.",
+    ))?;
+
+    Ok(())
 }
 
 fn get_file_name(file: &Path, base: &Path) -> String {

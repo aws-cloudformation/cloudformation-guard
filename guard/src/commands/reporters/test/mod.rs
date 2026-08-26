@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::Path;
 
+use crate::rules::exprs::RulesFile;
 use crate::rules::{NamedStatus, RecordType, Status};
 use crate::utils::writer::Writer;
 
@@ -19,11 +20,14 @@ pub mod structured;
 /// be ignored.
 pub(crate) type Diagnostics = BTreeSet<String>;
 
-/// The expectations that name a rule the file does not contain, by name and in sorted order.
+/// The expectations no evaluated rule answered, by name and in sorted order.
+///
+/// Names, not reasons: whether the file declares the name at all is a separate question, asked by
+/// [`unchecked_expectation_message`]. What this decides is only that nothing was compared against it.
 ///
 /// An expectation for `S3_BUCKET_ENCRYPTED` in a file whose rule is `S3_BUCKET_ENCRYPTION` was
 /// silently ignored: expectations are read per evaluated rule, so one with no rule to attach to is
-/// never consulted, and the run exits 0. A test asserting FAIL on a misspelled name passed while
+/// never consulted, and the run exited 0. A test asserting FAIL on a misspelled name passed while
 /// asserting nothing -- the same shape as the evaluator defects this branch fixes, one layer out.
 ///
 /// Sorted, because `expectations` is a `HashMap` and its key order is reseeded every process. The
@@ -43,14 +47,47 @@ pub(crate) fn unmatched_expectation_names(
     names
 }
 
-/// The one place this sentence is written, so the note on stderr and the structured reports cannot
-/// drift apart.
+/// The one place these sentences are written, so the note on stderr, the structured reports and the
+/// junit `<error>` cannot drift apart.
 ///
-/// A message, not a failure. Making it a failure would break suites that pass today, and the useful
-/// half is knowing; the reporters already print the mirror case, `No Test expectation was set for
-/// Rule`, when a rule has no expectation. The structured reporters carry it as a skip for the same
-/// reason.
-pub(crate) fn unchecked_expectation_message(name: &str) -> String {
+/// A failure, and not the message it was when it was first written. The reasoning then was that
+/// failing would break suites that pass today; the answer is that a suite passing because an
+/// assertion was dropped is the defect and not a property worth preserving. The mirror case the
+/// reporters print, `No Test expectation was set for Rule`, stays a message for a reason that does
+/// not apply here: a rule with no expectation is a gap in coverage the author can see in the report,
+/// while an expectation with no rule reads exactly like coverage the author does not have.
+///
+/// The suites this breaks are the ones that were not testing what they claimed. One was in this
+/// repo: `test_data_file_with_shorthand_reference` paired a logging test file against the encryption
+/// rules file, and its recorded output was five cases of `No Test expectation was set for Rule`
+/// with no PASS or FAIL section anywhere in it.
+///
+/// Two sentences, because there are two ways an expectation goes unchecked and only one of them is a
+/// name the file does not have. Both are decided from the rules file itself rather than from what
+/// ran, since the two questions are different: which names the file declares, and which of them
+/// produced a top-level verdict.
+///
+/// - Declared as a parameterized rule. It is in the file, so the first sentence would be a lie.
+///   `eval_rules_file` walks `guard_rules` only, and a parameterized rule is evaluated where a
+///   clause invokes it, which records it as a child of that clause's rule rather than of the file --
+///   so it never appears among the rules an expectation can be matched against.
+/// - Declared nowhere. A renamed or misspelled rule, which is the case worth naming plainly.
+///
+/// Not among these: a rule that exists and could not be evaluated. `eval_rule` closes that rule's
+/// record as a failure before the error leaves `eval_rules_file`, so it has a verdict and its
+/// expectation is checked against it. Measured, because keying on what ran would otherwise report a
+/// rule that is plainly in the file as missing from it.
+pub(crate) fn unchecked_expectation_message(rules: &RulesFile<'_>, name: &str) -> String {
+    if rules
+        .parameterized_rules
+        .iter()
+        .any(|each| each.rule.rule_name == name)
+    {
+        return format!(
+            "{name} is a parameterized rule, which only gets a verdict where a clause invokes it, so its expectation was not checked"
+        );
+    }
+
     format!("No rule named {name} is in this file, so its expectation was not checked")
 }
 
@@ -68,17 +105,6 @@ pub(crate) fn unmatched_test_file_message(path: &Path) -> String {
         "{} did not match any rules file, so it was not run",
         path.display()
     )
-}
-
-/// The messages, for the plaintext reporter, which writes them and keeps no structured record.
-pub(crate) fn unmatched_expectations(
-    expectations: &HashMap<String, String>,
-    evaluated: &BTreeSet<&str>,
-) -> Vec<String> {
-    unmatched_expectation_names(expectations, evaluated)
-        .iter()
-        .map(|name| unchecked_expectation_message(name))
-        .collect()
 }
 
 /// Write what a run collected. Sorted by the set, so two runs over the same input agree.
