@@ -558,19 +558,43 @@ fn merge_value_error(location: &Location) -> Error {
 ///
 /// **This reverses the reasoning recorded when the diagnostic was improved**, which was that
 /// rendering a resolved value "invents a name the document does not contain" because an `Int` from
-/// `0x1F` renders as "31". The premise was wrong: CloudFormation resolves `0x1F` as 31 by the same
-/// YAML 1.2 core schema this loader implements, and then stringifies it for JSON, so "31" is exactly
-/// the key CloudFormation sees. Rendering the resolved value models the deployment; rendering the
-/// source text would not.
+/// `0x1F` renders as "31". The premise was wrong: a template is converted to JSON before deployment,
+/// and the conversion resolves the scalar first, so "31" is what a `0x1F` key becomes on the way to
+/// deployment. Rendering the resolved value models that; rendering the source text would not.
 ///
-/// A float is formatted with a fractional part even when it is whole, so `1.0` is "1.0" rather than
-/// Rust's "1". That is what a YAML-to-JSON conversion produces, and matching it is the whole point.
+/// **The convention is one rule: the key is the text of the value this loader resolved the scalar to.**
+/// It reads as three because the resolutions differ. A `String` key never reaches this function --
+/// `handle_mapping_end` has its own arm for one -- so `0755` is the key "0755" because `resolve_int`
+/// deliberately leaves that spelling as the *string* "0755", not because a second convention prefers
+/// source text. `0x1F` is "31" because it resolved to an `Int`.
+///
+/// So this does not implement "the key CloudFormation sees" in general, and claiming it did was too
+/// strong. YAML 1.2 core reads `0755` as decimal 755; this loader keeps the literal instead, because
+/// 1.1 reads the same characters as octal 493 and resolving either way silently produces a number the
+/// author did not write. The key inherits that trade rather than contradicting it: `0755` compares as
+/// the string "0755" as a value and looks up as "0755" as a key, which is the property a rule author
+/// needs. The departure from 1.2 core is `resolve_int`'s, deliberate, and recorded there.
+///
+/// A float keeps a fractional part when it is whole, so `1.0` is "1.0" rather than Rust's "1". That is
+/// what a YAML-to-JSON conversion produces and what `PathAwareValue`'s own `serde_json` rendering
+/// produces, so `-o json` and `-o yaml` print the value `1.0` beside the key `"1.0"`.
+///
+/// One renderer disagrees, and it is not this one: `display::ValueOnlyDisplay` formats a float with
+/// Rust's `Display`, so the human text report prints `Value = {"v":1,"Mappings":{"1.0":...}}` -- a
+/// reader who takes the key spelling from that line writes `Mappings."1"` and gets nothing. Left
+/// alone here on measurement rather than on principle: whole-float *values* number 6 across both
+/// corpora (2 in this repository, 4 in one registry test spec) and non-string *keys* 0, so changing
+/// the report's float rendering would alter human output in the reporters' code to fix a collision no
+/// file in either corpus can reach.
 ///
 /// `Null` is deliberately absent. There is no text the two conventions agree on -- Python's
 /// yaml-then-json round trip gives "null", JSON has no such key at all -- and a document writing `~:`
 /// or a bare `:` is far more likely to have lost a key than to want one named after nothing, so the
 /// refusal is the more useful answer. The container and `BadValue` keys are absent for the stronger
 /// reason that they have no scalar text to render.
+///
+/// `values::scalar_key_name` is the serde-backed loader's half of this, and
+/// `both_loaders_resolve_the_same_document_to_the_same_value` holds the two to the same rendering.
 fn stringify_scalar_key(key: &MarkedValue) -> Option<String> {
     match key {
         MarkedValue::Int(i, ..) => Some(i.to_string()),
@@ -588,13 +612,15 @@ fn stringify_scalar_key(key: &MarkedValue) -> Option<String> {
 /// several thousand lines in which of N files. The location alone also cannot be searched for: a
 /// reader who sees `L:2,C:4` cannot grep for it.
 ///
-/// The value is included for the scalars whose rendering is short and unambiguous. It is deliberately
-/// *not* used to accept the key: `MarkedValue` holds the resolved value and not the text the document
-/// wrote, so rendering an `Int` back gives "31" for a key written `0x1F`, a `Float` gives "1" for
-/// `1.0`, and a `Bool` gives "true" for `True`. Turning any of those into a key name would invent a
-/// name the document does not contain, which is the same shape of defect as the ones this file has
-/// been fixing. Accepting non-string keys properly means carrying the scalar's original text through
-/// the value model, which is a larger change than a diagnostic.
+/// Only the keys `stringify_scalar_key` has no text for reach this, so in practice it names a null, a
+/// sequence, a mapping or a `BadValue`. The value is still rendered for the scalars it has one for,
+/// because the enum is total and a variant added to `MarkedValue` should not silently lose its name.
+///
+/// This used to carry the opposite position -- that rendering a resolved value would "invent a name the
+/// document does not contain", so non-string keys could not be accepted without carrying the source
+/// text through the value model. `stringify_scalar_key` reversed that and gives the reasons; the two
+/// comments sat twenty lines apart contradicting each other, with this one the stale half and the one
+/// the compiler sends a reader chasing the refusal message to.
 fn describe_key(key: &MarkedValue) -> String {
     match key {
         MarkedValue::Null(..) => "null".to_string(),
