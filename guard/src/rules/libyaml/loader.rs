@@ -254,6 +254,33 @@ impl Loader {
                         // Only a *plain* scalar reaches here -- the `style != Plain` arm above
                         // takes every quoted one -- so `k: ""` is still the empty string, which is
                         // the whole reason this can be decided on emptiness alone.
+                        //
+                        // The cost, which is not on the `k:` versus `k: ""` axis this was decided
+                        // on. `empty` is refused on every non-container scalar, `Null` included, so
+                        // moving the empty node here moved the most common spelling of a null out
+                        // of the one scalar shape `empty` could answer. `empty` and `!empty` over a
+                        // `k:` are now both FAIL, with "Attempting EMPTY operation on type null
+                        // that does not support it" -- which an explicit `null` already did, so
+                        // this widened an inconsistency rather than creating one.
+                        //
+                        // Where that is visible is a filter. `Resources[ Properties.Foo !empty ]`
+                        // used to select nothing and SKIP at exit 0; the refusal is an error rather
+                        // than a verdict, so it now bails and the rule FAILs at exit 19, with no
+                        // edit to the template or the rule. Measured against `9fee1a2` on a
+                        // one-property template, with `Foo: ""` as the control, which still SKIPs.
+                        //
+                        // Denominator, both sides of it: 79 empty-valued keys in 13 of 246 rules
+                        // registry data files and 5 in 4 of 115 here, against `empty` at bracket
+                        // depth in a `.guard` source -- which is a filter, since neither an index
+                        // nor an `IN` list can hold the word -- 8 times in 7 of 210 registry files
+                        // and once in 1 of 108 here.
+                        //
+                        // The direction is safe -- every arm moves toward FAIL -- and the three
+                        // states still have three predicates: `not exists` for an absent key,
+                        // `is_null` or `== null` for a key with no value, `empty` for an empty
+                        // string, list or map. Making `empty` hold for a null would make null the
+                        // one scalar it answers for and would convert refusals into verdicts
+                        // wherever a rule writes `!empty` over a property that happens to be null.
                         None => match val.to_lowercase().as_str() {
                             "" | "~" | "null" => MarkedValue::Null(location),
                             _ => MarkedValue::String(val, location),
