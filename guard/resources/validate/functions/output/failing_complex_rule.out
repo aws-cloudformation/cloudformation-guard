@@ -12,12 +12,12 @@ Resource = newServer {
         ALL {
           Check =  %expected EQUALS  %replaced {
             ComparisonError {
-              Error            = Check was not compliant as property [/Resources/newServer/Properties/Arn[L:10,C:12]] was not present in [(resolved, Path=/Resources/newServer/Properties/Arn[L:10,C:12] Value="aws/123456789012/us-west-2/newservice-Table/extracted")]
+              Error            = Check was not compliant as property [/Resources/newServer/Properties/Arn[L:10,C:12]] was not present in [(resolved, Path=[L:0,C:0] Value="random_str")]
             }
               PropertyPath    = /Resources/newServer/Properties/Arn[L:10,C:12]
               Operator        = EQUAL
               Value           = "aws/123456789012/us-west-2/newservice-Table/extracted"
-              ComparedWith    = ["aws/123456789012/us-west-2/newservice-Table/extracted"]
+              ComparedWith    = ["random_str"]
               Code:
                     8.           "Actions": ["s3*", "ec2*"]
                     9.        }
