@@ -485,3 +485,71 @@ Resources:
     println!("{:?}", path_value);
     Ok(())
 }
+
+/// cfn-guard has two document loaders, and they must give the same document the same value.
+///
+/// `values::read_from` -- the libyaml loader -- is reached only by `validate`'s `build_data_file`.
+/// Everything else goes through serde: `commands::helper::validate_and_return_json`, which is the
+/// public `run_checks`; the `test` command's spec `input:` blocks; and `rulegen`. So a scalar the two
+/// resolve differently means one file means two things depending on which command read it.
+///
+/// The measured divergences were: the YAML 1.1-only booleans, hex and `0o` integers, a decimal with a
+/// leading zero, the empty scalar, and the dotted `!GetAtt` short form. They showed up as
+/// `rulegen` emitting a rule that `validate` then rejected on the very template it was generated
+/// from, and as a rule whose `guard test` suite was green failing under `validate` on byte-identical
+/// input -- so the harness a rule author uses to prove a rule correct did not exercise the loader the
+/// rule would run against.
+///
+/// This compares the two through `serde_json`, which is the only form both reach, because the libyaml
+/// value carries source locations and the serde one has none. Two divergences remain and are left out
+/// deliberately, each with its reason in the loader: `0b101` binary, which YAML 1.2 core has no form
+/// for, and an integer wider than `i64`, which `MarkedValue::Int` cannot hold.
+#[test]
+fn both_loaders_resolve_the_same_document_to_the_same_value() -> Result<()> {
+    let document = r#"
+Resources:
+  Probe:
+    Properties:
+      bool_true: true
+      bool_TRUE: TRUE
+      bool_mixed: tRuE
+      not_a_bool_yes: yes
+      not_a_bool_n: N
+      not_a_bool_off: off
+      hex: 0x1F
+      octal: 0o17
+      leading_zero: 0755
+      plain_int: 42
+      signed_int: +42
+      i64_max: 9223372036854775807
+      float: 1.5
+      exponent: 1e5
+      time: 12:30:45
+      sexagesimal: 1:30
+      underscored: 1_000
+      empty_node:
+      quoted_empty: ""
+      tilde: ~
+      spelled_null: null
+      getatt_dotted: !GetAtt Other.Arn
+      getatt_multi_dot: !GetAtt myELB.SourceSecurityGroup.OwnerAlias
+      getatt_list: !GetAtt [Other, Arn]
+      ref: !Ref Param
+      unlisted_intrinsic: !Length [1, 2, 3]
+      tagged_mapping: !ToJsonString { a: 1 }
+"#;
+
+    let via_libyaml = PathAwareValue::try_from(crate::rules::values::read_from(document)?)?;
+    let via_serde = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(document)?)?;
+
+    let (_, libyaml_json): (String, serde_json::Value) = (&via_libyaml).try_into()?;
+    let (_, serde_json_value): (String, serde_json::Value) = (&via_serde).try_into()?;
+
+    assert_eq!(
+        serde_json_value, libyaml_json,
+        "the two loaders read the same bytes as different values, so which command read a file \
+         decides what it means"
+    );
+
+    Ok(())
+}
