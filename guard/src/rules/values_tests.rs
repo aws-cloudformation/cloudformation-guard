@@ -501,9 +501,21 @@ Resources:
 /// rule would run against.
 ///
 /// This compares the two through `serde_json`, which is the only form both reach, because the libyaml
-/// value carries source locations and the serde one has none. Two divergences remain and are left out
-/// deliberately, each with its reason in the loader: `0b101` binary, which YAML 1.2 core has no form
-/// for, and an integer wider than `i64`, which `MarkedValue::Int` cannot hold.
+/// value carries source locations and the serde one has none.
+///
+/// Two divergences are left out deliberately, each with its reason recorded where the decision was
+/// made:
+///
+///   - `0b101`. YAML 1.2 core has no binary form -- it is 1.1's -- so following `serde_yaml`'s
+///     extension would re-add a 1.1-ism the boolean set dropped.
+///   - a float literal that underflows to zero, such as `1e-400`. The libyaml loader keeps its text,
+///     because it can see that the mantissa holds a non-zero digit. This conversion cannot:
+///     `serde_yaml::Number` is `enum N { PosInt(u64), NegInt(i64), Float(f64) }` and retains no source
+///     text, so an underflowed `1e-400` arrives as `Float(0.0)` and is indistinguishable from a
+///     literal `0`. Checked against the pinned crate source (0.9.34), not assumed.
+///
+/// An integer wider than `i64` and a non-finite float *were* on that list and are now in the document:
+/// keeping the digits and the canonical `.nan`/`.inf` spelling closed both.
 #[test]
 fn both_loaders_resolve_the_same_document_to_the_same_value() -> Result<()> {
     let document = r#"
@@ -531,6 +543,11 @@ Resources:
       quoted_empty: ""
       tilde: ~
       spelled_null: null
+      u64_max: 18446744073709551615
+      just_past_i64_max: 9223372036854775808
+      not_a_number: .nan
+      infinity: .inf
+      negative_infinity: -.inf
       getatt_dotted: !GetAtt Other.Arn
       getatt_multi_dot: !GetAtt myELB.SourceSecurityGroup.OwnerAlias
       getatt_list: !GetAtt [Other, Arn]
@@ -550,6 +567,47 @@ Resources:
         "the two loaders read the same bytes as different values, so which command read a file \
          decides what it means"
     );
+
+    Ok(())
+}
+
+/// The serde-backed conversion does not read a positive integer as negative, and does not admit a
+/// non-finite float.
+///
+/// `num.as_u64().unwrap() as i64` reinterpreted the bit pattern rather than losing precision, as its
+/// comment claimed: `u64::MAX` became exactly -1 and `i64::MAX + 1` exactly `i64::MIN`. Every numeric
+/// guard in the language inverts for such a value, so `A < 0` passed and `MaxSize <= 1000` passed for
+/// an input of 18446744073709551615, at exit 0.
+///
+/// The float half is the `Eq` violation: `PathAwareValue` asserts `Eq` and `Float(NaN)` is not equal
+/// to itself, so `A == A` reported FAIL through this conversion on a document that PASSed through the
+/// libyaml one. The libyaml loader has had the finiteness gate all along; this conversion did not,
+/// and it is what `guard test` and the public `run_checks` read documents with.
+#[rstest::rstest]
+#[case::u64_max("18446744073709551615", Value::String("18446744073709551615".to_string()))]
+#[case::just_past_i64_max("9223372036854775808", Value::String("9223372036854775808".to_string()))]
+#[case::i64_max("9223372036854775807", Value::Int(i64::MAX))]
+#[case::i64_min("-9223372036854775808", Value::Int(i64::MIN))]
+#[case::negative("-1", Value::Int(-1))]
+#[case::ordinary("42", Value::Int(42))]
+#[case::nan(".nan", Value::String(".nan".to_string()))]
+#[case::infinity(".inf", Value::String(".inf".to_string()))]
+#[case::negative_infinity("-.inf", Value::String("-.inf".to_string()))]
+#[case::ordinary_float("1.5", Value::Float(1.5))]
+fn the_serde_conversion_never_changes_a_number_s_sign_or_admits_a_non_finite(
+    #[case] scalar: &str,
+    #[case] expected: Value,
+) -> Result<()> {
+    let yaml: serde_yaml::Value = serde_yaml::from_str(&format!("v: {scalar}"))?;
+    let converted = Value::try_from(&yaml)?;
+
+    let map = match converted {
+        Value::Map(m) => m,
+        other => unreachable!("a mapping converts to a map, got {:?}", other),
+    };
+    let value = map.get("v").expect("v is present");
+
+    assert_eq!(&expected, value, "for the scalar {}", scalar);
 
     Ok(())
 }

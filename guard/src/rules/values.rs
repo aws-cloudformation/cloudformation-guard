@@ -287,12 +287,38 @@ impl<'a> TryFrom<&'a serde_yaml::Value> for Value {
                 if num.is_i64() {
                     Ok(Value::Int(num.as_i64().unwrap()))
                 } else if num.is_u64() {
+                    // Reached only for a positive integer above `i64::MAX`, since `is_i64` takes
+                    // everything that fits. This was `num.as_u64().unwrap() as i64`, under a comment
+                    // reading "Yes we are losing precision here. TODO fix this". It was not losing
+                    // precision: `as i64` reinterprets the bit pattern, so the sign flipped.
+                    // `u64::MAX` read as exactly -1 and `i64::MAX + 1` as exactly `i64::MIN`, which
+                    // inverts every numeric guard in the language -- `A < 0` passed, `A > 0` failed,
+                    // and `MaxSize <= 1000` passed for an input of 18446744073709551615, at exit 0
+                    // with nothing on either channel.
                     //
-                    // Yes we are losing precision here. TODO fix this
-                    //
-                    Ok(Value::Int(num.as_u64().unwrap() as i64))
+                    // The digits are kept instead. `u64::to_string` is exact, so nothing is invented,
+                    // and a comparison against a number then refuses rather than answering from a
+                    // number the input does not contain. It is also the answer the libyaml loader
+                    // already gives an integer this wide, so the two agree.
+                    Ok(Value::String(num.as_u64().unwrap().to_string()))
                 } else {
-                    Ok(Value::Float(num.as_f64().unwrap()))
+                    let float = num.as_f64().unwrap();
+
+                    // The finiteness gate the libyaml loader has and this conversion did not.
+                    // `PathAwareValue` asserts `Eq` and hashes its own contents, and `Float(NaN)` is
+                    // not equal to itself, so admitting one made `A == A` report FAIL under
+                    // `guard test` on a document that PASSed under `validate`. `.inf` was worse than
+                    // inert: `A > 9223372036854775807` passed under `test` where the same document
+                    // refused under `validate`.
+                    //
+                    // These are the two entry points rule authors prove their rules with -- the
+                    // `test` subcommand and the public `run_checks` -- so the divergence ran in the
+                    // worst direction available.
+                    if float.is_finite() {
+                        Ok(Value::Float(float))
+                    } else {
+                        Ok(Value::String(non_finite_spelling(float)))
+                    }
                 }
             }
             serde_yaml::Value::Bool(b) => Ok(Value::Bool(*b)),
@@ -464,6 +490,25 @@ where
     I: IntoIterator<Item = (&'a str, Value)>,
 {
     values.into_iter().map(|(s, v)| (s.to_owned(), v)).collect()
+}
+
+/// YAML's own spelling of a non-finite float, which is what the libyaml loader leaves behind.
+///
+/// That loader keeps the literal the document wrote, and `serde_yaml` only resolves a float from
+/// `.nan`, `.inf` and `-.inf` -- bare `NaN` and `inf` stay strings in both, being outside the YAML
+/// 1.2 core schema. So returning the canonical spelling here makes the two loaders agree exactly on
+/// every input that can reach this function, rather than approximately.
+///
+/// `f64::to_string` was the alternative and it would have produced "NaN" and "inf", which no YAML
+/// document writes and neither loader would then match.
+fn non_finite_spelling(float: f64) -> String {
+    if float.is_nan() {
+        ".nan".to_string()
+    } else if float.is_sign_positive() {
+        ".inf".to_string()
+    } else {
+        "-.inf".to_string()
+    }
 }
 
 /// Wraps a `!Foo`-tagged value as `{ "Fn::Foo": payload }`.
