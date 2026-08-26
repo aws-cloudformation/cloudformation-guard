@@ -370,16 +370,54 @@ fn is_bool_false(s: &str) -> bool {
 fn handle_single_value_func_ref(val: String, loc: Location, fn_ref: &str) -> Option<MarkedValue> {
     if SINGLE_VALUE_FUNC_REF.contains(fn_ref) {
         let mut map = indexmap::IndexMap::new();
+        let payload = if fn_ref == "GetAtt" {
+            getatt_payload(val, &loc)
+        } else {
+            MarkedValue::String(val, loc.clone())
+        };
         let fn_ref = short_form_to_long(fn_ref);
-        map.insert(
-            (fn_ref.to_string(), loc.clone()),
-            MarkedValue::String(val, loc.clone()),
-        );
+        map.insert((fn_ref.to_string(), loc.clone()), payload);
 
         return Some(MarkedValue::Map(map, loc));
     }
 
     None
+}
+
+/// The payload of a `!GetAtt`, normalised to the list shape the other two spellings produce.
+///
+/// CloudFormation documents `!GetAtt logicalNameOfResource.attributeName` as the short form of
+/// `{ "Fn::GetAtt": [ "logicalNameOfResource", "attributeName" ] }`
+/// (<https://docs.aws.amazon.com/AWSCloudFormation/latest/TemplateReference/intrinsic-function-reference-getatt.html>),
+/// and the dotted spelling is YAML-only -- JSON has the list and nothing else. Nothing here split on
+/// the dot, so `!GetAtt SecretResource.Arn` was a *string* while `!GetAtt [SecretResource, Arn]` and
+/// the long form were both a *list*. One reference had two incompatible shapes depending on how the
+/// template happened to be written, so a rule authored against JSON templates silently declined to
+/// check YAML ones: a filter reaching `"Fn::GetAtt"[0]` selected nothing, the rule was skipped, and
+/// the run exited 0 with an empty stderr.
+///
+/// The split is on the **first** dot only, because the attribute name may contain dots of its own.
+/// AWS's own example is `!GetAtt myELB.SourceSecurityGroup.OwnerAlias`, which it gives as
+/// `["myELB", "SourceSecurityGroup.OwnerAlias"]`.
+///
+/// A payload with no dot is left as a string. It is not a valid `Fn::GetAtt` -- the function takes a
+/// resource and an attribute -- and inventing a one-element list would produce a shape neither the
+/// long form nor JSON can produce.
+///
+/// Both halves carry the location of the scalar they were written as, which is where they are: they
+/// came from one token, and the alternative is to derive a column by counting from a start mark whose
+/// relationship to the tag has not been established here.
+fn getatt_payload(val: String, loc: &Location) -> MarkedValue {
+    match val.split_once('.') {
+        Some((resource, attribute)) => MarkedValue::List(
+            vec![
+                MarkedValue::String(resource.to_string(), loc.clone()),
+                MarkedValue::String(attribute.to_string(), loc.clone()),
+            ],
+            loc.clone(),
+        ),
+        None => MarkedValue::String(val, loc.clone()),
+    }
 }
 
 fn handle_sequence_value_func_ref(loc: Location, fn_ref: &str) -> Option<MarkedValue> {

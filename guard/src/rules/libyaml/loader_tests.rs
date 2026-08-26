@@ -898,3 +898,102 @@ fn two_integers_wider_than_i64_do_not_collapse_into_one() -> Result<()> {
 
     Ok(())
 }
+
+/// The three spellings of one `Fn::GetAtt` produce one shape.
+///
+/// CloudFormation documents `!GetAtt logicalNameOfResource.attributeName` as the short form of
+/// `{ "Fn::GetAtt": [ "logicalNameOfResource", "attributeName" ] }`, and the dotted spelling is
+/// YAML-only -- JSON has the list and nothing else. Nothing split on the dot, so the dotted form was
+/// a *string* while the sequence and long forms were both a *list*. A filter reaching
+/// `"Fn::GetAtt"[0]` matched the list forms and selected nothing on the dotted one, so a rule
+/// authored against JSON templates skipped YAML ones at exit 0 with an empty stderr.
+///
+/// The multi-dot case is the reason the split is on the first dot only: AWS gives
+/// `!GetAtt myELB.SourceSecurityGroup.OwnerAlias` as `["myELB", "SourceSecurityGroup.OwnerAlias"]`.
+#[rstest::rstest]
+#[case::dotted("v: !GetAtt Other.Arn", "Other", "Arn")]
+#[case::sequence("v: !GetAtt [Other, Arn]", "Other", "Arn")]
+#[case::long_form("v:\n  Fn::GetAtt: [Other, Arn]", "Other", "Arn")]
+#[case::dotted_attribute_with_a_dot(
+    "v: !GetAtt myELB.SourceSecurityGroup.OwnerAlias",
+    "myELB",
+    "SourceSecurityGroup.OwnerAlias"
+)]
+#[case::sequence_attribute_with_a_dot(
+    "v: !GetAtt [myELB, SourceSecurityGroup.OwnerAlias]",
+    "myELB",
+    "SourceSecurityGroup.OwnerAlias"
+)]
+fn every_spelling_of_getatt_builds_the_same_list(
+    #[case] content: &str,
+    #[case] resource: &str,
+    #[case] attribute: &str,
+) -> Result<()> {
+    let value = Loader::new().load(content.to_string())?;
+
+    let map = match &value {
+        MarkedValue::Map(m, ..) => m,
+        other => unreachable!("a mapping loads as a map, got {:?}", other),
+    };
+    let wrapper = match map.first().expect("v is present").1 {
+        MarkedValue::Map(inner, ..) => inner,
+        other => panic!(
+            "{:?} did not wrap the value in a map, got {:?}",
+            content, other
+        ),
+    };
+    let ((name, ..), payload) = wrapper.first().expect("the function is present");
+
+    assert_eq!(
+        "Fn::GetAtt", name,
+        "{:?} named the function {}",
+        content, name
+    );
+
+    let parts = match payload {
+        MarkedValue::List(parts, ..) => parts,
+        other => panic!(
+            "{:?} gave Fn::GetAtt a {:?}; the JSON form can only be a list, so the two spellings \
+             of one reference would not be comparable",
+            content, other
+        ),
+    };
+
+    let as_strings: Vec<&str> = parts
+        .iter()
+        .map(|p| match p {
+            MarkedValue::String(s, ..) => s.as_str(),
+            other => panic!("a GetAtt element loaded as {:?}", other),
+        })
+        .collect();
+
+    assert_eq!(vec![resource, attribute], as_strings, "for {:?}", content);
+
+    Ok(())
+}
+
+/// A `!GetAtt` with no dot is not a valid `Fn::GetAtt` -- the function takes a resource *and* an
+/// attribute -- so it keeps its string rather than becoming a one-element list, which is a shape
+/// neither the long form nor JSON can produce.
+#[test]
+fn a_getatt_with_no_attribute_is_left_alone() -> Result<()> {
+    let value = Loader::new().load("v: !GetAtt myELB".to_string())?;
+
+    let map = match &value {
+        MarkedValue::Map(m, ..) => m,
+        other => unreachable!("a mapping loads as a map, got {:?}", other),
+    };
+    let wrapper = match map.first().expect("v is present").1 {
+        MarkedValue::Map(inner, ..) => inner,
+        other => panic!("expected a wrapper map, got {:?}", other),
+    };
+    let (.., payload) = wrapper.first().expect("the function is present");
+
+    assert!(
+        matches!(payload, MarkedValue::String(s, ..) if s == "myELB"),
+        "a dotless GetAtt loaded as {:?}",
+        payload
+    );
+
+    Ok(())
+}
