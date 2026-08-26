@@ -1910,13 +1910,14 @@ impl<'value, 'loc: 'value> EvalContext<'value, 'loc> for RootScope<'value, 'loc>
                 // from that clause, the rule came back non-PASS, and `eval_rule` then
                 // dropped every check in the guarded block while still exiting 0. Trading
                 // one unenforced clause for a whole disarmed block is the same hazard
-                // recorded on the `EmptyLhsCollection` arm in eval.rs, reached one level
-                // further out.
+                // recorded on the `EmptyRhsUnsatisfiable` arm in eval.rs, reached one level
+                // further out. #720 records the same hazard on an `EmptyLhsCollection` arm it
+                // adds alongside that one.
                 //
                 // Propagating the role gives an unevaluatable clause inside the body the
                 // strictness the *reference* deserves: a failure when the reference is an
                 // assertion, inapplicable when it is a gate. That is exactly the
-                // Unevaluatable split `Outcome::to_status` describes.
+                // Unevaluatable split #720's `Outcome::to_status` describes.
                 let status = super::eval::eval_rule(each_rule, self, role)?;
                 if status != SKIP {
                     break 'done status;
