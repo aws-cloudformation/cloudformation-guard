@@ -246,8 +246,9 @@ impl Loader {
         if self.last_container_index.len() >= MAX_NESTING_DEPTH {
             return Err(Error::UnsupportedDocument(format!(
                 "cfn-guard reads documents nested at most {MAX_NESTING_DEPTH} levels deep, and this \
-                 file goes deeper: the container at {location} is at level {}. The deepest \
-                 CloudFormation template in AWS's own rules registry is 15 levels.",
+                 file goes deeper: the container at {location} is at level {}. Real CloudFormation \
+                 templates nest a handful of levels; nothing in AWS's own rules registry comes close \
+                 to this.",
                 self.last_container_index.len() + 1
             )));
         }
