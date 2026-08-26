@@ -1734,11 +1734,11 @@ mod validate_tests {
 
         let output = writer.stripped().expect("failed to read the writer");
         // The property path rather than a phrase, because the two outcomes are both correct and word
-        // things differently. The first three demote the file to the generic reporter, which prints
-        // "Property [...] is not compliant with"; the last one stays with the console reporter -- a
-        // non-string CDK path is now just a resource without a CDK path -- and keeps the detailed
-        // per-resource report. Either way the path has to appear, and "Number of non-compliant
-        // resources 0" contains no path at all.
+        // things differently. The first three demote the file to `generic_summary::GenericSummary`,
+        // which prints "Property [...] is not compliant with"; the last one stays with
+        // `cfn::CfnAware` -- a non-string CDK path is now just a resource without a CDK path -- and
+        // keeps its detailed per-resource report. Either way the path has to appear, and "Number of
+        // non-compliant resources 0" contains no path at all.
         assert!(
             output.contains(expected_path),
             "the finding for {} must name {}, not be counted as zero:\n{}",

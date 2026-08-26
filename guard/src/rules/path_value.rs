@@ -299,16 +299,21 @@ impl PartialEq for PathAwareValue {
             //
             // `false` is a compromise and not the honest answer, so it is worth being plain about
             // what it costs. `PartialEq` returns `bool` and cannot report anything, and the arms
-            // cannot simply go: the map key filter in `QueryResolver::select` decides
-            // `Metadata[ keys == /^aws/ ]` through them, which `aws_meta_appender` relies on, and
-            // five tests fail if they stop matching. So through `eq` a regex that cannot be
-            // evaluated reads as "not equal", and a key filter selects nothing for that key --
-            // indistinguishable from a pattern that genuinely did not match.
+            // cannot simply go: `contained_in` in `eval/operators.rs` decides `X in [/re/]` by
+            // asking `elem == rest` for each element before it asks anything else, so a panic in
+            // these arms takes a run down. Pinned by
+            // `a_regex_in_a_list_literal_fails_the_clause_instead_of_aborting` and by the four
+            // `IN`/`NOT IN` cases of `an_ordinary_regex_comparison_is_unchanged`.
             //
-            // Where a verdict can be reported, it is. The comparison operators do not come through
-            // here: `X == /re/` asks `compare_eq`, and `X in [/re/]` reaches `contained_in`, which
-            // asks `compare_eq` as well and reports its error. Both fail the clause and name the
-            // reason instead of guessing.
+            // The compromise survives because `eq` is not the last word on that path.
+            // `contained_in` asks `compare_eq` for each element `eq` turned down, and `compare_eq`
+            // returns `Error::RegexError` rather than a verdict; `contained_in` promotes that to
+            // `NotComparable` and carries the reason out. So a regex that cannot be evaluated reads
+            // as "not equal" here and is named one line later.
+            //
+            // The unwrapped spelling does not arrive here at all: `X == /re/` asks `compare_eq`
+            // directly, which is why the `==`/`!=` cases of that same test stay clear of these arms
+            // while the `IN` ones do not.
             (PathAwareValue::String((_, s)), PathAwareValue::Regex((_, r))) => {
                 match Regex::new(r.as_str()) {
                     Ok(regex) => regex.is_match(s.as_str()).unwrap_or(false),
@@ -350,9 +355,11 @@ impl PartialEq for PathAwareValue {
 
 /// `eq` above is a match relation, and `Eq` claims more than it delivers.
 ///
-/// A string equals a regex it matches, and that arm is load-bearing rather than decorative: map key
-/// filters such as `Condition[ keys == /aws:[Ss]ource.*/ ]` are decided through it, and five
-/// evaluator tests fail if it is made to panic. It also puts a ceiling on how honest `Hash` can be,
+/// A string equals a regex it matches, and that arm is load-bearing rather than decorative:
+/// `contained_in` decides `X in [/re/]` by asking `eq` for each element of the list literal, so a
+/// panic in that arm ends the run at 101. Map key filters do not come through it, despite the
+/// spelling: `QueryPart::MapKeyFilter` in `eval_context.rs` hands its keys to
+/// `real_binary_operation`, which asks `compare_eq`. It also puts a ceiling on how honest `Hash` can be,
 /// because a regex and every string matching it would have to share one hash. So `eq` is not
 /// transitive, and `PathAwareValue` must not key a hashed collection that can hold a `Regex`.
 ///

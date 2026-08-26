@@ -9596,11 +9596,11 @@ fn a_function_call_on_the_right_of_keys_compares_against_the_keys(
 /// parse time proves the pattern compiles and says nothing about whether a match completes. So this
 /// spelling aborted at `path_value.rs` while the unwrapped one aborted at `operators.rs`.
 ///
-/// `PartialEq` returns `bool` and cannot report an error, and the arm cannot be removed -- the map
-/// key filter in `QueryResolver::select` decides `keys == /re/` through it. So `eq` answers `false`
-/// and `contained_in` asks `compare_eq` as well, reading the error `eq` had to swallow. That is
-/// what makes these three spellings agree with the four above rather than reporting a plain
-/// mismatch.
+/// `PartialEq` returns `bool` and cannot report an error, and the arm cannot be removed -- this
+/// membership loop is itself the caller that needs it, for every element of the list literal. So
+/// `eq` answers `false` and `contained_in` asks `compare_eq` as well, reading the error `eq` had to
+/// swallow. That is what makes these three spellings agree with the four above rather than
+/// reporting a plain mismatch.
 #[rstest::rstest]
 #[case::in_a_list("IN [/(?!x)((a+)+)b/]")]
 #[case::not_in_a_list("NOT IN [/(?!x)((a+)+)b/]")]

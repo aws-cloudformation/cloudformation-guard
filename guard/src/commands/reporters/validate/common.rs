@@ -69,8 +69,9 @@ fn non_empty_message(message: &Option<String>) -> Option<&str> {
 /// Collapsed onto one line rather than re-indented, which is the other way to keep the shapes apart.
 /// `emit_messages` re-indents, because a per-resource entry is a brace block with a line per message and
 /// has a shape to re-indent into; an entry here is two lines by construction. Collapsing is also what
-/// every other message writer in these reporters does -- `print_name_info` below, `cfn_reporter`,
-/// `generic_summary`, `console_reporter` -- each replacing a break with a semicolon.
+/// the other message writers reached from the validate reporter chain do -- `print_name_info` below and
+/// `generic_summary` -- each replacing a break with a semicolon. The only divergence is the separator:
+/// those two write `";"` and this writes `"; "`.
 ///
 /// `\r` as well as `\n`. A bare carriage return does not begin a line in a file, but it returns the cursor
 /// to column zero in a terminal and overwrites what was there, which forges a line just as well.
