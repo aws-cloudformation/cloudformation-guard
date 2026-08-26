@@ -277,93 +277,136 @@ fn is_within<T: PartialOrd>(range: &RangeType<T>, other: &T) -> bool {
     lower && upper
 }
 
+/// Whether a `<<` key carries YAML's merge semantics or is an ordinary key spelled `<<`.
+///
+/// Only the caller knows which format the text was written in, so this is threaded through the whole
+/// conversion rather than read off the value: a `<<` nested at any depth gets the same reading as the
+/// document's root, because the format does not change partway down.
+#[derive(Copy, Clone)]
+enum MergeKey {
+    /// YAML. Fold each `<<` value into the mapping that wrote it, per `merge_into`.
+    Resolve,
+    /// JSON. `<<` is an ordinary member name.
+    Literal,
+}
+
 impl<'a> TryFrom<&'a serde_yaml::Value> for Value {
     type Error = Error;
 
     fn try_from(value: &'a serde_yaml::Value) -> Result<Self, Self::Error> {
-        match value {
-            serde_yaml::Value::String(s) => Ok(Value::String(s.to_owned())),
-            serde_yaml::Value::Number(num) => {
-                if num.is_i64() {
-                    Ok(Value::Int(num.as_i64().unwrap()))
-                } else if num.is_u64() {
-                    // Reached only for a positive integer above `i64::MAX`, since `is_i64` takes
-                    // everything that fits. This was `num.as_u64().unwrap() as i64`, under a comment
-                    // reading "Yes we are losing precision here. TODO fix this". It was not losing
-                    // precision: `as i64` reinterprets the bit pattern, so the sign flipped.
-                    // `u64::MAX` read as exactly -1 and `i64::MAX + 1` as exactly `i64::MIN`, which
-                    // inverts every numeric guard in the language -- `A < 0` passed, `A > 0` failed,
-                    // and `MaxSize <= 1000` passed for an input of 18446744073709551615, at exit 0
-                    // with nothing on either channel.
-                    //
-                    // The digits are kept instead. `u64::to_string` is exact, so nothing is invented,
-                    // and a comparison against a number then refuses rather than answering from a
-                    // number the input does not contain. It is also the answer the libyaml loader
-                    // already gives an integer this wide, so the two agree.
-                    Ok(Value::String(num.as_u64().unwrap().to_string()))
+        convert_yaml(value, MergeKey::Resolve)
+    }
+}
+
+impl Value {
+    /// Converts a value that was parsed from JSON text, reading `<<` as an ordinary member name.
+    ///
+    /// JSON has no merge keys, and every JSON member name is quoted, so there is no plain scalar for
+    /// YAML's merge rule to apply to -- which is the style distinction `merge_into`'s comment says has
+    /// to be made where the text is still text. For a JSON document the format settles it outright, so
+    /// no style needs recovering.
+    ///
+    /// The parser is still `serde_yaml`, so the input it accepts is unchanged. Swapping in `serde_json`
+    /// was the alternative and is not used: it accepts a duplicate member name where `serde_yaml`
+    /// refuses one, which is the refusal
+    /// `guard/resources/validate/functions/data/embedded_json_the_parser_rejects.yaml` exists to pin;
+    /// it reaches `TryFrom<&serde_json::Value>`, which still reads an integer above `i64::MAX` as a
+    /// negative through `as i64` -- the sign flip this file's own `is_u64` arm was fixed for, and
+    /// `18446744073709551615` is valid JSON; and it refuses every YAML-only spelling that reaches
+    /// `json_parse` successfully today, which is a narrowing no caller asked for.
+    pub(crate) fn try_from_json(value: &serde_yaml::Value) -> crate::rules::Result<Value> {
+        convert_yaml(value, MergeKey::Literal)
+    }
+}
+
+fn convert_yaml(value: &serde_yaml::Value, merge_key: MergeKey) -> crate::rules::Result<Value> {
+    match value {
+        serde_yaml::Value::String(s) => Ok(Value::String(s.to_owned())),
+        serde_yaml::Value::Number(num) => {
+            if num.is_i64() {
+                Ok(Value::Int(num.as_i64().unwrap()))
+            } else if num.is_u64() {
+                // Reached only for a positive integer above `i64::MAX`, since `is_i64` takes
+                // everything that fits. This was `num.as_u64().unwrap() as i64`, under a comment
+                // reading "Yes we are losing precision here. TODO fix this". It was not losing
+                // precision: `as i64` reinterprets the bit pattern, so the sign flipped.
+                // `u64::MAX` read as exactly -1 and `i64::MAX + 1` as exactly `i64::MIN`, which
+                // inverts every numeric guard in the language -- `A < 0` passed, `A > 0` failed,
+                // and `MaxSize <= 1000` passed for an input of 18446744073709551615, at exit 0
+                // with nothing on either channel.
+                //
+                // The digits are kept instead. `u64::to_string` is exact, so nothing is invented,
+                // and a comparison against a number then refuses rather than answering from a
+                // number the input does not contain. It is also the answer the libyaml loader
+                // already gives an integer this wide, so the two agree.
+                Ok(Value::String(num.as_u64().unwrap().to_string()))
+            } else {
+                let float = num.as_f64().unwrap();
+
+                // The finiteness gate the libyaml loader has and this conversion did not.
+                // `PathAwareValue` asserts `Eq` and hashes its own contents, and `Float(NaN)` is
+                // not equal to itself, so admitting one made `A == A` report FAIL under
+                // `guard test` on a document that PASSed under `validate`. `.inf` was worse than
+                // inert: `A > 9223372036854775807` passed under `test` where the same document
+                // refused under `validate`.
+                //
+                // These are the two entry points rule authors prove their rules with -- the
+                // `test` subcommand and the public `run_checks` -- so the divergence ran in the
+                // worst direction available.
+                if float.is_finite() {
+                    Ok(Value::Float(float))
                 } else {
-                    let float = num.as_f64().unwrap();
-
-                    // The finiteness gate the libyaml loader has and this conversion did not.
-                    // `PathAwareValue` asserts `Eq` and hashes its own contents, and `Float(NaN)` is
-                    // not equal to itself, so admitting one made `A == A` report FAIL under
-                    // `guard test` on a document that PASSed under `validate`. `.inf` was worse than
-                    // inert: `A > 9223372036854775807` passed under `test` where the same document
-                    // refused under `validate`.
-                    //
-                    // These are the two entry points rule authors prove their rules with -- the
-                    // `test` subcommand and the public `run_checks` -- so the divergence ran in the
-                    // worst direction available.
-                    if float.is_finite() {
-                        Ok(Value::Float(float))
-                    } else {
-                        Ok(Value::String(non_finite_spelling(float)))
-                    }
+                    Ok(Value::String(non_finite_spelling(float)))
                 }
             }
-            serde_yaml::Value::Bool(b) => Ok(Value::Bool(*b)),
-            serde_yaml::Value::Sequence(sequence) => Ok(Value::List(sequence.iter().try_fold(
-                vec![],
-                |mut res, val| -> Result<Vec<Self>, Self::Error> {
-                    res.push(Value::try_from(val)?);
-                    Ok(res)
-                },
-            )?)),
-            serde_yaml::Value::Mapping(mapping) => {
-                let mut res = IndexMap::with_capacity(mapping.len());
-                let mut merges: Vec<&serde_yaml::Value> = vec![];
-
-                for (key, val) in mapping {
-                    // Held back until every explicit key is in, for the precedence reason recorded on
-                    // `libyaml::loader::apply_merges`. `serde_yaml` refuses a duplicate key, so this
-                    // can only ever collect one -- but it is collected rather than applied in place so
-                    // the ordering guarantee does not depend on that.
-                    if matches!(key, serde_yaml::Value::String(name) if name == MERGE_KEY) {
-                        merges.push(val);
-                        continue;
-                    }
-
-                    res.insert(scalar_key_name(key)?, Value::try_from(val)?);
-                }
-
-                merge_into(&mut res, merges)?;
-
-                Ok(Value::Map(res))
-            }
-            serde_yaml::Value::Tagged(tag) => {
-                let prefix = tag.tag.to_string();
-                let value = tag.value.clone();
-
-                match prefix.matches('!').count() {
-                    1 => {
-                        let stripped_prefix = prefix.strip_prefix('!').unwrap();
-                        Ok(handle_tagged_value(value, stripped_prefix)?)
-                    }
-                    _ => Ok(Value::try_from(value)?),
-                }
-            }
-            serde_yaml::Value::Null => Ok(Value::Null),
         }
+        serde_yaml::Value::Bool(b) => Ok(Value::Bool(*b)),
+        serde_yaml::Value::Sequence(sequence) => Ok(Value::List(sequence.iter().try_fold(
+            vec![],
+            |mut res, val| -> crate::rules::Result<Vec<Value>> {
+                res.push(convert_yaml(val, merge_key)?);
+                Ok(res)
+            },
+        )?)),
+        serde_yaml::Value::Mapping(mapping) => {
+            let mut res = IndexMap::with_capacity(mapping.len());
+            let mut merges: Vec<&serde_yaml::Value> = vec![];
+
+            for (key, val) in mapping {
+                // Held back until every explicit key is in, for the precedence reason recorded on
+                // `libyaml::loader::apply_merges`. `serde_yaml` refuses a duplicate key, so this
+                // can only ever collect one -- but it is collected rather than applied in place so
+                // the ordering guarantee does not depend on that.
+                //
+                // Under `MergeKey::Literal` the branch is not taken at all, so `<<` falls through to
+                // `scalar_key_name` and becomes an ordinary key of that name.
+                if matches!(merge_key, MergeKey::Resolve)
+                    && matches!(key, serde_yaml::Value::String(name) if name == MERGE_KEY)
+                {
+                    merges.push(val);
+                    continue;
+                }
+
+                res.insert(scalar_key_name(key)?, convert_yaml(val, merge_key)?);
+            }
+
+            merge_into(&mut res, merges)?;
+
+            Ok(Value::Map(res))
+        }
+        serde_yaml::Value::Tagged(tag) => {
+            let prefix = tag.tag.to_string();
+            let value = tag.value.clone();
+
+            match prefix.matches('!').count() {
+                1 => {
+                    let stripped_prefix = prefix.strip_prefix('!').unwrap();
+                    Ok(handle_tagged_value(value, stripped_prefix, merge_key)?)
+                }
+                _ => Ok(convert_yaml(&value, merge_key)?),
+            }
+        }
+        serde_yaml::Value::Null => Ok(Value::Null),
     }
 }
 
@@ -593,17 +636,29 @@ fn number_key_name(num: &serde_yaml::Number) -> String {
 /// -- a silent wrong SKIP. A quoted `"<<"` is a key someone wrote to mean the literal characters, and
 /// neither corpus contains one.
 ///
-/// The third option, and why it is not taken: resolve the plain `<<` only where the style is known, and
-/// leave the quoted key alone. That is what keeps the two loaders agreeing, and it cannot be done from
-/// here. `serde_yaml::Value` keeps no scalar style -- `<<` and `"<<"` are both `Value::String("<<")` by
-/// the time any of this runs -- so the distinction has to be made where the text is still text. The two
-/// entry points that reach this conversion are `commands::helper::validate_and_return_json`, which does
-/// have the bytes and could load them through `libyaml::loader` instead, and `TestSpec::input`, which
-/// does not: it arrives as a `serde_yaml::Value` nested inside a `Vec<TestSpec>` deserialization, and
-/// recovering the style would need either a `Deserialize` impl that carries it or a re-serialize and
-/// re-parse, which would decide the quoting itself. So the divergence is closed by replacing the loader
-/// at the entry points, not by a test here, and it is recorded with the pin's other cases in
-/// `values_tests` until then.
+/// The third option: resolve the plain `<<` only where the style is known, and leave the quoted key
+/// alone. That is what keeps the two loaders agreeing, and it cannot be decided from here.
+/// `serde_yaml::Value` keeps no scalar style -- `<<` and `"<<"` are both `Value::String("<<")` by the
+/// time any of this runs -- so the distinction has to be made where the text is still text. Three entry
+/// points reach this conversion, and they divide by whether the format leaves any style to recover:
+///
+///   - `functions::strings::json_parse`, which parses **JSON**. It no longer reaches this function at
+///     all: it converts through `Value::try_from_json`, which reads `<<` as an ordinary member name.
+///     No style needs recovering there, because JSON has none to lose -- every JSON member name is
+///     quoted, so a `<<` in JSON is always the literal key and never YAML's merge key. Until that was
+///     split out, `json_parse` on the valid JSON `{"<<": {"hoisted": "yes"}, "b": "kept"}` dropped the
+///     `"<<"` member and hoisted its contents, so `%p["<<"] exists` FAILed while `%p.hoisted == "yes"`
+///     PASSed -- a member every other JSON reader in a pipeline keeps.
+///   - `commands::helper::validate_and_return_json`, which does have the bytes and could load them
+///     through `libyaml::loader` instead.
+///   - `TestSpec::input`, which does not have them: it arrives as a `serde_yaml::Value` nested inside a
+///     `Vec<TestSpec>` deserialization, and recovering the style would need either a `Deserialize` impl
+///     that carries it or a re-serialize and re-parse, which would decide the quoting itself.
+///
+/// So for the two YAML entry points the divergence is still closed by replacing the loader there, not by
+/// a test here, and the quoted `"<<"` stays merged on this side meanwhile -- recorded with the pin's
+/// other cases in `values_tests`. What changed is that the set of callers paying that trade is now only
+/// the ones reading YAML, where a plain-versus-quoted distinction genuinely exists.
 fn merge_into(
     map: &mut IndexMap<String, Value>,
     merges: Vec<&serde_yaml::Value>,
@@ -676,8 +731,12 @@ fn non_finite_spelling(float: f64) -> String {
 /// `GetAtt` also gets its dotted payload split, for the reason given on `libyaml::loader::getatt_payload`:
 /// AWS documents `!GetAtt Resource.Attr` as the short form of the two-element list, and JSON has no
 /// other shape for it, so leaving the dotted form a string gives one reference two incomparable shapes.
-fn handle_tagged_value(val: serde_yaml::Value, fn_ref: &str) -> crate::rules::Result<Value> {
-    let payload = Value::try_from(val)?;
+fn handle_tagged_value(
+    val: serde_yaml::Value,
+    fn_ref: &str,
+    merge_key: MergeKey,
+) -> crate::rules::Result<Value> {
+    let payload = convert_yaml(&val, merge_key)?;
     let payload = match (fn_ref, &payload) {
         ("GetAtt", Value::String(reference)) => match reference.split_once('.') {
             Some((resource, attribute)) => Value::List(vec![

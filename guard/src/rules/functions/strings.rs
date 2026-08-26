@@ -65,11 +65,22 @@ pub(crate) fn json_parse(
                             "failed to parse the string at {path} as JSON: {e}"
                         ))
                     })?;
-                    let parsed = PathAwareValue::try_from((&value, path.clone())).map_err(|e| {
-                        crate::Error::IncompatibleError(format!(
-                            "failed to convert the parsed string at {path}: {e}"
-                        ))
-                    })?;
+                    // `Value::try_from_json`, not the plain `TryFrom<&serde_yaml::Value>`, because the
+                    // string is JSON and JSON has no merge keys. The plain conversion resolves `<<` as
+                    // YAML's merge key, so `{"<<": {"hoisted": "yes"}, "b": "kept"}` -- valid JSON, and
+                    // an ordinary object to every other reader in a pipeline -- lost the `"<<"` member
+                    // and hoisted its contents: `%p["<<"] exists` FAILed while `%p.hoisted == "yes"`
+                    // PASSed. The argument for reading it literally is on `values::merge_into`.
+                    //
+                    // The parser stays `serde_yaml`, so nothing about the accepted input changes. See
+                    // `Value::try_from_json` for why `serde_json` is not used instead.
+                    let parsed = crate::rules::values::Value::try_from_json(&value)
+                        .and_then(|converted| PathAwareValue::try_from((&converted, path.clone())))
+                        .map_err(|e| {
+                            crate::Error::IncompatibleError(format!(
+                                "failed to convert the parsed string at {path}: {e}"
+                            ))
+                        })?;
                     aggr.push(Some(parsed));
                 } else {
                     aggr.push(None);

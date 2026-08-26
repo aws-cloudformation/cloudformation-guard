@@ -252,3 +252,173 @@ fn substring_counts_characters_and_does_not_panic() -> crate::rules::Result<()> 
 
     Ok(())
 }
+
+/// Runs `json_parse` over a single property whose value is `embedded`.
+///
+/// The outer document is built as a `serde_yaml::Value` rather than as text so the embedded string
+/// needs no YAML quoting -- these cases are about characters (`<<`, quotes, `#`) that a quoting pass
+/// would be the thing under test.
+fn json_parse_embedded(embedded: &str) -> crate::rules::Result<Vec<Option<PathAwareValue>>> {
+    let mut root = serde_yaml::Mapping::new();
+    root.insert(
+        serde_yaml::Value::String("Doc".to_string()),
+        serde_yaml::Value::String(embedded.to_string()),
+    );
+    let value = PathAwareValue::try_from(serde_yaml::Value::Mapping(root))?;
+
+    let mut eval = BasicQueryTesting {
+        root: Rc::new(value),
+        recorder: None,
+    };
+    let results = eval.query(&AccessQuery::try_from("Doc")?.query)?;
+
+    json_parse(&results)
+}
+
+/// The one answer of a `json_parse` over a single property, as a map.
+fn sole_map(parsed: &[Option<PathAwareValue>]) -> &crate::rules::path_value::MapValue {
+    assert_eq!(parsed.len(), 1, "one input, one answer");
+    match parsed[0].as_ref().expect("a string input parses") {
+        PathAwareValue::Map((_, map)) => map,
+        other => panic!("expected a map, got {:?}", other),
+    }
+}
+
+/// `json_parse` keeps a member literally named `<<`.
+///
+/// JSON has no merge keys. Reading the string with `serde_yaml` and converting it through the
+/// merge-resolving `TryFrom<&serde_yaml::Value>` applied YAML's rule anyway, so the valid JSON
+/// `{"<<": {"hoisted": "yes"}, "b": "kept"}` lost the `"<<"` member and gained `hoisted` at the top
+/// level: `%p["<<"] exists` FAILed at exit 19 while `%p.hoisted == "yes"` PASSed at 0, against a
+/// document every other JSON reader in a pipeline hands over intact.
+///
+/// The sibling `"b"` is asserted because the failure mode is a hoist and not a drop -- a conversion that
+/// merely lost the whole mapping would also satisfy an assertion about `<<` alone.
+#[test]
+fn json_parse_keeps_a_member_named_as_the_merge_key() -> crate::rules::Result<()> {
+    let parsed = json_parse_embedded(r#"{"<<": {"hoisted": "yes"}, "b": "kept"}"#)?;
+    let map = sole_map(&parsed);
+
+    assert!(
+        map.values.contains_key("<<"),
+        "the `<<` member is gone; keys are {:?}",
+        map.values.keys().collect::<Vec<_>>()
+    );
+    assert!(
+        !map.values.contains_key("hoisted"),
+        "the `<<` value's contents were hoisted to the top level; keys are {:?}",
+        map.values.keys().collect::<Vec<_>>()
+    );
+    assert!(map.values.contains_key("b"), "the sibling member is kept");
+    assert_eq!(map.values.len(), 2, "exactly the two members written");
+
+    Ok(())
+}
+
+/// The literal reading reaches a `<<` at any depth, not just the document's root.
+///
+/// `MergeKey` is threaded through every recursive arm of the conversion for this: a nested `<<` would
+/// otherwise still be resolved, and nesting is where an embedded IAM policy actually puts its objects.
+#[test]
+fn json_parse_keeps_a_nested_member_named_as_the_merge_key() -> crate::rules::Result<()> {
+    let parsed = json_parse_embedded(r#"{"outer": [{"<<": {"hoisted": "yes"}, "b": "kept"}]}"#)?;
+    let map = sole_map(&parsed);
+
+    let inner = match map.values.get("outer").expect("outer is present") {
+        PathAwareValue::List((_, items)) => match &items[0] {
+            PathAwareValue::Map((_, map)) => map,
+            other => panic!("expected a map inside the list, got {:?}", other),
+        },
+        other => panic!("expected a list, got {:?}", other),
+    };
+
+    assert!(
+        inner.values.contains_key("<<"),
+        "the nested `<<` member is gone; keys are {:?}",
+        inner.values.keys().collect::<Vec<_>>()
+    );
+    assert!(
+        !inner.values.contains_key("hoisted"),
+        "the nested `<<` value's contents were hoisted; keys are {:?}",
+        inner.values.keys().collect::<Vec<_>>()
+    );
+
+    Ok(())
+}
+
+/// `json_parse` still refuses a duplicate member name.
+///
+/// This is the first of three pins on the parser staying `serde_yaml`. Parsing with `serde_json`
+/// instead would be the obvious way to drop merge-key semantics, and it accepts a duplicate name --
+/// last one wins, measured `{"a": 1, "a": 2}` -> `{"a": 2}`. The refusal is what
+/// `guard/resources/validate/functions/data/embedded_json_the_parser_rejects.yaml` exists to pin, and it
+/// is reported as a policy failure rather than a broken tool, so making the string readable would
+/// silently change what that fixture measures.
+#[test]
+fn json_parse_refuses_a_duplicate_member_name() {
+    let err =
+        json_parse_embedded(r#"{"a": 1, "a": 2}"#).expect_err("a duplicate member name is refused");
+
+    let message = err.to_string();
+    assert!(
+        message.contains("failed to parse the string at"),
+        "the refusal should name the property, got {}",
+        message
+    );
+    assert!(
+        message.contains("duplicate entry"),
+        "the refusal should say what was wrong, got {}",
+        message
+    );
+}
+
+/// `json_parse` still reads an integer above `i64::MAX` as its digits, not as a negative.
+///
+/// The second pin on the parser. `serde_json` routes to `TryFrom<&serde_json::Value>`, whose `is_u64`
+/// arm is still `num.as_u64().unwrap() as i64` -- the bit-pattern reinterpretation that reads
+/// `18446744073709551615` as exactly `-1`, inverting every numeric guard at exit 0. That is the sign
+/// flip the `serde_yaml` arm in `values.rs` was fixed for, and the literal is valid JSON, so the swap
+/// would reintroduce it here.
+#[test]
+fn json_parse_reads_an_integer_wider_than_i64_as_digits() -> crate::rules::Result<()> {
+    let parsed = json_parse_embedded(r#"{"v": 18446744073709551615}"#)?;
+    let map = sole_map(&parsed);
+
+    match map.values.get("v").expect("v is present") {
+        PathAwareValue::String((_, digits)) => assert_eq!("18446744073709551615", digits),
+        other => panic!(
+            "an integer above i64::MAX should keep its digits, got {:?}",
+            other
+        ),
+    }
+
+    Ok(())
+}
+
+/// `json_parse` still accepts the YAML-only spellings it accepted before.
+///
+/// The third pin on the parser, and the reason the fix changes the conversion rather than the parser.
+/// `serde_yaml` accepts a superset of JSON, so every shape here reaches `json_parse` successfully
+/// today; `serde_json` refuses all of them (measured: unquoted key, single quotes and a trailing
+/// comment each give "key must be a string" or "trailing characters"). Narrowing the accepted input is
+/// a behavior change no caller asked for, and it would land on templates that work now.
+#[rstest::rstest]
+#[case::unquoted_key("{a: 1}")]
+#[case::single_quoted_key("{'a': 1}")]
+#[case::trailing_comment(r#"{"a": 1} # a comment"#)]
+#[case::trailing_comma(r#"{"a": 1,}"#)]
+#[case::block_mapping("a: 1")]
+fn json_parse_accepts_the_yaml_spellings_it_accepted_before(
+    #[case] embedded: &str,
+) -> crate::rules::Result<()> {
+    let parsed = json_parse_embedded(embedded)?;
+    let map = sole_map(&parsed);
+
+    assert!(
+        map.values.contains_key("a"),
+        "{embedded} should still parse to a map with `a`; keys are {:?}",
+        map.values.keys().collect::<Vec<_>>()
+    );
+
+    Ok(())
+}
