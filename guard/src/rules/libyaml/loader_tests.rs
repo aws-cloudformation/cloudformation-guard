@@ -293,7 +293,16 @@ b: *numbers
 
     let mut loader = Loader::new();
     let value = loader.load(String::from(docs));
-    assert!(value.is_err());
+
+    // The variant and the wording, not just `is_err`. `is_err` alone was satisfied by any failure,
+    // including the one this used to produce: a `ParseError`, which `build_data_file` replaced with
+    // the file's first hundred bytes, so the only message that says what to change never reached
+    // anyone. `UnsupportedDocument` is what survives that substitution.
+    assert!(
+        matches!(&value, Err(Error::UnsupportedDocument(m)) if m.contains("aliases")),
+        "an aliased document gave {:?}, not an alias diagnostic that reaches the reader",
+        value
+    );
 
     Ok(())
 }
@@ -1108,5 +1117,82 @@ fn a_non_string_key_is_refused_with_the_key_named(#[case] content: &str, #[case]
         "the refusal for {:?} was {:?}, which does not say what to do about it",
         content,
         message
+    );
+}
+
+/// A `<<` key is YAML's merge key, and its value's keys belong to the mapping that carries it.
+///
+/// Nothing resolved it, so `<<` became an ordinary key of that name and everything under it was
+/// hidden. On the shape essentially every real rule uses that was a silent wrong SKIP: a template
+/// whose `Type` arrived through a merge was invisible to `Resources[ Type == "AWS::S3::Bucket" ]`, so
+/// the filter selected nothing, the rule was skipped, and a wide-open bucket exited 0 unchecked.
+///
+/// Each case is a precedence rule from <https://yaml.org/type/merge.html>. The last is not in the
+/// spec -- it does not define two merge keys in one mapping -- and earlier-wins is the same rule the
+/// sequence case follows.
+#[rstest::rstest]
+#[case::a_merged_key_is_reachable("<<: { a: merged }", "a", "merged")]
+#[case::an_explicit_key_wins("<<: { a: merged }\n  a: explicit", "a", "explicit")]
+#[case::an_explicit_key_wins_when_written_first(
+    "a: explicit\n  <<: { a: merged }",
+    "a",
+    "explicit"
+)]
+#[case::a_sequence_merges_each("<<: [{ a: first }, { b: second }]", "b", "second")]
+#[case::an_earlier_sequence_entry_wins("<<: [{ a: first }, { a: second }]", "a", "first")]
+#[case::an_earlier_merge_key_wins("<<: { a: first }\n  <<: { a: second }", "a", "first")]
+fn a_merge_key_folds_its_value_into_the_mapping(
+    #[case] body: &str,
+    #[case] key: &str,
+    #[case] expected: &str,
+) -> Result<()> {
+    let value = Loader::new().load(format!("outer:\n  {body}\n"))?;
+
+    let outer = match &value {
+        MarkedValue::Map(m, ..) => match m.first().expect("outer is present").1 {
+            MarkedValue::Map(inner, ..) => inner,
+            other => panic!("outer held {:?}", other),
+        },
+        other => unreachable!("a mapping loads as a map, got {:?}", other),
+    };
+
+    assert!(
+        !outer.keys().any(|(name, _)| name == "<<"),
+        "the merge key survived as a literal key in {:?}",
+        outer
+    );
+
+    let found = outer
+        .iter()
+        .find(|((name, _), _)| name == key)
+        .map(|(_, v)| v);
+
+    assert!(
+        matches!(found, Some(MarkedValue::String(s, ..)) if s == expected),
+        "{:?} gave {} = {:?}, not {:?}",
+        body,
+        key,
+        found,
+        expected
+    );
+
+    Ok(())
+}
+
+/// A merge key whose value cannot be merged is refused rather than folded into nothing. The spec
+/// requires a mapping or a sequence of mappings, and there is no sensible reading of anything else.
+#[rstest::rstest]
+#[case::a_scalar("outer:\n  <<: 5\n")]
+#[case::a_string("outer:\n  <<: hello\n")]
+#[case::a_sequence_of_scalars("outer:\n  <<: [1, 2]\n")]
+#[case::a_sequence_holding_a_sequence("outer:\n  <<: [[a]]\n")]
+fn a_merge_key_given_something_unmergeable_is_refused(#[case] content: &str) {
+    let loaded = Loader::new().load(content.to_string());
+
+    assert!(
+        matches!(loaded, Err(Error::UnsupportedDocument(ref m)) if m.contains("merge key")),
+        "{:?} gave {:?}, not the merge-value error",
+        content,
+        loaded
     );
 }

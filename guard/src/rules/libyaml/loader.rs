@@ -1,4 +1,5 @@
 use std::borrow::Cow;
+use std::collections::HashSet;
 
 use crate::rules::{
     self,
@@ -14,6 +15,10 @@ use crate::rules::{
 };
 
 const TYPE_REF_PREFIX: &str = "tag:yaml.org,2002:";
+
+/// YAML's merge key. Its value's keys belong to the mapping that carries it, rather than to a key of
+/// this name. See `apply_merges`.
+const MERGE_KEY: &str = "<<";
 
 /// How many mappings and sequences may be nested inside one another.
 ///
@@ -118,9 +123,20 @@ impl Loader {
                     }
                     Event::SequenceEnd => self.handle_sequence_end(),
                     Event::Scalar(scalar) => self.handle_scalar_event(scalar, location),
+                    // `UnsupportedDocument` rather than `ParseError` so the message survives:
+                    // `build_data_file` replaces a `ParseError` with the file's first hundred bytes,
+                    // which meant the one diagnostic that says what to change was thrown away and an
+                    // alias file reported only "Error encountered while parsing data file".
+                    //
+                    // The merge key gets a mention because `<<: *base` is how a merge is usually
+                    // written, so a template using one arrives here rather than at `apply_merges`,
+                    // and "does not support aliases" alone does not connect the two.
                     Event::Alias(_) => {
-                        return Err(Error::ParseError(String::from(
-                            "Guard does not currently support aliases",
+                        return Err(Error::UnsupportedDocument(format!(
+                            "cfn-guard does not support YAML aliases, and this file uses one at \
+                             {location}. Write the value out where it is used. A merge key written \
+                             `{MERGE_KEY}: *anchor` is an alias too; the inline form \
+                             `{MERGE_KEY}: {{ ... }}` is supported."
                         )))
                     }
                 };
@@ -255,6 +271,7 @@ impl Loader {
     fn handle_mapping_end(&mut self) -> crate::rules::Result<()> {
         let map_index = self.last_container_index.pop().unwrap();
         let mut key_values: Vec<MarkedValue> = self.stack.drain(map_index + 1..).collect();
+        let mut merges: Vec<MarkedValue> = vec![];
         let map = match self.stack.last_mut().unwrap() {
             MarkedValue::Map(map, _) => map,
             _ => unreachable!(),
@@ -273,10 +290,17 @@ impl Loader {
                 }
             };
 
+            // Held back rather than inserted. The keys it brings must not override the ones this
+            // mapping writes for itself, so they can only be added once every explicit key is in.
+            if key_str.0 == MERGE_KEY {
+                merges.push(value);
+                continue;
+            }
+
             map.insert(key_str, value);
         }
 
-        Ok(())
+        apply_merges(map, merges)
     }
 
     fn handle_mapping_start(&mut self, location: Location) {
@@ -284,6 +308,77 @@ impl Loader {
             .push(MarkedValue::Map(indexmap::IndexMap::new(), location));
         self.last_container_index.push(self.stack.len() - 1);
     }
+}
+
+/// Folds each `<<` value into the mapping that wrote it.
+///
+/// `<<` is YAML's merge key (<https://yaml.org/type/merge.html>): its value is a mapping, or a
+/// sequence of mappings, whose keys belong to the mapping that carries it. Nothing here resolved it,
+/// so `<<` became an ordinary key named `<<` and everything under it was hidden. libyaml is a parser
+/// rather than a composer, so nothing upstream resolves it either.
+///
+/// The consequence was a silent wrong SKIP on the shape essentially every real rule uses. A template
+/// whose `Type` arrives through a merge was invisible to `Resources[ Type == "AWS::S3::Bucket" ]`, so
+/// the filter selected nothing, the rule was skipped, and a wide-open bucket exited 0 unchecked.
+/// Writing the same `Type` inline made the same file exit 19 and FAIL.
+///
+/// Precedence follows the spec: a key the mapping writes for itself always wins over a merged one,
+/// which is why this runs after every explicit key is in, and within a sequence of mappings an earlier
+/// entry wins over a later one, which is what iterating in order and skipping names already present
+/// gives. Two `<<` keys in one mapping are not something the spec defines; earlier wins, for the same
+/// reason.
+///
+/// The merged keys are appended after the explicit ones. The spec does not say where they go, and the
+/// position only affects the order `PathAwareValue`'s `keys` are iterated in -- so which resource a
+/// report names first, not which verdict it reaches.
+///
+/// Only the inline spellings are reachable. `<<: *base`, which is how a merge key is usually written,
+/// contains an alias, and `Loader::load` refuses every alias before this runs. That refusal is loud
+/// and stays; this closes the spelling that was quietly misread.
+fn apply_merges(
+    map: &mut indexmap::IndexMap<(String, Location), MarkedValue>,
+    merges: Vec<MarkedValue>,
+) -> rules::Result<()> {
+    if merges.is_empty() {
+        return Ok(());
+    }
+
+    // By name, because the map is keyed on `(name, location)` and a merged key has a different
+    // location than the explicit key it must not displace.
+    let mut present: HashSet<String> = map.keys().map(|(name, _)| name.clone()).collect();
+
+    for source in merges {
+        let location = *source.location();
+        let sources = match source {
+            MarkedValue::Map(entries, ..) => vec![entries],
+            MarkedValue::List(entries, ..) => entries
+                .into_iter()
+                .map(|entry| match entry {
+                    MarkedValue::Map(entries, ..) => Ok(entries),
+                    other => Err(merge_value_error(other.location())),
+                })
+                .collect::<rules::Result<Vec<_>>>()?,
+            _ => return Err(merge_value_error(&location)),
+        };
+
+        for entries in sources {
+            for (key, value) in entries {
+                if present.insert(key.0.clone()) {
+                    map.insert(key, value);
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn merge_value_error(location: &Location) -> Error {
+    Error::UnsupportedDocument(format!(
+        "the merge key `{MERGE_KEY}` at {location} must be given a mapping, or a sequence of \
+         mappings, because its value's keys become keys of the mapping that carries it \
+         (https://yaml.org/type/merge.html)"
+    ))
 }
 
 /// Names the type of a key that is not a string, and its value where it has a short one.
