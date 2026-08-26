@@ -123,17 +123,19 @@ impl<'a> std::fmt::Display for ParserError<'a> {
 /// nested `when` blocks     when Type == "x" { when ... { } }      parses 2000, aborts 4000
 /// nested map literals      Type == {k: {k: ... } }                parses 2000, aborts 4000
 /// nested list literals     Type == [[[ ... ]]]                    parses 4000, aborts 8000
-/// nested query filters     A[ A[ ... ] exists ]                   parses  128, aborts 2000
-/// the same under a `let`   let q = A[ A[ ... ] exists ]           parses  128, aborts 2000
+/// nested query filters     A[ A[ ... ] exists ]                   parses 1105, aborts 1108
+/// the same under a `let`   let q = A[ A[ ... ] exists ]           parses 1105, aborts 1108
 /// nested key filters       Tags[ keys == a[ keys == a ] ]         parses  129, aborts 2000
 /// a call in an assignment  let x = f(f( ... ))                    parses 2000, aborts 3000
 /// a call as an argument    b(f(f( ... )))                         parses 2000, aborts 3000
 /// a call as a right side   Type == f(f( ... ))                    parses 2000, aborts 3000
 /// ```
 ///
-/// (Rows past the first are coarse ladders -- 2000/4000/8000 -- and the exact threshold does not matter
-/// for a bound an order of magnitude or more below it. The two filter rows parse at 128 in the sense that
-/// they do not abort there; see the note on their running time below.) The ten spellings share no single
+/// (Some rows are coarse ladders -- 2000/4000/8000 -- and the exact threshold does not matter for a bound
+/// an order of magnitude or more below it. The two filter rows are bisected rather than laddered, because
+/// their threshold is the nearest of all ten to 128 and because "parses" means something weaker there:
+/// 1105 does not abort, but it does not finish either. See the note on their running time below.) The ten
+/// spellings share no single
 /// function, which is why the count is kept per open construct in a thread-local rather than passed down
 /// as a parameter. Six functions open a level, one per construct that can contain another:
 ///
@@ -159,13 +161,13 @@ impl<'a> std::fmt::Display for ParserError<'a> {
 /// 7.66, 15.46, 30.67 at level 21. An earlier version of this comment argued from that time cost that a
 /// filter "never gets deep enough to abort because it becomes unusable first", and left it unbounded.
 /// That is false, and the measurement that refutes it is that wall time is not monotonic in the depth:
-/// on the pre-bound binary, depth 200 ran past a 15-second timeout at exit 124 while depth 2000 aborted
-/// with a stack overflow in 3.15 seconds. Two mechanisms are in play, and the recursive descent is the
-/// faster of them -- it exhausts the stack before the backtracking that makes moderate depths slow ever
-/// begins. So the depth bound does fire on this path, and it fires during the descent: the refusal is a
-/// `Failure`, which nom propagates out of `alt`, `opt` and `fold_many1` without retrying, so a 2000-deep
-/// filter is refused in milliseconds rather than backtracked. The bound does not make a 30-level filter
-/// any faster, and it is not a substitute for fixing the backtracking.
+/// on the pre-bound binary, depth 1105 ran past a 40-second timeout while depth 1108 aborted with a stack
+/// overflow in 2.85 seconds. Two mechanisms are in play, and the recursive descent is the faster of them
+/// -- it exhausts the stack before the backtracking that makes moderate depths slow ever begins. So the
+/// depth bound does fire on this path, and it fires during the descent: the refusal is a `Failure`, which
+/// nom propagates out of `alt`, `opt` and `fold_many1` without retrying, so a 2000-deep filter is refused
+/// in 0.01 seconds rather than backtracked. The bound does not make a 30-level filter any faster, and it
+/// is not a substitute for fixing the backtracking.
 /// The deepest `[` nesting in either corpus is 3.
 ///
 /// 128 is the value the data loader already enforces on the other kind of input this tool reads
@@ -173,9 +175,15 @@ impl<'a> std::fmt::Display for ParserError<'a> {
 /// input nest" to differ. It is far above anything real: over both corpora -- every `.guard` and
 /// `.ruleset` in this repository and in the rules registry snapshot, 318 files -- the deepest is **6**
 /// levels, reached by four files, and 172 of the 318 reach only 1. And it is below every abort above, the
-/// nearest of which is 2000. Nothing between 6 and 128 is a file anyone writes, and nothing between 128
-/// and 2000 was ever going to be evaluated anyway -- a 200-level filter does not finish, and a
-/// 200-level anything else is not a rule.
+/// nearest of which is 1108.
+///
+/// The argument for 128 is that no real file is near it, and deliberately not that files past it would
+/// have been unusable anyway. That second argument is what the deleted carve-out above rested on, and it
+/// is the kind that goes stale when someone fixes the other defect: the backtracking is being fixed on a
+/// branch beside this one, and on that branch a 1000-level filter parses in 1.97 seconds where it did not
+/// finish in 40 here. So a depth this bound refuses is not necessarily a depth nothing could evaluate --
+/// it is a depth nothing anyone writes reaches, which is the claim the corpus supports and the one that
+/// stays true however fast the parser gets.
 const MAX_NESTING_DEPTH: usize = 128;
 
 thread_local! {
