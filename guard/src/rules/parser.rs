@@ -100,6 +100,109 @@ impl<'a> std::fmt::Display for ParserError<'a> {
     }
 }
 
+/// How many blocks, list literals and map literals a rules file may nest inside one another.
+///
+/// There has to be a bound, because the recursive descent recurses once per level and overflows the
+/// stack. Measured on this repository's release build, `parse-tree --rules` on a file of nested block
+/// clauses (`rule a { Resources { ... Type exists ... } }`): level 1601 parses, level 1602 aborts with
+/// SIGABRT and "fatal runtime error: stack overflow" on stderr -- reported as 134 by a shell, which is
+/// outside the set this tool documents (0 pass, 5 rules-file or data error, 19 validation failure), so
+/// a caller saw neither a pass nor a failure it could report. `validate` and `test` abort at the same
+/// depth on the same file. This is the same defect class, and the same argument, as the `let` cycle and
+/// rule-reference cycle checks: an authoring mistake that killed the process rather than being refused.
+///
+/// Nested blocks are not the only recursion that reaches it. Four spellings were measured to abort, at
+/// four different depths, so a bound on any one of them would have left the others fatal:
+///
+/// ```text
+/// nested block clauses    Resources { Resources { ... } }      parses 1601, aborts 1602
+/// nested `when` blocks    when Type == "x" { when ... { } }    parses 2000, aborts 4000
+/// nested map literals     Type == {k: {k: ... } }              parses 2000, aborts 4000
+/// nested list literals    Type == [[[ ... ]]]                  parses 4000, aborts 8000
+/// ```
+///
+/// (The last two are coarse: the ladder was 2000/4000/8000, and the exact threshold does not matter for
+/// a bound three orders of magnitude below it.) They share no single function, which is why the count is
+/// kept per open construct in a thread-local rather than passed down as a parameter: the level is opened
+/// in [`block`], which every `{ ... }` body reaches, and in [`parse_list`] and [`parse_map`], which no
+/// block passes through. Threading a depth argument instead would have changed the signature of every
+/// function on all four paths -- `clause`, `access`, `cnf_clauses`, `disjunction_clauses`, `parse_value`
+/// and everything between -- and of the `pub(crate)` ones the tests call directly, to carry one integer.
+///
+/// One recursion is deliberately *not* bounded here: a query filter (`q[ q[ ... ] ]`) recurses through
+/// `predicate_filter_clauses`, and it never gets deep enough to abort because it becomes unusable first.
+/// Timed on this build, level 14 takes 0.25 seconds and every further level doubles it -- 0.48, 0.97,
+/// 1.92, 3.85, 7.66, 15.46, 30.67 at level 21 -- with every one of them exiting 0. So it is exponential
+/// in the depth rather than linear, and level 128 would be 2^107 times thirty seconds. A bound at any
+/// value that admits real files could never fire on it, and one low enough to fire would not be a depth
+/// bound but a workaround for the backtracking. That is a separate defect and it needs a separate fix.
+/// The deepest `[` nesting in either corpus is 3.
+///
+/// 128 is the value the data loader already enforces on the other kind of input this tool reads
+/// (`libyaml::loader::MAX_NESTING_DEPTH`), and there is no reason for the two answers to "how deeply may
+/// input nest" to differ. It is far above anything real: over both corpora -- every `.guard` and
+/// `.ruleset` in this repository and in the rules registry snapshot, 318 files -- the deepest is **6**
+/// levels, reached by four files, and 172 of the 318 reach only 1. And it is far below every abort above,
+/// the nearest of which is 1602. Nothing between 6 and 128 is a file anyone writes, and nothing between
+/// 128 and 1602 was ever going to be evaluated anyway.
+const MAX_NESTING_DEPTH: usize = 128;
+
+thread_local! {
+    /// How many nesting constructs are open at this point in the parse, on this thread.
+    ///
+    /// Thread-local so the bound does not depend on which thread is parsing, and specifically not on
+    /// that thread's stack size: `cargo test` parses on libtest's threads rather than on `main`, and a
+    /// limit derived from the stack would then admit a different set of files under test than in the
+    /// binary. A fixed count admits the same files everywhere.
+    static NESTING_DEPTH: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// One nesting construct held open, closed when it goes out of scope.
+///
+/// The count is restored by `Drop` rather than by the parser, which is what makes it correct under
+/// `nom`'s backtracking: an `alt` arm that opens a block and then fails returns `Err` and unwinds the
+/// scope, dropping the guard, so a failed attempt leaves the count where it found it. Every increment
+/// creates exactly one guard, so there is no path that opens a level without a matching close, and no
+/// need to reset the count between files.
+struct NestingGuard;
+
+impl NestingGuard {
+    /// Opens one level, or refuses the file if that would pass [`MAX_NESTING_DEPTH`].
+    ///
+    /// A `Failure` rather than an `Error`, so it escapes the `alt`s and `opt`s it sits inside instead of
+    /// being retried as a different construct: the file is too deep whichever reading is attempted, and
+    /// a recoverable error here would surface as whatever the last alternative had to say about the
+    /// position. The two other checks in [`block`] that reject a file outright do the same.
+    fn enter<'a>(
+        input: Span<'a>,
+        construct: &str,
+    ) -> Result<NestingGuard, nom::Err<ParserError<'a>>> {
+        let level = NESTING_DEPTH.with(|open| open.get()) + 1;
+        if level > MAX_NESTING_DEPTH {
+            return Err(nom::Err::Failure(ParserError {
+                span: input,
+                kind: ErrorKind::TooLarge,
+                context: format!(
+                    "cfn-guard reads rules files nested at most {MAX_NESTING_DEPTH} levels deep, and \
+                     this file goes deeper: the {construct} opened at line {} column {} is at level \
+                     {level}. The deepest rules file in AWS's own rules registry is 6 levels.",
+                    input.location_line(),
+                    input.get_utf8_column(),
+                ),
+            }));
+        }
+
+        NESTING_DEPTH.with(|open| open.set(level));
+        Ok(NestingGuard)
+    }
+}
+
+impl Drop for NestingGuard {
+    fn drop(&mut self) {
+        NESTING_DEPTH.with(|open| open.set(open.get() - 1));
+    }
+}
+
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 //                                                                                                //
 //                                                                                                //
@@ -736,14 +839,11 @@ fn parse_scalar_value(input: Span) -> IResult<Span, Value> {
 ///
 
 fn parse_list(input: Span) -> IResult<Span, Value> {
-    map(
-        delimited(
-            preceded_by('['),
-            separated_list0(separated_by(','), parse_value),
-            followed_by(']'),
-        ),
-        Value::List,
-    )(input)
+    let (input, _open) = preceded_by('[')(input)?;
+    let _nesting = NestingGuard::enter(input, "list")?;
+    let (input, values) = separated_list0(separated_by(','), parse_value)(input)?;
+    let (input, _close) = followed_by(']')(input)?;
+    Ok((input, Value::List(values)))
 }
 
 fn key_part(input: Span) -> IResult<Span, String> {
@@ -771,14 +871,13 @@ fn key_value(input: Span) -> IResult<Span, (String, Value)> {
 }
 
 fn parse_map(input: Span) -> IResult<Span, Value> {
-    let result = delimited(
-        char('{'),
-        separated_list0(separated_by(','), key_value),
-        followed_by('}'),
-    )(input)?;
+    let (input, _open) = char('{')(input)?;
+    let _nesting = NestingGuard::enter(input, "map")?;
+    let (input, pairs) = separated_list0(separated_by(','), key_value)(input)?;
+    let (input, _close) = followed_by('}')(input)?;
     Ok((
-        result.0,
-        Value::Map(result.1.into_iter().collect::<IndexMap<String, Value>>()),
+        input,
+        Value::Map(pairs.into_iter().collect::<IndexMap<String, Value>>()),
     ))
 }
 
@@ -2353,6 +2452,11 @@ where
 {
     move |input: Span| {
         let (input, _start_block) = preceded(zero_or_more_ws_or_comment, char('{'))(input)?;
+
+        // Held for the rest of this function, which is the whole of the block's body, so the level is
+        // open for exactly as long as the block is. `_nesting` rather than `_`, which would drop it
+        // here and count nothing.
+        let _nesting = NestingGuard::enter(input, "block")?;
 
         let mut conjunctions: Conjunctions<T> = Conjunctions::new();
         let (input, results) = fold_many1(

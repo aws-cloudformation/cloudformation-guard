@@ -6995,3 +6995,170 @@ fn a_name_both_assigned_and_captured_in_one_scope_is_rejected() -> Result<(), Er
     }
     Ok(())
 }
+
+/// A rules file nested deeper than the parser will read is refused, rather than taken as far as the
+/// stack allows.
+///
+/// The recursive descent recurses once per level and had no bound, so a deep enough file aborted the
+/// process: SIGABRT, "fatal runtime error: stack overflow" on stderr, reported as 134 by a shell and
+/// outside the exit codes this tool documents. Four spellings reached it at four different depths --
+/// nested block clauses at 1602, nested `when` blocks and nested map literals between 2000 and 4000,
+/// nested list literals between 4000 and 8000 -- and they share no single function, so each of the three
+/// places a level is opened is exercised here.
+///
+/// The boundary cases matter more than the extremes. An off-by-one either refuses a file one level
+/// inside the documented limit or admits one past it, and neither shows up in the deep cases.
+#[rstest::rstest]
+#[case::block_one_inside_the_limit("blocks", MAX_NESTING_DEPTH - 1, true)]
+#[case::block_exactly_the_limit("blocks", MAX_NESTING_DEPTH, true)]
+#[case::block_one_past_the_limit("blocks", MAX_NESTING_DEPTH + 1, false)]
+#[case::block_past_where_it_used_to_abort("blocks", 1700, false)]
+#[case::when_block_exactly_the_limit("when_blocks", MAX_NESTING_DEPTH, true)]
+#[case::when_block_one_past_the_limit("when_blocks", MAX_NESTING_DEPTH + 1, false)]
+#[case::when_block_past_where_it_used_to_abort("when_blocks", 4000, false)]
+#[case::list_exactly_the_limit("lists", MAX_NESTING_DEPTH, true)]
+#[case::list_one_past_the_limit("lists", MAX_NESTING_DEPTH + 1, false)]
+#[case::list_past_where_it_used_to_abort("lists", 8000, false)]
+#[case::map_exactly_the_limit("maps", MAX_NESTING_DEPTH, true)]
+#[case::map_one_past_the_limit("maps", MAX_NESTING_DEPTH + 1, false)]
+#[case::map_past_where_it_used_to_abort("maps", 4000, false)]
+fn a_rules_file_nested_past_the_limit_is_refused(
+    #[case] shape: &str,
+    #[case] depth: usize,
+    #[case] accepted: bool,
+) {
+    let rules = nested_rules_file(shape, depth);
+
+    let parsed = rules_file(from_str2(&rules));
+
+    if accepted {
+        assert!(
+            parsed.is_ok(),
+            "{shape} nested {depth} levels was refused, but the limit admits up to \
+             {MAX_NESTING_DEPTH}: {:?}",
+            parsed.err().map(|e| e.to_string())
+        );
+    } else {
+        let error = parsed
+            .expect_err("a file past the limit has to be refused")
+            .to_string();
+        assert!(
+            error.contains("nested at most"),
+            "{} nested {} levels was rejected for the wrong reason: {}",
+            shape,
+            depth,
+            error
+        );
+    }
+}
+
+/// The refusal says which limit was passed, where, and at what level, so an author can find the
+/// construct rather than bisecting the file. The position is the one the level was opened at.
+#[test]
+fn the_depth_refusal_names_the_limit_and_the_position() {
+    let rules = nested_rules_file("blocks", MAX_NESTING_DEPTH + 1);
+
+    let error = rules_file(from_str2(&rules))
+        .expect_err("a file one level past the limit is refused")
+        .to_string();
+
+    for expected in [
+        "nested at most 128 levels deep",
+        "is at level 129",
+        "the block opened at line",
+    ] {
+        assert!(
+            error.contains(expected),
+            "the diagnostic has to contain {:?}, got: {}",
+            expected,
+            error
+        );
+    }
+}
+
+/// The count of open constructs is restored when a parse fails, so a refused file does not leave the
+/// parser primed to refuse the next one.
+///
+/// The level is opened by an RAII guard and closed by its `Drop`, which is what makes this hold under
+/// `nom`'s backtracking as well: an `alt` arm that opens a block and then fails unwinds the scope. A
+/// leak would not show up in either half of this on its own -- it needs the legal parse, then the
+/// failure, then the same legal parse again.
+#[test]
+fn a_refused_file_does_not_leave_the_depth_count_raised() -> Result<(), Error> {
+    let at_the_limit = nested_rules_file("blocks", MAX_NESTING_DEPTH);
+
+    assert!(rules_file(from_str2(&at_the_limit))?.is_some());
+
+    for shape in ["blocks", "when_blocks", "lists", "maps"] {
+        assert!(
+            rules_file(from_str2(&nested_rules_file(shape, MAX_NESTING_DEPTH + 1))).is_err(),
+            "{} past the limit is refused",
+            shape
+        );
+    }
+
+    // A block opened inside an `alt` arm that then fails, so a guard is created and dropped on a
+    // backtracking path rather than on a returning one.
+    assert!(rules_file(from_str2("rule a {\n  Resources {\n    Type ==\n")).is_err());
+
+    assert!(
+        rules_file(from_str2(&at_the_limit))?.is_some(),
+        "the same file that parsed before the failures has to parse after them"
+    );
+
+    Ok(())
+}
+
+/// The control: the bound is on nesting, not on how much of the file is nested. Many shallow blocks are
+/// unaffected however many there are, which is what says the quantity being bounded is depth.
+#[test]
+fn a_wide_but_shallow_rules_file_is_not_affected_by_the_depth_bound() -> Result<(), Error> {
+    let mut rules = String::new();
+    for i in 0..500 {
+        rules.push_str(&format!(
+            "rule r{i} {{\n  Resources {{\n    Properties {{\n      Type exists\n    }}\n  }}\n}}\n"
+        ));
+    }
+
+    assert!(
+        rules_file(from_str2(&rules))?.is_some(),
+        "500 rules of 4 levels each is 2000 blocks and 4 levels, and 4 is inside the limit"
+    );
+
+    Ok(())
+}
+
+/// A rules file whose deepest construct sits at `depth` levels, in one of the spellings that recurses.
+///
+/// Built iteratively on purpose. The generator that produced these fixtures outside the test suite was
+/// recursive to begin with and hit Python's own recursion limit long before cfn-guard saw a file deep
+/// enough to matter, which is a way to measure the harness rather than the parser.
+///
+/// The rule body is itself the first level, so `depth` levels means `depth - 1` nested constructs
+/// inside it.
+fn nested_rules_file(shape: &str, depth: usize) -> String {
+    let inner = depth - 1;
+    match shape {
+        "blocks" => format!(
+            "rule a {{\n{}Type exists\n{}}}\n",
+            "Resources {\n".repeat(inner),
+            "}\n".repeat(inner)
+        ),
+        "when_blocks" => format!(
+            "rule a {{\n{}Type exists\n{}}}\n",
+            "when Type == \"x\" {\n".repeat(inner),
+            "}\n".repeat(inner)
+        ),
+        "lists" => format!(
+            "rule a {{\n  Type == {}1{}\n}}\n",
+            "[".repeat(inner),
+            "]".repeat(inner)
+        ),
+        "maps" => format!(
+            "rule a {{\n  Type == {}1{}\n}}\n",
+            "{k: ".repeat(inner),
+            "}".repeat(inner)
+        ),
+        other => unreachable!("no generator for {}", other),
+    }
+}
