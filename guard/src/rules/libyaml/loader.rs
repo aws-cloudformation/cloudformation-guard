@@ -15,6 +15,37 @@ use crate::rules::{
 
 const TYPE_REF_PREFIX: &str = "tag:yaml.org,2002:";
 
+/// How many mappings and sequences may be nested inside one another.
+///
+/// There has to be a bound, because `PathAwareValue::try_from_marked` -- which every loaded document
+/// is handed to -- recurses once per level and overflows the stack. Measured on this repository's
+/// release build: depth 5281 converts, depth 5375 aborts with SIGABRT and
+/// "thread 'main' has overflowed its stack" on stderr, no diagnostic from cfn-guard and an exit code
+/// outside the set the tool documents. `Loader::load` itself is iterative and survives depth 20000,
+/// and so does dropping the resulting `MarkedValue`, so the bound belongs where the deep value is
+/// *built* rather than where it is consumed -- refusing here means no deep `MarkedValue` is ever
+/// constructed for anything downstream to recurse over.
+///
+/// The same recursion is also why depth is expensive well before it is fatal. Every node rebuilds its
+/// full path string from its parent's, so the bytes allocated grow with the square of the depth:
+/// depth 800 took 4.9 seconds, depth 1600 took 39, depth 2000 took 76, and a 40 KB file of nothing
+/// but brackets killed the process. Bounding the depth bounds that cost too, which is why this is one
+/// change and not two.
+///
+/// 128 is not arbitrary. It is the recursion limit serde already enforces on the *other* loader in
+/// this product, and at this value the two agree level for level: on files of `a: ` followed by n
+/// brackets, `validate` and `rulegen` both accept n = 127 and both refuse n = 128, the second with
+/// "recursion limit exceeded". So no document this loader refuses could have reached `run_checks` or
+/// `guard test` either. And it is far above anything real -- the deepest data file in the rules
+/// registry snapshot is 15 levels, and the deepest in this repository is 24
+/// (`guard/resources/parse-tree/output-dir/test_rule_with_this_keyword.yaml`).
+///
+/// A non-recursive conversion was the alternative. It would remove the crash but not the quadratic
+/// path-string cost, which is inherent to storing a full path at every node and reaches into `Path`,
+/// `PathAwareValue` and every reporter that prints one. A bound fixes both, in the loader, and leaves
+/// that refactor free to happen on its own terms.
+const MAX_NESTING_DEPTH: usize = 128;
+
 #[derive(Debug, Default)]
 pub struct Loader {
     stack: Vec<MarkedValue>,
@@ -76,9 +107,13 @@ impl Loader {
                         self.last_container_index.clear();
                         self.func_support_index.clear();
                     }
-                    Event::MappingStart(..) => self.handle_mapping_start(location),
+                    Event::MappingStart(..) => {
+                        self.enter_container(&location)?;
+                        self.handle_mapping_start(location)
+                    }
                     Event::MappingEnd => self.handle_mapping_end()?,
                     Event::SequenceStart(sequence_start) => {
+                        self.enter_container(&location)?;
                         self.handle_sequence_start(sequence_start, location)
                     }
                     Event::SequenceEnd => self.handle_sequence_end(),
@@ -91,6 +126,23 @@ impl Loader {
                 };
             };
         }
+    }
+
+    /// Refuses a container that would nest deeper than [`MAX_NESTING_DEPTH`].
+    ///
+    /// `last_container_index` holds one entry per mapping or sequence currently open, so its length
+    /// is the depth this container is about to be nested inside.
+    fn enter_container(&mut self, location: &Location) -> rules::Result<()> {
+        if self.last_container_index.len() >= MAX_NESTING_DEPTH {
+            return Err(Error::UnsupportedDocument(format!(
+                "cfn-guard reads documents nested at most {MAX_NESTING_DEPTH} levels deep, and this \
+                 file goes deeper: the container at {location} is at level {}. The deepest \
+                 CloudFormation template in AWS's own rules registry is 15 levels.",
+                self.last_container_index.len() + 1
+            )));
+        }
+
+        Ok(())
     }
 
     fn handle_scalar_event(&mut self, event: Scalar, location: Location) {

@@ -997,3 +997,75 @@ fn a_getatt_with_no_attribute_is_left_alone() -> Result<()> {
 
     Ok(())
 }
+
+/// A document nested deeper than the loader will read is refused, rather than taken as far as the
+/// stack allows.
+///
+/// `PathAwareValue::try_from_marked` recurses once per level, and past roughly 5300 levels it
+/// overflowed the stack: SIGABRT, "thread 'main' has overflowed its stack" on stderr, no diagnostic
+/// from cfn-guard and an exit code outside the documented set. Depth was also expensive long before
+/// it was fatal, because every node rebuilds its full path string from its parent's -- depth 1600
+/// took 39 seconds and depth 2000 took 76.
+///
+/// The bound is checked in `Loader::load`, which is iterative, so nothing deep is ever built for a
+/// later pass to recurse over. That placement is what the isolation measurement decided: `load`
+/// itself survived depth 20000, and so did dropping the value it returned; only the conversion died.
+///
+/// The boundary cases matter more than the extremes. An off-by-one here either refuses a document one
+/// level inside the documented limit or admits one past it, and neither shows up in the deep cases.
+#[rstest::rstest]
+#[case::one_level_inside_the_limit(126, true)]
+#[case::exactly_the_limit(127, true)]
+#[case::one_level_past_the_limit(128, false)]
+#[case::far_past_the_limit(2000, false)]
+#[case::deep_enough_to_have_overflowed(20000, false)]
+fn a_document_nested_past_the_limit_is_refused(#[case] brackets: usize, #[case] accepted: bool) {
+    // One root mapping plus `brackets` nested sequences, so the deepest container is at level
+    // `brackets + 1`.
+    let content = format!("a: {}{}\n", "[".repeat(brackets), "]".repeat(brackets));
+
+    let loaded = Loader::new().load(content);
+
+    if accepted {
+        assert!(
+            loaded.is_ok(),
+            "{} levels was refused, but the limit admits up to {}: {:?}",
+            brackets + 1,
+            MAX_NESTING_DEPTH,
+            loaded.err()
+        );
+    } else {
+        assert!(
+            matches!(loaded, Err(Error::UnsupportedDocument(ref m)) if m.contains("nested at most")),
+            "{} levels gave {:?}, not the depth error",
+            brackets + 1,
+            loaded
+        );
+    }
+}
+
+/// The control: the bound is on nesting, not on size. A flat document of the same element count is
+/// unaffected, which is what says the cost being bounded is depth and not the number of scalars.
+#[test]
+fn a_wide_but_shallow_document_is_not_affected_by_the_depth_bound() -> Result<()> {
+    let content = format!(
+        "a: [{}]\n",
+        (0..2000)
+            .map(|i| i.to_string())
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
+
+    let value = Loader::new().load(content)?;
+
+    let map = match &value {
+        MarkedValue::Map(m, ..) => m,
+        other => unreachable!("a mapping loads as a map, got {:?}", other),
+    };
+    match map.first().expect("a is present").1 {
+        MarkedValue::List(items, ..) => assert_eq!(2000, items.len()),
+        other => panic!("expected a list of 2000, got {:?}", other),
+    }
+
+    Ok(())
+}
