@@ -193,20 +193,25 @@ mod validate_tests {
     // forgetting a `let` is a common mistake, and being told the tool is broken sends the author
     // looking in the wrong place.
     #[case(vec!["s3-server-side-encryption-template-non-compliant-2.yaml"], vec!["malformed-rule.guard"], StatusCode::PARSING_ERROR)]
-    #[case(vec!["malformed-template.yaml"], vec!["s3_bucket_server_side_encryption_enabled_2.guard"], StatusCode::INTERNAL_FAILURE)]
+    // The four cases below name a data file whose *content* cannot be read -- malformed, or holding
+    // no document. That is the user's input, so they are `PARSING_ERROR` for the same reason the
+    // undeclared-variable case above is: 5 is not 19, so a gate still tells it from a violation, and
+    // unlike -1 it does not claim cfn-guard broke. The two `dne` cases keep -1, because a path that
+    // does not exist is a different failure and validate, test and parse-tree already agree on it.
+    #[case(vec!["malformed-template.yaml"], vec!["s3_bucket_server_side_encryption_enabled_2.guard"], StatusCode::PARSING_ERROR)]
     #[case(vec!["s3-server-side-encryption-template-non-compliant-2.yaml"], vec!["blank-rule.guard"], StatusCode::SUCCESS)]
     #[case(
         vec!["s3-server-side-encryption-template-non-compliant-2.yaml"],
         vec!["s3_bucket_server_side_encryption_enabled_2.guard", "blank-rule.guard"],
         StatusCode::VALIDATION_ERROR
     )]
-    #[case(vec!["blank-template.yaml"], vec!["s3_bucket_server_side_encryption_enabled_2.guard"], StatusCode::INTERNAL_FAILURE)]
+    #[case(vec!["blank-template.yaml"], vec!["s3_bucket_server_side_encryption_enabled_2.guard"], StatusCode::PARSING_ERROR)]
     #[case(
         vec!["blank-template.yaml", "s3-server-side-encryption-template-non-compliant-2.yaml"],
-        vec!["s3_bucket_server_side_encryption_enabled_2.guard"], StatusCode::INTERNAL_FAILURE)]
+        vec!["s3_bucket_server_side_encryption_enabled_2.guard"], StatusCode::PARSING_ERROR)]
     #[case(vec!["dne.yaml"], vec!["rules-dir/s3_bucket_public_read_prohibited.guard"], StatusCode::INTERNAL_FAILURE)]
     #[case(vec!["data-dir/s3-public-read-prohibited-template-non-compliant.yaml"], vec!["dne.guard"], StatusCode::INTERNAL_FAILURE)]
-    #[case(vec!["blank.yaml"], vec!["rules-dir/s3_bucket_public_read_prohibited.guard"], StatusCode::INTERNAL_FAILURE)]
+    #[case(vec!["blank.yaml"], vec!["rules-dir/s3_bucket_public_read_prohibited.guard"], StatusCode::PARSING_ERROR)]
     #[case(vec!["s3-server-side-encryption-template-non-compliant-2.yaml"], vec!["comments.guard"], StatusCode::SUCCESS)]
     #[case(vec!["s3-server-side-encryption-template-non-compliant-2.yaml"], vec!["comments.guard"], StatusCode::SUCCESS)]
     // A rule whose only check compares against a reference that resolved to no values must
@@ -265,7 +270,9 @@ mod validate_tests {
             .rules(vec!["s3_bucket_server_side_encryption_enabled_2.guard"])
             .run(&mut writer, &mut reader);
 
-        assert_eq!(StatusCode::INTERNAL_FAILURE, status_code);
+        // `PARSING_ERROR`, not `INTERNAL_FAILURE`. A key cfn-guard cannot model is the template
+        // author's mistake, and -1 is the code this repository reserves for cfn-guard breaking.
+        assert_eq!(StatusCode::PARSING_ERROR, status_code);
     }
 
     /// A data file with no document in it -- nothing but comments -- used to abort the process at
@@ -290,9 +297,13 @@ mod validate_tests {
             .rules(vec!["s3_bucket_server_side_encryption_enabled_2.guard"])
             .run(&mut writer, &mut reader);
 
-        assert_eq!(StatusCode::INTERNAL_FAILURE, status_code);
+        // The code and the message both move, together. An empty data file is the user's input, so
+        // it is `PARSING_ERROR` rather than `INTERNAL_FAILURE`; and once `validate` has decided the
+        // failure is not internal, `main`'s "Error occurred" prefix -- its vocabulary for an
+        // unexpected failure -- no longer describes it, so the command reports it itself.
+        assert_eq!(StatusCode::PARSING_ERROR, status_code);
         assert_eq!(
-            "Error occurred Parser Error when parsing `Unable to parse a template from data file: STDIN is empty`\n",
+            "Parser Error when parsing `Unable to parse a template from data file: STDIN is empty`\n",
             writer.err_to_stripped().expect("failed to read stderr")
         );
     }
@@ -404,9 +415,9 @@ mod validate_tests {
             .run(&mut writer, &mut reader);
 
         assert_eq!(
-            StatusCode::INTERNAL_FAILURE,
+            StatusCode::PARSING_ERROR,
             status_code,
-            "a data file that will not load aborts the run"
+            "a data file that will not load aborts the run, as the user's mistake rather than ours"
         );
 
         let err = writer.err_to_stripped().expect("failed to read stderr");

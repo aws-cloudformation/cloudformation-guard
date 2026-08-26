@@ -321,8 +321,42 @@ impl Executable for Validate {
     /// - parse errors occur in the rule file
     /// - illegal json or yaml syntax present in any of the data/input parameter files
     /// - both rules is empty, and payload is false
-    #[allow(deprecated)]
     fn execute(&self, writer: &mut Writer, reader: &mut Reader) -> Result<i32> {
+        match self.evaluate(writer, reader) {
+            // Input cfn-guard cannot read is the user's mistake, not cfn-guard breaking, and the exit
+            // code has to say which. An `Err` escaping here reaches `main`'s catch-all, which prints
+            // "Error occurred" and exits -1 -- the code `guard/tests/utils.rs` names
+            // `INTERNAL_FAILURE`. So a template with an unquoted `~` key, an empty data file, or a
+            // file that is not YAML all reported that cfn-guard had broken.
+            //
+            // `ERROR_STATUS_CODE` is 5, which this repository already gives a ruleset it cannot use,
+            // and two commits on this branch moved rules-file mistakes here for the same reason: 5 is
+            // not 19, so a CI gate still distinguishes it from a violation, and unlike -1 it does not
+            // additionally claim the tool is at fault.
+            //
+            // `ParseError` is the discriminator because every one of its ~20 producers is about the
+            // user's input -- the rules parser, the libyaml loader, the test-spec readers, the payload
+            // deserializer -- and none is an internal failure. `guard-ffi`'s error table had already
+            // reached the same judgement, mapping `ParseError` to its code 5.
+            //
+            // A *missing* file keeps -1 deliberately. `File::open` returns `IoError`, not
+            // `ParseError`, so it is untouched here, and that is the same line the parse-tree commit
+            // drew: validate, test and parse-tree already agree on -1 for a path that does not exist.
+            Err(e @ Error::ParseError(..)) => {
+                // Reported here rather than left to `main`, because once this function has decided the
+                // failure is not internal, "Error occurred" no longer describes it.
+                writer.write_err(format!("{e}"))?;
+
+                Ok(ERROR_STATUS_CODE)
+            }
+            outcome => outcome,
+        }
+    }
+}
+
+impl Validate {
+    #[allow(deprecated)]
+    fn evaluate(&self, writer: &mut Writer, reader: &mut Reader) -> Result<i32> {
         let summary_type = self
             .show_summary
             .iter()
