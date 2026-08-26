@@ -262,6 +262,12 @@ mod test_command_tests {
     /// a merge key given a scalar, a merge key given a sequence holding a scalar, a quoted `"<<"` given a
     /// scalar, a null key and a sequence key. The first three arrived with the round that taught this
     /// loader to resolve the merge key; the last two were already there.
+    ///
+    /// This asserts the generic reporter only, which is a `Writer`'s text. The three structured formats
+    /// are pinned by
+    /// [`a_case_whose_input_cannot_be_read_does_not_discard_the_other_cases_in_structured_formats`],
+    /// because asserting one reporter is how the structured half of this went unfixed while its own
+    /// comment described the fix.
     #[test]
     fn a_case_whose_input_cannot_be_read_does_not_discard_the_other_cases() {
         let mut reader = Reader::default();
@@ -291,6 +297,65 @@ mod test_command_tests {
             output.contains("the merge key"),
             "and the run must still say what it could not read:\n{}",
             output
+        );
+    }
+
+    /// The same bytes through `json`, `yaml` and `junit`: the decided case keeps its verdict and the
+    /// unreadable one is an error of its own.
+    ///
+    /// The sibling above was asserted and this was not, so the structured reporter kept the defect its
+    /// own comment claimed to close. It answered a case's unreadable `input:` with a whole-file
+    /// `TestResult::Err`, which replaces the document with a single `{rule_file, error}` object -- so
+    /// the first case's `FAIL`, already decided, was absent from all three formats while the
+    /// single-line reporter printed it.
+    ///
+    /// junit is the sharpest of the three and the reason a golden is used rather than a `contains`.
+    /// It reported `tests="1" errors="1"` with its one `<testcase>` named after the *rules file*, so a
+    /// CI job reading it saw a suite of one erroring test where the file has two cases, one of them
+    /// decided. It now reports `tests="2"`: the decided rule as a passing case, and the unreadable
+    /// case as `status="error"` named after the case. `errors` stays 1 and the exit code stays
+    /// `INCORRECT_STATUS_ERROR`, which is what these formats already agreed with the generic one
+    /// about -- content was the only thing they disagreed on.
+    ///
+    /// Both cases carry a `name:`, so nothing here depends on the empty-string fallback an unnamed
+    /// case gets.
+    #[rstest]
+    #[case("json")]
+    #[case("yaml")]
+    #[case("junit")]
+    fn a_case_whose_input_cannot_be_read_does_not_discard_the_other_cases_in_structured_formats(
+        #[case] output: &str,
+    ) {
+        let mut reader = Reader::default();
+        let mut writer = Writer::new(WBVec(vec![])).expect("Failed to create writer.");
+        let status_code = TestCommandTestRunner::default()
+            .test_data(Some(
+                "resources/test-command/data-dir/a_case_whose_input_cannot_be_read_tests.yaml",
+            ))
+            .rules(Some(
+                "resources/test-command/rule-dir/a_case_whose_input_cannot_be_read.guard",
+            ))
+            .output_format(output)
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(
+            StatusCode::INCORRECT_STATUS_ERROR,
+            status_code,
+            "an unreadable input is the test file's mistake, not INTERNAL_FAILURE"
+        );
+
+        let writer = if output == "junit" {
+            sanitize_junit_writer(writer)
+        } else {
+            writer
+        };
+
+        assert_output_from_file_eq!(
+            format!(
+                "resources/test-command/output-dir/a_case_whose_input_cannot_be_read_{output}.out"
+            )
+            .as_str(),
+            writer
         );
     }
 

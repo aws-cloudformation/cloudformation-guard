@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="cfn-guard test report" tests="2" failures="0" errors="1" time="0">
+    <testsuite name="resources/test-command/rule-dir/a_case_whose_input_cannot_be_read.guard" errors="1" failures="0" time="0">
+        <testcase id="a bucket named something other than expected" name="bucket_is_named_expected" time="0" status="pass"/>
+        <testcase id="an input whose merge key is given a scalar" name="an input whose merge key is given a scalar" time="0" status="error">
+            <error>Parser Error when parsing `the merge key `&lt;&lt;` must be given a mapping, or a sequence of mappings, because its value&apos;s keys become keys of the mapping that carries it (https://yaml.org/type/merge.html)`</error>
+        </testcase>
+    </testsuite>
+</testsuites>
