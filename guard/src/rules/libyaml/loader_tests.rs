@@ -1127,9 +1127,10 @@ fn a_non_string_key_is_refused_with_the_key_named(#[case] content: &str, #[case]
 /// whose `Type` arrived through a merge was invisible to `Resources[ Type == "AWS::S3::Bucket" ]`, so
 /// the filter selected nothing, the rule was skipped, and a wide-open bucket exited 0 unchecked.
 ///
-/// Each case is a precedence rule from <https://yaml.org/type/merge.html>. The last is not in the
-/// spec -- it does not define two merge keys in one mapping -- and earlier-wins is the same rule the
-/// sequence case follows.
+/// Each case is a precedence rule from <https://yaml.org/type/merge.html>, except the last two, which
+/// the spec does not define. Two `<<` keys in one mapping is a duplicate key, and a name repeated
+/// inside one merge source is too, so both follow the rule cfn-guard applies to a duplicated key
+/// everywhere else: the last value wins. PyYAML and `serde_yaml::Value::apply_merge` agree on both.
 #[rstest::rstest]
 #[case::a_merged_key_is_reachable("<<: { a: merged }", "a", "merged")]
 #[case::an_explicit_key_wins("<<: { a: merged }\n  a: explicit", "a", "explicit")]
@@ -1140,7 +1141,7 @@ fn a_non_string_key_is_refused_with_the_key_named(#[case] content: &str, #[case]
 )]
 #[case::a_sequence_merges_each("<<: [{ a: first }, { b: second }]", "b", "second")]
 #[case::an_earlier_sequence_entry_wins("<<: [{ a: first }, { a: second }]", "a", "first")]
-#[case::an_earlier_merge_key_wins("<<: { a: first }\n  <<: { a: second }", "a", "first")]
+#[case::a_later_merge_key_wins("<<: { a: first }\n  <<: { a: second }", "a", "second")]
 fn a_merge_key_folds_its_value_into_the_mapping(
     #[case] body: &str,
     #[case] key: &str,
@@ -1174,6 +1175,55 @@ fn a_merge_key_folds_its_value_into_the_mapping(
         key,
         found,
         expected
+    );
+
+    Ok(())
+}
+
+/// A name repeated inside one merge source resolves the way a repeated key in a plain mapping does:
+/// the last value, with the duplicate-key warning.
+///
+/// `apply_merges` claimed each name as it inserted it, so the *first* of two same-named entries of one
+/// source won and the second was dropped -- the opposite of the plain mapping, whose two entries both
+/// survive the loader (the map is keyed on `(name, location)`) and collapse last-wins in
+/// `try_from_marked`. Dropping the loser in `apply_merges` also silenced the warning, because
+/// `try_from_marked` is the only place a duplicate is visible.
+///
+/// So one malformed shape had two answers and only the quieter one, depending on whether the duplicate
+/// arrived through `<<`. Asserted through `try_from_marked` rather than on the loader's map, because
+/// that is where the collapse and the warning both happen.
+#[rstest::rstest]
+#[case::inside_one_merge_source("<<: { a: first, a: second }")]
+#[case::a_plain_mapping("a: first\n  a: second")]
+fn a_duplicate_name_resolves_last_wins_and_warns_wherever_it_arrived_from(
+    #[case] body: &str,
+) -> Result<()> {
+    let loaded = Loader::new().load(format!("outer:\n  {body}\n"))?;
+
+    let mut duplicates = vec![];
+    let converted = crate::rules::path_value::PathAwareValue::try_from_marked(
+        (loaded, crate::rules::path_value::Path::root()),
+        &mut duplicates,
+    )?;
+
+    let (_, json): (String, serde_json::Value) =
+        std::convert::TryInto::try_into(&converted).map_err(|e: Error| e)?;
+    assert_eq!(
+        json,
+        serde_json::json!({ "outer": { "a": "second" } }),
+        "{:?} resolved to {}",
+        body,
+        json
+    );
+
+    assert_eq!(
+        duplicates
+            .iter()
+            .map(|d| d.path.as_str())
+            .collect::<Vec<_>>(),
+        vec!["/outer/a"],
+        "{:?} did not report the duplicate",
+        body
     );
 
     Ok(())

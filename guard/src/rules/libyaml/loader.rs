@@ -428,11 +428,25 @@ impl Loader {
 /// the filter selected nothing, the rule was skipped, and a wide-open bucket exited 0 unchecked.
 /// Writing the same `Type` inline made the same file exit 19 and FAIL.
 ///
-/// Precedence follows the spec: a key the mapping writes for itself always wins over a merged one,
-/// which is why this runs after every explicit key is in, and within a sequence of mappings an earlier
-/// entry wins over a later one, which is what iterating in order and skipping names already present
-/// gives. Two `<<` keys in one mapping are not something the spec defines; earlier wins, for the same
-/// reason.
+/// Precedence follows the spec where the spec has a rule: a key the mapping writes for itself always
+/// wins over a merged one, which is why this runs after every explicit key is in, and within a
+/// sequence of mappings an earlier entry wins over a later one, which is what iterating a source in
+/// order and skipping names already claimed gives.
+///
+/// **Two `<<` keys in one mapping is a duplicate key**, and the spec does not define it. It used to
+/// resolve earlier-wins here, by analogy with the sequence rule. The closer analogy is the one
+/// cfn-guard applies to every other duplicated key -- `path_value::try_from_marked` keeps the last
+/// value and warns -- so the sources are applied in reverse document order and a later `<<` wins.
+/// That is also what PyYAML and `serde_yaml::Value::apply_merge` do, the second because `serde_yaml`
+/// has already collapsed the duplicate key before it looks for `<<` at all, so this is the answer the
+/// other loader in this product already gives.
+///
+/// **A name duplicated inside one merge source is left for `try_from_marked` to collapse.** The map
+/// is keyed on `(name, location)`, so two same-named entries of one source are two entries and both
+/// survive to there, where they resolve last-wins with a warning -- the same convention, and the same
+/// warning, a plain mapping gets. Claiming names per source rather than per entry is what allows that:
+/// updating `present` inside a source would have made the *first* of the two win, silently, so one
+/// malformed shape had two answers depending on whether the duplicate arrived through `<<`.
 ///
 /// The merged keys are appended after the explicit ones. The spec does not say where they go, and the
 /// position only affects the order `PathAwareValue`'s `keys` are iterated in -- so which resource a
@@ -453,7 +467,7 @@ fn apply_merges(
     // location than the explicit key it must not displace.
     let mut present: HashSet<String> = map.keys().map(|(name, _)| name.clone()).collect();
 
-    for source in merges {
+    for source in merges.into_iter().rev() {
         let location = *source.location();
         let sources = match source {
             MarkedValue::Map(entries, ..) => vec![entries],
@@ -468,11 +482,14 @@ fn apply_merges(
         };
 
         for entries in sources {
+            let mut claimed: Vec<String> = vec![];
             for (key, value) in entries {
-                if present.insert(key.0.clone()) {
+                if !present.contains(&key.0) {
+                    claimed.push(key.0.clone());
                     map.insert(key, value);
                 }
             }
+            present.extend(claimed);
         }
     }
 
