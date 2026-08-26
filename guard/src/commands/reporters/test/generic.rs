@@ -89,8 +89,26 @@ impl<'report> GenericReporter<'report> {
                         // because since `eval_rules_file` evaluates every rule before returning an error,
                         // the record holds the other rules' verdicts and there is no reason to throw them
                         // away.
+                        // Not `?` either, and for the reason the loop above already applies to a test
+                        // file it cannot parse at all. What is left that can fail here is the case's
+                        // `input:` and its expectation strings, both of which are the test file's
+                        // content: `TEST_ERROR_STATUS_CODE` is the answer to those, and it is what the
+                        // `Err` arm twenty lines up gives a file that is not YAML. Propagating reached
+                        // `main`'s catch-all and exited 255 -- `INTERNAL_FAILURE`, the code reserved for
+                        // the tool breaking -- and abandoned every later case in the file, so one
+                        // unreadable `input:` cost the verdicts of every good case behind it. The
+                        // structured reporter answered 1 on the same input, so the two disagreed by
+                        // output format.
                         let (by_result, eval_error, unchecked) =
-                            self.get_by_result(each, &mut diagnostics)?;
+                            match self.get_by_result(each, &mut diagnostics) {
+                                Ok(decided) => decided,
+                                Err(e) => {
+                                    writeln!(self.writer, "Error processing {e}")?;
+                                    exit_code = TEST_ERROR_STATUS_CODE;
+                                    test_counter += 1;
+                                    continue;
+                                }
+                            };
 
                         // Guarded, rather than assigned outright: an expectation that could not be
                         // evaluated outranks one that was not met, and the two can come from different

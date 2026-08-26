@@ -1,0 +1,28 @@
+# The first case is ordinary and decidable. The second holds an `input:` this loader cannot read: the
+# merge key is given a scalar, and a merge value's keys have to become keys of the mapping carrying it, so
+# there is nothing to merge. That is a mistake in this file, not the tool breaking.
+#
+# It used to reach `main`'s catch-all and exit 255 -- `INTERNAL_FAILURE` -- and abandon the run, so the
+# first case's verdict was never reported even though it had already been decided.
+- name: a bucket named something other than expected
+  input:
+    Resources:
+      BucketA:
+        Type: AWS::S3::Bucket
+        Properties:
+          BucketName: wrong
+  expectations:
+    rules:
+      bucket_is_named_expected: FAIL
+
+- name: an input whose merge key is given a scalar
+  input:
+    <<: not a mapping
+    Resources:
+      BucketA:
+        Type: AWS::S3::Bucket
+        Properties:
+          BucketName: expected
+  expectations:
+    rules:
+      bucket_is_named_expected: PASS

@@ -581,9 +581,29 @@ fn number_key_name(num: &serde_yaml::Number) -> String {
 /// silently miss it, and it resolves a *quoted* `"<<"` as a merge because `Value` keeps no scalar
 /// style -- the defect `libyaml::loader` carries `merge_key_index` to avoid.
 ///
-/// A quoted `"<<"` is therefore still merged on this side. `serde_yaml::Value` has already discarded
-/// the style by the time this runs, so the divergence cannot be closed here; it is recorded with the
-/// pin's other unclosable cases in `values_tests`.
+/// A quoted `"<<"` is therefore merged on this side, and resolving the merge key here is what starts
+/// that: before it, nothing on this side resolved `<<` at all, so a quoted `"<<"` was an ordinary key of
+/// that name -- which is the correct reading, and the one `libyaml::loader` was fixed to give in the same
+/// round this was written. The two loaders did not converge on that shape; they swapped, and the case
+/// this side had right is the price of the case it had wrong. Measured on `"<<": { a: kept }`, this
+/// loader went from `{"<<":{"a":"kept"}}` to `{"a":"kept"}` while libyaml went the other way.
+///
+/// The trade is deliberate and it is the right way round, because the two cases are not the same size. A
+/// plain `<<` is the shape essentially every real template that merges uses, and it was hidden entirely
+/// -- a silent wrong SKIP. A quoted `"<<"` is a key someone wrote to mean the literal characters, and
+/// neither corpus contains one.
+///
+/// The third option, and why it is not taken: resolve the plain `<<` only where the style is known, and
+/// leave the quoted key alone. That is what keeps the two loaders agreeing, and it cannot be done from
+/// here. `serde_yaml::Value` keeps no scalar style -- `<<` and `"<<"` are both `Value::String("<<")` by
+/// the time any of this runs -- so the distinction has to be made where the text is still text. The two
+/// entry points that reach this conversion are `commands::helper::validate_and_return_json`, which does
+/// have the bytes and could load them through `libyaml::loader` instead, and `TestSpec::input`, which
+/// does not: it arrives as a `serde_yaml::Value` nested inside a `Vec<TestSpec>` deserialization, and
+/// recovering the style would need either a `Deserialize` impl that carries it or a re-serialize and
+/// re-parse, which would decide the quoting itself. So the divergence is closed by replacing the loader
+/// at the entry points, not by a test here, and it is recorded with the pin's other cases in
+/// `values_tests` until then.
 fn merge_into(
     map: &mut IndexMap<String, Value>,
     merges: Vec<&serde_yaml::Value>,

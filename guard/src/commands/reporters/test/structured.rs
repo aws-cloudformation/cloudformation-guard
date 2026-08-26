@@ -313,7 +313,23 @@ impl<'reporter> StructuredTestReporter<'reporter> {
                     }))
                 }
                 Ok(spec) => {
-                    let test_data = get_test_data(spec)?;
+                    // Not `?`, for the same reason as the evaluation below, and this is the sibling call
+                    // that reason was not applied to. A case's `input:` that this loader cannot read is a
+                    // mistake in the test file, not the tool breaking: propagating discarded the whole
+                    // structured result -- one unreadable case in a file of good ones produced no
+                    // document at all -- and reached `main`'s catch-all, which exits 255,
+                    // `INTERNAL_FAILURE`. Reported the way this function already reports a spec it cannot
+                    // parse and an expectation string it cannot read.
+                    let test_data = match get_test_data(spec) {
+                        Ok(data) => data,
+                        Err(e) => {
+                            return Ok(TestResult::Err(Err {
+                                rule_file: file.to_owned(),
+                                error: e.to_string(),
+                                time: now.elapsed().as_millis(),
+                            }))
+                        }
+                    };
 
                     for each in &test_data {
                         let now = Instant::now();

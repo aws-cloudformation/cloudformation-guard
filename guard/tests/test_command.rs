@@ -246,6 +246,54 @@ mod test_command_tests {
         }
     }
 
+    /// A case whose `input:` cannot be read costs its own case, not the file's, and not the exit code
+    /// reserved for the tool breaking.
+    ///
+    /// The sibling of the test above, one call earlier. `get_by_result` converts the case's `input:`
+    /// before it evaluates anything, and that conversion was propagated with `?`, so it left the `test`
+    /// command entirely and reached `main`'s catch-all: **255**, `INTERNAL_FAILURE`, the code this
+    /// repository reserves for the tool itself breaking. Everything about that was wrong. The mistake is
+    /// in the test file, which is content, and the same loop already answers `INCORRECT_STATUS_ERROR` for
+    /// a test file it cannot parse at all. Every later case in the file went with it -- here the first
+    /// case's verdict had already been decided and printed. And the structured reporter answered 1 on the
+    /// same bytes, so the two output formats disagreed about whether the tool had broken.
+    ///
+    /// Five shapes of unreadable `input:` were measured reaching 255 through all four output formats:
+    /// a merge key given a scalar, a merge key given a sequence holding a scalar, a quoted `"<<"` given a
+    /// scalar, a null key and a sequence key. The first three arrived with the round that taught this
+    /// loader to resolve the merge key; the last two were already there.
+    #[test]
+    fn a_case_whose_input_cannot_be_read_does_not_discard_the_other_cases() {
+        let mut reader = Reader::default();
+        let mut writer = Writer::new(WBVec(vec![])).expect("Failed to create writer.");
+        let status_code = TestCommandTestRunner::default()
+            .test_data(Some(
+                "resources/test-command/data-dir/a_case_whose_input_cannot_be_read_tests.yaml",
+            ))
+            .rules(Some(
+                "resources/test-command/rule-dir/a_case_whose_input_cannot_be_read.guard",
+            ))
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(
+            StatusCode::INCORRECT_STATUS_ERROR,
+            status_code,
+            "an unreadable input is the test file's mistake, not INTERNAL_FAILURE"
+        );
+
+        let output = writer.stripped().expect("failed to read the writer");
+        assert!(
+            output.contains("bucket_is_named_expected: Expected = FAIL"),
+            "the decidable case's verdict must still be reported:\n{}",
+            output
+        );
+        assert!(
+            output.contains("the merge key"),
+            "and the run must still say what it could not read:\n{}",
+            output
+        );
+    }
+
     #[test]
     fn test_parse_error_when_guard_rule_has_syntax_error() {
         let mut reader = Reader::default();
