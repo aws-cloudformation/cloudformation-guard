@@ -204,8 +204,22 @@ impl Hash for PathAwareValue {
                 s.hash(state);
             }
 
+            // Hashed as the one-character string it is, not as a `char`. `compare_values` relates
+            // `Char('b')` to `String("b")`, and the fall-through in `PartialEq` delegates to
+            // `compare_values`, so `eq` says the two are equal. `Hash for char` is
+            // `state.write_u32(*self as u32)` and `Hash for str` is
+            // `state.write(self.as_bytes()); state.write_u8(0xff)`, so for `'b'` the hasher was handed
+            // `62 00 00 00` in one case and `62 ff` in the other -- equal values, different hashes,
+            // which is the contract `equal_values_hash_equally` exists to hold.
+            //
+            // Same class of break as the `Float` cast below and unnoticed for the same reason: the one
+            // live consumer keys on map keys, which are always strings.
+            //
+            // `encode_utf8` into a stack buffer rather than `to_string()`, so the bytes go through
+            // `str`'s impl -- which is the impl the equal `String` uses -- without allocating.
             PathAwareValue::Char((_, c)) => {
-                c.hash(state);
+                let mut buf = [0u8; 4];
+                c.encode_utf8(&mut buf).hash(state);
             }
             PathAwareValue::Int((_, i)) => {
                 i.hash(state);
@@ -429,8 +443,18 @@ impl PartialEq for PathAwareValue {
 /// started asking `compare_eq` as well. The arms stay out; the caller asks the function that has the
 /// table.
 ///
-/// Numeric widening does stay, reached through `compare_values`. Unlike the other two it is an
-/// equivalence relation on the values it relates, and `Hash` agrees with it.
+/// Two widenings do stay, both reached through `compare_values`: a number against a number across
+/// `Int` and `Float`, and a `Char` against the one-character `String` that spells it. Unlike the regex
+/// arm each is an equivalence relation on the values it relates, and `Hash` agrees with both -- a
+/// `Float` that is exactly an integer hashes as that integer, and a `Char` hashes as its one-character
+/// string.
+///
+/// Those two `Hash` arms are obligations this comment creates rather than incidental facts about it.
+/// The fall-through in `PartialEq` delegates to `compare_values`, so **every arm added to
+/// `compare_values` widens `eq`**, and has to be matched in `Hash` in the same commit or the type stops
+/// satisfying the `Eq` it claims. The `Char`/`String` arms were added without that step and the two
+/// hashed differently until it was caught; `equal_values_hash_equally` now pins both widenings so the
+/// next one cannot land silently.
 ///
 /// For the same reason the type has no `PartialOrd`, and must not be given one. Rust requires
 /// `a.partial_cmp(b) == Some(Ordering::Equal)` exactly when `a == b`, and no ordering can satisfy that

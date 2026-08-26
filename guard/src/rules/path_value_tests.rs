@@ -651,6 +651,12 @@ fn equal_values_hash_equally() {
     fn flt(f: f64) -> PathAwareValue {
         PathAwareValue::Float((Path::root(), f))
     }
+    fn chr(c: char) -> PathAwareValue {
+        PathAwareValue::Char((Path::root(), c))
+    }
+    fn string(s: &str) -> PathAwareValue {
+        PathAwareValue::String((Path::root(), s.to_string()))
+    }
 
     let equal_pairs = [
         (
@@ -670,6 +676,23 @@ fn equal_values_hash_equally() {
             "most negative i64",
             int(i64::MIN),
             flt(-9_223_372_036_854_775_808.0),
+        ),
+        // The second widening `compare_values` reaches, and the one this test did not cover when the
+        // arms for it were added: `Char` hashed through `Hash for char` (`write_u32`) while the equal
+        // `String` hashed through `Hash for str` (`write` then a `0xff` terminator).
+        (
+            "a char against the string that spells it",
+            chr('b'),
+            string("b"),
+        ),
+        // Multi-byte, so the `encode_utf8` buffer is exercised past one byte. `'é'` is two bytes in
+        // UTF-8 and a `to_string()` would have hidden a buffer that was too small.
+        ("a multi-byte char", chr('é'), string("é")),
+        // Four bytes, the widest `encode_utf8` can produce.
+        (
+            "an astral-plane char",
+            chr('\u{1F600}'),
+            string("\u{1F600}"),
         ),
     ];
     for (label, a, b) in equal_pairs {
@@ -741,6 +764,27 @@ fn equal_values_hash_equally() {
     let unordered = PathAwareValue::List((Path::root(), vec![int(2), int(1)]));
     assert_ne!(ordered, unordered);
     assert_ne!(hash_of(&ordered), hash_of(&unordered));
+
+    // A `Char` nested in a list. `eq` for a list is element-wise `eq`, so the widening reaches through
+    // the collection arms; the hash has to reach through them the same way, and the `List` arm hashing
+    // each element is what makes it. The same holds inside a map value.
+    let char_in_list = PathAwareValue::List((Path::root(), vec![chr('b'), int(1)]));
+    let string_in_list = PathAwareValue::List((Path::root(), vec![string("b"), int(1)]));
+    assert_eq!(
+        char_in_list, string_in_list,
+        "precondition, element-wise eq"
+    );
+    assert_eq!(hash_of(&char_in_list), hash_of(&string_in_list));
+
+    // The widening does not flatten a real difference: a char is not the two-character string that
+    // starts with it, and must not hash as one.
+    assert_ne!(chr('b'), string("bc"));
+    assert_ne!(hash_of(&chr('b')), hash_of(&string("bc")));
+    // Nor is it a different character.
+    assert_ne!(chr('b'), string("c"));
+    assert_ne!(hash_of(&chr('b')), hash_of(&string("c")));
+    // And the empty string, which no char spells.
+    assert_ne!(chr('b'), string(""));
 }
 
 /// `eq` is symmetric, which `Eq` requires and range membership violated.
