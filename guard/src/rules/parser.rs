@@ -119,13 +119,14 @@ impl<'a> std::fmt::Display for ParserError<'a> {
 /// nested `when` blocks    when Type == "x" { when ... { } }    parses 2000, aborts 4000   bounded
 /// nested map literals     Type == {k: {k: ... } }              parses 2000, aborts 4000   bounded
 /// nested list literals    Type == [[[ ... ]]]                  parses 4000, aborts 8000   bounded
-/// query filters           q[ q[ ... ] exists ] exists          parses 1110, aborts 1115   NOT bounded
+/// query filters           q[ q[ ... ] exists ] exists          parses 1112, aborts 1114   NOT bounded
 /// ```
 ///
 /// (The map and list rows are coarse: the ladder was 2000/4000/8000, and the exact threshold does not
-/// matter for a bound three orders of magnitude below it. The filter row is bracketed to five levels,
-/// and its boundary is not exact either -- it shifted by a few levels when the same file was run with
-/// `parse-tree` output piped rather than discarded, the output at that depth being 148 MB.) They share no
+/// matter for a bound three orders of magnitude below it. The filter row skips 1113, which is the one
+/// depth that is not repeatable: five runs there gave three aborts and two passes. Whether the process's
+/// output was discarded or read made no difference to that, checked five runs each way, so it is
+/// stack-start jitter and not the harness.) They share no
 /// single function, which is why the count is kept per open construct in a thread-local rather than passed
 /// down as a parameter: the level is opened in [`block`], which every `{ ... }` body reaches, and in
 /// [`parse_list`] and [`parse_map`], which no block passes through. Threading a depth argument instead
@@ -143,18 +144,18 @@ impl<'a> std::fmt::Display for ParserError<'a> {
 /// The exponent is gone -- one `access` parse now serves both readings of a clause, the cost is linear,
 /// and level 128 takes 0.03 seconds -- so that arithmetic no longer holds. But the argument was already
 /// wrong before that, because the abort never depended on the exponent: the stack overflows on the way
-/// *down*, before any backtracking has been paid for. On the commit before the exponent was fixed, 1105
-/// levels did not return and 1110 aborted in about three seconds -- a depth the doubling was supposed to
+/// *down*, before any backtracking has been paid for. On the commit before the exponent was fixed, 1106
+/// levels did not return and 1107 aborted in about three seconds -- a depth the doubling was supposed to
 /// have put out of reach, killing the process in less time than level 22 took to parse successfully,
-/// which was 58 seconds. Removing the exponent moved that boundary to between 1110 and 1115, five levels
+/// which was 58 seconds. Removing the exponent moved that boundary from 1107 to 1114, half a dozen levels
 /// deeper rather than shallower, so it did not bring the abort any closer.
 ///
 /// A bound of 128 would fire on such a file and refuse it, which is what should happen. The only reason
 /// this path still opens no level is that `enter` is called at three sites and this is not the only
 /// recursion that misses it, so the fix belongs with the others rather than here alone. Adding
 /// `NestingGuard::enter` to `predicate_filter_clauses` turns the last row of the table above `bounded`
-/// and makes these three paragraphs deletable. Until then, a filter between 128 and 1110 levels parses
-/// where this constant says it may not, and one past 1115 aborts where it should have been refused. The
+/// and makes these three paragraphs deletable. Until then, a filter between 128 and 1112 levels parses
+/// where this constant says it may not, and one past 1113 aborts where it should have been refused. The
 /// deepest `[` nesting in either corpus is 3.
 ///
 /// 128 is the value the data loader already enforces on the other kind of input this tool reads
@@ -162,7 +163,7 @@ impl<'a> std::fmt::Display for ParserError<'a> {
 /// input nest" to differ. It is far above anything real: over both corpora -- every `.guard` and
 /// `.ruleset` in this repository and in the rules registry snapshot, 318 files -- the deepest is **6**
 /// levels, reached by four files, and 172 of the 318 reach only 1. And it is far below every abort above,
-/// the nearest of which is 1115. Nothing between 6 and 128 is a file anyone writes.
+/// the nearest of which is 1114. Nothing between 6 and 128 is a file anyone writes.
 const MAX_NESTING_DEPTH: usize = 128;
 
 thread_local! {
