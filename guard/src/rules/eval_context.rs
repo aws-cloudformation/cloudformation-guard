@@ -540,6 +540,46 @@ fn retrieve_index(
     }
 }
 
+/// Whether a filter still lies at or after `index`, so the query has not yet chosen the subjects the
+/// clause is about.
+///
+/// This is the question that decides what expanding an *empty* collection means, and the two answers
+/// are not interchangeable:
+///
+/// - `Resources.*[ Type == 'AWS::DynamoDB::Table' ].Properties.TableName` -- the filter picks which
+///   resources the clause is about. Over an empty or absent `Resources` it picks none, so the clause
+///   has no subjects and is not applicable. `eval.rs` already answers exactly this state with SKIP
+///   when the filter runs and keeps nothing, and its comment there says why the branch exists:
+///   "This only happens when the query has filters in them."
+/// - `Properties.Tags[*].Key == /PROD/` -- there is no filter. The subject was chosen before this
+///   query started and the clause asserts something about all of its tags. Over `Tags: []` the
+///   clause does have an answer, and it is FAIL: `rule_test_type_blocks` requires an IAM role
+///   carrying no tags to fail its tag-content checks, and `test_support_for_atleast_one_match_clause`
+///   requires `some Tags[*].Key == /PROD/` to fail on an empty tag list. Reporting "not applicable"
+///   for those would retire the ordinary spelling of "this resource must carry a qualifying tag".
+///
+/// A pending filter is what separates them, not the mere presence of a wildcard. A filter that has
+/// *already* run is not selection still to come, which is why the search starts at `index` rather
+/// than at zero: in `Resources.*[ Type == 'X' ].Properties.Tags[*].Key` the resource was selected and
+/// an empty `Tags` is a property of it, so that clause keeps failing.
+fn selection_pending_at(query: &[QueryPart<'_>], index: usize) -> bool {
+    index < query.len()
+        && query[index..]
+            .iter()
+            .any(|part| matches!(part, QueryPart::Filter(..) | QueryPart::MapKeyFilter(..)))
+}
+
+/// Whether the part at `index` enumerates a collection.
+///
+/// `Index` is deliberately excluded: `Items[0]` names one element rather than enumerating a set, so a
+/// missing `Items` stays a retrieval failure for it.
+fn expansion_at(query: &[QueryPart<'_>], index: usize) -> bool {
+    matches!(
+        query.get(index),
+        Some(QueryPart::AllValues(_) | QueryPart::AllIndices(_))
+    )
+}
+
 fn accumulate<'value, 'loc: 'value>(
     parent: Rc<PathAwareValue>,
     query_index: usize,
@@ -549,10 +589,22 @@ fn accumulate<'value, 'loc: 'value>(
     converter: Option<&dyn Fn(&str) -> String>,
 ) -> Result<Vec<QueryResult>> {
     //
-    // We are here when we are doing [*] for a list. It is an error if there are no
-    // elements
+    // We are here when we are doing [*] for a list.
     //
     if elements.is_empty() {
+        // Enumerating zero elements ahead of a filter selects nothing, which is the same state a
+        // filter that keeps nothing produces -- and `eval.rs` already answers that with SKIP. The two
+        // used to disagree: a filter that kept nothing returned an empty vector and skipped, while an
+        // empty collection returned an unresolved marker that the clause's operator then ran on, so
+        // `not exists` over it answered PASS. One empty selection claimed compliance and the other
+        // reported inapplicability.
+        if selection_pending_at(query, query_index) {
+            return Ok(vec![]);
+        }
+
+        // No filter pending, so the empty collection is a property of a subject already chosen rather
+        // than a selection over subjects. Kept unresolved so the operator still decides:
+        // `Tags[*].Key == /PROD/` against `Tags: []` has to fail.
         return to_unresolved_result(
             Rc::clone(&parent),
             format!(
@@ -620,10 +672,16 @@ where
     ) -> Result<Vec<QueryResult>>,
 {
     //
-    // We are here when we are doing * all values for map. It is an error if there are no
-    // elements in the map
+    // We are here when we are doing * all values for map.
     //
     if map.is_empty() {
+        // Same split as `accumulate`, for the map spelling. `{"Resources":{}}` under
+        // `Resources.*[ Type == ... ]...` reaches here with a filter pending and is an empty
+        // selection; `Resources.*.Properties exists` has no filter and stays a failure.
+        if selection_pending_at(query, query_index) {
+            return Ok(vec![]);
+        }
+
         return to_unresolved_result(
             Rc::clone(&parent),
             format!(
@@ -1078,6 +1136,26 @@ fn query_retrieval_with_converter<'value, 'loc: 'value>(
                                     }
                                 }
                             },
+                        }
+
+                        // A container that is absent enumerates to nothing, exactly as a container
+                        // that is present and empty does. `{}` -- no `Resources` key at all --
+                        // reaches here, and without this it produced an unresolved marker that
+                        // `not exists` read as vacuously true, so a document containing nothing was
+                        // reported compliant while a document containing one unrelated resource
+                        // correctly reported the rule inapplicable. Less information yielded the
+                        // stronger claim, and the stronger claim was the unsafe one.
+                        //
+                        // Narrow on two counts, both of which matter. The absent key has to be the
+                        // collection an expansion was about to enumerate, and a filter has to still be
+                        // pending -- so the query was on its way to selecting subjects. A missing
+                        // *leaf* is untouched, because no expansion follows it:
+                        // `Properties.BucketEncryption exists` still fails, which is the whole point
+                        // of the tool.
+                        if expansion_at(query, query_index + 1)
+                            && selection_pending_at(query, query_index + 1)
+                        {
+                            return Ok(vec![]);
                         }
 
                         to_unresolved_result(
