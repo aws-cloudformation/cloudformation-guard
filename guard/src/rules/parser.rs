@@ -197,9 +197,14 @@ impl<'a> std::fmt::Display for ParserError<'a> {
 /// 128 is the value the data loader already enforces on the other kind of input this tool reads
 /// (`libyaml::loader::MAX_NESTING_DEPTH`), and there is no reason for the two answers to "how deeply may
 /// input nest" to differ. It is far above anything real: over both corpora -- every `.guard` and
-/// `.ruleset` in this repository and in the rules registry snapshot, 318 files -- the deepest is **6**
-/// levels, reached by four files, and 172 of the 318 reach only 1. And it is below every abort above, the
-/// nearest of which is 1107.
+/// `.ruleset` in this repository and in the rules registry snapshot, 318 files -- the deepest is **7**
+/// levels, reached by two files, and 130 reach only 1. The distribution over levels 1 to 7 is 130, 103,
+/// 50, 25, 4, 3, 2; the one remaining file is `invalid_regex.guard`, a fixture that does not parse at all.
+/// So the bound clears the whole corpus by more than an order of magnitude rather than merely clearing its
+/// maximum, and that is the form of the claim worth keeping: an example file twice as deep as today's
+/// deepest would still not approach 128, and this paragraph would not need rewriting. Re-derive by setting
+/// this constant to N, rebuilding, and parsing every file -- a file's level count is the smallest N that
+/// accepts it. And it is below every abort above, the nearest of which is 1107.
 ///
 /// The argument for 128 is that no real file is near it, and deliberately not that files past it would
 /// have been unusable anyway. That second argument is what the deleted carve-out above rested on, and it
@@ -263,8 +268,10 @@ thread_local! {
     /// so what they assert no longer depends on the profile.
     ///
     /// None of that moves the bound, and it is worth saying why rather than leaving the release number to
-    /// carry the argument alone. 128 rests on the corpus -- the deepest real file is 6 levels -- and not on
-    /// stack headroom, and nothing can recurse past it in either profile. What the debug figure costs is
+    /// carry the argument alone. 128 rests on the corpus -- real files run to single digits, 7 levels at the
+    /// deepest measured -- and not on stack headroom, and nothing can recurse past it in either profile. The
+    /// margin is an order of magnitude on purpose, so that a deeper example file moves the measured maximum
+    /// without touching the argument. What the debug figure costs is
     /// the *claim*: "safe with 2.3x to spare" cannot be stated unconditionally, and anyone raising
     /// [`MAX_NESTING_DEPTH`] has to say which profile they are raising it for. Past ~290 optimized or ~67
     /// unoptimized the failure mode is not a failing assertion: the test binary aborts with "fatal runtime
