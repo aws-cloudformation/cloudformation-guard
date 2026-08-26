@@ -7001,13 +7001,24 @@ fn a_name_both_assigned_and_captured_in_one_scope_is_rejected() -> Result<(), Er
 ///
 /// The recursive descent recurses once per level and had no bound, so a deep enough file aborted the
 /// process: SIGABRT, "fatal runtime error: stack overflow" on stderr, reported as 134 by a shell and
-/// outside the exit codes this tool documents. Four spellings reached it at four different depths --
-/// nested block clauses at 1602, nested `when` blocks and nested map literals between 2000 and 4000,
-/// nested list literals between 4000 and 8000 -- and they share no single function, so each of the three
-/// places a level is opened is exercised here.
+/// outside the exit codes this tool documents. Ten spellings reached it, at depths from 1603 down to
+/// 2000 for the bracket forms, and they share no single function, so each of the six places a level is
+/// opened is exercised here -- `block`, `parse_list`, `parse_map`, `predicate_filter_clauses`,
+/// `map_keys_match` and `call_expr`.
+///
+/// The first bound covered the first four spellings only. A query filter, a key filter and a function
+/// call each still recursed with nothing counting the levels, so each still aborted: the three cases
+/// below at 2000, 2000 and 3000 are the depths that were measured aborting before this was fixed.
 ///
 /// The boundary cases matter more than the extremes. An off-by-one either refuses a file one level
 /// inside the documented limit or admits one past it, and neither shows up in the deep cases.
+///
+/// One boundary is deliberately not asserted: `filters` "exactly the limit". A query filter is also
+/// exponential in its depth -- a separate defect, unrelated to the stack -- and 127 nested filters is
+/// 2^127 units of backtracking. Measured on this build, a 124-level filter file does not finish inside
+/// 60 seconds while the same file at 129 levels is refused in 0.01, because the bound fires during the
+/// linear descent and never reaches the backtracking. So the accepted side is asserted at 9 levels,
+/// where it takes milliseconds, and the refused side at the boundary and beyond.
 #[rstest::rstest]
 #[case::block_one_inside_the_limit("blocks", MAX_NESTING_DEPTH - 1, true)]
 #[case::block_exactly_the_limit("blocks", MAX_NESTING_DEPTH, true)]
@@ -7022,6 +7033,15 @@ fn a_name_both_assigned_and_captured_in_one_scope_is_rejected() -> Result<(), Er
 #[case::map_exactly_the_limit("maps", MAX_NESTING_DEPTH, true)]
 #[case::map_one_past_the_limit("maps", MAX_NESTING_DEPTH + 1, false)]
 #[case::map_past_where_it_used_to_abort("maps", 4000, false)]
+#[case::filter_well_inside_the_limit("filters", 9, true)]
+#[case::filter_one_past_the_limit("filters", MAX_NESTING_DEPTH + 1, false)]
+#[case::filter_past_where_it_used_to_abort("filters", 2000, false)]
+#[case::key_filter_exactly_the_limit("key_filters", MAX_NESTING_DEPTH, true)]
+#[case::key_filter_one_past_the_limit("key_filters", MAX_NESTING_DEPTH + 1, false)]
+#[case::key_filter_past_where_it_used_to_abort("key_filters", 2000, false)]
+#[case::function_call_exactly_the_limit("function_calls", MAX_NESTING_DEPTH, true)]
+#[case::function_call_one_past_the_limit("function_calls", MAX_NESTING_DEPTH + 1, false)]
+#[case::function_call_past_where_it_used_to_abort("function_calls", 3000, false)]
 fn a_rules_file_nested_past_the_limit_is_refused(
     #[case] shape: &str,
     #[case] depth: usize,
@@ -7089,7 +7109,15 @@ fn a_refused_file_does_not_leave_the_depth_count_raised() -> Result<(), Error> {
 
     assert!(rules_file(from_str2(&at_the_limit))?.is_some());
 
-    for shape in ["blocks", "when_blocks", "lists", "maps"] {
+    for shape in [
+        "blocks",
+        "when_blocks",
+        "lists",
+        "maps",
+        "filters",
+        "key_filters",
+        "function_calls",
+    ] {
         assert!(
             rules_file(from_str2(&nested_rules_file(shape, MAX_NESTING_DEPTH + 1))).is_err(),
             "{} past the limit is refused",
@@ -7159,72 +7187,73 @@ fn nested_rules_file(shape: &str, depth: usize) -> String {
             "{k: ".repeat(inner),
             "}".repeat(inner)
         ),
+        // `A[ A[ ... ] exists ]`: a query filter, which recurses `predicate_filter_clauses` ->
+        // `cnf_clauses` -> `clause` -> `access` -> `predicate_or_index` -> `predicate_filter_clauses`.
         "filters" => format!(
-            "rule a {{\n  {}q exists{}\n}}\n",
-            "q[ ".repeat(inner),
+            "rule a {{\n  {}Type exists{}\n}}\n",
+            "A[ ".repeat(inner),
             " ] exists".repeat(inner)
+        ),
+        // `Tags[ keys == a[ keys == a ] ]`: a key filter, whose right-hand side is a query, so it
+        // recurses through `map_keys_match` -> `access` -> `predicate_or_index` -> `map_keys_match`.
+        // Linear in the depth, unlike the ordinary filter beside it.
+        "key_filters" => format!(
+            "rule a {{\n  Tags{}{} exists\n}}\n",
+            "[ keys == a".repeat(inner),
+            " ]".repeat(inner)
+        ),
+        // `Type == f(f( ... ))`: a function call, which recurses `function_expr` -> `call_expr` ->
+        // `let_value` -> `function_expr`. This is the clause right-hand side spelling; the two other
+        // routes into `call_expr` are covered by
+        // `the_other_two_routes_to_a_function_call_are_bounded_and_say_so`.
+        "function_calls" => format!(
+            "rule a {{\n  Type == {}\"x\"{}\n}}\n",
+            "to_upper(".repeat(inner),
+            ")".repeat(inner)
         ),
         other => unreachable!("no generator for {}", other),
     }
 }
 
-/// A query whose filters nest costs time linear in the depth, not twice as much for each level.
+/// The two routes into `call_expr` that do not go through a clause right-hand side: a `let` assignment,
+/// and an argument to a parameterized rule call.
 ///
-/// `clause` reads a block clause and a comparison clause, and both open with an `access`. As separate
-/// arms of one alternation each got its own attempt at it: the block reading parsed the whole query,
-/// found no `{` where `block` needs one, returned a recoverable error, and the comparison arm parsed the
-/// identical text again. A filter inside a query is itself a `clause`, so the two attempts doubled at
-/// every level of nesting. `rule a { q[ q[ .. ] exists ] exists }` measured 2.00x per level over nine
-/// consecutive levels: 0.06s at twelve levels, 14.5s at twenty, 58s at twenty-two, and about nine hours
-/// at thirty, for a file of under 400 bytes. Every depth parsed correctly and exited 0, so nothing was
-/// ever reported -- a caller with a timeout saw a timeout and one without saw nothing at all.
-///
-/// The assertion is a ratio and not a wall-clock bound, so that it states the growth rather than the
-/// speed of whichever machine runs it. Both depths are ones the doubling parse could still finish,
-/// which is the point of choosing them: a deeper pair would make a reintroduction hang here instead of
-/// failing, and a test that hangs reports nothing. Doubling puts the deep depth at 2^8 = 256 times the
-/// shallow one and measured 234x. Linear measures 1.4x here -- 112us against 151us per parse -- so the
-/// 50x ceiling sits 36x above what passes and 4.7x below what used to fail. Reaching it by noise alone
-/// would take a stall that hit one of the two measurements and not the other by a factor of thirty; a
-/// machine that is uniformly slower does not move a ratio at all.
+/// The `let` route is here for its message rather than its verdict. `assignment` used to fall through to
+/// reading the same text as a property access on *any* error from `function_expr`, a `Failure` included,
+/// so a file past the bound was refused -- correctly, at 5 -- by `access` then failing on the `(` with a
+/// `ParserError` whose context was the empty string. The verdict was right and the diagnostic named
+/// neither the depth nor the construct, which is the half a test on `is_err()` alone would have missed.
 #[test]
-fn nested_query_filters_cost_time_linear_in_the_depth() {
-    const SHALLOW: usize = 13;
-    const DEEP: usize = 21;
-    const RUNS: u32 = 10;
+fn the_other_two_routes_to_a_function_call_are_bounded_and_say_so() {
+    let open = "to_upper(".repeat(200);
+    let close = ")".repeat(200);
 
-    fn parse_repeatedly(depth: usize, runs: u32) -> std::time::Duration {
-        let rules = nested_rules_file("filters", depth);
-        let start = std::time::Instant::now();
-        for _ in 0..runs {
+    for (route, rules) in [
+        (
+            "a let assignment",
+            format!(
+                "let y = Resources.*.Type\nlet x = {open}%y{close}\nrule a {{\n  Type exists\n}}\n"
+            ),
+        ),
+        (
+            "a rule call argument",
+            format!("rule b(t) {{ Type == %t }}\nrule a {{\n  b({open}\"x\"{close})\n}}\n"),
+        ),
+    ] {
+        let error = rules_file(from_str2(&rules))
+            .expect_err("a call nested past the limit has to be refused")
+            .to_string();
+
+        for expected in ["nested at most", "the function call opened at line"] {
             assert!(
-                rules_file(from_str2(&rules)).is_ok(),
-                "a query with {} nested filters has to parse",
-                depth - 1
+                error.contains(expected),
+                "{} past the limit has to be refused with {:?}, got: {}",
+                route,
+                expected,
+                error
             );
         }
-        start.elapsed()
     }
-
-    let shallow = parse_repeatedly(SHALLOW, RUNS);
-    let deep = parse_repeatedly(DEEP, RUNS);
-    let ratio = deep.as_secs_f64() / shallow.as_secs_f64();
-
-    assert!(
-        ratio < 50.0,
-        "{} more levels of filter nesting cost {:.1}x, where a linear parse costs a few times as \
-         much: {} levels took {:?} and {} levels took {:?}, over {} runs each. A factor anywhere \
-         near 2^{} = {} means every level is being parsed twice again.",
-        DEEP - SHALLOW,
-        ratio,
-        SHALLOW - 1,
-        shallow,
-        DEEP - 1,
-        deep,
-        RUNS,
-        DEEP - SHALLOW,
-        1usize << (DEEP - SHALLOW),
-    );
 }
 
 /// A block clause's body and a type block's body each carry a rule reference, in two spellings, and a

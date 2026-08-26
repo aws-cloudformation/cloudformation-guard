@@ -100,72 +100,82 @@ impl<'a> std::fmt::Display for ParserError<'a> {
     }
 }
 
-/// How many blocks, list literals and map literals a rules file may nest inside one another.
+/// How many nesting constructs a rules file may nest inside one another: blocks, list and map literals,
+/// query filters, key filters and function calls.
 ///
 /// There has to be a bound, because the recursive descent recurses once per level and overflows the
-/// stack. Measured on this repository's release build, `parse-tree --rules` on a file of nested block
-/// clauses (`rule a { Resources { ... Type exists ... } }`): level 1601 parses, level 1602 aborts with
-/// SIGABRT and "fatal runtime error: stack overflow" on stderr -- reported as 134 by a shell, which is
+/// stack. Measured on a release build of this repository *without* the bound -- which is the only build
+/// the number is measurable on, since with it the file is refused at 129 -- `parse-tree --rules` on a
+/// file of nested block clauses (`rule a { Resources { ... Type exists ... } }`): level 1602 parses,
+/// level 1603 aborts with SIGABRT and "fatal runtime error: stack overflow" on stderr, reported as 134
+/// by a shell. 134 is
 /// outside the set this tool documents (0 pass, 5 rules-file or data error, 19 validation failure), so
 /// a caller saw neither a pass nor a failure it could report. `validate` and `test` abort at the same
 /// depth on the same file. This is the same defect class, and the same argument, as the `let` cycle and
 /// rule-reference cycle checks: an authoring mistake that killed the process rather than being refused.
 ///
-/// Nested blocks are not the only recursion that reaches it. Five spellings were measured to abort, at
-/// five different depths, so a bound on any one of them would have left the others fatal:
+/// Nested blocks are not the only recursion that reaches it. Ten spellings were measured to abort, at
+/// depths spread over two orders of magnitude, so a bound on any one of them would have left the rest
+/// fatal:
 ///
 /// ```text
-/// nested block clauses    Resources { Resources { ... } }      parses 1601, aborts 1602   bounded
-/// nested `when` blocks    when Type == "x" { when ... { } }    parses 2000, aborts 4000   bounded
-/// nested map literals     Type == {k: {k: ... } }              parses 2000, aborts 4000   bounded
-/// nested list literals    Type == [[[ ... ]]]                  parses 4000, aborts 8000   bounded
-/// query filters           q[ q[ ... ] exists ] exists          parses 1112, aborts 1114   NOT bounded
+/// nested block clauses     Resources { Resources { ... } }        parses 1602, aborts 1603
+/// nested `when` blocks     when Type == "x" { when ... { } }      parses 2000, aborts 4000
+/// nested map literals      Type == {k: {k: ... } }                parses 2000, aborts 4000
+/// nested list literals     Type == [[[ ... ]]]                    parses 4000, aborts 8000
+/// nested query filters     A[ A[ ... ] exists ]                   parses  128, aborts 2000
+/// the same under a `let`   let q = A[ A[ ... ] exists ]           parses  128, aborts 2000
+/// nested key filters       Tags[ keys == a[ keys == a ] ]         parses  129, aborts 2000
+/// a call in an assignment  let x = f(f( ... ))                    parses 2000, aborts 3000
+/// a call as an argument    b(f(f( ... )))                         parses 2000, aborts 3000
+/// a call as a right side   Type == f(f( ... ))                    parses 2000, aborts 3000
 /// ```
 ///
-/// (The map and list rows are coarse: the ladder was 2000/4000/8000, and the exact threshold does not
-/// matter for a bound three orders of magnitude below it. The filter row skips 1113 because each binary
-/// has exactly one unrepeatable rung, sitting at its own boundary -- 1113 here, 1106 before the exponent
-/// was fixed -- where repeated runs of the same file both abort and pass. That the band is one rung wide
-/// in both is why stack-start jitter is the explanation rather than merely an available one. Whether the
-/// output was discarded or read makes no difference, checked five runs each way.) They share no
-/// single function, which is why the count is kept per open construct in a thread-local rather than passed
-/// down as a parameter: the level is opened in [`block`], which every `{ ... }` body reaches, and in
-/// [`parse_list`] and [`parse_map`], which no block passes through. Threading a depth argument instead
-/// would have changed the signature of every function on all of those paths -- `clause`, `access`,
-/// `cnf_clauses`, `disjunction_clauses`, `parse_value` and everything between -- and of the `pub(crate)`
-/// ones the tests call directly, to carry one integer.
+/// (Rows past the first are coarse ladders -- 2000/4000/8000 -- and the exact threshold does not matter
+/// for a bound an order of magnitude or more below it. The two filter rows parse at 128 in the sense that
+/// they do not abort there; see the note on their running time below.) The ten spellings share no single
+/// function, which is why the count is kept per open construct in a thread-local rather than passed down
+/// as a parameter. Six functions open a level, one per construct that can contain another:
 ///
-/// The last row is the one to read carefully, because this comment used to give a reason for leaving it
-/// unbounded and the reason was wrong twice over. It said a query filter (`q[ q[ ... ] ]`, recursing
-/// through `predicate_filter_clauses`) "never gets deep enough to abort because it becomes unusable
-/// first", on the strength of the filter being exponential in the depth: 0.25 seconds at level 14,
-/// doubling every level to 30 at level 21, so level 128 would be 2^107 times thirty seconds and
-/// therefore "a bound at any value that admits real files could never fire on it".
+/// ```text
+/// block                     every `{ ... }` body, so blocks and `when` blocks and type blocks
+/// parse_list, parse_map     a list or map literal, which no block passes through
+/// predicate_filter_clauses  a query filter, reached from a clause and from an assignment alike
+/// map_keys_match            a key filter, whose right-hand side is a query or a call
+/// call_expr                 a function call, in a `let`, as a rule argument or as a right-hand side
+/// ```
 ///
-/// The exponent is gone -- one `access` parse now serves both readings of a clause, the cost is linear,
-/// and level 128 takes 0.03 seconds -- so that arithmetic no longer holds. But the argument was already
-/// wrong before that, because the abort never depended on the exponent: the stack overflows on the way
-/// *down*, before any backtracking has been paid for. On the commit before the exponent was fixed the
-/// boundary sat at 1107: 1105 never aborted, 1107 always did, and 1106 went either way between runs. That
-/// is a depth the doubling was supposed to have put out of reach, and it killed the process in about three
-/// seconds -- less time than level 22 took to parse successfully, which was 58. Removing the exponent
-/// moved the boundary to 1114, half a dozen levels deeper rather than shallower, so it did not bring the
-/// abort any closer.
+/// That set is chosen to be complete rather than to be a list of shapes someone thought to try: it is a
+/// feedback vertex set of this file's call graph, so every cycle in the graph passes through at least one
+/// of the six and no construct can nest without incrementing the counter. Removing the six leaves the
+/// graph acyclic; removing only the first three leaves one strongly-connected component of seventeen
+/// functions, which is what the six filter, key-filter and function-call rows above are spellings of.
+/// Threading a depth argument instead would have changed the signature of every function on all of those
+/// paths -- `clause`, `access`, `cnf_clauses`, `disjunction_clauses`, `parse_value`, `let_value` and
+/// everything between -- and of the `pub(crate)` ones the tests call directly, to carry one integer.
 ///
-/// A bound of 128 would fire on such a file and refuse it, which is what should happen. The only reason
-/// this path still opens no level is that `enter` is called at three sites and this is not the only
-/// recursion that misses it, so the fix belongs with the others rather than here alone. Adding
-/// `NestingGuard::enter` to `predicate_filter_clauses` turns the last row of the table above `bounded`
-/// and makes these three paragraphs deletable. Until then, a filter between 128 and 1112 levels parses
-/// where this constant says it may not, and one past 1113 aborts where it should have been refused. The
-/// deepest `[` nesting in either corpus is 3.
+/// A query filter is bounded here even though it is also exponential in its depth, which is a separate
+/// defect: level 14 takes 0.25 seconds and every further level doubles it -- 0.48, 0.97, 1.92, 3.85,
+/// 7.66, 15.46, 30.67 at level 21. An earlier version of this comment argued from that time cost that a
+/// filter "never gets deep enough to abort because it becomes unusable first", and left it unbounded.
+/// That is false, and the measurement that refutes it is that wall time is not monotonic in the depth:
+/// on the pre-bound binary, depth 200 ran past a 15-second timeout at exit 124 while depth 2000 aborted
+/// with a stack overflow in 3.15 seconds. Two mechanisms are in play, and the recursive descent is the
+/// faster of them -- it exhausts the stack before the backtracking that makes moderate depths slow ever
+/// begins. So the depth bound does fire on this path, and it fires during the descent: the refusal is a
+/// `Failure`, which nom propagates out of `alt`, `opt` and `fold_many1` without retrying, so a 2000-deep
+/// filter is refused in milliseconds rather than backtracked. The bound does not make a 30-level filter
+/// any faster, and it is not a substitute for fixing the backtracking.
+/// The deepest `[` nesting in either corpus is 3.
 ///
 /// 128 is the value the data loader already enforces on the other kind of input this tool reads
 /// (`libyaml::loader::MAX_NESTING_DEPTH`), and there is no reason for the two answers to "how deeply may
 /// input nest" to differ. It is far above anything real: over both corpora -- every `.guard` and
 /// `.ruleset` in this repository and in the rules registry snapshot, 318 files -- the deepest is **6**
-/// levels, reached by four files, and 172 of the 318 reach only 1. And it is far below every abort above,
-/// the nearest of which is 1114. Nothing between 6 and 128 is a file anyone writes.
+/// levels, reached by four files, and 172 of the 318 reach only 1. And it is below every abort above, the
+/// nearest of which is 2000. Nothing between 6 and 128 is a file anyone writes, and nothing between 128
+/// and 2000 was ever going to be evaluated anyway -- a 200-level filter does not finish, and a
+/// 200-level anything else is not a rule.
 const MAX_NESTING_DEPTH: usize = 128;
 
 thread_local! {
@@ -1381,6 +1391,14 @@ fn variable_capture_in_map_or_index(input: Span) -> IResult<Span, String> {
 
 fn predicate_filter_clauses(input: Span) -> IResult<Span, QueryPart> {
     let (input, _open) = open_array(input)?;
+
+    // Held for the rest of this function, so the level is open for exactly as long as the filter is.
+    // Safe to open as soon as the `[` is consumed because this is the last branch of
+    // `predicate_or_index`: nothing else is tried at this position afterwards, so a level opened here
+    // is never open while a sibling reading is being attempted. `map_keys_match` cannot say the same
+    // and does not open here; see the guard there.
+    let _nesting = NestingGuard::enter(input, "filter")?;
+
     let (input, var) = opt(variable_capture_in_map_or_index)(input)?;
     let (input, filters) = cnf_clauses(input, clause, std::convert::identity, true)?;
     let (input, _close) = cut(close_array)(input)?;
@@ -1548,6 +1566,15 @@ fn map_keys_match(input: Span) -> IResult<Span, QueryPart> {
     // arm that resolves a `LetValue::FunctionCall` for a key filter is already there in
     // `eval_context::query_retrieval_with_converter` -- it was unreachable because the parser could not build
     // one.
+    // Held for the rest of this function, which is the right-hand side -- the only part of a key filter
+    // that recurses, through `access` and `function_expr` below. Opened here rather than at the `[`
+    // above on purpose: this branch is tried *before* `predicate_filter_clauses`, and a filter over a
+    // property named `keys` backtracks out of it (see the comment on the comparator above). A level held
+    // during that failed attempt would count against the ordinary filter that reads the same text next,
+    // so a file legally 128 filters deep would be refused at 128 rather than at 129. By here the
+    // comparator has matched and this is a key filter in any reading.
+    let _nesting = NestingGuard::enter(input, "key filter")?;
+
     let (input, with) = cut(preceded(
         zero_or_more_ws_or_comment,
         alt((
@@ -1914,14 +1941,20 @@ pub(crate) fn let_value(input: Span) -> IResult<Span, LetValue> {
 }
 
 fn call_expr(input: Span) -> IResult<Span, (String, Vec<LetValue>)> {
-    tuple((
-        var_name,
-        delimited(
-            char('('),
-            separated_list0(char(','), delimited(multispace0, let_value, multispace0)),
-            char(')'),
-        ),
-    ))(input)
+    // Spelled out rather than as one `tuple((var_name, delimited(..)))` so the level can be opened
+    // between the `(` and the arguments. The sequence, and every failure it can return, is the same.
+    let (input, name) = var_name(input)?;
+    let (input, _open) = char('(')(input)?;
+
+    // Held for the rest of this function, which is the whole argument list, so the level is open for
+    // exactly as long as the call is. After the `(` rather than before `var_name`, so a bare name that
+    // is not a call -- which is most of what this parser tries this on -- costs nothing.
+    let _nesting = NestingGuard::enter(input, "function call")?;
+
+    let (input, parameters) =
+        separated_list0(char(','), delimited(multispace0, let_value, multispace0))(input)?;
+    let (input, _close) = char(')')(input)?;
+    Ok((input, (name, parameters)))
 }
 
 pub(crate) fn parameterized_rule_call_clause(
@@ -2345,7 +2378,7 @@ fn assignment(input: Span) -> IResult<Span, LetExpr> {
             //
             // if we did not succeed in parsing a value object, then
             // if must be an access pattern, or function call  else it is a failure
-            match cut(preceded(zero_or_more_ws_or_comment, function_expr))(input) {
+            match preceded(zero_or_more_ws_or_comment, function_expr)(input) {
                 Ok((input, function)) => Ok((
                     input,
                     LetExpr {
@@ -2353,7 +2386,17 @@ fn assignment(input: Span) -> IResult<Span, LetExpr> {
                         value: LetValue::FunctionCall(function),
                     },
                 )),
-                Err(_) => {
+
+                // Fall through to an access only on a *recoverable* error, which is the same rule
+                // `single_clause` follows: a `Failure` means something inside the call committed, and
+                // reading the same text as a property access instead reports whatever that fails on.
+                // The depth bound is one such commitment, and it showed: `let x = f(f( ... ))` past the
+                // bound was refused -- correctly, at 5 -- with a `ParserError` whose context was the
+                // empty string, because the message that named the depth had been thrown away here and
+                // `access` failed on the `(` with nothing to say. The `cut` that used to wrap this call
+                // could not prevent that: it turned a recoverable error into a `Failure` and the arm
+                // below then caught it, so it changed no outcome at all.
+                Err(nom::Err::Error(_)) => {
                     let (input, access) = cut(preceded(zero_or_more_ws_or_comment, access))(input)?;
 
                     Ok((
@@ -2364,6 +2407,8 @@ fn assignment(input: Span) -> IResult<Span, LetExpr> {
                         },
                     ))
                 }
+
+                Err(e) => Err(e),
             }
         }
 
