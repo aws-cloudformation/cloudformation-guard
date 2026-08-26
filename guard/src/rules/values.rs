@@ -10,7 +10,7 @@ use nom::lib::std::fmt::Formatter;
 
 use crate::rules::{
     errors::{Error, InternalError},
-    libyaml::loader::Loader,
+    libyaml::loader::{Loader, MERGE_KEY},
     long_form_of,
     parser::Span,
     path_value::Location,
@@ -329,24 +329,27 @@ impl<'a> TryFrom<&'a serde_yaml::Value> for Value {
                     Ok(res)
                 },
             )?)),
-            serde_yaml::Value::Mapping(mapping) => Ok(Value::Map(mapping.iter().try_fold(
-                IndexMap::with_capacity(mapping.len()),
-                |mut res, (key, val)| -> Result<IndexMap<String, Self>, Self::Error> {
-                    match key {
-                        serde_yaml::Value::String(key) => {
-                            res.insert(key.to_string(), Value::try_from(val)?);
-                        }
-                        _ => {
-                            // NOTE: can't provide a location for our error here since serde_yaml
-                            // doesn't provide that for us
-                            return Err(Error::InternalError(InternalError::InvalidKeyType(
-                                String::default(),
-                            )));
-                        }
+            serde_yaml::Value::Mapping(mapping) => {
+                let mut res = IndexMap::with_capacity(mapping.len());
+                let mut merges: Vec<&serde_yaml::Value> = vec![];
+
+                for (key, val) in mapping {
+                    // Held back until every explicit key is in, for the precedence reason recorded on
+                    // `libyaml::loader::apply_merges`. `serde_yaml` refuses a duplicate key, so this
+                    // can only ever collect one -- but it is collected rather than applied in place so
+                    // the ordering guarantee does not depend on that.
+                    if matches!(key, serde_yaml::Value::String(name) if name == MERGE_KEY) {
+                        merges.push(val);
+                        continue;
                     }
-                    Ok(res)
-                },
-            )?)),
+
+                    res.insert(scalar_key_name(key)?, Value::try_from(val)?);
+                }
+
+                merge_into(&mut res, merges)?;
+
+                Ok(Value::Map(res))
+            }
             serde_yaml::Value::Tagged(tag) => {
                 let prefix = tag.tag.to_string();
                 let value = tag.value.clone();
@@ -490,6 +493,127 @@ where
     I: IntoIterator<Item = (&'a str, Value)>,
 {
     values.into_iter().map(|(s, v)| (s.to_owned(), v)).collect()
+}
+
+/// The name a mapping key stands for, or `InvalidKeyType` for a key that has no name.
+///
+/// This is the serde-backed loader's half of `libyaml::loader::stringify_scalar_key`, and it has to
+/// move with it: refusing an unquoted account id, port or file mode under `Mappings` refuses templates
+/// CloudFormation accepts, since a template is converted to JSON before deployment and JSON has no key
+/// but a string. Until this landed, `validate` read the five keys of a `Mappings` block written that
+/// way and `guard test` refused the same bytes outright, which is the shape of divergence the two
+/// loaders exist under a pin to prevent.
+///
+/// Every spelling is checked against the other loader in
+/// `both_loaders_resolve_the_same_document_to_the_same_value`. `serde_yaml` resolves the same scalars
+/// this loader does -- `0x1F` is 31, `0755` stays the string "0755", `.nan` is a float -- so agreeing
+/// on the *rendering* is all that is left, which is why the float and non-finite arms are spelled the
+/// way they are rather than through `to_string`.
+///
+/// `Null`, the containers and a tagged key are refused, for the reasons on `stringify_scalar_key`: a
+/// null has no text either convention agrees on, and `? [a, b]` has no JSON representation at all.
+/// The message names the key's type, since `serde_yaml` has no position to name instead.
+fn scalar_key_name(key: &serde_yaml::Value) -> crate::rules::Result<String> {
+    match key {
+        serde_yaml::Value::String(name) => Ok(name.to_string()),
+        serde_yaml::Value::Bool(b) => Ok(b.to_string()),
+        serde_yaml::Value::Number(num) => Ok(number_key_name(num)),
+        other => Err(Error::InternalError(InternalError::InvalidKeyType(
+            format!(
+                "an unrecorded position, where the key is {}. Quote it to make it a string",
+                match other {
+                    serde_yaml::Value::Null => "null".to_string(),
+                    serde_yaml::Value::Sequence(..) => "a sequence".to_string(),
+                    serde_yaml::Value::Mapping(..) => "a mapping".to_string(),
+                    serde_yaml::Value::Tagged(tagged) => format!("tagged {}", tagged.tag),
+                    // Covered by the arms above; naming the variant is as specific as this can be.
+                    _ => format!("{other:?}"),
+                }
+            ),
+        ))),
+    }
+}
+
+/// The text a numeric key stands for, rendered as `stringify_scalar_key` renders the same number.
+fn number_key_name(num: &serde_yaml::Number) -> String {
+    if num.is_i64() {
+        // `as_i64` is `Some` under `is_i64`.
+        return num.as_i64().unwrap_or_default().to_string();
+    }
+
+    if num.is_u64() {
+        // Above `i64::MAX`. The libyaml loader keeps the literal for an integer this wide, and
+        // `u64::to_string` is the same digits.
+        return num.as_u64().unwrap_or_default().to_string();
+    }
+
+    let float = num.as_f64().unwrap_or_default();
+
+    if !float.is_finite() {
+        non_finite_spelling(float)
+    } else if float.fract() == 0.0 {
+        // A whole float keeps a fractional part, so `1.0` is "1.0" and not Rust's "1". That is what a
+        // YAML-to-JSON conversion produces and what `PathAwareValue`'s own `serde_json` rendering
+        // produces, and it is what `stringify_scalar_key` produces.
+        format!("{float:.1}")
+    } else {
+        float.to_string()
+    }
+}
+
+/// Folds each `<<` value into the mapping that wrote it.
+///
+/// The serde-backed loader's half of `libyaml::loader::apply_merges`, and the precedence is that
+/// function's: a key the mapping writes for itself wins over a merged one, which is why this runs once
+/// every explicit key is in, and within a sequence of mappings an earlier entry wins over a later one.
+///
+/// Nothing here resolved the merge key at all, so `<<` became an ordinary key of that name and
+/// everything under it was hidden -- a silent wrong SKIP on the shape essentially every real rule uses,
+/// still live through the public `run_checks` and therefore through `guard-ffi` and `guard-lambda`
+/// after the libyaml loader had been fixed. `serde_yaml::Value::apply_merge` was the alternative and is
+/// not used: it would have to be called at every site that reaches this conversion, so a new one would
+/// silently miss it, and it resolves a *quoted* `"<<"` as a merge because `Value` keeps no scalar
+/// style -- the defect `libyaml::loader` carries `merge_key_index` to avoid.
+///
+/// A quoted `"<<"` is therefore still merged on this side. `serde_yaml::Value` has already discarded
+/// the style by the time this runs, so the divergence cannot be closed here; it is recorded with the
+/// pin's other unclosable cases in `values_tests`.
+fn merge_into(
+    map: &mut IndexMap<String, Value>,
+    merges: Vec<&serde_yaml::Value>,
+) -> crate::rules::Result<()> {
+    for source in merges {
+        let sources = match source {
+            serde_yaml::Value::Mapping(entries) => vec![entries],
+            serde_yaml::Value::Sequence(entries) => entries
+                .iter()
+                .map(|entry| match entry {
+                    serde_yaml::Value::Mapping(entries) => Ok(entries),
+                    _ => Err(merge_value_error()),
+                })
+                .collect::<crate::rules::Result<Vec<_>>>()?,
+            _ => return Err(merge_value_error()),
+        };
+
+        for entries in sources {
+            for (key, value) in entries {
+                let name = scalar_key_name(key)?;
+                if !map.contains_key(&name) {
+                    map.insert(name, Value::try_from(value)?);
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// The libyaml loader's merge-value refusal without the position, which `serde_yaml` does not carry.
+fn merge_value_error() -> Error {
+    Error::ParseError(format!(
+        "the merge key `{MERGE_KEY}` must be given a mapping, or a sequence of mappings, because its \
+         value's keys become keys of the mapping that carries it (https://yaml.org/type/merge.html)"
+    ))
 }
 
 /// YAML's own spelling of a non-finite float, which is what the libyaml loader leaves behind.

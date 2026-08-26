@@ -1221,7 +1221,8 @@ fn a_non_string_key_is_refused_with_the_key_named(#[case] content: &str, #[case]
 /// Each case is a precedence rule from <https://yaml.org/type/merge.html>, except the last two, which
 /// the spec does not define. Two `<<` keys in one mapping is a duplicate key, and a name repeated
 /// inside one merge source is too, so both follow the rule cfn-guard applies to a duplicated key
-/// everywhere else: the last value wins. PyYAML and `serde_yaml::Value::apply_merge` agree on both.
+/// everywhere else: the last value wins. PyYAML agrees; `serde_yaml` refuses a duplicate key
+/// outright, so it has no answer to compare against.
 #[rstest::rstest]
 #[case::a_merged_key_is_reachable("<<: { a: merged }", "a", "merged")]
 #[case::an_explicit_key_wins("<<: { a: merged }\n  a: explicit", "a", "explicit")]

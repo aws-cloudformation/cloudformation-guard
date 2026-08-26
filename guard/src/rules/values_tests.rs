@@ -503,24 +503,64 @@ Resources:
 /// This compares the two through `serde_json`, which is the only form both reach, because the libyaml
 /// value carries source locations and the serde one has none.
 ///
-/// Two divergences are left out deliberately, each with its reason recorded where the decision was
-/// made:
+/// The cases left out are below, and the list is exhaustive: everything else this document can be
+/// extended with belongs in it. They divide into two kinds, and the difference decides whether the
+/// next reader should try to close one.
+///
+/// **Closable, and left open with a reason.**
 ///
 ///   - `0b101`. YAML 1.2 core has no binary form -- it is 1.1's -- so following `serde_yaml`'s
-///     extension would re-add a 1.1-ism the boolean set dropped.
+///     extension would re-add a 1.1-ism the boolean set dropped. A choice, not a limit.
+///
+/// **Not closable at this boundary.** `serde_yaml::Value` is a *resolved* value model: it has already
+/// discarded how each scalar was written, and anchors with it, before this conversion sees anything. So
+/// no amount of work in `values.rs` can close a divergence whose correct answer depends on the source
+/// text or the scalar style. Closing these means one loader rather than two -- for the entry points
+/// that read a whole file, moving `validate_and_return_json` onto `read_from` the way `rulegen` moved,
+/// which costs the YAML aliases that `run_checks` accepts today; for `guard test` it means more, since
+/// a spec's `input:` is a `serde_yaml::Value` by the time the `test` command has it.
+///
 ///   - a float literal that underflows to zero, such as `1e-400`. The libyaml loader keeps its text,
-///     because it can see that the mantissa holds a non-zero digit. This conversion cannot:
-///     `serde_yaml::Number` is `enum N { PosInt(u64), NegInt(i64), Float(f64) }` and retains no source
-///     text, so an underflowed `1e-400` arrives as `Float(0.0)` and is indistinguishable from a
-///     literal `0`. Checked against the pinned crate source (0.9.34), not assumed.
+///     because it can see that the mantissa holds a non-zero digit. `serde_yaml::Number` is
+///     `enum N { PosInt(u64), NegInt(i64), Float(f64) }` and retains no source text, so an underflowed
+///     `1e-400` arrives as `Float(0.0)`, indistinguishable from a literal `0`. Refusing every
+///     `Float(0.0)` would refuse a legitimate `0.0`, which is worse. Checked against the pinned crate
+///     source (0.9.34), not assumed. This one's direction is a silent wrong PASS: `underflow == 0`
+///     holds here and fails under `validate`.
+///   - a **quoted** `"<<"`. YAML resolves the merge key from a plain scalar only, so `"<<"` is an
+///     ordinary key; `libyaml::loader` records which scalars were plain to tell them apart, and a
+///     `serde_yaml::Value::Mapping` key is `String("<<")` either way.
+///   - a YAML **alias**. `serde_yaml` resolves anchors and aliases; the libyaml loader refuses them,
+///     loudly, because it is a parser wrapper with no composer. So `run_checks` reads an aliased file
+///     that `validate` will not.
+///   - a **duplicate key**. `serde_yaml::from_str` refuses one outright ("duplicate entry with key
+///     ..."); the libyaml loader keeps the last value and warns.
 ///
 /// An integer wider than `i64` and a non-finite float *were* on that list and are now in the document:
-/// keeping the digits and the canonical `.nan`/`.inf` spelling closed both.
+/// keeping the digits and the canonical `.nan`/`.inf` spelling closed both. So are the merge key and
+/// the non-string scalar keys, which the round that added this test fixed on the libyaml loader only.
+/// The document with those two blocks in it fails this assertion against `values.rs` as it stood then,
+/// which is measured, and each of the two was measured diverging on its own through `guard test`.
 #[test]
 fn both_loaders_resolve_the_same_document_to_the_same_value() -> Result<()> {
     let document = r#"
+Mappings:
+  NonStringKeys:
+    123456789012: an account id
+    0755: a file mode
+    0x1F: a bitmask
+    1.0: a whole float
+    2.5: a fractional float
+    true: a boolean
+    18446744073709551615: past i64
+    .nan: not a number
 Resources:
   Probe:
+    Merged:
+      <<: { from_merge: yes_really, overridden: from_merge }
+      overridden: explicit
+    MergedSequence:
+      <<: [{ a: first, shared: from_first }, { b: second, shared: from_second }]
     Properties:
       bool_true: true
       bool_TRUE: TRUE

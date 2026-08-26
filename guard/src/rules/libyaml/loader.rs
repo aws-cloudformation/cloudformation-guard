@@ -18,7 +18,10 @@ const TYPE_REF_PREFIX: &str = "tag:yaml.org,2002:";
 
 /// YAML's merge key. Its value's keys belong to the mapping that carries it, rather than to a key of
 /// this name. See `apply_merges`.
-const MERGE_KEY: &str = "<<";
+///
+/// Shared with `values::merge_into`, the serde-backed loader's half of the same resolution, so the two
+/// cannot drift apart on the spelling.
+pub(crate) const MERGE_KEY: &str = "<<";
 
 /// How many mappings and sequences may be nested inside one another.
 ///
@@ -450,9 +453,9 @@ impl Loader {
 /// resolve earlier-wins here, by analogy with the sequence rule. The closer analogy is the one
 /// cfn-guard applies to every other duplicated key -- `path_value::try_from_marked` keeps the last
 /// value and warns -- so the sources are applied in reverse document order and a later `<<` wins.
-/// That is also what PyYAML and `serde_yaml::Value::apply_merge` do, the second because `serde_yaml`
-/// has already collapsed the duplicate key before it looks for `<<` at all, so this is the answer the
-/// other loader in this product already gives.
+/// PyYAML agrees. `serde_yaml` does not settle it: measured, `from_str` refuses a duplicate key
+/// outright ("duplicate entry with key `<<`"), so it never reaches its own merge handling, and the
+/// two loaders differ on duplicate keys generally rather than on merges.
 ///
 /// **A name duplicated inside one merge source is left for `try_from_marked` to collapse.** The map
 /// is keyed on `(name, location)`, so two same-named entries of one source are two entries and both

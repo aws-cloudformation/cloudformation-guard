@@ -62,21 +62,32 @@ fn an_internal_error_converts_to_a_code_rather_than_panicking() {
 }
 
 /// The control, and the reason the case above constructs the error rather than provoking it through
-/// the entry point. A data file with a non-string key is the input that produces
-/// `InternalError::InvalidKeyType`, but it does not reach this table: `validate_and_return_json`,
-/// which is what `cfn_guard_run_checks` calls, parses with serde rather than the libyaml loader and
-/// maps every conversion failure to `Error::ParseError` before returning. All four key shapes come
-/// back as a parse error and none of them panics.
+/// the entry point. `validate_and_return_json`, which is what `cfn_guard_run_checks` calls, maps every
+/// conversion failure to `Error::ParseError` before returning, so a key it refuses arrives here as a
+/// parse error rather than as the `InternalError::InvalidKeyType` the conversion raised.
 ///
 /// So the table is fed by `Error`'s public surface rather than by this route as the code stands. It
 /// is still wrong for it to abort: `Error` is public, `run_checks` is public, and a table that is
 /// total for every variant does not depend on an unreachability argument that the next commit to
 /// either of those can invalidate.
+///
+/// The `accepted` column is what changed when the non-string scalar keys landed on this loader too. A
+/// number or a boolean written as a mapping key is a template CloudFormation accepts -- it is
+/// converted to JSON before deployment, and JSON has no key but a string -- and `validate` had been
+/// reading those for a commit while `run_checks` refused the same bytes. A null or a sequence key
+/// stays refused: there is no text either convention agrees on for the first and no JSON
+/// representation at all for the second. Nothing panics either way, which is what this test is here
+/// for.
 #[test]
-fn a_non_string_key_reaches_the_entry_point_as_a_parse_error() {
+fn a_non_string_key_reaches_the_entry_point_without_panicking() {
     let rules = "rule r { Resources.B.Properties.Encrypted == true }";
 
-    for data in ["1: foo\n", "true: foo\n", "~: foo\n", "[1, 2]: foo\n"] {
+    for (data, accepted) in [
+        ("1: foo\n", true),
+        ("true: foo\n", true),
+        ("~: foo\n", false),
+        ("[1, 2]: foo\n", false),
+    ] {
         let outcome = std::panic::catch_unwind(|| {
             run_checks(
                 ValidateInput {
@@ -96,12 +107,21 @@ fn a_non_string_key_reaches_the_entry_point_as_a_parse_error() {
             Err(..) => panic!("run_checks panicked on the key in {:?}", data),
         };
 
-        assert!(
-            matches!(returned, Err(Error::ParseError(..))),
-            "the key in {:?} gave {:?}, not a parse error",
-            data,
-            returned
-        );
+        if accepted {
+            assert!(
+                returned.is_ok(),
+                "the key in {:?} gave {:?}, and `validate` reads it",
+                data,
+                returned
+            );
+        } else {
+            assert!(
+                matches!(returned, Err(Error::ParseError(..))),
+                "the key in {:?} gave {:?}, not a parse error",
+                data,
+                returned
+            );
+        }
     }
 }
 
