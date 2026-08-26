@@ -174,7 +174,7 @@ impl<'a> std::fmt::Display for ParserError<'a> {
 /// That set is chosen to be complete rather than to be a list of shapes someone thought to try: it is a
 /// feedback vertex set of this file's call graph, so every cycle in the graph passes through at least one
 /// of the six and no construct can nest without incrementing the counter. Removing the six leaves the
-/// graph acyclic; removing only the first three leaves one strongly-connected component of seventeen
+/// graph acyclic; removing only the first three leaves one strongly-connected component of nineteen
 /// functions, which is what the six filter, key-filter and function-call rows above are spellings of.
 /// Threading a depth argument instead would have changed the signature of every function on all of those
 /// paths -- `clause`, `access`, `cnf_clauses`, `disjunction_clauses`, `parse_value`, `let_value` and
