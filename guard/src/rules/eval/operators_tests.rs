@@ -1256,3 +1256,150 @@ fn not_eq_passes_for_an_unreportable_left_operand() -> crate::rules::Result<()> 
 
     Ok(())
 }
+
+/// A query-versus-query `==` that both fails on several values and hits a pairing it cannot answer
+/// reports every failing value, and the pairing it names is one that actually failed.
+///
+/// Two separate defects, both from the arm that returned the refusal *instead of* the diff:
+///
+/// 1. Every other unmatched value went with the discarded diff. Over `[1, 5]` against `["p", "q"]` both
+///    left values fail and the report named one, so a template with N offending properties took N runs
+///    to fix.
+/// 2. The refusal recorded the first error seen anywhere in either sweep, including one hit on the way
+///    to a match found afterwards. That pairing decided nothing, and naming it points a reader at the
+///    wrong operand.
+///
+/// The single-value case is asserted too, because it is the common one and it must not gain a second
+/// entry saying the same thing about the same property.
+#[test]
+fn a_refused_pairing_does_not_swallow_the_rest_of_the_diff() -> crate::rules::Result<()> {
+    fn at(path: &str, v: PathAwareValue) -> QueryResult {
+        // A document path, so `placeable` holds and the diff is taken from the left.
+        let placed = match v {
+            PathAwareValue::Int((_, i)) => {
+                PathAwareValue::Int((Path::new(path.to_string(), 1, 1), i))
+            }
+            PathAwareValue::String((_, s)) => {
+                PathAwareValue::String((Path::new(path.to_string(), 1, 1), s))
+            }
+            other => other,
+        };
+        QueryResult::Resolved(Rc::new(placed))
+    }
+    fn int(i: i64) -> PathAwareValue {
+        PathAwareValue::Int((Path::root(), i))
+    }
+    fn string(s: &str) -> PathAwareValue {
+        PathAwareValue::String((Path::root(), s.to_string()))
+    }
+    fn results(lhs: &[QueryResult], rhs: &[QueryResult]) -> Vec<ValueEvalResult> {
+        match (CmpOperator::Eq, false).compare(lhs, rhs).unwrap() {
+            EvalResult::Result(v) => v,
+            other => panic!("expected a per-value result: {:?}", other),
+        }
+    }
+
+    // Defect 1: two failing left values, every pairing incomparable.
+    let lhs = [at("/A1/V", int(1)), at("/A2/V", int(5))];
+    let rhs = [at("/C1/V", string("p")), at("/C2/V", string("q"))];
+    let got = results(&lhs, &rhs);
+
+    let refusals = got
+        .iter()
+        .filter(|r| {
+            matches!(
+                r,
+                ValueEvalResult::ComparisonResult(ComparisonResult::NotComparable(_))
+            )
+        })
+        .count();
+    assert_eq!(refusals, 1, "the refusal is still reported: {:?}", got);
+
+    let diffs = got
+        .iter()
+        .filter_map(|r| match r {
+            ValueEvalResult::ComparisonResult(ComparisonResult::Fail(Compare::QueryIn(qin))) => {
+                Some(qin)
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(diffs.len(), 1, "and the diff beside it: {:?}", got);
+    assert_eq!(
+        diffs[0].diff.len(),
+        2,
+        "both failing values must be named, not just the one the refusal is about"
+    );
+    let named = diffs[0]
+        .diff
+        .iter()
+        .map(|v| v.self_path().0.clone())
+        .collect::<Vec<_>>();
+    assert!(
+        named.contains(&"/A1/V".to_string()) && named.contains(&"/A2/V".to_string()),
+        "expected both properties, got {:?}",
+        named
+    );
+
+    // Defect 2: the left value hits an incomparable pairing against "x" and then matches against 1, so
+    // the refusal decided nothing. The clause still fails, on the right-hand extra. The pairing named
+    // must be about "x", the value with no equal -- not about the left value that matched.
+    let lhs = [at("/A1/V", int(1))];
+    let rhs = [at("/B1/V", string("x")), at("/B2/V", int(1))];
+    let got = results(&lhs, &rhs);
+    let named = got
+        .iter()
+        .filter_map(|r| match r {
+            ValueEvalResult::ComparisonResult(ComparisonResult::NotComparable(nc)) => {
+                Some(nc.pair.lhs.self_path().0.clone())
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        named,
+        vec!["/B1/V".to_string()],
+        "the refusal must be about the value that found no equal, not one that matched: {:?}",
+        got
+    );
+
+    // The single-value case: one failing value, and the refusal already names it. One result, not two.
+    let lhs = [at("/A1/V", int(1))];
+    let rhs = [at("/C1/V", string("p"))];
+    let got = results(&lhs, &rhs);
+    assert_eq!(
+        got.len(),
+        1,
+        "a refusal that already names the only failing value must not be doubled: {:?}",
+        got
+    );
+    assert!(matches!(
+        got[0],
+        ValueEvalResult::ComparisonResult(ComparisonResult::NotComparable(_))
+    ));
+
+    // Polarity: a refusal fails `!=` as well. Inverting it would let a denylist admit a value it could
+    // not compare, which is the exit-0-with-nothing-in-the-report defect.
+    let negated = match (CmpOperator::Eq, true).compare(&lhs, &rhs)? {
+        EvalResult::Result(v) => v,
+        other => panic!("expected a per-value result: {:?}", other),
+    };
+    assert!(
+        negated.iter().any(|r| matches!(
+            r,
+            ValueEvalResult::ComparisonResult(ComparisonResult::NotComparable(_))
+        )),
+        "!= must refuse rather than pass: {:?}",
+        negated
+    );
+    assert!(
+        !negated.iter().any(|r| matches!(
+            r,
+            ValueEvalResult::ComparisonResult(ComparisonResult::Success(_))
+        )),
+        "!= must not report a success for a pair it could not compare: {:?}",
+        negated
+    );
+
+    Ok(())
+}

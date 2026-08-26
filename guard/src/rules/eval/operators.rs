@@ -756,25 +756,38 @@ impl Comparator for EqOperation {
                 // be compared on the way to a match that was found afterwards did not decide anything,
                 // so `%q == %r` over two sets that do match must not start refusing because some
                 // unrelated pairing inside it had no answer.
+                //
+                // Promoted only once the value it is about turns out to be unmatched, which is what the
+                // paragraph above is asking for and what recording it inside the inner loop did not
+                // deliver. `each` can hit an incomparable pairing and then find a match against a later
+                // element of `against`; the `continue 'each` skips the remaining comparisons but not the
+                // error already stored. So with a left operand of `[1]` against a right of `["x", 1]` the
+                // clause failed on the right-hand extra and reported that `1` is not comparable with
+                // `"x"` -- a pairing that decided nothing, since `1` matched.
                 let mut unanswerable: Option<(Rc<PathAwareValue>, Rc<PathAwareValue>, String)> =
                     None;
                 let mut without_a_match =
                     |from: &[Rc<PathAwareValue>], against: &[Rc<PathAwareValue>]| {
                         let mut unmatched = Vec::with_capacity(from.len());
                         'each: for each in from {
+                            let mut refused: Option<(Rc<PathAwareValue>, String)> = None;
                             for other in against {
                                 match compare_eq_symmetric(each, other) {
                                     Ok(true) => continue 'each,
                                     Ok(false) => {}
                                     Err(err) => {
-                                        if unanswerable.is_none() {
-                                            unanswerable = Some((
-                                                Rc::clone(each),
-                                                Rc::clone(other),
-                                                unanswerable_reason(err),
-                                            ));
+                                        if refused.is_none() {
+                                            refused =
+                                                Some((Rc::clone(other), unanswerable_reason(err)));
                                         }
                                     }
+                                }
+                            }
+                            // `each` has no equal anywhere in `against`, so it is one of the values that
+                            // fails the clause, and a pairing it could not answer is now worth reporting.
+                            if unanswerable.is_none() {
+                                if let Some((other, reason)) = refused {
+                                    unanswerable = Some((Rc::clone(each), other, reason));
                                 }
                             }
                             unmatched.push(Rc::clone(each));
@@ -833,19 +846,49 @@ impl Comparator for EqOperation {
                     QueryIn::new(lhs_unmatched, lhs_selected, rhs_selected)
                 };
 
-                results.push(match (query_in.diff.is_empty(), unanswerable) {
-                    (true, _) => ValueEvalResult::ComparisonResult(ComparisonResult::Success(
-                        Compare::QueryIn(query_in),
-                    )),
-
-                    (false, Some((each, other, reason))) => {
-                        not_comparable_because(each, other, reason)
+                // A refusal replaces the diff only when the diff has nothing to add -- that is, when it
+                // names exactly the one value the refusal already names. Otherwise both are reported.
+                //
+                // Returning `not_comparable_because` unconditionally dropped `query_in`, and with it
+                // every other value that failed. For `%a.Properties.V == %c.Properties.V` over `[1, 5]`
+                // against `["p", "q"]` both left values fail and the report named one: it said `A1` /
+                // `Value = 1`, and `A2` / `Value = 5` appeared nowhere, so a template with N offending
+                // properties took N runs to fix. The pre-round code reported one entry per failing value;
+                // it named the wrong side, which is what F10 fixed, but it did not lose values.
+                //
+                // Two results rather than one reason carried on the diff. `InComparisonCheck` does have
+                // a `message` field, and putting the reason there gives one finding per value with the
+                // reason on the right one -- but `common.rs:871` maps that field to `NameInfo.message`,
+                // the author's custom-message slot, where the `Comparison` variant beside it maps to
+                // `NameInfo.error`. Measured: the reason then disappears from the human output *and*
+                // from `--output-format json --structured`, which is `7df7617`'s whole point undone.
+                // Making it render means changing that mapping, which also currently discards
+                // `custom_message` for this variant -- a separate defect and a wider change than this one.
+                //
+                // The refusal is pushed first, and it must stay a `NotComparable`: the negation wrapper
+                // passes that through untouched and inverts `Fail`, so this is what keeps `%q != %r`
+                // failing on a pair it cannot compare instead of passing at exit 0.
+                let refusal_says_it_all = match &unanswerable {
+                    Some((value, _, _)) => {
+                        query_in.diff.len() == 1 && Rc::ptr_eq(&query_in.diff[0], value)
                     }
+                    None => false,
+                };
 
-                    (false, None) => ValueEvalResult::ComparisonResult(ComparisonResult::Fail(
-                        Compare::QueryIn(query_in),
-                    )),
-                });
+                if query_in.diff.is_empty() {
+                    results.push(ValueEvalResult::ComparisonResult(
+                        ComparisonResult::Success(Compare::QueryIn(query_in)),
+                    ));
+                } else {
+                    if let Some((each, other, reason)) = unanswerable {
+                        results.push(not_comparable_because(each, other, reason));
+                    }
+                    if !refusal_says_it_all {
+                        results.push(ValueEvalResult::ComparisonResult(ComparisonResult::Fail(
+                            Compare::QueryIn(query_in),
+                        )));
+                    }
+                }
             }
         }
         Ok(EvalResult::Result(results))
