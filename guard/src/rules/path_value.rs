@@ -1597,11 +1597,27 @@ pub(crate) fn compare_eq(first: &PathAwareValue, second: &PathAwareValue) -> Res
         // comparisons on a float would otherwise do. `is_within` is `le`/`lt`/`ge`/`gt` and
         // `float_within_int_range` reads `compare_int_to_float`'s `None` through a `_ => false` arm, so
         // every one of them reports "not in the range" for a value that cannot be ordered against
-        // either bound. That is a decision, and `!=` and `NOT IN` then invert it into a pass: with a
-        // `Float(NaN)` in the document, `A not in r[-1,1]` succeeded, so a denylist admitted a value
-        // that is not a number. Every other comparison against a NaN already refuses, through
-        // `compare_values` and `compare_int_to_float`, and both polarities of a refusal fail the
-        // clause -- these four were the only ones answering.
+        // either bound. That is a decision, and `!=` and `NOT IN` then invert it into a pass, so a
+        // denylist would admit a value that is not a number. Every other comparison against a NaN
+        // already refuses, through `compare_values` and `compare_int_to_float`, and both polarities of a
+        // refusal fail the clause -- these four were the only ones answering.
+        //
+        // **No input can reach it as the tree stands, and it is kept anyway.** When this was written the
+        // scenario was live: a `Float(NaN)` did arrive from a document. It cannot now, because the serde
+        // loader gained a finiteness gate afterwards (`values.rs:317`, which stringifies a non-finite
+        // float to `.nan` / `.inf` / `-.inf`), and every other way a `Float` is built from input already
+        // had one: the libyaml loader at `libyaml/loader.rs:215`, the rules-file float literal at
+        // `parser.rs:427`, which is a parse error, and `parse_float` at `functions/converters.rs:40`,
+        // which yields no value. `serde_json::Number` cannot hold a NaN in the first place -- JSON has
+        // no spelling for one, and `1e400` in a JSON data file loads as the string `"1e400"` through the
+        // YAML reader rather than as an infinity.
+        //
+        // So it becomes reachable again the moment any of those four gates goes, or a fifth construction
+        // site appears -- which is a property of the callers and not of this match, exactly as for the
+        // `Err(_) => false` arm in `PartialEq` above. Not `unreachable!()` for the same reason given
+        // there: that would turn each of those changes into a panic inside a comparison, and a widened
+        // contract reaching a panic is worse than a widened contract reaching a refusal. The guard is
+        // one `is_nan` call on a path that already does four comparisons.
         //
         // Only the scalar is tested. A range's bounds come from `parse_range` in the rules parser,
         // which builds them with `parse_float`, and that rejects a literal which is not finite -- so a
