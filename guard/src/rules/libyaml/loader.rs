@@ -44,9 +44,29 @@ pub(crate) const MERGE_KEY: &str = "<<";
 /// this product, and at this value the two agree level for level: on files of `a: ` followed by n
 /// brackets, `validate` and `rulegen` both accept n = 127 and both refuse n = 128, the second with
 /// "recursion limit exceeded". So no document this loader refuses could have reached `run_checks` or
-/// `guard test` either. And it is far above anything real -- the deepest data file in the rules
-/// registry snapshot is 15 levels, and the deepest in this repository is 24
-/// (`guard/resources/parse-tree/output-dir/test_rule_with_this_keyword.yaml`).
+/// `guard test` either. And it is far above anything real. Measured by this loader's own counting: set
+/// this constant to N, rebuild, and run `validate --data` over every `.yaml`, `.yml`, `.json` and
+/// `.template` file in both corpora, 382 of them, taking a file's level count to be the smallest N that
+/// accepts it.
+///
+/// ```text
+/// rules registry snapshot, 256 files    14   kms_no_wildcard_principal_tests.yml, and two others
+///   its embedded `input:` templates     12
+/// this repository, 126 files            23   parse-tree/output-dir/test_rule_with_this_keyword.yaml
+///   excluding `output-dir/` fixtures    11   apigateway-restapi-tests.yaml, and two others
+/// ```
+///
+/// The 23 needs reading carefully, because it is not a template. Every file here deeper than 11 levels --
+/// six of them -- sits under an `output-dir/`, and those are cfn-guard's own expected *output*, serialized
+/// parse trees and validate reports, which this loader never reads. Nothing in either corpus that is
+/// actually shaped like a CloudFormation template passes 12. The registry holds no template files at all,
+/// in fact: its data files are `test` specs whose `input:` blocks carry the templates, and those blocks
+/// are read by the serde loader rather than by this one.
+///
+/// So the bound clears real input by an order of magnitude and clears even this repository's own
+/// serialized output by more than 5x. That is the form worth keeping: it does not move when a fixture
+/// gains a level. An earlier revision put these at 15 and 24, one too many each, with no method recorded
+/// for re-deriving either.
 ///
 /// A non-recursive conversion was the alternative. It would remove the crash but not the quadratic
 /// path-string cost, which is inherent to storing a full path at every node and reaches into `Path`,
