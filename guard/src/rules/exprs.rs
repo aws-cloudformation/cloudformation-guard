@@ -1036,8 +1036,8 @@ impl<'value, 'loc: 'value> RuleReference<'value, 'loc> {
 /// a tripwire for a hypothetical grammar change. A rule body reaches one directly, through a rule-level
 /// `when`, through a nested `when` block, and through a type block's `when` conditions. The *bodies* of a
 /// type block and of a block clause reach one in two spellings: both take `block(clause)`, and `clause`
-/// is an alternation of five arms of which three are not access clauses -- a nested `block_clause`, a
-/// `when_block`, and `parameterized_rule_call_clause`. So
+/// reads more than access clauses -- a nested block clause, which it reaches through
+/// `access_clause_or_block`, a `when_block`, and `parameterized_rule_call_clause`. So
 ///
 /// ```text
 /// rule a(t) { Resources { a(%t) } }                  the call, directly in the body

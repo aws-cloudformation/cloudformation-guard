@@ -6685,7 +6685,7 @@ fn rule_still_defines_a_rule() -> Result<(), Error> {
 /// `opt(some_keyword)` inside `access` commits: once the word and a space have matched, the rest of the clause
 /// is parsed as though the modifier were meant, and what fails afterwards fails for the whole clause. So
 /// `some == "bar"` failed inside `access`, where an operator cannot begin a query, and `some exists` failed one
-/// step later in `clause_with_map`, where `exists` had been taken as the query and no comparator was left.
+/// step later in `clause_tail_with_map`, where `exists` had been taken as the query and no comparator was left.
 /// Neither is ambiguous: the modifier reading of both is a `some` with no clause after it.
 #[test]
 fn a_clause_whose_first_identifier_is_some_reads_as_that_clause() -> Result<(), Error> {
@@ -7159,8 +7159,72 @@ fn nested_rules_file(shape: &str, depth: usize) -> String {
             "{k: ".repeat(inner),
             "}".repeat(inner)
         ),
+        "filters" => format!(
+            "rule a {{\n  {}q exists{}\n}}\n",
+            "q[ ".repeat(inner),
+            " ] exists".repeat(inner)
+        ),
         other => unreachable!("no generator for {}", other),
     }
+}
+
+/// A query whose filters nest costs time linear in the depth, not twice as much for each level.
+///
+/// `clause` reads a block clause and a comparison clause, and both open with an `access`. As separate
+/// arms of one alternation each got its own attempt at it: the block reading parsed the whole query,
+/// found no `{` where `block` needs one, returned a recoverable error, and the comparison arm parsed the
+/// identical text again. A filter inside a query is itself a `clause`, so the two attempts doubled at
+/// every level of nesting. `rule a { q[ q[ .. ] exists ] exists }` measured 2.00x per level over nine
+/// consecutive levels: 0.06s at twelve levels, 14.5s at twenty, 58s at twenty-two, and about nine hours
+/// at thirty, for a file of under 400 bytes. Every depth parsed correctly and exited 0, so nothing was
+/// ever reported -- a caller with a timeout saw a timeout and one without saw nothing at all.
+///
+/// The assertion is a ratio and not a wall-clock bound, so that it states the growth rather than the
+/// speed of whichever machine runs it. Both depths are ones the doubling parse could still finish,
+/// which is the point of choosing them: a deeper pair would make a reintroduction hang here instead of
+/// failing, and a test that hangs reports nothing. Doubling puts the deep depth at 2^8 = 256 times the
+/// shallow one and measured 234x. Linear measures 1.4x here -- 112us against 151us per parse -- so the
+/// 50x ceiling sits 36x above what passes and 4.7x below what used to fail. Reaching it by noise alone
+/// would take a stall that hit one of the two measurements and not the other by a factor of thirty; a
+/// machine that is uniformly slower does not move a ratio at all.
+#[test]
+fn nested_query_filters_cost_time_linear_in_the_depth() {
+    const SHALLOW: usize = 13;
+    const DEEP: usize = 21;
+    const RUNS: u32 = 10;
+
+    fn parse_repeatedly(depth: usize, runs: u32) -> std::time::Duration {
+        let rules = nested_rules_file("filters", depth);
+        let start = std::time::Instant::now();
+        for _ in 0..runs {
+            assert!(
+                rules_file(from_str2(&rules)).is_ok(),
+                "a query with {} nested filters has to parse",
+                depth - 1
+            );
+        }
+        start.elapsed()
+    }
+
+    let shallow = parse_repeatedly(SHALLOW, RUNS);
+    let deep = parse_repeatedly(DEEP, RUNS);
+    let ratio = deep.as_secs_f64() / shallow.as_secs_f64();
+
+    assert!(
+        ratio < 50.0,
+        "{} more levels of filter nesting cost {:.1}x, where a linear parse costs a few times as \
+         much: {} levels took {:?} and {} levels took {:?}, over {} runs each. A factor anywhere \
+         near 2^{} = {} means every level is being parsed twice again.",
+        DEEP - SHALLOW,
+        ratio,
+        SHALLOW - 1,
+        shallow,
+        DEEP - 1,
+        deep,
+        RUNS,
+        DEEP - SHALLOW,
+        1usize << (DEEP - SHALLOW),
+    );
 }
 
 /// A block clause's body and a type block's body each carry a rule reference, in two spellings, and a
@@ -7169,8 +7233,8 @@ fn nested_rules_file(shape: &str, depth: usize) -> String {
 /// This is the pair of `RuleRefs` arms whose doc comment used to call them unreachable -- "their clause
 /// parsers take access clauses only" -- and offer that as the reason they recurse rather than being
 /// folded into the `Clause(_)` catch-all. The claim was false: both bodies take `block(clause)`, and
-/// `clause` admits a nested `block_clause`, a `when_block` and a `parameterized_rule_call_clause`
-/// alongside its two access-clause arms. Nothing pinned these two positions, so a reader who trusted the
+/// `clause` admits a nested block clause, a `when_block` and a `parameterized_rule_call_clause`
+/// alongside its comparison clauses. Nothing pinned these two positions, so a reader who trusted the
 /// comment and deleted the recursion would have found every test still passing.
 ///
 /// The controls are what make the cases non-vacuous. `rule a { Resources { a } }` really is a syntax

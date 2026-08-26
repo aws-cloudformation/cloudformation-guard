@@ -1512,7 +1512,7 @@ fn map_keys_match(input: Span) -> IResult<Span, QueryPart> {
             map(tuple((not, in_keyword)), |_m| MapKeyComparator::NotIn),
         )),
     )(input)?;
-    // Value, then function call, then access -- the order and the set that `clause_with_map` and `let_value`
+    // Value, then function call, then access -- the order and the set that `clause_tail_with_map` and `let_value`
     // use. The function call was missing here, and it is the one right-hand side of the three that changed
     // what a clause means rather than rejecting it. `access` matched the function's name as a query and left
     // `(...)` behind, `close_array` carries no `cut` so that failed recoverably, and
@@ -1637,7 +1637,7 @@ pub(crate) fn access(input: Span) -> IResult<Span, AccessQuery> {
 /// `some` is a legal property name, and `opt(some_keyword)` commits: once the modifier has matched, the
 /// remainder is parsed as though it were meant, and whatever fails afterwards fails for the whole clause.
 /// So `some == "bar"` failed inside `access` -- an operator cannot begin a query -- and `some exists` failed
-/// one step later in `clause_with_map`, where `exists` had already been taken as the query and no comparator
+/// one step later in `clause_tail_with_map`, where `exists` had already been taken as the query and no comparator
 /// was left. Neither is ambiguous: the modifier reading of both is a `some` with no clause after it.
 /// `someProperty` and `some.foo` were never affected, because `some_keyword` requires a space after the word.
 ///
@@ -1692,11 +1692,10 @@ fn access_query(input: Span, some_modifier: bool) -> IResult<Span, AccessQuery> 
     )(input)
 }
 
-#[allow(clippy::redundant_closure)]
 fn clause_with_map<'loc, A, M, T: 'loc>(
     input: Span<'loc>,
     mut access: A,
-    mut mapper: M,
+    mapper: M,
 ) -> IResult<Span<'loc>, T>
 where
     A: FnMut(Span<'loc>) -> IResult<Span<'loc>, AccessQuery<'loc>>,
@@ -1709,15 +1708,32 @@ where
     };
 
     let (rest, not) = preceded(zero_or_more_ws_or_comment, opt(not))(input)?;
-    let (rest, (query, cmp)) = map(tuple((
-        |a| access(a),
+    let (rest, query) = access(rest)?;
+    clause_tail_with_map(rest, location, not.is_some(), query, access, mapper)
+}
+
+/// A comparison clause, continued from a query already parsed.
+///
+/// Split out of `clause_with_map` so `access_clause_or_block` can offer one parse of a query to this
+/// reading and to the block reading, rather than each parsing the same text for itself.
+fn clause_tail_with_map<'loc, A, M, T: 'loc>(
+    input: Span<'loc>,
+    location: FileLocation<'loc>,
+    negation: bool,
+    query: AccessQuery<'loc>,
+    access: A,
+    mut mapper: M,
+) -> IResult<'loc, Span<'loc>, T>
+where
+    A: FnMut(Span<'loc>) -> IResult<Span<'loc>, AccessQuery<'loc>>,
+    M: FnMut(GuardAccessClause<'loc>) -> T + 'loc,
+{
+    let (rest, cmp) = preceded(
         context("expecting one or more WS or comment blocks", zero_or_more_ws_or_comment),
         // error if there is no value_cmp, has to exist
         context("expecting comparison binary operators like >, <= or unary operators KEYS, EXISTS, EMPTY or NOT",
                 value_cmp)
-    )), |(query, _ign, value)| {
-        (query, value)
-    })(rest)?;
+    )(input)?;
 
     if !does_comparator_have_rhs(&cmp.0) {
         let (rest, custom_message) = map(
@@ -1734,7 +1750,7 @@ where
                     custom_message,
                     location,
                 },
-                negation: not.is_some(),
+                negation,
             }),
         ))
     } else {
@@ -1773,7 +1789,7 @@ where
                     custom_message,
                     location,
                 },
-                negation: not.is_some(),
+                negation,
             }),
         ))
     }
@@ -1793,7 +1809,19 @@ pub(crate) fn block_clause(input: Span) -> IResult<Span, GuardClause> {
         column: input.get_utf8_column() as u32,
     };
 
-    let (input, query) = access(input)?;
+    let (rest, query) = access(input)?;
+    block_clause_with_query(rest, location, query)
+}
+
+/// A block clause, continued from a query already parsed.
+///
+/// The counterpart of `clause_tail_with_map`, and split out for the same reason: `access_clause_or_block`
+/// parses the query once and offers it to both readings.
+fn block_clause_with_query<'loc>(
+    input: Span<'loc>,
+    location: FileLocation<'loc>,
+    query: AccessQuery<'loc>,
+) -> IResult<'loc, Span<'loc>, GuardClause<'loc>> {
     let (input, not_empty) = opt(value(
         true,
         preceded(zero_or_more_ws_or_comment, tuple((not, empty))),
@@ -1930,12 +1958,14 @@ fn clause(input: Span) -> IResult<Span, GuardClause> {
                 },
             )
         }),
-        block_clause,
+        // Ahead of `access_clause_or_block`, where the block reading used to sit ahead of it. The two are
+        // disjoint: this one needs a `(` immediately after the name, and the block reading needs a `{` at
+        // the position where the query stopped, which for a name is that same `(`.
         map(
             parameterized_rule_call_clause,
             GuardClause::ParameterizedNamedRule,
         ),
-        |i| clause_with(i, access),
+        access_clause_or_block,
         // Last, and only reached when the reading above failed. `some` is a property name as well as the
         // modifier, and `access` commits to the modifier as soon as it sees the word and a space, so
         // `some == "bar"` and `some exists` -- clauses about a property named `some` -- could not be written.
@@ -1946,6 +1976,55 @@ fn clause(input: Span) -> IResult<Span, GuardClause> {
         // name only when a newline, a comment, `{`, `}` or `or` follows it.
         |i| clause_with(i, access_without_some_modifier),
     ))(input)
+}
+
+/// The two readings of a clause that open with a query, over one parse of it.
+///
+/// A block clause and a comparison clause both begin with an `access`, and as separate arms of the
+/// alternation above each got its own attempt: the block reading parsed the entire query, found no `{`
+/// where `block` needs one, returned a recoverable error, and the comparison arm parsed the identical
+/// text again. A filter inside a query is a `clause`, so the two attempts double at every level of
+/// nesting, and the cost of `rule a { q[ q[ .. ] exists ] exists }` was 2^depth: measured at 2.00x per
+/// level over nine consecutive levels, thirty seconds at depth twenty for a 262-byte file, about nine
+/// hours at depth thirty. Every depth parsed correctly and exited 0, so nothing was ever reported --
+/// a caller with a timeout saw a timeout and one without saw nothing.
+///
+/// The block reading is still tried first, and has to be. Both readings succeed on
+/// `foo not empty { .. }`, because `empty` is a unary comparator and the comparison reading takes
+/// `foo not empty` and leaves the block unread; the block arm came earlier and won.
+///
+/// The sharing is conditional because the two readings do not open at the same position in general.
+/// The comparison reading skips whitespace and takes a negation before the query, and the block reading
+/// does neither -- it reads `not`, `NOT` or `!` as the start of a property name instead, which is why
+/// `not { a == 1 }` is a block clause over a property called `not` and `not foo { a == 1 }` is not a
+/// block clause at all. So one parse serves both exactly when that prefix consumed nothing, and
+/// otherwise the two readings are tried in turn as before. That fallback cannot be the exponential case:
+/// after a negation the block reading needs the filter to hang off the negation word itself and the
+/// comparison reading needs a name in its place, so at most one of the two descends.
+fn access_clause_or_block(input: Span) -> IResult<Span, GuardClause> {
+    let location = FileLocation {
+        file_name: input.extra,
+        line: input.location_line(),
+        column: input.get_utf8_column() as u32,
+    };
+
+    // A negation consumes at least one character, so an unmoved offset means the prefix took neither a
+    // negation nor any whitespace, which is exactly when the two readings open on the same span.
+    let (after_prefix, _) = preceded(zero_or_more_ws_or_comment, opt(not))(input)?;
+    if after_prefix.location_offset() == input.location_offset() {
+        let (rest, query) = access(input)?;
+        match block_clause_with_query(rest, location.clone(), query.clone()) {
+            Err(nom::Err::Error(_)) => {}
+            result => return result,
+        }
+
+        return clause_tail_with_map(rest, location, false, query, access, GuardClause::Clause);
+    }
+
+    match block_clause(input) {
+        Err(nom::Err::Error(_)) => clause_with(input, access),
+        result => result,
+    }
 }
 
 fn single_clause(input: Span) -> IResult<Span, WhenGuardClause> {
