@@ -1395,3 +1395,38 @@ fn a_scalar_key_becomes_the_text_cloudformation_would_give_it(
 
     Ok(())
 }
+
+/// The refusal says how many documents the stream holds, not merely that it holds more than one.
+///
+/// "More than one" leaves the reader to find out whether they have two documents or twenty. Counting
+/// means draining the rest of the stream, and the rest may not parse -- a file whose *later* document
+/// is not YAML is one of the shapes this refusal exists for -- so the count degrades to a lower bound
+/// rather than to a syntax error from further down the file, which would replace a message about
+/// document structure with one about the wrong thing.
+#[rstest::rstest]
+#[case::two("a: 1\n---\nb: 2\n", "holds 2")]
+#[case::three("a: 1\n---\nb: 2\n---\nc: 3\n", "holds 3")]
+#[case::five("a: 1\n---\nb: 2\n---\nc: 3\n---\nd: 4\n---\ne: 5\n", "holds 5")]
+#[case::a_later_document_that_does_not_parse(
+    "a: 1\n---\nb: [ this is : not valid yaml {{{\n---\nc: 3\n",
+    "holds at least 2"
+)]
+fn the_multiple_document_refusal_counts_them(#[case] content: &str, #[case] expected: &str) {
+    let loaded = Loader::new().load(content.to_string());
+
+    let message = match loaded {
+        Err(Error::UnsupportedDocument(message)) => message,
+        other => panic!(
+            "{:?} gave {:?}, not the multiple-document error",
+            content, other
+        ),
+    };
+
+    assert!(
+        message.contains(expected),
+        "the refusal for {:?} was {:?}, which does not say it {:?}",
+        content,
+        message,
+        expected
+    );
+}

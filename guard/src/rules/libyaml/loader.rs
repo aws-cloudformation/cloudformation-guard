@@ -93,10 +93,13 @@ impl Loader {
                     // file, so nothing that works today stops working.
                     Event::DocumentStart => {
                         if document.is_some() {
+                            let (documents, exact) = count_remaining_documents(&mut parser);
+
                             return Err(Error::UnsupportedDocument(format!(
-                                "cfn-guard evaluates one document per file, and this file holds \
-                                 more than one: a second document starts at {location}. Split the \
-                                 documents into separate files."
+                                "cfn-guard evaluates one document per file, and this file holds {}{} \
+                                 -- the second starts at {location}. Split them into separate files.",
+                                if exact { "" } else { "at least " },
+                                documents
                             )));
                         }
                     }
@@ -502,6 +505,30 @@ fn describe_key(key: &MarkedValue) -> String {
         // Every remaining variant is produced by the rules parser rather than by this loader, so
         // naming the variant is as specific as this can honestly be.
         other => format!("a {other:?}"),
+    }
+}
+
+/// How many documents the stream holds, counted from the second `DocumentStart` onwards.
+///
+/// The refusal is worth more if it says what the tool saw, because "more than one" leaves the reader
+/// to find out whether they have two documents or twenty. Counting means draining the rest of the
+/// stream, and the rest of the stream may not parse -- a file whose *later* document is not YAML is
+/// one of the shapes this refusal exists for -- so the count is reported as a lower bound when
+/// libyaml stops early. Returning "at least n" is better than either abandoning the count or
+/// replacing a message about document structure with a syntax error from further down the file.
+///
+/// The two already seen are added in by starting at two: the caller is inside the second
+/// `DocumentStart` when it asks.
+fn count_remaining_documents(parser: &mut Parser) -> (usize, bool) {
+    let mut documents = 2;
+
+    loop {
+        match parser.next() {
+            Ok((Event::DocumentStart, _)) => documents += 1,
+            Ok((Event::StreamEnd, _)) => return (documents, true),
+            Ok(_) => {}
+            Err(_) => return (documents, false),
+        }
     }
 }
 
