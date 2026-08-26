@@ -7027,9 +7027,9 @@ fn a_name_both_assigned_and_captured_in_one_scope_is_rejected() -> Result<(), Er
 /// The accepted cases run on a libtest thread, which is where the headroom is smaller than
 /// `MAX_NESTING_DEPTH`'s own thresholds suggest -- those are all the CLI's `main` and its 8 MB stack,
 /// against 2 MB for a Rust thread. See the note on `NESTING_DEPTH`: with the bound raised, the shape
-/// that overflows a libtest thread first is a key filter, between 300 and 350. So 128 is safe with
-/// about 2.3x to spare, and a future raise past ~300 breaks these cases by aborting the whole test
-/// binary rather than by failing.
+/// that overflows a libtest thread first is the **query** filter, 290 ok and 291 aborting, ahead of the
+/// key filter at 315/317. So 128 is safe with about 2.3x to spare, and a future raise past ~290 breaks
+/// these cases by aborting the whole test binary rather than by failing.
 #[rstest::rstest]
 #[case::block_one_inside_the_limit("blocks", MAX_NESTING_DEPTH - 1, true)]
 #[case::block_exactly_the_limit("blocks", MAX_NESTING_DEPTH, true)]

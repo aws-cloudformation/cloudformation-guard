@@ -123,23 +123,36 @@ impl<'a> std::fmt::Display for ParserError<'a> {
 /// nested `when` blocks     when Type == "x" { when ... { } }      parses 2000, aborts 4000
 /// nested map literals      Type == {k: {k: ... } }                parses 2000, aborts 4000
 /// nested list literals     Type == [[[ ... ]]]                    parses 4000, aborts 8000
-/// nested query filters     A[ A[ ... ] exists ]                   parses 1105, aborts 1107
+/// nested query filters     A[ A[ ... ] exists ] exists            parses 1105, aborts 1107  <- nearest
 /// the same under a `let`   let q = A[ A[ ... ] exists ]           parses 1105, aborts 1107
-/// nested key filters       Tags[ keys == a[ keys == a ] ]         parses  129, aborts 2000
+/// nested key filters       Tags[ keys == a[ keys == a ] ] exists  parses  129, aborts 2000
 /// a call in an assignment  let x = f(f( ... ))                    parses 2000, aborts 3000
 /// a call as an argument    b(f(f( ... )))                         parses 2000, aborts 3000
 /// a call as a right side   Type == f(f( ... ))                    parses 2000, aborts 3000
 /// ```
 ///
+/// Every shape above is written so that it parses as it stands, which two of them did not: the query-filter
+/// and key-filter rows each dropped the trailing `exists`, and a filter query with no operator after the
+/// closing bracket is a syntax error rather than a deep file. Anyone re-deriving these numbers renders the
+/// row, gets "There were no clauses present", and concludes the construct does not exist. The `let` row
+/// needs no trailing operator, because a `let` value is a query. Render the row, do not paraphrase it.
+///
 /// (Some rows are coarse ladders -- 2000/4000/8000 -- and the exact threshold does not matter for a bound
-/// an order of magnitude or more below it. The two filter rows are bisected rung by rung instead, because
-/// their threshold is the nearest of all ten to 128. Two caveats on them. "Parses" means something weaker
-/// than in the other rows: 1105 does not abort, but it does not finish either, for the reason below. And
-/// the boundary is one rung wide -- **1106 is unrepeatable**, measured three times as abort, abort, hang,
-/// while 1105 never aborts and 1107 always does. Stack-start jitter, from environment size and ASLR; it is
-/// not affected by how stdout is handled, which was checked over twelve depths with the output discarded
-/// and piped and agreed at every one. Anyone re-deriving these numbers should expect the same one-rung
-/// band, and should not read a single run at the boundary as the boundary.) The ten
+/// an order of magnitude or more below it. The query-filter rows are bisected rung by rung instead, because
+/// theirs is the **nearest** abort to 128 of all ten and so the one the bound has to clear. Three caveats.
+/// "Parses" means something weaker there than in the other rows: 1105 does not abort, but it does not
+/// finish either, for the reason below. The boundary is one rung wide -- **1106 is unrepeatable**, measured
+/// three times as abort, abort, hang, while 1105 never aborts and 1107 always does. That is stack-start
+/// jitter, from environment size and ASLR, and it is *not* affected by how stdout is handled, which was
+/// checked over twelve depths with the output discarded and piped and agreed at every one. So do not read a
+/// single run at the boundary as the boundary.
+///
+/// And the number moves with the backtracking fix, in the direction that makes the bound safer rather than
+/// less so. The two filter rows are the depths on a build with the exponential filter cost still present.
+/// With it fixed the descent gets further before the stack runs out: measured on that build, **1112 parses,
+/// 1113 is the unrepeatable rung, 1114 always aborts**. Both numbers are recorded because the difference is
+/// the point -- a bound justified by "deeper files abort anyway" would have to be re-derived every time the
+/// parser gets faster, and this one is not: see the argument for 128 at the end.) The ten
 /// spellings share no single
 /// function, which is why the count is kept per open construct in a thread-local rather than passed down
 /// as a parameter. Six functions open a level, one per construct that can contain another:
@@ -203,14 +216,24 @@ thread_local! {
     /// exists to prevent is not thread-independent at all. Every threshold on [`MAX_NESTING_DEPTH`] is
     /// the CLI's `main`, which gets 8 MB here; a Rust thread gets 2 MB by default, so libtest's ceiling
     /// is roughly a quarter of it. Measured by raising this bound to 100_000 in a throwaway build and
-    /// laddering the linear shapes on a libtest thread: a key filter overflows between 300 and 350, a
-    /// block between 420 and 450, a function call between 800 and 1200 -- against 1108 and 1603 for the
-    /// same shapes on `main`.
+    /// laddering each shape on a libtest thread, three runs per rung:
     ///
-    /// At 128 that leaves the tests about 2.3x of headroom rather than the 8.7x the CLI figures imply,
-    /// which is still ample, and nothing can recurse past the bound anyway. It matters if anyone raises
-    /// [`MAX_NESTING_DEPTH`] past ~300, because the failure mode there is not a failing assertion: the
-    /// test binary aborts with "fatal runtime error: stack overflow", taking every other test in that
+    /// ```text
+    /// query filter    290 ok, 291 aborts     <- binding, and the same shape that is nearest on `main`
+    /// key filter      315 ok, 317 aborts
+    /// block clause    beyond 360
+    /// function call   beyond 360
+    /// ```
+    ///
+    /// The query filter is the binding shape on both stacks, which is worth stating because it is not the
+    /// one a reader would guess: a key filter reaches `access` through the same `predicate_or_index`, and
+    /// costs *less* stack per level. An earlier version of this comment named the key filter, on a ladder
+    /// too coarse to separate them -- 300 ok, 350 aborts brackets 291 and 317 both.
+    ///
+    /// At 128 that leaves the tests about 2.3x of headroom (290/128) rather than the 8.7x the CLI figures
+    /// imply, which is still ample, and nothing can recurse past the bound anyway. It matters if anyone
+    /// raises [`MAX_NESTING_DEPTH`] past ~290, because the failure mode there is not a failing assertion:
+    /// the test binary aborts with "fatal runtime error: stack overflow", taking every other test in that
     /// target with it and reporting nothing about which one did it.
     static NESTING_DEPTH: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
