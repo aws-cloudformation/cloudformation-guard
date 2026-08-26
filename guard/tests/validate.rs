@@ -7,6 +7,7 @@ mod validate_tests {
     use pretty_assertions::assert_eq;
     use std::io::Cursor;
 
+    use cfn_guard::commands::CfnGuard;
     use cfn_guard::commands::{
         ALPHABETICAL, DATA, INPUT_PARAMETERS, LAST_MODIFIED, OUTPUT_FORMAT, PAYLOAD, PRINT_JSON,
         RULES, SHOW_SUMMARY, STRUCTURED, VERBOSE,
@@ -14,6 +15,7 @@ mod validate_tests {
     use cfn_guard::utils::reader::ReadBuffer::Cursor as ReadCursor;
     use cfn_guard::utils::reader::Reader;
     use cfn_guard::utils::writer::{WriteBuffer::Vec as WBVec, Writer};
+    use clap::Parser;
 
     use crate::utils::{
         get_full_path_for_resource_file, sanitize_junit_writer, sanitize_sarif_writer, Command,
@@ -2902,23 +2904,37 @@ mod validate_tests {
         assert_eq!(StatusCode::VALIDATION_ERROR, status_code);
     }
 
+    /// `--verbose` with a machine-readable `--output-format` is refused, because the two write to one
+    /// stdout.
+    ///
+    /// This asserted SUCCESS against a fixture, and the fixture was the defect: it held a YAML
+    /// document with the verbose tree appended straight onto it, so the recorded expected output of
+    /// this test was a stream that no YAML parser accepts. With `-o json` the join is worse still --
+    /// the closing brace and the tree's first line share a line.
+    ///
+    /// Refusing rather than rerouting the tree to stderr, because refusing is what the rest of the
+    /// tool already does with this combination: `test` rejects "an output_type of JSON, YAML, or JUnit
+    /// while the verbose flag is set", clap rejects `-z -v`, and `ValidateBuilder::try_build` rejects
+    /// `structured && verbose`. This was the one spelling of the combination nothing guarded.
     #[test]
-    fn test_payload_verbose_yaml_compliant() {
+    fn verbose_is_refused_with_a_machine_readable_output_format() {
         let mut reader = utils::get_reader(
             "resources/validate/data-dir/s3-public-read-prohibited-template-compliant.yaml",
         );
-        let mut writer = Writer::new(WBVec(vec![])).expect("Failed to create writer.");
+        let mut writer =
+            Writer::new_with_err(WBVec(vec![]), WBVec(vec![])).expect("Failed to create writer.");
         let status_code = ValidateTestRunner::default()
             .rules(vec!["rules-dir/s3_bucket_public_read_prohibited.guard"])
             .verbose()
             .output_format(Some("yaml"))
             .run(&mut writer, &mut reader);
 
-        assert_output_from_file_eq!(
-            "resources/validate/output-dir/payload_verbose_yaml_compliant.out",
-            writer
+        assert_eq!(StatusCode::USAGE_ERROR, status_code);
+        assert_eq!(
+            "Error occurred Cannot provide an output format of YAML while the verbose flag is set, \
+             because the verbose tree and the report share stdout\n",
+            writer.err_to_stripped().expect("failed to read stderr")
         );
-        assert_eq!(StatusCode::SUCCESS, status_code);
     }
 
     #[test]
@@ -3314,6 +3330,268 @@ mod validate_tests {
         // fallen over. clap's own conflicts -- `-P -r`, `-z -v` -- already answered 2 for the same
         // class of mistake, so the two layers disagreed about the same kind of error.
         assert_eq!(StatusCode::USAGE_ERROR, status_code);
+    }
+
+    /// `--rules` with no values after it is a usage error, not a panic.
+    ///
+    /// `--rules` is a member of the required `<--rules|--payload>` group, so a bare `--rules`
+    /// *satisfied* that group while leaving the list empty; `execute` then matched neither the rules
+    /// branch nor the payload branch and reached its `unreachable!()`, exit 101. `num_args=1..` is what
+    /// closes it, and this asserts through `try_parse_from` because the failure is clap's to report --
+    /// the builder in this file cannot emit `--rules` with no values, which is why nothing here caught
+    /// it.
+    ///
+    /// The three spellings matter separately: a trailing `--rules`, and `--rules` followed by another
+    /// flag, which clap does not consume as a value.
+    #[rstest::rstest]
+    #[case::nothing_after_it(vec!["validate", "--rules"])]
+    #[case::followed_by_another_flag(vec!["validate", "--rules", "--data"])]
+    #[case::followed_by_a_flag_with_a_value(vec!["validate", "-r", "-d", "some-template.yaml"])]
+    fn rules_with_no_values_is_a_usage_error(#[case] args: Vec<&str>) {
+        let error =
+            CfnGuard::try_parse_from(args).expect_err("--rules with no values must not parse");
+
+        assert_eq!(StatusCode::USAGE_ERROR, error.exit_code());
+    }
+
+    /// A machine-readable `--output-format` puts exactly one document on stdout, so a failing run is
+    /// still parseable.
+    ///
+    /// `--show-summary` defaults to `fail` and the summary table shares stdout with the report, so
+    /// `-o json` emitted clean JSON while everything passed and a table welded to the front of the
+    /// JSON as soon as a rule failed -- invalid exactly when a consumer needs to read it. The default
+    /// is now `none` when the format is machine-readable.
+    ///
+    /// Asserted by parsing, not by comparing to a fixture: the requirement is that the bytes are a
+    /// document, and a fixture would have recorded the corruption just as happily.
+    #[rstest::rstest]
+    #[case::json_without_structured(vec!["json"], false)]
+    #[case::yaml_without_structured(vec!["yaml"], false)]
+    #[case::json_with_structured(vec!["json"], true)]
+    #[case::yaml_with_structured(vec!["yaml"], true)]
+    fn a_failing_run_puts_one_parseable_document_on_stdout(
+        #[case] output: Vec<&str>,
+        #[case] structured: bool,
+    ) {
+        let mut reader = Reader::default();
+        let mut writer = Writer::new(WBVec(vec![])).expect("Failed to create writer.");
+
+        let status_code = match structured {
+            true => ValidateTestRunner::default()
+                .rules(vec!["rules-dir/s3_bucket_public_read_prohibited.guard"])
+                .data(vec![
+                    "data-dir/s3-public-read-prohibited-template-non-compliant.yaml",
+                ])
+                .output_format(Some(output[0]))
+                .structured()
+                .run(&mut writer, &mut reader),
+            false => ValidateTestRunner::default()
+                .rules(vec!["rules-dir/s3_bucket_public_read_prohibited.guard"])
+                .data(vec![
+                    "data-dir/s3-public-read-prohibited-template-non-compliant.yaml",
+                ])
+                .output_format(Some(output[0]))
+                .run(&mut writer, &mut reader),
+        };
+
+        assert_eq!(StatusCode::VALIDATION_ERROR, status_code);
+
+        let document = writer.stripped().expect("failed to read stdout");
+        assert!(
+            !document.trim().is_empty(),
+            "a failing run must still write its report"
+        );
+
+        match output[0] {
+            "json" => {
+                serde_json::from_str::<serde_json::Value>(&document).unwrap_or_else(|e| {
+                    panic!("stdout is not valid JSON: {}\n{}", e, document);
+                });
+            }
+            _ => {
+                serde_yaml::from_str::<serde_yaml::Value>(&document).unwrap_or_else(|e| {
+                    panic!("stdout is not valid YAML: {}\n{}", e, document);
+                });
+            }
+        }
+    }
+
+    /// `--structured` no longer needs `-S none` spelled out beside it.
+    ///
+    /// `validate_construct` rejected `structured && !summary_type.is_empty()`, and `--show-summary`'s
+    /// own default of `fail` is not empty, so every `-z` invocation that did not say `-S none` failed
+    /// with a complaint about a flag the caller never passed. The `-z` help text lists
+    /// `show-summary: all/fail/pass/skip` among its conflicts without saying that `fail` is the
+    /// default, so following the help produced the error.
+    #[rstest::rstest]
+    #[case("json")]
+    #[case("yaml")]
+    #[case("junit")]
+    #[case("sarif")]
+    fn structured_does_not_require_show_summary_none_to_be_spelled_out(#[case] output: &str) {
+        let mut reader = Reader::default();
+        let mut writer = Writer::new(WBVec(vec![])).expect("Failed to create writer.");
+        let status_code = ValidateTestRunner::default()
+            .rules(vec!["rules-dir/s3_bucket_public_read_prohibited.guard"])
+            .data(vec![
+                "data-dir/s3-public-read-prohibited-template-compliant.yaml",
+            ])
+            .output_format(Option::from(output))
+            .structured()
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(StatusCode::SUCCESS, status_code);
+        assert!(
+            !writer
+                .stripped()
+                .expect("failed to read stdout")
+                .trim()
+                .is_empty(),
+            "the structured report must be written"
+        );
+    }
+
+    /// A `--rules` argument that yields no rules file says so, rather than reporting success.
+    ///
+    /// The `--data` side has had `report_no_data_evaluated` and its doc comment states the hazard: a
+    /// run that checked nothing prints nothing and exits 0, which is what a run in which everything
+    /// complied also does. The rules side had no counterpart, so `--rules some-dir-with-no-rules`
+    /// applied no policy and reported success -- a green build for rules nobody ran.
+    ///
+    /// The exit code is deliberately left at 0, as it is on the data side; moving it is a separate
+    /// argument. What is asserted is that the run is no longer silent.
+    #[test]
+    fn a_rules_directory_holding_no_rules_files_says_nothing_was_checked() {
+        let mut reader = Reader::default();
+        let mut writer =
+            Writer::new_with_err(WBVec(vec![]), WBVec(vec![])).expect("Failed to create writer.");
+        let status_code = ValidateTestRunner::default()
+            .rules(vec!["data-dir"])
+            .data(vec![
+                "data-dir/s3-public-read-prohibited-template-compliant.yaml",
+            ])
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(StatusCode::SUCCESS, status_code);
+
+        let stderr = writer.err_to_stripped().expect("failed to read stderr");
+        assert!(
+            stderr.contains("no rules files were evaluated"),
+            "a run that applied no rule must say so, got: {}",
+            stderr
+        );
+        assert!(
+            stderr.contains("dummy.txt was not evaluated because its extension is not one of"),
+            "the files the walk passed over must be named, got: {}",
+            stderr
+        );
+    }
+
+    /// A `--payload` whose `rules` or `data` list is empty says nothing was checked.
+    ///
+    /// The payload branch reached neither `report_no_data_evaluated` nor its new rules-side
+    /// counterpart, so `{"rules":[],"data":["{}"]}` parsed, evaluated nothing and exited 0. That is
+    /// the same false green as above, arrived at through the one input most likely to be machine-built
+    /// and least likely to be read by a person.
+    #[rstest::rstest]
+    #[case::no_rules(
+        r#"{"rules":[],"data":["{\"Resources\":{}}"]}"#,
+        "no rules files were evaluated"
+    )]
+    #[case::no_data(
+        r#"{"rules":["rule M { Resources !empty }"],"data":[]}"#,
+        "no data files were evaluated"
+    )]
+    fn a_payload_with_an_empty_list_says_nothing_was_checked(
+        #[case] payload: &str,
+        #[case] expected: &str,
+    ) {
+        let mut reader = Reader::new(ReadCursor(Cursor::new(Vec::from(payload.as_bytes()))));
+        let mut writer =
+            Writer::new_with_err(WBVec(vec![]), WBVec(vec![])).expect("Failed to create writer.");
+        let status_code = ValidateTestRunner::default()
+            .payload()
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(StatusCode::SUCCESS, status_code);
+        let stderr = writer.err_to_stripped().expect("failed to read stderr");
+        assert!(
+            stderr.contains(expected),
+            "expected {:?} on stderr, got: {}",
+            expected,
+            stderr
+        );
+    }
+
+    /// `--payload` read from stdin that will not parse names the flag, the stream and the shape.
+    ///
+    /// The message was serde's bare text -- `EOF while parsing a value at line 1 column 0` for no
+    /// stdin at all -- which names none of the three even though `deserialize_payload` knows all
+    /// three. "line 1 column 0" is least helpful in the case it is most likely to describe: a CI step
+    /// with nothing piped in.
+    #[rstest::rstest]
+    #[case::empty_stdin("")]
+    #[case::not_json("not json")]
+    fn a_payload_that_will_not_parse_says_where_it_came_from(#[case] input: &str) {
+        let mut reader = Reader::new(ReadCursor(Cursor::new(Vec::from(input.as_bytes()))));
+        let mut writer =
+            Writer::new_with_err(WBVec(vec![]), WBVec(vec![])).expect("Failed to create writer.");
+        let status_code = ValidateTestRunner::default()
+            .payload()
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(StatusCode::INTERNAL_FAILURE, status_code);
+        let stderr = writer.err_to_stripped().expect("failed to read stderr");
+        assert!(
+            stderr.contains("--payload")
+                && stderr.contains("stdin")
+                && stderr.contains("\"rules\""),
+            "the message must name the flag, the stream and the expected shape, got: {}",
+            stderr
+        );
+    }
+
+    /// `--input-parameters` is merged into a `--payload` run whichever reporter runs.
+    ///
+    /// The structured path passed `input_params: extra_data` and the plain path passed `&None`, so
+    /// `validate -P -i params.yaml` returned opposite verdicts depending only on whether `-z` was
+    /// given -- PASS structured, FAIL not -- and nothing said that a file the caller named had not
+    /// been read. Both paths now merge, which is what `--input-parameters` documents.
+    ///
+    /// The two runs are compared to each other rather than to a recorded verdict: the defect was that
+    /// they disagreed, so agreement is the property worth pinning.
+    #[test]
+    fn input_parameters_reach_a_payload_run_whichever_reporter_runs() {
+        const PAYLOAD: &str = r#"{"rules":["rule MAIN { Parameters.Env == \"prod\" }"],"data":["{\"Resources\":{\"V\":{}}}"]}"#;
+
+        let mut plain_reader = Reader::new(ReadCursor(Cursor::new(Vec::from(PAYLOAD.as_bytes()))));
+        let mut plain_writer = Writer::new(WBVec(vec![])).expect("Failed to create writer.");
+        let plain = ValidateTestRunner::default()
+            .payload()
+            .input_parameters(vec!["payload-input-parameters/prod-env.yaml"])
+            .show_summary(vec!["none"])
+            .run(&mut plain_writer, &mut plain_reader);
+
+        let mut structured_reader =
+            Reader::new(ReadCursor(Cursor::new(Vec::from(PAYLOAD.as_bytes()))));
+        let mut structured_writer = Writer::new(WBVec(vec![])).expect("Failed to create writer.");
+        let structured = ValidateTestRunner::default()
+            .payload()
+            .input_parameters(vec!["payload-input-parameters/prod-env.yaml"])
+            .output_format(Some("json"))
+            .structured()
+            .run(&mut structured_writer, &mut structured_reader);
+
+        assert_eq!(
+            structured, plain,
+            "the same rules, data and --input-parameters must reach the same verdict \
+             whether or not --structured is passed"
+        );
+        assert_eq!(
+            StatusCode::SUCCESS,
+            plain,
+            "the parameter file supplies Parameters.Env, so the rule passes"
+        );
     }
 
     #[rstest::rstest]

@@ -146,7 +146,19 @@ pub(crate) trait Reporter: Debug {
 /// .
 /// The Validate command evaluates rules against data files to determine success or failure
 pub struct Validate {
-    #[arg(short, long, help=RULES_HELP, num_args=0.., conflicts_with=PAYLOAD.0)]
+    // `num_args=1..`, not `0..`. `--rules` is a member of the required `REQUIRED_FLAGS` group, so a
+    // bare `--rules` with no values *satisfied* that group while leaving `self.rules` empty, and
+    // `execute` then took neither branch and hit its `unreachable!()` -- exit 101 on
+    // `cfn-guard validate --rules`. `num_args=0..` had widened what the argument can hold without the
+    // `else` arm being widened to match.
+    //
+    // One value is also the smallest number that can mean anything: there is no reading of `--rules`
+    // with nothing after it. `ValidateBuilder::try_build` already rejects the same state for library
+    // callers (`guard/src/lib.rs:185`), so this makes the two agree rather than inventing a rule.
+    //
+    // `--data` keeps `num_args=0..` on purpose: an empty `data` is a supported state that means "read
+    // the data from stdin", which is what an absent `--data` also means.
+    #[arg(short, long, help=RULES_HELP, num_args=1.., conflicts_with=PAYLOAD.0)]
     /// a list of paths that point to rule files, or a directory containing rule files on a local machine. Only files that end with .guard or .ruleset will be evaluated
     /// conflicts with payload
     pub(crate) rules: Vec<String>,
@@ -165,10 +177,28 @@ pub struct Validate {
     /// default is single-line-summary
     /// if junit is used, `structured` attributed must be set to true
     pub(crate) output_format: OutputFormatType,
-    #[arg(short=SHOW_SUMMARY.1, long, help=SHOW_SUMMARY_HELP, value_enum, default_values_t=vec![ShowSummaryType::Fail], value_delimiter=',')]
+    // The default is `none` when the output format is machine-readable, and `fail` otherwise.
+    //
+    // A single `fail` default made `-z` unusable without `-S none`, because `validate_construct`
+    // cannot tell a default apart from a value the caller chose, and rejected the default. Rather than
+    // teach it that difference, the default is made correct for the format: a run whose stdout is a
+    // JSON, YAML, JUnit or SARIF document has nowhere to put a summary table, so `none` is the only
+    // default that can be honoured. `-S` given explicitly still wins in both cases, and
+    // `-o json -S all` is still an error -- the caller asked for two things on one stream.
+    //
+    // `default_value_if` is evaluated before `default_value`, so the order of these two is what
+    // selects between them.
+    #[arg(short=SHOW_SUMMARY.1, long, help=SHOW_SUMMARY_HELP, value_enum, value_delimiter=',',
+          default_value_ifs([
+              (OUTPUT_FORMAT_ID, "json", SHOW_SUMMARY_NONE),
+              (OUTPUT_FORMAT_ID, "yaml", SHOW_SUMMARY_NONE),
+              (OUTPUT_FORMAT_ID, "junit", SHOW_SUMMARY_NONE),
+              (OUTPUT_FORMAT_ID, "sarif", SHOW_SUMMARY_NONE),
+          ]),
+          default_value=SHOW_SUMMARY_FAIL)]
     /// Controls if the summary table needs to be displayed. --show-summary fail (default) or --show-summary pass,fail (only show rules that did pass/fail) or --show-summary none (to turn it off) or --show-summary all (to show all the rules that pass, fail or skip)
-    /// default is failed
-    /// must be set to none if used together with the structured flag
+    /// default is failed, or none when the output format is machine-readable
+    /// must be none, or left to its default, when the output format is machine-readable
     pub(crate) show_summary: Vec<ShowSummaryType>,
     #[arg(short, long, help=ALPHABETICAL_HELP, conflicts_with=LAST_MODIFIED.0)]
     /// Validate files in a directory ordered alphabetically, conflicts with `last_modified` field
@@ -199,13 +229,56 @@ pub struct Validate {
 }
 
 impl Validate {
+    /// A machine-readable `--output-format` means stdout carries exactly one document, and nothing
+    /// else.
+    ///
+    /// One rule, replacing two half-rules that between them let stdout be corrupted and made `-z`
+    /// unusable on its own:
+    ///
+    /// - The summary table was suppressed only when `--structured` was passed, not when the output
+    ///   format was machine-readable. `--show-summary` defaults to `fail`, and the table goes to the
+    ///   same stdout the document does, so `validate ... -o json` emitted clean JSON while everything
+    ///   passed and a table welded to the front of the JSON the moment a rule failed -- that is,
+    ///   exactly when a consumer needs to read it. `-o json > out.json` produced a valid file or an
+    ///   invalid one depending on the verdict.
+    /// - The check keyed on `self.structured` fired against `--show-summary`'s own *default*, so every
+    ///   `-z` invocation that did not spell out `-S none` exited with a complaint about a flag the
+    ///   caller never passed. The `-z` help text lists `show-summary: all/fail/pass/skip` among its
+    ///   conflicts without noting that `fail` is the default, so following the help produced the
+    ///   error.
+    ///
+    /// Keying both on the format rather than on the flag fixes the pair, because `--structured`
+    /// already requires a machine-readable format (the arm below rejects `-z -o single-line-summary`),
+    /// so the format is the more general condition and subsumes the flag.
+    ///
+    /// `--verbose` and `--print-json` are rejected for the same reason and are not merely suppressed:
+    /// both append a second document to stdout after the first, unseparated -- `-o json -v` put the
+    /// closing brace and the tree's first line on one line. `test` already refuses
+    /// "an output_type of JSON, YAML, or JUnit while the verbose flag is set", clap already refuses
+    /// `-z -v` and `-z -p`, and `ValidateBuilder::try_build` refuses both. This is the fourth
+    /// statement of a rule the codebase had already made three times, applied to the case that was
+    /// missed.
     fn validate_construct(
         &self,
         summary_type: &BitFlags<SummaryType, u8>,
     ) -> crate::rules::Result<()> {
-        if self.structured && !summary_type.is_empty() {
-            return Err(Error::IllegalArguments(String::from(
-                "Cannot provide a summary-type other than `none` when the `structured` flag is present",
+        if self.output_format.is_structured() && !summary_type.is_empty() {
+            return Err(Error::IllegalArguments(format!(
+                "Cannot provide a summary-type other than `none` when the output format is {:?}, \
+                 because the summary table and the report share stdout",
+                self.output_format
+            )));
+        } else if self.output_format.is_structured() && self.verbose {
+            return Err(Error::IllegalArguments(format!(
+                "Cannot provide an output format of {:?} while the verbose flag is set, \
+                 because the verbose tree and the report share stdout",
+                self.output_format
+            )));
+        } else if self.output_format.is_structured() && self.print_json {
+            return Err(Error::IllegalArguments(format!(
+                "Cannot provide an output format of {:?} while the print-json flag is set, \
+                 because the parse tree and the report share stdout",
+                self.output_format
             )));
         } else if self.structured
             && matches!(self.output_format, OutputFormatType::SingleLineSummary)
@@ -380,6 +453,7 @@ impl Executable for Validate {
 
         if !self.rules.is_empty() {
             let mut rules = Vec::new();
+            let mut skipped = Vec::new();
 
             for file_or_dir in &self.rules {
                 validate_path(file_or_dir)?;
@@ -389,19 +463,26 @@ impl Executable for Validate {
                     rules.push(base.clone())
                 } else {
                     for entry in walk_dir(base, cmp) {
-                        if entry.path().is_file()
-                            && entry
-                                .path()
-                                .file_name()
-                                .and_then(|s| s.to_str())
-                                .map_or(false, |s| {
-                                    has_a_supported_extension(s, &RULE_FILE_SUPPORTED_EXTENSIONS)
-                                })
-                        {
-                            rules.push(entry.path().to_path_buf());
+                        if entry.path().is_file() {
+                            let name = file_name_of(entry.path());
+                            if has_a_supported_extension(&name, &RULE_FILE_SUPPORTED_EXTENSIONS) {
+                                rules.push(entry.path().to_path_buf());
+                            } else {
+                                skipped.push(name);
+                            }
                         }
                     }
                 }
+            }
+
+            // The counterpart of `report_no_data_evaluated`, which the `--data` side has had and this
+            // side has not. A `--rules` directory holding no `.guard` or `.ruleset` file left `rules`
+            // empty, the loop below ran zero times, and the run exited 0 having printed nothing --
+            // indistinguishable from a run in which every rule passed. That is a green build for a
+            // policy nobody applied, which is worse on this side than on the data side: the data side
+            // at least named the files its walk passed over.
+            if rules.is_empty() {
+                report_no_rules_evaluated(writer, &skipped)?;
             }
 
             exit_code = match self.structured {
@@ -477,6 +558,19 @@ impl Executable for Validate {
                 })
                 .collect::<Vec<_>>();
 
+            // The payload branch had no equivalent of the two warnings above, which are reached only
+            // from the `--data` and `--rules` branches. A payload whose `rules` or `data` list was
+            // empty parsed cleanly, evaluated nothing, printed nothing and exited 0 -- the same
+            // false green, arrived at through the one input that is most likely to be machine-built
+            // and so least likely to be eyeballed.
+            if rule_info.is_empty() {
+                report_no_rules_evaluated(writer, &[])?;
+            }
+
+            if data_collection.is_empty() {
+                report_no_data_evaluated(writer, &[])?;
+            }
+
             exit_code = match self.structured {
                 true => {
                     let mut evaluator = StructuredEvaluator {
@@ -491,10 +585,25 @@ impl Executable for Validate {
                 }
                 false => {
                     for rule in rule_info {
+                        // `&extra_data`, not `&None`. The structured branch above merges
+                        // `--input-parameters` into every payload document; this one discarded them,
+                        // so `validate -P -i params.yaml` gave opposite verdicts depending on whether
+                        // `-z` was passed -- PASS structured, FAIL not -- with nothing saying a file
+                        // the caller named had not been read.
+                        //
+                        // Merging is the side that matches what `--input-parameters` documents: the
+                        // parameter files "get merged and this combined context is again merged with
+                        // each file passed as an argument for `data`". Nothing in that says the merge
+                        // is conditional on the reporter.
+                        //
+                        // Rejecting `-P` with `-i` was the alternative, by giving `--input-parameters`
+                        // the `conflicts_with=PAYLOAD` that `--rules` and `--data` carry. It was not
+                        // taken because the structured path makes the combination work today, so
+                        // banning it would break a caller to fix a caller that is already served.
                         let status = evaluate_rule(
                             data_type,
                             self.output_format,
-                            &None,
+                            &extra_data,
                             &data_collection,
                             rule,
                             self.verbose,
@@ -509,7 +618,19 @@ impl Executable for Validate {
                 }
             };
         } else {
-            unreachable!()
+            // Genuinely unreachable, and by construction rather than by hope. Two enforcement points
+            // stand between a caller and this arm, and both are needed because there are two ways in:
+            //
+            // - CLI: the `REQUIRED_FLAGS` group (`--rules` or `--payload`) is `required(true)`, and
+            //   `--rules` takes `num_args=1..`, so `self.rules` cannot be empty while `--payload` is
+            //   absent. Widening either back would make this a panic again -- it was one, at exit 101,
+            //   while `--rules` took `num_args=0..`.
+            // - Library: `ValidateBuilder::try_build` rejects `!payload && rules.is_empty()`
+            //   (`guard/src/lib.rs:185`).
+            unreachable!(
+                "validate requires --rules with at least one value or --payload; \
+                 the clap argument group and ValidateBuilder::try_build both enforce it"
+            )
         }
 
         Ok(exit_code)
@@ -536,6 +657,21 @@ or rules files.
 
 // const SHOW_SUMMARY_VALUE_TYPE: [&str; 5] = ["none", "all", "pass", "fail", "skip"];
 const TEMPLATE_TYPE: [&str; 1] = ["CFNTemplate"];
+/// The two `--show-summary` defaults, selected by whether `--output-format` is machine-readable.
+/// Spelled as the strings clap parses rather than as `ShowSummaryType`, because `default_value_ifs`
+/// takes values in their unparsed form.
+const SHOW_SUMMARY_NONE: &str = "none";
+const SHOW_SUMMARY_FAIL: &str = "fail";
+/// `--output-format`'s clap **id**, which is the field name and not the long flag.
+///
+/// `OUTPUT_FORMAT.0` is `"output-format"`, the spelling a caller types. clap derives an argument's id
+/// from the field name unless `name=` overrides it, and this field does not, so its id is
+/// `output_format` with an underscore. Referring to it by the long flag in `default_value_ifs` is not
+/// an error clap reports -- the condition simply never matches, so the default silently stays `fail`
+/// and every `-z` invocation keeps failing exactly as it did before the fix. Using `name=` to make the
+/// two agree was the alternative; it was not taken because the id also supplies the value placeholder
+/// in `--help`, so it would rewrite `<OUTPUT_FORMAT>` to `<output-format>` for every reader.
+const OUTPUT_FORMAT_ID: &str = "output_format";
 const RULES_HELP: &str = "Provide a rules file or a directory of rules files. Supports passing multiple values by using this option repeatedly.\
                           \nExample:\n --rules rule1.guard --rules ./rules-dir1 --rules rule2.guard\
                           \nFor directory arguments such as `rules-dir1` above, scanning is only supported for files with following extensions: .guard, .ruleset";
@@ -556,6 +692,10 @@ const ALPHABETICAL_HELP: &str = "Validate files in a directory ordered alphabeti
 const LAST_MODIFIED_HELP: &str = "Validate files in a directory ordered by last modified times";
 const VERBOSE_HELP: &str = "Verbose logging";
 const PRINT_JSON_HELP: &str = "Print the parse tree in a json format. This can be used to get more details on how the clauses were evaluated";
+/// The shape `--payload` expects, named in both the help text and the parse error, from here, so the
+/// two cannot describe different shapes.
+const PAYLOAD_SCHEMA: &str =
+    "{\"rules\":[\"<rules 1>\", \"<rules 2>\", ...], \"data\":[\"<data 1>\", \"<data 2>\", ...]}";
 const PAYLOAD_HELP: &str = "Provide rules and data in the following JSON format via STDIN,\n{\"rules\":[\"<rules 1>\", \"<rules 2>\", ...], \"data\":[\"<data 1>\", \"<data 2>\", ...]}, where,\n- \"rules\" takes a list of string \
                 version of rules files as its value and\n- \"data\" takes a list of string version of data files as it value.\nWhen --payload is specified --rules and --data cannot be specified.";
 const STRUCTURED_HELP: &str = "Print out a list of structured and valid JSON/YAML. This argument conflicts with the following arguments: \nverbose \n print-json \n show-summary: all/fail/pass/skip \noutput-format: single-line-summary";
@@ -707,10 +847,20 @@ pub fn resolve_path(file_or_dir: &str) -> Result<PathBuf> {
     }
 }
 
+/// Reads the `--payload` JSON from stdin.
+///
+/// The message says where the text came from, which flag asked for it, and what shape was expected.
+/// It used to be serde's bare text -- `EOF while parsing a value at line 1 column 0` for no stdin at
+/// all -- which names none of the three, even though this function knows all three and `PAYLOAD_HELP`
+/// already carries the schema. "line 1 column 0" is especially unhelpful when the real answer is that
+/// nothing was piped in, which is the shape this takes in CI with no stdin attached.
 fn deserialize_payload(payload: &str) -> Result<Payload> {
     match serde_json::from_str::<Payload>(payload) {
         Ok(value) => Ok(value),
-        Err(e) => Err(Error::ParseError(e.to_string())),
+        Err(e) => Err(Error::ParseError(format!(
+            "Unable to parse the --payload JSON read from stdin: {e}. Expected {}",
+            PAYLOAD_SCHEMA
+        ))),
     }
 }
 
@@ -963,6 +1113,34 @@ fn report_no_data_evaluated(writer: &mut Writer, skipped: &[String]) -> Result<(
 
     writer.write_err(String::from(
         "Warning: no data files were evaluated. Nothing was checked, and the absence of findings \
+         does not mean the data complied.",
+    ))?;
+
+    Ok(())
+}
+
+/// Reports on stderr that the run had no rules to apply, and names the files a directory walk passed
+/// over on the way to finding none.
+///
+/// The mirror of [`report_no_data_evaluated`], written for the same reason and reached the same way:
+/// a run that applied no rule prints nothing to stdout and exits 0, which is what a run in which
+/// everything complied also does. `--rules some-empty-dir` therefore reported success for a policy
+/// that was never applied.
+///
+/// Like the data side, this fires only when the run found no rules at all, and leaves the exit code
+/// alone. Moving the code would change the result for every caller pointing `--rules` at a directory
+/// that happens to hold no rules file, which is a separate argument to make; and a warning that fires
+/// on runs which *did* apply rules stops being read.
+fn report_no_rules_evaluated(writer: &mut Writer, skipped: &[String]) -> Result<()> {
+    for name in skipped {
+        writer.write_err(format!(
+            "Warning: {name} was not evaluated because its extension is not one of: {}",
+            RULE_FILE_SUPPORTED_EXTENSIONS.join(", ")
+        ))?;
+    }
+
+    writer.write_err(String::from(
+        "Warning: no rules files were evaluated. Nothing was checked, and the absence of findings \
          does not mean the data complied.",
     ))?;
 
