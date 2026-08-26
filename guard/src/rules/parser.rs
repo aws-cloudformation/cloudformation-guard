@@ -930,12 +930,32 @@ pub(crate) fn parse_value(input: Span) -> IResult<Span, Value> {
 ///
 ///  when_type                  = when 1*( (LWSP/comment) clause (LWSP/comment) )
 ///  when_rule                  = when 1*( (LWSP/comment) rule_clause (LWSP/comment) )
-///  named_rule                 = "rule" 1*SP var_name "{"
+///
+///  ; Parameterized rules were absent from this block entirely, in both the definition and the call
+///  ; form, so it could not be cited either way about them -- which is what let `when` on one go
+///  ; missing without contradicting anything written down. `named_rule`'s own `when` was missing too,
+///  ; and the parser has accepted it all along.
+///  ;
+///  ; The empty parameter list is `1*` on purpose and the empty argument list is not. A rule that takes
+///  ; no parameters is a `named_rule`; a call with no arguments is accepted by the parser and then
+///  ; rejected by `rules_file`, which reads every call against the definition it names.
+///  rule_body                  = "{"
 ///                                   assignment 1*(LWPS/comment)   /
 ///                                   (type_expr 1*(LWPS/comment))  /
 ///                                   (disjunctions_type_expr) *(LWSP/comment) "}"
+///  named_rule                 = "rule" 1*SP var_name [(LWSP/comment) when_rule] rule_body
+///  parameter_list             = "(" *WSP var_name *WSP *("," *WSP var_name *WSP) ")"
+///  parameterized_rule         = "rule" 1*SP var_name parameter_list
+///                                   [(LWSP/comment) when_rule] rule_body
+///  ;
+///  ; `argument` is spelled as `assignment`'s right-hand side is, and omits a function call for the
+///  ; same reason that one does: this block has never modelled function calls or custom messages,
+///  ; and `json_parse(%x)` is as legal an argument here as it is there.
+///  argument                   = access / value
+///  parameterized_rule_call    = [not_keyword] var_name "(" [ *WSP argument *WSP
+///                                   *("," *WSP argument *WSP) ] ")"
 ///
-///  expressions                = 1*( (assignment / named_rule / type_expr / disjunctions_type_expr / comment) (LWPS/comment) )
+///  expressions                = 1*( (assignment / named_rule / parameterized_rule / type_expr / disjunctions_type_expr / comment) (LWPS/comment) )
 ///  ```
 ///
 ///
@@ -2736,6 +2756,20 @@ fn parameterized_rule_block(input: Span) -> IResult<Span, ParameterizedRule> {
     // first and both sites needed the same treatment.
     let (input, rule_name) = rule_definition_name(input)?;
     let (input, parameter_names) = parameter_names(input)?;
+
+    // The same step `rule_block` takes, in the same position relative to the block. It was missing
+    // here and `conditions` was hardcoded to `None`, so `rule check(t) when ... { ... }` did not parse
+    // -- and not by a refusal: the `cut` on the block reported a brace problem at the column where
+    // `when` begins, with an empty "when handling" field and the rest of the file as its fragment, so
+    // nothing said the construct was unavailable or what to write instead.
+    //
+    // Nothing downstream needed changing. `eval_parameterized_rule_call` evaluates the body through
+    // `eval_rule`, which is the function that reads `rule.conditions`, so a parameterized rule whose
+    // condition does not match returns SKIP exactly as a plain one does -- and the SKIP arm of
+    // `eval_parameterized_rule_call` then treats it as the plain spelling's reference is treated.
+    // `first_name_assigned_and_captured` already walks `parameterized_rules` and reads their
+    // conditions, so the assigned-and-captured check covers them without a change.
+    let (input, conditions) = opt(when_conditions(single_clauses))(input)?;
     let (input, (assignments, conjunctions)) = cut(block(rule_block_clause))(input)?;
 
     Ok((
@@ -2748,7 +2782,7 @@ fn parameterized_rule_block(input: Span) -> IResult<Span, ParameterizedRule> {
                     assignments,
                     conjunctions,
                 },
-                conditions: None,
+                conditions,
             },
         },
     ))

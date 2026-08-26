@@ -856,7 +856,11 @@ lazy_static! {
     ];
 }
 
-fn query_retrieval<'value, 'loc: 'value>(
+/// `pub(in crate::rules)` for `ResolvedParameterContext::query` in `eval.rs`, which has to run a
+/// retrieval with itself as the resolver -- as `RootScope::query` and `BlockScope::query` do -- so
+/// that a `%parameter` in a parameterized rule's `when` conditions resolves to the argument the
+/// call site passed.
+pub(in crate::rules) fn query_retrieval<'value, 'loc: 'value>(
     query_index: usize,
     query: &'value [QueryPart<'loc>],
     current: Rc<PathAwareValue>,

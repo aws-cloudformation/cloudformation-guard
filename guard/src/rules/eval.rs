@@ -1,7 +1,7 @@
 use super::exprs::*;
 use super::*;
 use crate::rules::eval::operators::Comparator;
-use crate::rules::eval_context::{block_scope, resolve_function, ValueScope};
+use crate::rules::eval_context::{block_scope, query_retrieval, resolve_function, ValueScope};
 use crate::rules::path_value::compare_eq;
 use std::collections::HashMap;
 
@@ -2136,8 +2136,26 @@ struct ResolvedParameterContext<'eval, 'value, 'loc: 'value> {
 impl<'eval, 'value, 'loc: 'value> EvalContext<'value, 'loc>
     for ResolvedParameterContext<'eval, 'value, 'loc>
 {
+    /// Retrieved with this scope as the resolver rather than the parent's, or the arguments the call
+    /// site passed are invisible to the query.
+    ///
+    /// `RootScope::query` and `BlockScope::query` both pass themselves; this one delegated, which put
+    /// the parent in charge of resolving `%name` and the parent does not hold the parameters. It was
+    /// unreachable while a parameterized rule could not carry a `when`, because `eval_rule` is the only
+    /// caller that queries this scope directly -- for a rule's conditions -- and everything else it
+    /// does goes through `eval_general_block_clause`, which interposes a `BlockScope` that passes
+    /// itself and therefore reaches `resolve_variable` below. That is why a `%parameter` in the *body*
+    /// has always worked.
+    ///
+    /// Measured rather than argued: with a `panic!` in place of the delegation, 1495 tests and 318
+    /// rules files across this repository and the AWS rule registry reached it zero times.
+    ///
+    /// So the rule-level `when` is the one path that queries this scope, and
+    /// `rule r(t) when %t == "x" { ... }` reported `Could not resolve variable by name t across
+    /// scopes` until this stopped delegating.
     fn query(&mut self, query: &'value [QueryPart<'loc>]) -> Result<Vec<QueryResult>> {
-        self.parent.query(query)
+        let root = self.root();
+        query_retrieval(0, query, root, self)
     }
 
     fn find_parameterized_rule(
