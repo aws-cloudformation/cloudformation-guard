@@ -76,11 +76,26 @@ pub(crate) const MERGE_KEY: &str = "<<";
 /// and it kills the process. Bounding the depth bounds that cost too, which is why this is one change
 /// and not two.
 ///
-/// 128 is not arbitrary. It is the recursion limit serde already enforces on the *other* loader in
-/// this product, and at this value the two agree level for level: on files of `a: ` followed by n
-/// brackets, `validate` and `rulegen` both accept n = 127 and both refuse n = 128, the second with
-/// "recursion limit exceeded". So no document this loader refuses could have reached `run_checks` or
-/// `guard test` either. And it is far above anything real. Measured by this loader's own counting: set
+/// 128 is not arbitrary. It is the limit serde already enforces on the *other* loader in this product,
+/// and at this value the two agree level for level: both accept a document nested 128 containers deep and
+/// both refuse 129. Measured on the live serde path, which is a `test` spec's `input:` block -- a template
+/// under `Resources/B/Properties` with n nested sequences beneath it, so the deepest container is at
+/// 6 + n: `test` accepts n = 122 and refuses n = 123. `validate` on the same template without the spec's
+/// two levels of wrapping -- the case list and the case mapping -- accepts n = 124 and refuses n = 125.
+/// Both boundaries are the same document: 128 containers accepted, 129 refused. So no document this
+/// loader refuses could have reached `run_checks` or `guard test` either.
+///
+/// Two corrections to how that used to be evidenced, because the sentence outlived its measurement.
+/// `rulegen` was the second witness, and it is no longer one: `load_template` now reads the template
+/// "through the loader the evaluator reads it with", so `rulegen` and `validate` share this loader and
+/// their agreement is tautological rather than a check on serde. And the boundary does not announce
+/// itself as "recursion limit exceeded" on any path reachable today -- what `test` prints is `invalid
+/// number at line 1 column 2`, which is serde's depth failure surfacing as a parse error about the first
+/// two characters of the file. The old fixture cannot be re-run either: `a: ` followed by brackets is not
+/// a template, and `rulegen` refuses it at n = 1 with "Unable to read the template", so that shape never
+/// exercised the limit it was cited for.
+///
+/// And it is far above anything real. Measured by this loader's own counting: set
 /// this constant to N, rebuild, and run `validate --data` over every `.yaml`, `.yml`, `.json` and
 /// `.template` file in both corpora, 382 of them, taking a file's level count to be the smallest N that
 /// accepts it.
