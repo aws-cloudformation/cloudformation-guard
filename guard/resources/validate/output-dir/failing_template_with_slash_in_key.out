@@ -14,11 +14,10 @@ Resource = A/Resource/Name/With/Slash {
           Fix: Set the S3 Bucket property BucketEncryption.ServerSideEncryptionConfiguration.ServerSideEncryptionByDefault.SSEAlgorithm to either "aws:kms" or "AES256"
         }
         RequiredPropertyError {
-          PropertyPath = /Resources/A/Resource/Name/With/Slash/Properties/BucketEncryption[L:9,C:23]
+          PropertyPath = /Resources/A/Resource/Name/With/Slash/Properties/BucketEncryption[L:10,C:24]
           MissingProperty = ServerSideEncryptionConfiguration[*].ServerSideEncryptionByDefault.SSEAlgorithm
-          Reason = Attempting to retrieve from key ServerSideEncryptionConfiguration but type is not an struct type at path /Resources/A/Resource/Name/With/Slash/Properties/BucketEncryption[L:9,C:23], Type = String, Value = String((Path("/Resources/A/Resource/Name/With/Slash/Properties/BucketEncryption", Location { line: 9, col: 23 }), ""))
+          Reason = Attempting to retrieve from key ServerSideEncryptionConfiguration but type is not an struct type at path /Resources/A/Resource/Name/With/Slash/Properties/BucketEncryption[L:10,C:24], Type = String, Value = String((Path("/Resources/A/Resource/Name/With/Slash/Properties/BucketEncryption", Location { line: 10, col: 24 }), ""))
           Code:
-                7.        BlockPublicPolicy: true
                 8.        IgnorePublicAcls: true
                 9.        RestrictPublicBuckets: true
                10.      BucketEncryption:
@@ -43,4 +42,4 @@ Resource = A/Resource/Name/With/Slash {
       |- GuardClauseBlock(Status = PASS)[Context=GuardAccessClause#block %s3_buckets_server_side_encryption[*].Properties.BucketEncryption EXISTS  ]
       |  `- GuardClauseValueCheck(Status=PASS)[Context= %s3_buckets_server_side_encryption[*].Properties.BucketEncryption EXISTS  ]
       `- GuardClauseBlock(Status = FAIL)[Context=GuardAccessClause#block %s3_buckets_server_side_encryption[*].Properties.BucketEncryption.ServerSideEncryptionConfiguration[*].ServerSideEncryptionByDefault.SSEAlgorithm IN  ["aws:kms","AES256"]]
-         `- GuardClauseBinaryCheck(Status=FAIL, Comparison= IN, from=(unresolved, Path=/Resources/A/Resource/Name/With/Slash/Properties/BucketEncryption[L:9,C:23] Value=""), to=)[Context= %s3_buckets_server_side_encryption[*].Properties.BucketEncryption.ServerSideEncryptionConfiguration[*].ServerSideEncryptionByDefault.SSEAlgorithm IN  ["aws:kms","AES256"]]
+         `- GuardClauseBinaryCheck(Status=FAIL, Comparison= IN, from=(unresolved, Path=/Resources/A/Resource/Name/With/Slash/Properties/BucketEncryption[L:10,C:24] Value=""), to=)[Context= %s3_buckets_server_side_encryption[*].Properties.BucketEncryption.ServerSideEncryptionConfiguration[*].ServerSideEncryptionByDefault.SSEAlgorithm IN  ["aws:kms","AES256"]]

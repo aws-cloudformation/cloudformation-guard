@@ -21,7 +21,7 @@ fn yaml_loader() -> Result<()> {
     let mut loader = Loader::new();
     let value = loader.load(String::from(docs))?;
 
-    let expected_string = r#"Map({("Name", Location { line: 8, col: 4 }): Map({("Fn::Sub", Location { line: 8, col: 10 }): List([String("www.${Domain}", Location { line: 9, col: 8 }), Map({("Domain", Location { line: 10, col: 10 }): Map({("Ref", Location { line: 10, col: 18 }): String("RootDomainName", Location { line: 10, col: 18 })}, Location { line: 10, col: 18 })}, Location { line: 10, col: 8 })], Location { line: 8, col: 10 })}, Location { line: 8, col: 10 })}, Location { line: 8, col: 4 })"#;
+    let expected_string = r#"Map({("Name", Location { line: 9, col: 5 }): Map({("Fn::Sub", Location { line: 9, col: 11 }): List([String("www.${Domain}", Location { line: 10, col: 9 }), Map({("Domain", Location { line: 11, col: 11 }): Map({("Ref", Location { line: 11, col: 19 }): String("RootDomainName", Location { line: 11, col: 19 })}, Location { line: 11, col: 19 })}, Location { line: 11, col: 9 })], Location { line: 9, col: 11 })}, Location { line: 9, col: 11 })}, Location { line: 9, col: 5 })"#;
     let result_as_string = format!("{:?}", value);
     assert_eq!(expected_string, result_as_string);
 
@@ -102,7 +102,7 @@ Resources:
     let mut loader = Loader::new();
     let value = loader.load(String::from(docs))?;
 
-    let expected_string = r#"Map({("Resources", Location { line: 1, col: 0 }): Map({("MyEc2Thing", Location { line: 2, col: 2 }): Map({("Type", Location { line: 3, col: 4 }): String("AWS::EC2::CapacityReservation", Location { line: 3, col: 10 }), ("Properties", Location { line: 4, col: 4 }): Map({("AvailabilityZone", Location { line: 5, col: 6 }): String("some string", Location { line: 5, col: 24 }), ("EbsOptimized", Location { line: 6, col: 6 }): Bool(true, Location { line: 6, col: 20 }), ("EndDate", Location { line: 7, col: 6 }): String("12/31/2023", Location { line: 7, col: 15 }), ("EphemeralStorage", Location { line: 8, col: 6 }): Bool(false, Location { line: 8, col: 24 }), ("InstanceCount", Location { line: 9, col: 6 }): Int(312, Location { line: 9, col: 21 }), ("InstanceMatchCriteria", Location { line: 10, col: 6 }): String("open", Location { line: 10, col: 29 }), ("TagSpecifications", Location { line: 11, col: 6 }): List([Map({("ResourceType", Location { line: 12, col: 8 }): String("instance", Location { line: 12, col: 22 }), ("Tags", Location { line: 13, col: 8 }): List([Map({("Key", Location { line: 14, col: 10 }): String("Name", Location { line: 14, col: 15 }), ("Value", Location { line: 15, col: 10 }): String("CFN EC2 Spot Instance", Location { line: 15, col: 17 })}, Location { line: 14, col: 10 })], Location { line: 14, col: 8 })}, Location { line: 12, col: 8 })], Location { line: 12, col: 6 }), ("Tenancy", Location { line: 16, col: 6 }): String("String", Location { line: 16, col: 15 })}, Location { line: 5, col: 6 })}, Location { line: 3, col: 4 })}, Location { line: 2, col: 2 })}, Location { line: 1, col: 0 })"#;
+    let expected_string = r#"Map({("Resources", Location { line: 2, col: 1 }): Map({("MyEc2Thing", Location { line: 3, col: 3 }): Map({("Type", Location { line: 4, col: 5 }): String("AWS::EC2::CapacityReservation", Location { line: 4, col: 11 }), ("Properties", Location { line: 5, col: 5 }): Map({("AvailabilityZone", Location { line: 6, col: 7 }): String("some string", Location { line: 6, col: 25 }), ("EbsOptimized", Location { line: 7, col: 7 }): Bool(true, Location { line: 7, col: 21 }), ("EndDate", Location { line: 8, col: 7 }): String("12/31/2023", Location { line: 8, col: 16 }), ("EphemeralStorage", Location { line: 9, col: 7 }): Bool(false, Location { line: 9, col: 25 }), ("InstanceCount", Location { line: 10, col: 7 }): Int(312, Location { line: 10, col: 22 }), ("InstanceMatchCriteria", Location { line: 11, col: 7 }): String("open", Location { line: 11, col: 30 }), ("TagSpecifications", Location { line: 12, col: 7 }): List([Map({("ResourceType", Location { line: 13, col: 9 }): String("instance", Location { line: 13, col: 23 }), ("Tags", Location { line: 14, col: 9 }): List([Map({("Key", Location { line: 15, col: 11 }): String("Name", Location { line: 15, col: 16 }), ("Value", Location { line: 16, col: 11 }): String("CFN EC2 Spot Instance", Location { line: 16, col: 18 })}, Location { line: 15, col: 11 })], Location { line: 15, col: 9 })}, Location { line: 13, col: 9 })], Location { line: 13, col: 7 }), ("Tenancy", Location { line: 17, col: 7 }): String("String", Location { line: 17, col: 16 })}, Location { line: 6, col: 7 })}, Location { line: 4, col: 5 })}, Location { line: 3, col: 3 })}, Location { line: 2, col: 1 })"#;
     let result_as_string = format!("{:?}", value);
     assert_eq!(expected_string, result_as_string);
 
@@ -133,7 +133,7 @@ Resources:
     let mut loader = Loader::new();
     let value = loader.load(String::from(docs))?;
 
-    let expected_string = r#"Map({("Resources", Location { line: 1, col: 0 }): Map({("MyEc2Thing", Location { line: 2, col: 2 }): Map({("Type", Location { line: 3, col: 4 }): String("AWS::EC2::CapacityReservation", Location { line: 3, col: 10 }), ("Properties", Location { line: 4, col: 4 }): Map({("AvailabilityZone", Location { line: 5, col: 6 }): String("some string", Location { line: 5, col: 24 }), ("EbsOptimized", Location { line: 6, col: 6 }): Bool(true, Location { line: 6, col: 20 }), ("EndDate", Location { line: 7, col: 6 }): String("12/31/2023", Location { line: 7, col: 15 }), ("EphemeralStorage", Location { line: 8, col: 6 }): Bool(false, Location { line: 8, col: 24 }), ("InstanceCount", Location { line: 9, col: 6 }): Float(3.12, Location { line: 9, col: 21 }), ("InstanceMatchCriteria", Location { line: 10, col: 6 }): String("open", Location { line: 10, col: 29 }), ("TagSpecifications", Location { line: 11, col: 6 }): List([Map({("ResourceType", Location { line: 12, col: 8 }): String("instance", Location { line: 12, col: 22 }), ("Tags", Location { line: 13, col: 8 }): List([Map({("Key", Location { line: 14, col: 10 }): String("Name", Location { line: 14, col: 15 }), ("Value", Location { line: 15, col: 10 }): String("CFN EC2 Spot Instance", Location { line: 15, col: 17 })}, Location { line: 14, col: 10 })], Location { line: 14, col: 8 })}, Location { line: 12, col: 8 })], Location { line: 12, col: 6 }), ("Tenancy", Location { line: 16, col: 6 }): String("String", Location { line: 16, col: 15 })}, Location { line: 5, col: 6 })}, Location { line: 3, col: 4 })}, Location { line: 2, col: 2 })}, Location { line: 1, col: 0 })"#;
+    let expected_string = r#"Map({("Resources", Location { line: 2, col: 1 }): Map({("MyEc2Thing", Location { line: 3, col: 3 }): Map({("Type", Location { line: 4, col: 5 }): String("AWS::EC2::CapacityReservation", Location { line: 4, col: 11 }), ("Properties", Location { line: 5, col: 5 }): Map({("AvailabilityZone", Location { line: 6, col: 7 }): String("some string", Location { line: 6, col: 25 }), ("EbsOptimized", Location { line: 7, col: 7 }): Bool(true, Location { line: 7, col: 21 }), ("EndDate", Location { line: 8, col: 7 }): String("12/31/2023", Location { line: 8, col: 16 }), ("EphemeralStorage", Location { line: 9, col: 7 }): Bool(false, Location { line: 9, col: 25 }), ("InstanceCount", Location { line: 10, col: 7 }): Float(3.12, Location { line: 10, col: 22 }), ("InstanceMatchCriteria", Location { line: 11, col: 7 }): String("open", Location { line: 11, col: 30 }), ("TagSpecifications", Location { line: 12, col: 7 }): List([Map({("ResourceType", Location { line: 13, col: 9 }): String("instance", Location { line: 13, col: 23 }), ("Tags", Location { line: 14, col: 9 }): List([Map({("Key", Location { line: 15, col: 11 }): String("Name", Location { line: 15, col: 16 }), ("Value", Location { line: 16, col: 11 }): String("CFN EC2 Spot Instance", Location { line: 16, col: 18 })}, Location { line: 15, col: 11 })], Location { line: 15, col: 9 })}, Location { line: 13, col: 9 })], Location { line: 13, col: 7 }), ("Tenancy", Location { line: 17, col: 7 }): String("String", Location { line: 17, col: 16 })}, Location { line: 6, col: 7 })}, Location { line: 4, col: 5 })}, Location { line: 3, col: 3 })}, Location { line: 2, col: 1 })"#;
     let result_as_string = format!("{:?}", value);
     assert_eq!(expected_string, result_as_string);
 
@@ -164,7 +164,7 @@ Resources:
     let mut loader = Loader::new();
     let value = loader.load(String::from(docs))?;
 
-    let expected_string = r#"Map({("Resources", Location { line: 1, col: 0 }): Map({("MyEc2Thing", Location { line: 2, col: 2 }): Map({("Type", Location { line: 3, col: 4 }): String("AWS::EC2::CapacityReservation", Location { line: 3, col: 10 }), ("Properties", Location { line: 4, col: 4 }): Map({("AvailabilityZone", Location { line: 5, col: 6 }): String("some string", Location { line: 5, col: 24 }), ("EbsOptimized", Location { line: 6, col: 6 }): Bool(true, Location { line: 6, col: 20 }), ("EndDate", Location { line: 7, col: 6 }): String("12/31/2023", Location { line: 7, col: 15 }), ("EphemeralStorage", Location { line: 8, col: 6 }): Bool(false, Location { line: 8, col: 24 }), ("InstanceCount", Location { line: 9, col: 6 }): Float(3.12, Location { line: 9, col: 21 }), ("InstanceMatchCriteria", Location { line: 10, col: 6 }): String("open", Location { line: 10, col: 29 }), ("TagSpecifications", Location { line: 11, col: 6 }): List([Map({("ResourceType", Location { line: 12, col: 8 }): String("instance", Location { line: 12, col: 22 }), ("Tags", Location { line: 13, col: 8 }): List([Map({("Key", Location { line: 14, col: 10 }): String("Name", Location { line: 14, col: 15 }), ("Value", Location { line: 15, col: 10 }): String("CFN EC2 Spot Instance", Location { line: 15, col: 17 })}, Location { line: 14, col: 10 })], Location { line: 14, col: 8 })}, Location { line: 12, col: 8 })], Location { line: 12, col: 6 }), ("Tenancy", Location { line: 16, col: 6 }): String("String", Location { line: 16, col: 15 })}, Location { line: 5, col: 6 })}, Location { line: 3, col: 4 })}, Location { line: 2, col: 2 })}, Location { line: 1, col: 0 })"#;
+    let expected_string = r#"Map({("Resources", Location { line: 2, col: 1 }): Map({("MyEc2Thing", Location { line: 3, col: 3 }): Map({("Type", Location { line: 4, col: 5 }): String("AWS::EC2::CapacityReservation", Location { line: 4, col: 11 }), ("Properties", Location { line: 5, col: 5 }): Map({("AvailabilityZone", Location { line: 6, col: 7 }): String("some string", Location { line: 6, col: 25 }), ("EbsOptimized", Location { line: 7, col: 7 }): Bool(true, Location { line: 7, col: 21 }), ("EndDate", Location { line: 8, col: 7 }): String("12/31/2023", Location { line: 8, col: 16 }), ("EphemeralStorage", Location { line: 9, col: 7 }): Bool(false, Location { line: 9, col: 25 }), ("InstanceCount", Location { line: 10, col: 7 }): Float(3.12, Location { line: 10, col: 22 }), ("InstanceMatchCriteria", Location { line: 11, col: 7 }): String("open", Location { line: 11, col: 30 }), ("TagSpecifications", Location { line: 12, col: 7 }): List([Map({("ResourceType", Location { line: 13, col: 9 }): String("instance", Location { line: 13, col: 23 }), ("Tags", Location { line: 14, col: 9 }): List([Map({("Key", Location { line: 15, col: 11 }): String("Name", Location { line: 15, col: 16 }), ("Value", Location { line: 16, col: 11 }): String("CFN EC2 Spot Instance", Location { line: 16, col: 18 })}, Location { line: 15, col: 11 })], Location { line: 15, col: 9 })}, Location { line: 13, col: 9 })], Location { line: 13, col: 7 }), ("Tenancy", Location { line: 17, col: 7 }): String("String", Location { line: 17, col: 16 })}, Location { line: 6, col: 7 })}, Location { line: 4, col: 5 })}, Location { line: 3, col: 3 })}, Location { line: 2, col: 1 })"#;
     let result_as_string = format!("{:?}", value);
     assert_eq!(expected_string, result_as_string);
 
@@ -195,7 +195,7 @@ Resources:
     let mut loader = Loader::new();
     let value = loader.load(String::from(docs))?;
 
-    let expected_string = r#"Map({("Resources", Location { line: 1, col: 0 }): Map({("MyEc2Thing", Location { line: 2, col: 2 }): Map({("Type", Location { line: 3, col: 4 }): String("AWS::EC2::CapacityReservation", Location { line: 3, col: 10 }), ("Properties", Location { line: 4, col: 4 }): Map({("AvailabilityZone", Location { line: 5, col: 6 }): String("some string", Location { line: 5, col: 24 }), ("EbsOptimized", Location { line: 6, col: 6 }): Bool(true, Location { line: 6, col: 20 }), ("EndDate", Location { line: 7, col: 6 }): String("12/31/2023", Location { line: 7, col: 15 }), ("EphemeralStorage", Location { line: 8, col: 6 }): Bool(false, Location { line: 8, col: 24 }), ("InstanceCount", Location { line: 9, col: 6 }): Int(312, Location { line: 9, col: 21 }), ("InstanceMatchCriteria", Location { line: 10, col: 6 }): String("open", Location { line: 10, col: 29 }), ("TagSpecifications", Location { line: 11, col: 6 }): List([Map({("ResourceType", Location { line: 12, col: 8 }): String("instance", Location { line: 12, col: 22 }), ("Tags", Location { line: 13, col: 8 }): List([Map({("Key", Location { line: 14, col: 10 }): String("Name", Location { line: 14, col: 15 }), ("Value", Location { line: 15, col: 10 }): String("CFN EC2 Spot Instance", Location { line: 15, col: 17 })}, Location { line: 14, col: 10 })], Location { line: 14, col: 8 })}, Location { line: 12, col: 8 })], Location { line: 12, col: 6 }), ("Tenancy", Location { line: 16, col: 6 }): Null(Location { line: 16, col: 15 })}, Location { line: 5, col: 6 })}, Location { line: 3, col: 4 })}, Location { line: 2, col: 2 })}, Location { line: 1, col: 0 })"#;
+    let expected_string = r#"Map({("Resources", Location { line: 2, col: 1 }): Map({("MyEc2Thing", Location { line: 3, col: 3 }): Map({("Type", Location { line: 4, col: 5 }): String("AWS::EC2::CapacityReservation", Location { line: 4, col: 11 }), ("Properties", Location { line: 5, col: 5 }): Map({("AvailabilityZone", Location { line: 6, col: 7 }): String("some string", Location { line: 6, col: 25 }), ("EbsOptimized", Location { line: 7, col: 7 }): Bool(true, Location { line: 7, col: 21 }), ("EndDate", Location { line: 8, col: 7 }): String("12/31/2023", Location { line: 8, col: 16 }), ("EphemeralStorage", Location { line: 9, col: 7 }): Bool(false, Location { line: 9, col: 25 }), ("InstanceCount", Location { line: 10, col: 7 }): Int(312, Location { line: 10, col: 22 }), ("InstanceMatchCriteria", Location { line: 11, col: 7 }): String("open", Location { line: 11, col: 30 }), ("TagSpecifications", Location { line: 12, col: 7 }): List([Map({("ResourceType", Location { line: 13, col: 9 }): String("instance", Location { line: 13, col: 23 }), ("Tags", Location { line: 14, col: 9 }): List([Map({("Key", Location { line: 15, col: 11 }): String("Name", Location { line: 15, col: 16 }), ("Value", Location { line: 16, col: 11 }): String("CFN EC2 Spot Instance", Location { line: 16, col: 18 })}, Location { line: 15, col: 11 })], Location { line: 15, col: 9 })}, Location { line: 13, col: 9 })], Location { line: 13, col: 7 }), ("Tenancy", Location { line: 17, col: 7 }): Null(Location { line: 17, col: 16 })}, Location { line: 6, col: 7 })}, Location { line: 4, col: 5 })}, Location { line: 3, col: 3 })}, Location { line: 2, col: 1 })"#;
     let result_as_string = format!("{:?}", value);
     assert_eq!(expected_string, result_as_string);
 
@@ -226,7 +226,7 @@ Resources:
     let mut loader = Loader::new();
     let value = loader.load(String::from(docs))?;
 
-    let expected_string = r#"Map({("Resources", Location { line: 1, col: 0 }): Map({("MyEc2Thing", Location { line: 2, col: 2 }): Map({("Type", Location { line: 3, col: 4 }): String("AWS::EC2::CapacityReservation", Location { line: 3, col: 10 }), ("Properties", Location { line: 4, col: 4 }): Map({("AvailabilityZone", Location { line: 5, col: 6 }): String("some string", Location { line: 5, col: 24 }), ("EbsOptimized", Location { line: 6, col: 6 }): Bool(true, Location { line: 6, col: 20 }), ("EndDate", Location { line: 7, col: 6 }): String("12/31/2023", Location { line: 7, col: 15 }), ("EphemeralStorage", Location { line: 8, col: 6 }): Bool(false, Location { line: 8, col: 24 }), ("InstanceCount", Location { line: 9, col: 6 }): Int(312, Location { line: 9, col: 21 }), ("InstanceMatchCriteria", Location { line: 10, col: 6 }): String("open", Location { line: 10, col: 29 }), ("TagSpecifications", Location { line: 11, col: 6 }): List([Map({("ResourceType", Location { line: 12, col: 8 }): String("instance", Location { line: 12, col: 22 }), ("Tags", Location { line: 13, col: 8 }): List([Map({("Key", Location { line: 14, col: 10 }): String("Name", Location { line: 14, col: 15 }), ("Value", Location { line: 15, col: 10 }): String("CFN EC2 Spot Instance", Location { line: 15, col: 17 })}, Location { line: 14, col: 10 })], Location { line: 14, col: 8 })}, Location { line: 12, col: 8 })], Location { line: 12, col: 6 }), ("Tenancy", Location { line: 16, col: 6 }): Null(Location { line: 16, col: 15 })}, Location { line: 5, col: 6 })}, Location { line: 3, col: 4 })}, Location { line: 2, col: 2 })}, Location { line: 1, col: 0 })"#;
+    let expected_string = r#"Map({("Resources", Location { line: 2, col: 1 }): Map({("MyEc2Thing", Location { line: 3, col: 3 }): Map({("Type", Location { line: 4, col: 5 }): String("AWS::EC2::CapacityReservation", Location { line: 4, col: 11 }), ("Properties", Location { line: 5, col: 5 }): Map({("AvailabilityZone", Location { line: 6, col: 7 }): String("some string", Location { line: 6, col: 25 }), ("EbsOptimized", Location { line: 7, col: 7 }): Bool(true, Location { line: 7, col: 21 }), ("EndDate", Location { line: 8, col: 7 }): String("12/31/2023", Location { line: 8, col: 16 }), ("EphemeralStorage", Location { line: 9, col: 7 }): Bool(false, Location { line: 9, col: 25 }), ("InstanceCount", Location { line: 10, col: 7 }): Int(312, Location { line: 10, col: 22 }), ("InstanceMatchCriteria", Location { line: 11, col: 7 }): String("open", Location { line: 11, col: 30 }), ("TagSpecifications", Location { line: 12, col: 7 }): List([Map({("ResourceType", Location { line: 13, col: 9 }): String("instance", Location { line: 13, col: 23 }), ("Tags", Location { line: 14, col: 9 }): List([Map({("Key", Location { line: 15, col: 11 }): String("Name", Location { line: 15, col: 16 }), ("Value", Location { line: 16, col: 11 }): String("CFN EC2 Spot Instance", Location { line: 16, col: 18 })}, Location { line: 15, col: 11 })], Location { line: 15, col: 9 })}, Location { line: 13, col: 9 })], Location { line: 13, col: 7 }), ("Tenancy", Location { line: 17, col: 7 }): Null(Location { line: 17, col: 16 })}, Location { line: 6, col: 7 })}, Location { line: 4, col: 5 })}, Location { line: 3, col: 3 })}, Location { line: 2, col: 1 })"#;
     let result_as_string = format!("{:?}", value);
     assert_eq!(expected_string, result_as_string);
 
@@ -257,7 +257,7 @@ Resources:
     let mut loader = Loader::new();
     let value = loader.load(String::from(docs))?;
 
-    let expected_string = r#"Map({("Resources", Location { line: 1, col: 0 }): Map({("MyEc2Thing", Location { line: 2, col: 2 }): Map({("Type", Location { line: 3, col: 4 }): String("AWS::EC2::CapacityReservation", Location { line: 3, col: 10 }), ("Properties", Location { line: 4, col: 4 }): Map({("AvailabilityZone", Location { line: 5, col: 6 }): String("some string", Location { line: 5, col: 24 }), ("EbsOptimized", Location { line: 6, col: 6 }): Bool(true, Location { line: 6, col: 20 }), ("EndDate", Location { line: 7, col: 6 }): String("12/31/2023", Location { line: 7, col: 15 }), ("EphemeralStorage", Location { line: 8, col: 6 }): Bool(false, Location { line: 8, col: 24 }), ("InstanceCount", Location { line: 9, col: 6 }): BadValue("3x12", Location { line: 9, col: 21 }), ("InstanceMatchCriteria", Location { line: 10, col: 6 }): String("open", Location { line: 10, col: 29 }), ("TagSpecifications", Location { line: 11, col: 6 }): List([Map({("ResourceType", Location { line: 12, col: 8 }): String("instance", Location { line: 12, col: 22 }), ("Tags", Location { line: 13, col: 8 }): List([Map({("Key", Location { line: 14, col: 10 }): String("Name", Location { line: 14, col: 15 }), ("Value", Location { line: 15, col: 10 }): String("CFN EC2 Spot Instance", Location { line: 15, col: 17 })}, Location { line: 14, col: 10 })], Location { line: 14, col: 8 })}, Location { line: 12, col: 8 })], Location { line: 12, col: 6 }), ("Tenancy", Location { line: 16, col: 6 }): Null(Location { line: 16, col: 15 })}, Location { line: 5, col: 6 })}, Location { line: 3, col: 4 })}, Location { line: 2, col: 2 })}, Location { line: 1, col: 0 })"#;
+    let expected_string = r#"Map({("Resources", Location { line: 2, col: 1 }): Map({("MyEc2Thing", Location { line: 3, col: 3 }): Map({("Type", Location { line: 4, col: 5 }): String("AWS::EC2::CapacityReservation", Location { line: 4, col: 11 }), ("Properties", Location { line: 5, col: 5 }): Map({("AvailabilityZone", Location { line: 6, col: 7 }): String("some string", Location { line: 6, col: 25 }), ("EbsOptimized", Location { line: 7, col: 7 }): Bool(true, Location { line: 7, col: 21 }), ("EndDate", Location { line: 8, col: 7 }): String("12/31/2023", Location { line: 8, col: 16 }), ("EphemeralStorage", Location { line: 9, col: 7 }): Bool(false, Location { line: 9, col: 25 }), ("InstanceCount", Location { line: 10, col: 7 }): BadValue("3x12", Location { line: 10, col: 22 }), ("InstanceMatchCriteria", Location { line: 11, col: 7 }): String("open", Location { line: 11, col: 30 }), ("TagSpecifications", Location { line: 12, col: 7 }): List([Map({("ResourceType", Location { line: 13, col: 9 }): String("instance", Location { line: 13, col: 23 }), ("Tags", Location { line: 14, col: 9 }): List([Map({("Key", Location { line: 15, col: 11 }): String("Name", Location { line: 15, col: 16 }), ("Value", Location { line: 16, col: 11 }): String("CFN EC2 Spot Instance", Location { line: 16, col: 18 })}, Location { line: 15, col: 11 })], Location { line: 15, col: 9 })}, Location { line: 13, col: 9 })], Location { line: 13, col: 7 }), ("Tenancy", Location { line: 17, col: 7 }): Null(Location { line: 17, col: 16 })}, Location { line: 6, col: 7 })}, Location { line: 4, col: 5 })}, Location { line: 3, col: 3 })}, Location { line: 2, col: 1 })"#;
     let result_as_string = format!("{:?}", value);
     assert_eq!(expected_string, result_as_string);
 
@@ -288,7 +288,7 @@ Resources:
     let mut loader = Loader::new();
     let value = loader.load(String::from(docs))?;
 
-    let expected_string = r#"Map({("Resources", Location { line: 1, col: 0 }): Map({("MyEc2Thing", Location { line: 2, col: 2 }): Map({("Type", Location { line: 3, col: 4 }): String("AWS::EC2::CapacityReservation", Location { line: 3, col: 10 }), ("Properties", Location { line: 4, col: 4 }): Map({("AvailabilityZone", Location { line: 5, col: 6 }): String("some string", Location { line: 5, col: 24 }), ("EbsOptimized", Location { line: 6, col: 6 }): Bool(true, Location { line: 6, col: 20 }), ("EndDate", Location { line: 7, col: 6 }): String("12/31/2023", Location { line: 7, col: 15 }), ("EphemeralStorage", Location { line: 8, col: 6 }): Bool(false, Location { line: 8, col: 24 }), ("InstanceCount", Location { line: 9, col: 6 }): BadValue("3x12", Location { line: 9, col: 21 }), ("InstanceMatchCriteria", Location { line: 10, col: 6 }): String("open", Location { line: 10, col: 29 }), ("TagSpecifications", Location { line: 11, col: 6 }): List([Map({("ResourceType", Location { line: 12, col: 8 }): String("instance", Location { line: 12, col: 22 }), ("Tags", Location { line: 13, col: 8 }): List([Map({("Key", Location { line: 14, col: 10 }): String("Name", Location { line: 14, col: 15 }), ("Value", Location { line: 15, col: 10 }): String("CFN EC2 Spot Instance", Location { line: 15, col: 17 })}, Location { line: 14, col: 10 })], Location { line: 14, col: 8 })}, Location { line: 12, col: 8 })], Location { line: 12, col: 6 }), ("Tenancy", Location { line: 16, col: 6 }): String("~", Location { line: 16, col: 15 })}, Location { line: 5, col: 6 })}, Location { line: 3, col: 4 })}, Location { line: 2, col: 2 })}, Location { line: 1, col: 0 })"#;
+    let expected_string = r#"Map({("Resources", Location { line: 2, col: 1 }): Map({("MyEc2Thing", Location { line: 3, col: 3 }): Map({("Type", Location { line: 4, col: 5 }): String("AWS::EC2::CapacityReservation", Location { line: 4, col: 11 }), ("Properties", Location { line: 5, col: 5 }): Map({("AvailabilityZone", Location { line: 6, col: 7 }): String("some string", Location { line: 6, col: 25 }), ("EbsOptimized", Location { line: 7, col: 7 }): Bool(true, Location { line: 7, col: 21 }), ("EndDate", Location { line: 8, col: 7 }): String("12/31/2023", Location { line: 8, col: 16 }), ("EphemeralStorage", Location { line: 9, col: 7 }): Bool(false, Location { line: 9, col: 25 }), ("InstanceCount", Location { line: 10, col: 7 }): BadValue("3x12", Location { line: 10, col: 22 }), ("InstanceMatchCriteria", Location { line: 11, col: 7 }): String("open", Location { line: 11, col: 30 }), ("TagSpecifications", Location { line: 12, col: 7 }): List([Map({("ResourceType", Location { line: 13, col: 9 }): String("instance", Location { line: 13, col: 23 }), ("Tags", Location { line: 14, col: 9 }): List([Map({("Key", Location { line: 15, col: 11 }): String("Name", Location { line: 15, col: 16 }), ("Value", Location { line: 16, col: 11 }): String("CFN EC2 Spot Instance", Location { line: 16, col: 18 })}, Location { line: 15, col: 11 })], Location { line: 15, col: 9 })}, Location { line: 13, col: 9 })], Location { line: 13, col: 7 }), ("Tenancy", Location { line: 17, col: 7 }): String("~", Location { line: 17, col: 16 })}, Location { line: 6, col: 7 })}, Location { line: 4, col: 5 })}, Location { line: 3, col: 3 })}, Location { line: 2, col: 1 })"#;
     let result_as_string = format!("{:?}", value);
     assert_eq!(expected_string, result_as_string);
 
@@ -327,7 +327,7 @@ fn test_handle_null() {
     };
 
     let val = map
-        .get(&("Resources".to_string(), Location::new(1, 4)))
+        .get(&("Resources".to_string(), Location::new(2, 5)))
         .unwrap()
         .to_owned();
 
@@ -345,7 +345,7 @@ fn test_handle_null() {
     };
 
     let val = map
-        .get(&("Resources".to_string(), Location::new(1, 4)))
+        .get(&("Resources".to_string(), Location::new(2, 5)))
         .unwrap()
         .to_owned();
 
@@ -363,7 +363,7 @@ fn test_handle_null() {
     };
 
     let val = map
-        .get(&("Resources".to_string(), Location::new(1, 4)))
+        .get(&("Resources".to_string(), Location::new(2, 5)))
         .unwrap()
         .to_owned();
 
@@ -381,7 +381,7 @@ fn test_handle_null() {
     };
 
     let val = map
-        .get(&("Resources".to_string(), Location::new(1, 4)))
+        .get(&("Resources".to_string(), Location::new(2, 5)))
         .unwrap()
         .to_owned();
 
@@ -641,4 +641,70 @@ fn one_document_with_a_marker_or_a_banner_still_loads(#[case] content: &str) -> 
     );
 
     Ok(())
+}
+
+/// Data-file markers count lines and columns from one, the same as everything that reads them.
+///
+/// libyaml counts from zero and `system_mark_to_location` passed the numbers through, so every
+/// `Path=[L:n,C:m]` in every data-file finding named the line above the one a person editing the
+/// file sees. The report contradicted itself in one block, because `emit_code` prints a one-based
+/// excerpt beside the `L:` value: a finding at physical line 14 read `L:13` above its own excerpt
+/// line `14.`, and the excerpt window -- which starts two lines above `line` -- was centred on the
+/// wrong line too. Rules-file locations were already one-based, since they come from `nom`'s
+/// `LocatedSpan`, so the product printed one convention for the rules file and another for the data.
+///
+/// The expectations here are computed from the fixture rather than written as numbers, so the test
+/// says "the marker is where the text is" rather than restating whatever the loader currently does.
+#[test]
+fn a_marker_names_the_one_based_position_of_its_scalar() -> Result<()> {
+    let content = "Resources:\n  B:\n    Type: AWS::S3::Bucket\n";
+
+    let expected_line = content
+        .lines()
+        .position(|l| l.contains("AWS::S3::Bucket"))
+        .expect("the fixture holds the value")
+        + 1;
+    let expected_col = content
+        .lines()
+        .nth(expected_line - 1)
+        .expect("the line exists")
+        .find("AWS::S3::Bucket")
+        .expect("the value is on that line")
+        + 1;
+
+    let value = Loader::new().load(content.to_string())?;
+
+    let type_value = match &value {
+        MarkedValue::Map(root, ..) => match root.first().expect("Resources is present").1 {
+            MarkedValue::Map(resources, ..) => match resources.first().expect("B is present").1 {
+                MarkedValue::Map(b, ..) => b.first().expect("Type is present").1.clone(),
+                other => unreachable!("B is a mapping, got {:?}", other),
+            },
+            other => unreachable!("Resources is a mapping, got {:?}", other),
+        },
+        other => unreachable!("the document is a mapping, got {:?}", other),
+    };
+
+    assert_eq!(
+        &Location {
+            line: expected_line,
+            col: expected_col,
+        },
+        type_value.location(),
+        "the marker for {:?} does not name its own line {} and column {}",
+        "AWS::S3::Bucket",
+        expected_line,
+        expected_col
+    );
+
+    Ok(())
+}
+
+/// The other half of the convention, and the reason the offset is added in the conversion rather
+/// than in `Display`. `Location::default()` is what a literal written in the *rules* file is given,
+/// and SARIF's `build_region` reads `line < 1` as "this finding has no position at all". Adding the
+/// offset where `Display` runs would have turned every literal into a claim about line 1.
+#[test]
+fn a_location_with_no_position_stays_zero() {
+    assert_eq!(Location { line: 0, col: 0 }, Location::default());
 }

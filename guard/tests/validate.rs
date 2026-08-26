@@ -569,13 +569,13 @@ mod validate_tests {
     #[rstest::rstest]
     #[case::yaml(
         "Resources:\n  B:\n    Properties:\n      Encrypted: false\n      Encrypted: true\n",
-        "L:3,C:6",
-        "L:4,C:6"
+        "L:4,C:7",
+        "L:5,C:7"
     )]
     #[case::json(
         "{\"Resources\":{\"B\":{\"Properties\":{\"Encrypted\":false,\"Encrypted\":true}}}}",
-        "L:0,C:33",
-        "L:0,C:51"
+        "L:1,C:34",
+        "L:1,C:52"
     )]
     fn test_a_duplicate_key_is_reported_with_its_path(
         #[case] input: &str,
