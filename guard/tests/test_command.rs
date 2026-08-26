@@ -1364,4 +1364,251 @@ mod test_command_tests {
         // format the command does not have is the caller's mistake, not cfn-guard breaking.
         assert_eq!(StatusCode::USAGE_ERROR, status_code);
     }
+
+    /// Every output format `test` has a reporter for.
+    ///
+    /// Named in one place because the two tests below run all of them over one input. A table that
+    /// lists three of the four is how the two halves of this command drifted apart, twice.
+    const EVERY_OUTPUT_FORMAT: [&str; 4] = ["single-line-summary", "json", "yaml", "junit"];
+
+    /// What each output format made of one invocation: its name, the code the run exited with, and its
+    /// stderr.
+    type PerFormat = Vec<(&'static str, i32, String)>;
+
+    /// Asserts every format gave the same exit code and the same stderr, and returns the pair they
+    /// agreed on so the caller can then say what it should have been.
+    ///
+    /// Compared against the first format rather than every pair: agreement is transitive, so N-1
+    /// comparisons decide it, and a failure names the two formats that differ either way.
+    ///
+    /// Every message here passes its values positionally. This crate is edition 2018, where
+    /// `assert!(cond, "{value}")` hands the string to `panic!` unformatted and the braces reach the
+    /// output literally -- so an inline-captured message reads as `{format} disagrees` on the run that
+    /// needed it most. `assert_eq!` routes through `format_args!` and does interpolate, which is worse
+    /// than if neither did: the two macros would disagree for the same written message.
+    fn the_formats_agree(results: &PerFormat, input: &str) -> (i32, String) {
+        let (first_format, first_code, first_stderr) =
+            results.first().expect("no output format was run");
+
+        for (format, code, stderr) in results {
+            assert_eq!(
+                first_code, code,
+                "{}: {} exits {} where {} exits {}, on the same input",
+                input, first_format, first_code, format, code
+            );
+            assert_eq!(
+                first_stderr, stderr,
+                "{}: {} and {} report different diagnostics for the same input",
+                input, first_format, format
+            );
+        }
+
+        (*first_code, first_stderr.clone())
+    }
+
+    fn every_format_over_one_rules_file(rules: &str, test_data: &str) -> PerFormat {
+        EVERY_OUTPUT_FORMAT
+            .iter()
+            .map(|&format| {
+                let mut reader = Reader::default();
+                let mut writer = Writer::new_with_err(WBVec(vec![]), WBVec(vec![]))
+                    .expect("Failed to create writer.");
+                let status_code = TestCommandTestRunner::default()
+                    .test_data(Some(test_data))
+                    .rules(Some(rules))
+                    .output_format(format)
+                    .run(&mut writer, &mut reader);
+
+                (
+                    format,
+                    status_code,
+                    writer.err_to_stripped().expect("failed to read stderr"),
+                )
+            })
+            .collect()
+    }
+
+    fn every_format_over_a_directory(dir: &str) -> PerFormat {
+        EVERY_OUTPUT_FORMAT
+            .iter()
+            .map(|&format| {
+                let mut reader = Reader::default();
+                let mut writer = Writer::new_with_err(WBVec(vec![]), WBVec(vec![]))
+                    .expect("Failed to create writer.");
+                let status_code = TestCommandTestRunner::default()
+                    .directory(Some(dir))
+                    .output_format(format)
+                    .run(&mut writer, &mut reader);
+
+                (
+                    format,
+                    status_code,
+                    writer.err_to_stripped().expect("failed to read stderr"),
+                )
+            })
+            .collect()
+    }
+
+    /// One rules file and one test data file: all four output formats exit with the same code and put
+    /// the same diagnostics on stderr.
+    ///
+    /// This asserts the invariant rather than an instance of it, and the reason is that two rounds of
+    /// instance assertions each missed the half the other was about.
+    /// [`a_case_whose_input_cannot_be_read_does_not_discard_the_other_cases`] pinned the generic
+    /// reporter, its structured sibling went unfixed, and the sibling test that closed that gap pinned
+    /// the structured reporter -- so when the generic reporter later lost a diagnostic the structured
+    /// one kept, nothing failed. "The structured format reports X" cannot catch a disagreement; only
+    /// "the formats report the same thing" can, and it catches it in whichever direction it appears.
+    ///
+    /// The exit code and stderr are the right two things to compare because they are the only outputs
+    /// that do not depend on the format. The report itself is legitimately four different documents.
+    /// `write_diagnostics` writes to stderr from code both reporters share, so the same input owes the
+    /// same sentences there; and one input has one verdict, so it owes one number.
+    ///
+    /// Two defects this would have caught, one per column. A rules file the command could not read or
+    /// parse exited 0 through `json`, `yaml` and `junit` and 1 through `single-line-summary`, because
+    /// `handle_structured_single_report` assigned its exit code only in the arm where the rules file
+    /// parsed -- so a CI job gating on the code read a ruleset that never loaded as a pass, while the
+    /// junit document beside it said `errors="1"`. And a case carrying both a bad expectation string
+    /// and an expectation naming a rule that does not exist lost the second diagnostic in
+    /// `single-line-summary` alone, because the generic reporter computed it after the loop that
+    /// abandons such a case.
+    ///
+    /// What this does not cover: the content of the reports, which
+    /// [`test_structured_single_report`] and the golden files own; `sarif`, which `test` rejects at the
+    /// parser; and the ordering of stderr against stdout, which is not fixed because they are separate
+    /// streams. It also cannot see a disagreement over an input shape absent from the table -- the
+    /// nine cases here are the shapes the two reporters take different branches on, not a proof of
+    /// agreement over all inputs.
+    #[rstest]
+    #[case::everything_passes(
+        "resources/validate/rules-dir/s3_bucket_server_side_encryption_enabled.guard",
+        "resources/test-command/data-dir/s3_bucket_server_side_encryption_enabled.yaml",
+        StatusCode::SUCCESS
+    )]
+    #[case::an_expectation_that_was_not_met(
+        "resources/validate/rules-dir/s3_bucket_server_side_encryption_enabled.guard",
+        "resources/test-command/data-dir/failing_test.yaml",
+        StatusCode::TEST_COMMAND_FAILURE
+    )]
+    #[case::a_rules_file_that_will_not_parse(
+        "resources/test-command/rule-dir/invalid_rule.guard",
+        "resources/test-command/data-dir/test.yaml",
+        StatusCode::INCORRECT_STATUS_ERROR
+    )]
+    #[case::a_rules_file_that_cannot_be_read(
+        "resources/test-command/format-agreement/not_utf8.guard",
+        "resources/test-command/data-dir/test.yaml",
+        StatusCode::INCORRECT_STATUS_ERROR
+    )]
+    #[case::a_rules_file_that_declares_no_rules(
+        "resources/validate/blank-rule.guard",
+        "resources/test-command/data-dir/test.yaml",
+        StatusCode::INCORRECT_STATUS_ERROR
+    )]
+    #[case::a_bad_expectation_beside_a_stale_rule_name(
+        "resources/validate/rules-dir/s3_bucket_server_side_encryption_enabled.guard",
+        "resources/test-command/format-agreement/a_bad_expectation_beside_a_stale_rule_name.yaml",
+        StatusCode::INCORRECT_STATUS_ERROR
+    )]
+    #[case::a_stale_rule_name_alone(
+        "resources/validate/rules-dir/s3_bucket_server_side_encryption_enabled.guard",
+        "resources/test-command/data-dir/expectation_for_a_rule_that_does_not_exist.yaml",
+        StatusCode::INCORRECT_STATUS_ERROR
+    )]
+    #[case::an_expectation_for_a_parameterized_rule(
+        "resources/test-command/parameterized-rule/encryption.guard",
+        "resources/test-command/data-dir/expectation_for_a_parameterized_rule.yaml",
+        StatusCode::INCORRECT_STATUS_ERROR
+    )]
+    #[case::a_case_whose_input_cannot_be_read(
+        "resources/test-command/rule-dir/a_case_whose_input_cannot_be_read.guard",
+        "resources/test-command/data-dir/a_case_whose_input_cannot_be_read_tests.yaml",
+        StatusCode::INCORRECT_STATUS_ERROR
+    )]
+    fn every_output_format_agrees_over_one_rules_file(
+        #[case] rules: &str,
+        #[case] test_data: &str,
+        #[case] expected_code: i32,
+    ) {
+        let results = every_format_over_one_rules_file(rules, test_data);
+        let (code, _) = the_formats_agree(&results, test_data);
+
+        // Agreeing on the wrong number is still agreement, so the number is named too.
+        assert_eq!(
+            expected_code, code,
+            "{}: every format agreed on {}, which is not the code this input owes",
+            test_data, code
+        );
+    }
+
+    /// The same invariant over a directory walk, which is a separate pair of handlers.
+    ///
+    /// Not folded into the table above, because `handle_plaintext_directory` and
+    /// `handle_structured_directory_report` are different code from the single-file pair and held three
+    /// disagreements of their own. A rules file that would not parse exited 7 here and 1 in the three
+    /// structured formats -- `guard/README.md` gives 7 to an expectation that was not met and 1 to one
+    /// that could not be evaluated, and a file that will not parse is the second. A rules file that
+    /// could not be read was worse: the plaintext walk propagated it to `main`'s catch-all for 255,
+    /// the code reserved for cfn-guard itself breaking, and abandoned every later rules file in the
+    /// directory. And a walk whose first file failed an expectation and whose second could not evaluate
+    /// one exited 7 rather than 1, because the plaintext merge kept whatever it already had instead of
+    /// letting an error outrank a failure.
+    ///
+    /// The last of those is why the fixtures are named `a_` and `b_`: the walk is sorted by file name,
+    /// so the failure has to be reached before the error for the merge to be the thing under test.
+    #[rstest]
+    #[case::everything_passes("resources/test-command/dir", StatusCode::SUCCESS)]
+    #[case::a_rules_file_that_will_not_parse(
+        "resources/test-command/format-agreement/an-unparseable-rules-file",
+        StatusCode::INCORRECT_STATUS_ERROR
+    )]
+    #[case::a_rules_file_that_cannot_be_read(
+        "resources/test-command/format-agreement/an-unreadable-rules-file",
+        StatusCode::INCORRECT_STATUS_ERROR
+    )]
+    #[case::a_failure_reached_before_an_error(
+        "resources/test-command/format-agreement/a-failure-before-an-error",
+        StatusCode::INCORRECT_STATUS_ERROR
+    )]
+    fn every_output_format_agrees_over_a_directory(#[case] dir: &str, #[case] expected_code: i32) {
+        let results = every_format_over_a_directory(dir);
+        let (code, _) = the_formats_agree(&results, dir);
+
+        assert_eq!(
+            expected_code, code,
+            "{}: every format agreed on {}, which is not the code this input owes",
+            dir, code
+        );
+    }
+
+    /// A rules file that cannot be read does not end the directory walk in any output format.
+    ///
+    /// The other half of the 255 above, and the half an exit code cannot express: propagating with `?`
+    /// left the walk entirely, so `b_readable.guard` -- which sorts after the unreadable file and
+    /// passes -- was never reached, and its suite went unrun in silence under `single-line-summary`
+    /// while all three structured formats reported it. Asserted per format rather than once, because a
+    /// return to propagating would show in exactly one of them.
+    #[test]
+    fn an_unreadable_rules_file_does_not_end_a_directory_walk() {
+        const DIR: &str = "resources/test-command/format-agreement/an-unreadable-rules-file";
+
+        for format in EVERY_OUTPUT_FORMAT {
+            let mut reader = Reader::default();
+            let mut writer = Writer::new_with_err(WBVec(vec![]), WBVec(vec![]))
+                .expect("Failed to create writer.");
+            TestCommandTestRunner::default()
+                .directory(Some(DIR))
+                .output_format(format)
+                .run(&mut writer, &mut reader);
+
+            let stdout = writer.stripped().expect("failed to read stdout");
+            assert!(
+                stdout.contains("b_readable"),
+                "{} stopped at the unreadable rules file instead of going on to the next one:\n{}",
+                format,
+                stdout
+            );
+        }
+    }
 }

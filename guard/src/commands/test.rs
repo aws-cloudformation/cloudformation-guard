@@ -157,7 +157,6 @@ impl Executable for Test {
     /// - parse errors occur in the rule file
     /// - illegal json or yaml syntax present in any of the data input files
     fn execute(&self, writer: &mut Writer, _: &mut Reader) -> Result<i32> {
-        let mut exit_code = SUCCESS_STATUS_CODE;
         let cmp = if self.alphabetical {
             alphabetical
         } else if self.last_modified {
@@ -195,19 +194,16 @@ impl Executable for Test {
                 OutputFormatType::SingleLineSummary => {
                     handle_plaintext_directory(ordered_directory, writer, self.verbose)
                 }
+                // Returned as the handler gave it. This merged the handler's code with a local that
+                // was `SUCCESS_STATUS_CODE` on every path reaching here and nowhere assigned in
+                // between, so the merge could only ever yield the handler's code -- a third spelling
+                // of the exit-code policy that decided nothing.
                 OutputFormatType::JSON | OutputFormatType::YAML | OutputFormatType::Junit => {
-                    let test_exit_code = handle_structured_directory_report(
+                    handle_structured_directory_report(
                         ordered_directory,
                         writer,
                         self.output_format,
-                    )?;
-                    exit_code = if exit_code == SUCCESS_STATUS_CODE {
-                        test_exit_code
-                    } else {
-                        exit_code
-                    };
-
-                    Ok(exit_code)
+                    )
                 }
                 OutputFormatType::Sarif => unreachable!(),
             }
@@ -320,13 +316,33 @@ fn handle_plaintext_directory(
             )?;
 
             let path = each_rule_file.file.path();
-            let content = get_rule_content(path)?;
+            // Not `?`. Propagating reached `main`'s catch-all and exited 255, `INTERNAL_FAILURE`, the
+            // code this repository reserves for the tool itself breaking -- and it abandoned every
+            // later rules file in the directory, so one unreadable file cost the whole walk. A rules
+            // file that cannot be read is content: `TEST_ERROR_STATUS_CODE` is what
+            // `handle_plaintext_single_file` and both structured paths answer, and the structured
+            // directory walk carries on to the next file the way this now does.
+            let content = match get_rule_content(path) {
+                Ok(content) => content,
+                Err(e) => {
+                    writeln!(writer, "Unable to read rule file content {e}")?;
+                    exit_code = get_exit_code(exit_code, TEST_ERROR_STATUS_CODE);
+                    writeln!(writer, "---")?;
+                    continue;
+                }
+            };
             let span = crate::rules::parser::Span::new_extra(&content, &each_rule_file.prefix);
 
             match crate::rules::parser::rules_file(span) {
                 Err(e) => {
                     writeln!(writer, "Parse Error on ruleset file {e}",)?;
-                    exit_code = TEST_FAILURE_STATUS_CODE;
+                    // `TEST_ERROR_STATUS_CODE`, not `TEST_FAILURE_STATUS_CODE`. A rules file that will
+                    // not parse is an expectation that could not be evaluated, not one that was not
+                    // met, and `guard/README.md` gives those two different codes. This arm was the only
+                    // one of the four that said 7: the same directory answered 7 under
+                    // `single-line-summary` and 1 under `json`, `yaml` and `junit`, and
+                    // `handle_plaintext_single_file` answers 1 for these same bytes.
+                    exit_code = get_exit_code(exit_code, TEST_ERROR_STATUS_CODE);
                 }
                 Ok(Some(rules)) => {
                     let data_test_files = each_rule_file
@@ -344,11 +360,12 @@ fn handle_plaintext_directory(
 
                     let test_exit_code = reporter.report()?;
 
-                    exit_code = if exit_code == SUCCESS_STATUS_CODE {
-                        test_exit_code
-                    } else {
-                        exit_code
-                    };
+                    // `get_exit_code`, not `if exit_code == SUCCESS_STATUS_CODE`. That spelling kept
+                    // whatever it already had, so it never promoted a failure to an error: a directory
+                    // whose first rules file failed an expectation and whose second could not evaluate
+                    // one exited 7, while the structured walk over the same directory exited 1. Each
+                    // file on its own already agreed across the formats; only the merge did not.
+                    exit_code = get_exit_code(exit_code, test_exit_code);
                 }
                 Ok(None) => {
                     let mut diagnostics = Diagnostics::new();
@@ -357,7 +374,7 @@ fn handle_plaintext_directory(
                         &each_rule_file.get_test_files(),
                         &mut diagnostics,
                     ) {
-                        exit_code = TEST_ERROR_STATUS_CODE;
+                        exit_code = get_exit_code(exit_code, TEST_ERROR_STATUS_CODE);
                     }
                     write_diagnostics(&diagnostics, writer)?;
                 }
@@ -493,7 +510,6 @@ pub(crate) fn handle_structured_single_report(
     data_test_files: &[PathBuf],
     output: OutputFormatType,
 ) -> Result<i32> {
-    let mut exit_code = SUCCESS_STATUS_CODE;
     let now = Instant::now();
 
     let mut diagnostics = Diagnostics::new();
@@ -524,24 +540,40 @@ pub(crate) fn handle_structured_single_report(
                     };
 
                     let test = reporter.evaluate()?;
-                    let test_code = test.get_exit_code();
-                    exit_code = get_exit_code(exit_code, test_code);
 
                     diagnostics.append(&mut reporter.diagnostics);
                     test
                 }
                 Ok(None) => {
-                    if report_expectations_against_no_rules(path, data_test_files, &mut diagnostics)
-                    {
-                        exit_code = TEST_ERROR_STATUS_CODE;
-                    }
+                    let dropped = report_expectations_against_no_rules(
+                        path,
+                        data_test_files,
+                        &mut diagnostics,
+                    );
                     write_diagnostics(&diagnostics, writer)?;
 
-                    return Ok(exit_code);
+                    return Ok(match dropped {
+                        true => TEST_ERROR_STATUS_CODE,
+                        false => SUCCESS_STATUS_CODE,
+                    });
                 }
             }
         }
     };
+
+    // Read off the report, once, for every arm that produced one.
+    //
+    // It used to be assigned inside the `Ok(Some(..))` arm alone, from a local initialized to
+    // `SUCCESS_STATUS_CODE`, so both `TestResult::Err` arms above -- a rules file that could not be
+    // read, and one that would not parse -- returned 0. `json`, `yaml` and `junit` exited 0 on a
+    // broken ruleset while `single-line-summary` exited 1 on the same bytes, and the junit document
+    // the same run had just written said `errors="1"`: a CI job gating on the exit code read a
+    // ruleset it had never managed to load as a pass, with every expectation in the suite unchecked.
+    //
+    // `TestResult::get_exit_code`'s `Err` arm already answered `TEST_ERROR_STATUS_CODE`; nothing on
+    // this path consulted it. Deriving the code from the report here rather than assigning it per arm
+    // is what keeps the number the process exits with and the number the report states the same.
+    let exit_code = result.get_exit_code();
 
     // Before the report, as in `validate`, and on stderr so that stdout stays parseable.
     write_diagnostics(&diagnostics, writer)?;
@@ -575,15 +607,21 @@ fn handle_structured_directory_report(
             }
 
             let path = each_rule_file.file.path();
+            // Both `TestResult::Err` arms below take their code from the report they push, as the
+            // `Ok(Some(..))` arm does and as `handle_structured_single_report` now does. They spelled
+            // `TEST_ERROR_STATUS_CODE` out instead, which is the same number `TestResult::get_exit_code`
+            // gives an `Err` -- a second place stating the policy, and the single-file path is where
+            // having two of them cost the run its exit code.
             let content = match get_rule_content(path) {
                 Ok(content) => content,
                 Err(e) => {
-                    exit_code = TEST_ERROR_STATUS_CODE;
-                    test_results.push(TestResult::Err(Err {
+                    let result = TestResult::Err(Err {
                         rule_file: path.to_str().unwrap().to_string(),
                         error: e.to_string(),
                         time: now.elapsed().as_millis(),
-                    }));
+                    });
+                    exit_code = get_exit_code(exit_code, result.get_exit_code());
+                    test_results.push(result);
                     continue;
                 }
             };
@@ -592,12 +630,13 @@ fn handle_structured_directory_report(
 
             match crate::rules::parser::rules_file(span) {
                 Err(e) => {
-                    exit_code = TEST_ERROR_STATUS_CODE;
-                    test_results.push(TestResult::Err(Err {
+                    let result = TestResult::Err(Err {
                         rule_file: path.to_str().unwrap().to_string(),
                         error: e.to_string(),
                         time: now.elapsed().as_millis(),
-                    }))
+                    });
+                    exit_code = get_exit_code(exit_code, result.get_exit_code());
+                    test_results.push(result)
                 }
                 Ok(Some(rules)) => {
                     let data_test_files = each_rule_file.get_test_files();

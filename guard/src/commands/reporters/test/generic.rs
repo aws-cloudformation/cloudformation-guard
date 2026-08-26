@@ -177,6 +177,25 @@ impl<'report> GenericReporter<'report> {
         let by_rules = get_by_rules(&top);
         let evaluated = by_rules.keys().copied().collect::<BTreeSet<&str>>();
 
+        // Decided once and used twice, as in the structured reporter: the note on stderr and the exit
+        // code have to be answering the same question.
+        //
+        // Before the rule loop, and that is the whole of the fix. The loop below returns early on an
+        // expectation that is not a status -- deliberately, because the case is then abandoned and the
+        // structured reporter abandons it the same way -- and this was computed after the loop, so the
+        // early return took it with it. The structured reporter computes it before its own rule loop,
+        // so a case carrying both a bad expectation string and an expectation naming a rule that does
+        // not exist reported the stale name in `json`, `yaml` and `junit` and not in
+        // `single-line-summary`. Both formats already exited 1 on those bytes; the sentence saying
+        // *which* expectation named nothing was the half that went missing, and a stale rule name
+        // reads as coverage the author does not have, which is the reason the sentence exists.
+        let unchecked = unmatched_expectation_names(&spec.expectations.rules, &evaluated);
+        diagnostics.extend(
+            unchecked
+                .iter()
+                .map(|name| unchecked_expectation_message(&self.rules, name)),
+        );
+
         for (rule_name, rule) in by_rules {
             let expected = match spec.expectations.rules.get(rule_name) {
                 Some(exp) => Status::try_from(exp.as_str())?,
@@ -209,15 +228,6 @@ impl<'report> GenericReporter<'report> {
                 }
             }
         }
-
-        // Decided once and used twice, as in the structured reporter: the note on stderr and the exit
-        // code have to be answering the same question.
-        let unchecked = unmatched_expectation_names(&spec.expectations.rules, &evaluated);
-        diagnostics.extend(
-            unchecked
-                .iter()
-                .map(|name| unchecked_expectation_message(&self.rules, name)),
-        );
 
         if self.verbose {
             validate::print_verbose_tree(&top, self.writer);
