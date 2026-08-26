@@ -199,7 +199,7 @@ impl<'a> std::fmt::Display for ParserError<'a> {
 /// input nest" to differ. It is far above anything real: over both corpora -- every `.guard` and
 /// `.ruleset` in this repository and in the rules registry snapshot, 318 files -- the deepest is **6**
 /// levels, reached by four files, and 172 of the 318 reach only 1. And it is below every abort above, the
-/// nearest of which is 1108.
+/// nearest of which is 1107.
 ///
 /// The argument for 128 is that no real file is near it, and deliberately not that files past it would
 /// have been unusable anyway. That second argument is what the deleted carve-out above rested on, and it
