@@ -3543,6 +3543,14 @@ mod validate_tests {
     /// stdin at all -- which names none of the three even though `deserialize_payload` knows all
     /// three. "line 1 column 0" is least helpful in the case it is most likely to describe: a CI step
     /// with nothing piped in.
+    ///
+    /// `PARSING_ERROR`, not `INTERNAL_FAILURE`. `deserialize_payload` raises
+    /// `Error::ParseError`, and `execute` classifies every one of those as the caller's input rather
+    /// than as cfn-guard breaking -- the payload deserializer is one of the producers that
+    /// classification was written to cover. This case asserted -1 only because, when it was written,
+    /// the error reached `main`'s catch-all, which is the code this repository reserves for an
+    /// unexpected failure and would here have told a CI author with nothing piped in that the tool
+    /// was at fault.
     #[rstest::rstest]
     #[case::empty_stdin("")]
     #[case::not_json("not json")]
@@ -3554,13 +3562,23 @@ mod validate_tests {
             .payload()
             .run(&mut writer, &mut reader);
 
-        assert_eq!(StatusCode::INTERNAL_FAILURE, status_code);
+        assert_eq!(StatusCode::PARSING_ERROR, status_code);
         let stderr = writer.err_to_stripped().expect("failed to read stderr");
         assert!(
             stderr.contains("--payload")
                 && stderr.contains("stdin")
                 && stderr.contains("\"rules\""),
             "the message must name the flag, the stream and the expected shape, got: {}",
+            stderr
+        );
+        // The code and the message have to agree about whose mistake this is, and they are set in
+        // two different places -- the code by `execute`'s classification, the prefix by whether
+        // `main` ever sees the error. `test_a_data_file_with_no_document_is_reported_as_empty` pins
+        // the same pairing for an unreadable data file; this pins it for the payload.
+        assert!(
+            !stderr.contains("Error occurred"),
+            "an input cfn-guard cannot read must not be reported in main's vocabulary for an \
+             unexpected failure, got: {}",
             stderr
         );
     }
