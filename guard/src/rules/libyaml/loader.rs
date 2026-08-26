@@ -321,13 +321,26 @@ impl Loader {
             let value = key_values.remove(0);
             let key_str = match key {
                 MarkedValue::String(val, loc) => (val, loc),
-                val => {
-                    return Err(Error::InternalError(InvalidKeyType(format!(
-                        "{}, where the key is {}. Quote it to make it a string",
-                        val.location(),
-                        describe_key(&val)
-                    ))));
-                }
+                // A scalar key becomes the text CloudFormation would give it. A template is
+                // converted to JSON before it is deployed and JSON has no key but a string, so
+                // `Mappings: { AccountToEnv: { 123456789012: ... } }` -- an account id written the
+                // way a person writes one -- is a template CloudFormation accepts, and the same
+                // content written in JSON already loaded here.
+                //
+                // `stringify_scalar_key` covers the integer, float and boolean scalars, whose
+                // canonical text is the text CloudFormation's own conversion produces. Null and the
+                // container keys are not in it: a null has no text either convention agrees on, and
+                // `? [a, b]` has no JSON representation at all.
+                val => match stringify_scalar_key(&val) {
+                    Some(text) => (text, *val.location()),
+                    None => {
+                        return Err(Error::InternalError(InvalidKeyType(format!(
+                            "{}, where the key is {}. Quote it to make it a string",
+                            val.location(),
+                            describe_key(&val)
+                        ))));
+                    }
+                },
             };
 
             // Held back rather than inserted. The keys it brings must not override the ones this
@@ -426,6 +439,40 @@ fn merge_value_error(location: &Location) -> Error {
          mappings, because its value's keys become keys of the mapping that carries it \
          (https://yaml.org/type/merge.html)"
     ))
+}
+
+/// The text a non-string scalar key stands for, or `None` for a key that has no text.
+///
+/// This exists because refusing these keys refuses templates CloudFormation accepts. A template is
+/// converted to JSON before deployment and JSON has no key but a string, so an unquoted account id,
+/// port or status code under `Mappings` is ordinary -- and the same document written in JSON already
+/// loaded here, which is the inconsistency. `path_value::list_index_of`'s doc comment describes the
+/// retrieval half of this as fixed; it was, and the template half was unreachable, because a document
+/// writing the key the natural way never got as far as retrieval.
+///
+/// **This reverses the reasoning recorded when the diagnostic was improved**, which was that
+/// rendering a resolved value "invents a name the document does not contain" because an `Int` from
+/// `0x1F` renders as "31". The premise was wrong: CloudFormation resolves `0x1F` as 31 by the same
+/// YAML 1.2 core schema this loader implements, and then stringifies it for JSON, so "31" is exactly
+/// the key CloudFormation sees. Rendering the resolved value models the deployment; rendering the
+/// source text would not.
+///
+/// A float is formatted with a fractional part even when it is whole, so `1.0` is "1.0" rather than
+/// Rust's "1". That is what a YAML-to-JSON conversion produces, and matching it is the whole point.
+///
+/// `Null` is deliberately absent. There is no text the two conventions agree on -- Python's
+/// yaml-then-json round trip gives "null", JSON has no such key at all -- and a document writing `~:`
+/// or a bare `:` is far more likely to have lost a key than to want one named after nothing, so the
+/// refusal is the more useful answer. The container and `BadValue` keys are absent for the stronger
+/// reason that they have no scalar text to render.
+fn stringify_scalar_key(key: &MarkedValue) -> Option<String> {
+    match key {
+        MarkedValue::Int(i, ..) => Some(i.to_string()),
+        MarkedValue::Bool(b, ..) => Some(b.to_string()),
+        MarkedValue::Float(f, ..) if f.fract() == 0.0 && f.is_finite() => Some(format!("{f:.1}")),
+        MarkedValue::Float(f, ..) => Some(f.to_string()),
+        _ => None,
+    }
 }
 
 /// Names the type of a key that is not a string, and its value where it has a short one.

@@ -247,12 +247,15 @@ mod validate_tests {
         assert_eq!(expected_status_code, status_code);
     }
 
+    /// `1: foo` and `1.0: foo` used to be here. They are not errors any more: a scalar key becomes the
+    /// text CloudFormation would give it, because a template is converted to JSON before deployment and
+    /// JSON has no key but a string. `a_scalar_key_becomes_the_text_cloudformation_would_give_it` pins
+    /// the text each one produces. What remains is the set with no text to produce: a null key, a
+    /// sequence key, and a document that does not parse at all.
     #[rstest::rstest]
     #[case("SSEAlgorithm: {{CRASH}}")]
     #[case("~:")]
     #[case("[1, 2, 3]: foo")]
-    #[case("1: foo")]
-    #[case("1.0: foo")]
     fn test_graceful_handling_when_yaml_file_has_non_string_type_key(#[case] input: &str) {
         let bytes = input.as_bytes();
         let mut reader = Reader::new(ReadCursor(Cursor::new(bytes.to_vec())));

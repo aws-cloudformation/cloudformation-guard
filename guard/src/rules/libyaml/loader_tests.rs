@@ -1091,10 +1091,10 @@ fn a_wide_but_shallow_document_is_not_affected_by_the_depth_bound() -> Result<()
 /// written `0x1F`, a `Float` gives "1" for `1.0` and a `Bool` gives "true" for `True`. Turning those
 /// into key names would invent names the document does not contain.
 #[rstest::rstest]
-#[case::an_integer("80: http", "the integer 80")]
-#[case::a_float("1.5: x", "the float 1.5")]
-#[case::a_boolean("true: x", "the boolean true")]
 #[case::a_null("~: x", "null")]
+// The only spelling of an empty key YAML accepts. A bare `: x` does not parse at all, so the
+// refusal here is for a key that resolved to null rather than for one that is missing.
+#[case::an_explicit_empty_key("? \n: x", "null")]
 #[case::a_sequence("? [a, b]\n: x", "a sequence")]
 #[case::a_mapping("? {a: b}\n: x", "a mapping")]
 fn a_non_string_key_is_refused_with_the_key_named(#[case] content: &str, #[case] expected: &str) {
@@ -1351,6 +1351,47 @@ fn a_small_float_that_is_still_representable_stays_a_float(#[case] scalar: &str)
         scalar,
         loaded
     );
+
+    Ok(())
+}
+
+/// A scalar key becomes the text CloudFormation would give it.
+///
+/// These were refused, which refused templates CloudFormation accepts: a template is converted to
+/// JSON before deployment and JSON has no key but a string, so an unquoted account id under
+/// `Mappings` is ordinary -- and the same document written in JSON already loaded. The retrieval half
+/// of this was fixed long ago and `path_value::list_index_of`'s doc comment says so; the template half
+/// was unreachable, because a document writing the key the natural way never reached retrieval.
+///
+/// The expected text is not this loader's invention. Each case matches what a YAML-to-JSON round trip
+/// produces for the same key, which is what CloudFormation does before it deploys: `80` becomes "80",
+/// `1.0` becomes "1.0" and not Rust's "1", and `0x1F` becomes "31" because YAML 1.2 core resolves it
+/// to 31 first. That last case is the one that makes the rule "render the resolved value", not
+/// "render the source text".
+#[rstest::rstest]
+#[case::an_integer("80: http", "80")]
+#[case::an_account_id("123456789012: prod", "123456789012")]
+#[case::a_negative_integer("-1: x", "-1")]
+#[case::a_whole_float("1.0: x", "1.0")]
+#[case::a_fractional_float("1.5: x", "1.5")]
+#[case::a_true("true: x", "true")]
+#[case::a_capitalised_true("True: x", "true")]
+#[case::a_false("false: x", "false")]
+#[case::hex_resolved_first("0x1F: x", "31")]
+#[case::a_leading_zero_stays_text("0755: x", "0755")]
+fn a_scalar_key_becomes_the_text_cloudformation_would_give_it(
+    #[case] content: &str,
+    #[case] expected: &str,
+) -> Result<()> {
+    let value = Loader::new().load(content.to_string())?;
+
+    let map = match &value {
+        MarkedValue::Map(m, ..) => m,
+        other => unreachable!("a mapping loads as a map, got {:?}", other),
+    };
+    let ((name, ..), _) = map.first().expect("the key is present");
+
+    assert_eq!(expected, name, "for the document {:?}", content);
 
     Ok(())
 }
