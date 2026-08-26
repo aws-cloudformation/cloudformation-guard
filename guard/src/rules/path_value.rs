@@ -1483,6 +1483,35 @@ pub(crate) fn compare_eq(first: &PathAwareValue, second: &PathAwareValue) -> Res
 
         (PathAwareValue::Regex((_, r)), PathAwareValue::Regex((_, s))) => return Ok(r == s),
 
+        // Two ranges are equal when they describe the same range, which is what `PartialEq` already
+        // says three arms of its own. `compare_eq` is the equality function `==` actually calls --
+        // `EqOperation` hands it to `match_value` -- and it had no such arm, so its `(_, _)`
+        // fall-through asked `compare_values`, whose only range arms are the membership cells below.
+        // Two ranges landed on the incomparable catch-all, and `%allowed == r[80,90]` reported
+        // `Value=[80,90] not equal to value [80,90]` with reason `not comparable range(int, int),
+        // range(int, int)`. A reason that refutes itself on its face.
+        //
+        // Both polarities were affected, so a rule author had no working spelling: `!=` on the same
+        // pair also refused, because the negation wrapper in `eval/operators.rs` inverts `Fail` and
+        // `Success` and passes `NotComparable` through untouched -- correctly, since "could not be
+        // answered" must not become a pass. `in [r[80,90]]` was the only spelling that worked, and only
+        // because `contained_in` consults `PartialEq` first.
+        //
+        // Structural, matching `PartialEq`'s arms exactly rather than asking whether the two ranges
+        // admit the same values: `r[1,3]` and `r[1,4)` over the integers admit the same set and are
+        // written differently, and answering `==` on the admitted set would make equality depend on the
+        // bound type in a way nothing else in the file does.
+        //
+        // The collection arms above recurse into `compare_eq`, so this also settles a map or list
+        // holding a range: `{p: r[80,90]} == {p: r[80,90]}` refused for the same reason and now decides.
+        (PathAwareValue::RangeInt((_, r)), PathAwareValue::RangeInt((_, r2))) => return Ok(r == r2),
+        (PathAwareValue::RangeFloat((_, r)), PathAwareValue::RangeFloat((_, r2))) => {
+            return Ok(r == r2)
+        }
+        (PathAwareValue::RangeChar((_, r)), PathAwareValue::RangeChar((_, r2))) => {
+            return Ok(r == r2)
+        }
+
         //
         // Range checks
         //

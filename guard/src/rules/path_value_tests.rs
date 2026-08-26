@@ -840,6 +840,17 @@ fn a_range_is_equal_to_itself() {
             "{} hashes differently from itself",
             label
         );
+        // The same question asked of the other equality function, which is the one `==` actually
+        // reaches: `EqOperation` hands `compare_eq` to `match_value`. It had no range-against-range
+        // arm either, so `%allowed == r[80,90]` refused with `not comparable range(int, int),
+        // range(int, int)` and reported `Value=[80,90] not equal to value [80,90]`, while
+        // `in [r[80,90]]` passed on the same pair because `contained_in` consults `PartialEq` first.
+        // One entry point being reflexive is not enough when the operator uses the other.
+        assert!(
+            compare_eq(range, &range.clone()).unwrap(),
+            "compare_eq: {} is not equal to itself",
+            label
+        );
     }
 
     // Different ranges of the same kind stay unequal, so reflexivity was not bought by making every
@@ -854,6 +865,7 @@ fn a_range_is_equal_to_itself() {
         },
     ));
     assert_ne!(five_to_100, &six_to_100);
+    assert!(!compare_eq(five_to_100, &six_to_100).unwrap());
 
     // Inclusivity is part of the range, not decoration: two ranges over the same bounds that differ
     // only in whether an endpoint is included are different ranges.
@@ -866,9 +878,39 @@ fn a_range_is_equal_to_itself() {
         },
     ));
     assert_ne!(five_to_100, &five_to_100_exclusive);
+    assert!(!compare_eq(five_to_100, &five_to_100_exclusive).unwrap());
 
     // Ranges of different kinds are not equal, and must not error either.
     assert_ne!(&ranges[0].1, &ranges[1].1);
+
+    // Through `compare_eq` the same pair refuses rather than answering false, and that difference is
+    // deliberate on both sides. `compare_eq` returns the error so the clause can name the reason;
+    // `PartialEq` cannot return one and swallows it, which `docs/KNOWN_ISSUES.md` records. A
+    // `RangeInt` and a `RangeFloat` are two kinds, not two ranges, so refusing is the honest answer
+    // and the arms added for the same-kind case must not widen to this one.
+    assert!(compare_eq(&ranges[0].1, &ranges[1].1).is_err());
+
+    // The collection arms recurse, so a range nested in one inherits whichever answer the range
+    // itself gets. This is the `{p: r[80,90]} == {p: r[80,90]}` case, which refused before the arms
+    // existed even though `PartialEq` on the same two maps answered true.
+    let map_with_range = |range: &PathAwareValue| {
+        let mut values = indexmap::IndexMap::new();
+        values.insert("p".to_string(), range.clone());
+        PathAwareValue::Map((
+            Path::root(),
+            MapValue {
+                keys: vec![PathAwareValue::String((Path::root(), "p".to_string()))],
+                values,
+            },
+        ))
+    };
+    assert!(compare_eq(&map_with_range(five_to_100), &map_with_range(five_to_100)).unwrap());
+    assert!(!compare_eq(&map_with_range(five_to_100), &map_with_range(&six_to_100)).unwrap());
+
+    let list_with_range =
+        |range: &PathAwareValue| PathAwareValue::List((Path::root(), vec![range.clone()]));
+    assert!(compare_eq(&list_with_range(five_to_100), &list_with_range(five_to_100)).unwrap());
+    assert!(!compare_eq(&list_with_range(five_to_100), &list_with_range(&six_to_100)).unwrap());
 }
 
 /// An index refers to one element or to none, and never silently to the wrong one.

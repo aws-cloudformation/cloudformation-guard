@@ -358,10 +358,14 @@ fn contained_in(lhs_value: Rc<PathAwareValue>, rhs_value: Rc<PathAwareValue>) ->
                 // always right, because that spelling reaches `compare_eq` below, and `compare_eq`
                 // is where the range table lives.
                 //
-                // `eq` is still consulted first, and not for belt and braces: it is the only one of
-                // the two that relates a range to an equal range, so asking `compare_eq` alone would
-                // lose `%range_literal in [r[80,90]]`. Everything `eq` decides, it decides the same
-                // way as before; `compare_eq` can only add a match, never remove one.
+                // `eq` is consulted first, and it used to be the only one of the two that related a
+                // range to an equal range, so asking `compare_eq` alone would have lost
+                // `%range_literal in [r[80,90]]`. `compare_eq` now carries those three arms itself,
+                // which makes this call belt and braces: there is no longer a pair `eq` answers true
+                // and `compare_eq` answers false, so it could be dropped. Kept because it costs one
+                // comparison on a path that already runs one, and because `eq` answering true short
+                // circuits while `eq` answering false changes nothing -- `compare_eq` is asked next
+                // either way. `compare_eq` can only add a match, never remove one.
                 //
                 // A regex `compare_eq` could not evaluate is read rather than discarded, which is
                 // what makes `Port in [/re/]` answer the same way as `Port == /re/`. Both spellings
