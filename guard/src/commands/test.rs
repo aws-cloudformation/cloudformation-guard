@@ -3,7 +3,8 @@ use crate::commands::reporters::test::structured::{
     ContextAwareRule, Err, StructuredTestReporter, TestResult,
 };
 use crate::commands::reporters::test::{
-    no_rules_declared_message, unmatched_test_file_message, write_diagnostics, Diagnostics,
+    no_rules_declared_message, test_file_parse_error, unmatched_test_file_message,
+    write_diagnostics, Diagnostics,
 };
 use crate::commands::reporters::JunitReport;
 use crate::commands::{
@@ -494,11 +495,7 @@ pub(crate) fn parse_test_specs(content: &str, path: &Path) -> Result<Vec<TestSpe
         Ok(spec) => Ok(spec),
         Err(_) => match serde_json::from_str::<Vec<TestSpec>>(content) {
             Ok(specs) => Ok(specs),
-            Err(e) => Err(Error::ParseError(format!(
-                "Unable to process data in file {}, Error {},",
-                path.display(),
-                e
-            ))),
+            Err(e) => Err(test_file_parse_error(path, e)),
         },
     }
 }

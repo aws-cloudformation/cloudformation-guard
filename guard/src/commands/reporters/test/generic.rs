@@ -9,15 +9,13 @@ use crate::{
     commands::{
         files::iterate_over,
         reporters::test::{
-            get_by_rules, get_status_result, unchecked_expectation_message,
+            get_by_rules, get_status_result, test_file_parse_error, unchecked_expectation_message,
             unmatched_expectation_names, write_diagnostics, Diagnostics,
         },
         test::TestSpec,
         validate, SUCCESS_STATUS_CODE, TEST_ERROR_STATUS_CODE, TEST_FAILURE_STATUS_CODE,
     },
-    rules::{
-        errors::Error, eval::eval_rules_file, exprs::RulesFile, path_value::PathAwareValue, Status,
-    },
+    rules::{eval::eval_rules_file, exprs::RulesFile, path_value::PathAwareValue, Status},
 };
 use std::io::Write;
 
@@ -58,11 +56,7 @@ impl<'report> GenericReporter<'report> {
                 Ok(spec) => Ok(spec),
                 Err(_) => match serde_json::from_str::<Vec<TestSpec>>(&data) {
                     Ok(specs) => Ok(specs),
-                    Err(e) => Err(Error::ParseError(format!(
-                        "Unable to process data in file {}, Error {},",
-                        path.display(),
-                        e
-                    ))),
+                    Err(e) => Err(test_file_parse_error(path, e)),
                 },
             }
         }) {

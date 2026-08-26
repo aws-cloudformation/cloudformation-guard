@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::Path;
 
+use crate::rules::errors::Error;
 use crate::rules::exprs::RulesFile;
 use crate::rules::{NamedStatus, RecordType, Status};
 use crate::utils::writer::Writer;
@@ -107,6 +108,27 @@ pub(crate) fn unchecked_expectation_message(rules: &RulesFile<'_>, name: &str) -
 /// same constraint for the same reason.
 pub(crate) fn no_rules_declared_message(rules_file: &str, expectation: &str) -> String {
     format!("{rules_file} declares no rules, so the expectation for {expectation} was not checked")
+}
+
+/// The one place the sentence for a test data file that is neither YAML nor JSON is written.
+///
+/// Three copies of it existed inside the test command and one of them had already drifted: the generic
+/// reporter and `parse_test_specs` ended it with a comma and the structured reporter did not, so the
+/// same file that will not parse read as `... at column 2,` in `single-line-summary` and `... at column 2` in
+/// the three structured formats. That is the drift the note on [`unchecked_expectation_message`] exists
+/// to prevent, on a sentence that had never been given the same treatment. The comma is what goes:
+/// nothing ever followed it.
+///
+/// `validate`'s copy in `commands/helper.rs` is deliberately left where it is. That is a different
+/// command's input path and this module is the test command's, so the sentence is now one place per
+/// command rather than one place outright, and those two can still drift from each other. Said here
+/// because the omission is a boundary rather than an oversight.
+pub(crate) fn test_file_parse_error(path: &Path, error: impl std::fmt::Display) -> Error {
+    Error::ParseError(format!(
+        "Unable to process data in file {}, Error {}",
+        path.display(),
+        error
+    ))
 }
 
 /// One message per test file that no rules file claimed.

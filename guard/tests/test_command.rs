@@ -1560,7 +1560,7 @@ mod test_command_tests {
     #[rstest]
     #[case::everything_passes("resources/test-command/dir", StatusCode::SUCCESS)]
     #[case::a_rules_file_that_will_not_parse(
-        "resources/test-command/format-agreement/an-unparseable-rules-file",
+        "resources/test-command/format-agreement/a-rules-file-that-will-not-parse",
         StatusCode::INCORRECT_STATUS_ERROR
     )]
     #[case::a_rules_file_that_cannot_be_read(

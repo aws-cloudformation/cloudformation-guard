@@ -1,8 +1,8 @@
 use std::{convert::TryFrom, path::PathBuf, rc::Rc, time::Instant};
 
 use crate::commands::reporters::test::{
-    get_by_rules, get_status_result, unchecked_expectation_message, unmatched_expectation_names,
-    Diagnostics,
+    get_by_rules, get_status_result, test_file_parse_error, unchecked_expectation_message,
+    unmatched_expectation_names, Diagnostics,
 };
 use crate::commands::reporters::{
     FailingTestCase, TestCase as JunitTestCase, TestCaseStatus, TestSuite,
@@ -16,8 +16,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     commands::{files::iterate_over, test::TestSpec, validate::OutputFormatType},
     rules::{
-        errors::Error, eval::eval_rules_file, eval_context, exprs::RulesFile,
-        path_value::PathAwareValue, Status,
+        eval::eval_rules_file, eval_context, exprs::RulesFile, path_value::PathAwareValue, Status,
     },
 };
 
@@ -339,11 +338,7 @@ impl<'reporter> StructuredTestReporter<'reporter> {
                     Ok(spec) => Ok(spec),
                     Err(..) => match serde_json::from_str::<Vec<TestSpec>>(&data) {
                         Ok(spec) => Ok(spec),
-                        Err(e) => Err(Error::ParseError(format!(
-                            "Unable to process data in file {}, Error {}",
-                            path.display(),
-                            e
-                        ))),
+                        Err(e) => Err(test_file_parse_error(path, e)),
                     },
                 },
             );
