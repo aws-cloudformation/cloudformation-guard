@@ -39,7 +39,7 @@ fn an_internal_error_converts_to_a_code_rather_than_panicking() {
         // `Error` boxes a `dyn Error`, so it is not `UnwindSafe`. Asserting it is, is sound here:
         // nothing is read back out of the closure's captures after a panic, only the returned value.
         let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
-            ExternError::from(FfiError(error))
+            ExternError::from(FfiError::Guard(error))
         }));
 
         let converted = match outcome {
@@ -103,4 +103,131 @@ fn a_non_string_key_reaches_the_entry_point_as_a_parse_error() {
             returned
         );
     }
+}
+
+/// An unreadable input pointer reports a code of its own rather than the -1 a caught panic produced.
+///
+/// -1 is `ErrorCode::PANIC`. Nothing documents it -- neither the doc comment on
+/// `cfn_guard_run_checks` nor the header -- and `get_code` cannot produce it, yet it was what an
+/// ordinary caller mistake reached. Measured across the boundary before this change: all four null
+/// pointers, and a `content` holding invalid UTF-8, gave -1.
+#[test]
+fn an_unreadable_input_pointer_converts_to_its_own_code() {
+    let cases = [
+        (
+            InvalidInputCause::Null,
+            23,
+            "data.content was a null pointer",
+        ),
+        (
+            InvalidInputCause::NotUtf8,
+            24,
+            "data.content did not hold valid UTF-8",
+        ),
+    ];
+
+    for (cause, expected_code, expected_message) in cases {
+        let converted = ExternError::from(FfiError::Input(InvalidInput {
+            whose: "data",
+            field: "content",
+            cause,
+        }));
+
+        assert_eq!(expected_code, converted.get_code().code());
+        // The code does not say which of the four pointers was wrong, so the message has to.
+        assert_eq!(expected_message, message_of(&converted));
+    }
+}
+
+/// The two causes are told apart, which they were not before: `FfiStr::as_str` panics with
+/// "Unexpected null string pointer passed to rust" for invalid UTF-8 as well, sending the real cause
+/// to `log::error!` -- which a C caller has no Rust logger to receive.
+#[test]
+fn a_null_pointer_and_invalid_utf8_do_not_report_the_same_thing() {
+    let null = ExternError::from(FfiError::Input(InvalidInput {
+        whose: "rules",
+        field: "file_name",
+        cause: InvalidInputCause::Null,
+    }));
+    let not_utf8 = ExternError::from(FfiError::Input(InvalidInput {
+        whose: "rules",
+        field: "file_name",
+        cause: InvalidInputCause::NotUtf8,
+    }));
+
+    assert_ne!(null.get_code().code(), not_utf8.get_code().code());
+    assert_ne!(message_of(&null), message_of(&not_utf8));
+}
+
+/// Every code `get_code` produces is distinct, is usable as an error, and is not 19.
+///
+/// The table has no `_ =>` arm, so the compiler makes it total over `Error` -- that is what keeps it
+/// complete. What the compiler cannot check is that two arms do not answer the same number, and
+/// adding the two input codes is exactly the change that could collide.
+///
+/// Five `Error` variants are absent, because guard-ffi depends on `cfn-guard` and `ffi-support` and
+/// nothing else, so their payloads cannot be built here: `JsonError` (1), `YamlError` (2),
+/// `RegexError` (6), `Errors` (14) and `XMLError` (20). `ConversionError` (13) is absent for a
+/// stronger reason -- its payload is `Infallible`, so no value of it exists and the arm is
+/// unreachable by construction. None of those five numbers appears below, so the arms covered here
+/// are distinct from them too.
+#[test]
+fn every_error_code_is_distinct_and_usable() {
+    let errors = vec![
+        FfiError::Guard(Error::FormatError(std::fmt::Error)),
+        FfiError::Guard(Error::IoError(std::io::Error::new(
+            std::io::ErrorKind::Other,
+            "io",
+        ))),
+        FfiError::Guard(Error::ParseError(String::from("x"))),
+        FfiError::Guard(Error::MissingProperty(String::from("x"))),
+        FfiError::Guard(Error::MissingVariable(String::from("x"))),
+        FfiError::Guard(Error::MultipleValues(String::from("x"))),
+        FfiError::Guard(Error::IncompatibleRetrievalError(String::from("x"))),
+        FfiError::Guard(Error::IncompatibleError(String::from("x"))),
+        FfiError::Guard(Error::NotComparable(String::from("x"))),
+        FfiError::Guard(Error::RetrievalError(String::from("x"))),
+        FfiError::Guard(Error::MissingValue(String::from("x"))),
+        FfiError::Guard(Error::FileNotFoundError(String::from("x"))),
+        FfiError::Guard(Error::IllegalArguments(String::from("x"))),
+        FfiError::Guard(Error::MissingDocument),
+        FfiError::Guard(Error::InternalError(InternalError::InvalidKeyType(
+            String::from("x"),
+        ))),
+        FfiError::Input(InvalidInput {
+            whose: "data",
+            field: "content",
+            cause: InvalidInputCause::Null,
+        }),
+        FfiError::Input(InvalidInput {
+            whose: "data",
+            field: "content",
+            cause: InvalidInputCause::NotUtf8,
+        }),
+    ];
+
+    let expected = errors.len();
+    let mut codes = vec![];
+
+    for error in errors {
+        let rendered = error.to_string();
+        let code = ExternError::from(error).get_code().code();
+
+        // 0 is what `ExternError::success()` carries, so an error reporting it would read as a
+        // successful run with a null result. -1 is `ErrorCode::PANIC`. 19 is the CLI's
+        // validation-failure exit code, deliberately skipped so the two cannot be confused.
+        assert!(code > 0, "`{}` reported code {}", rendered, code);
+        assert_ne!(19, code, "`{}` reported the CLI's failure code", rendered);
+
+        codes.push(code);
+    }
+
+    codes.sort_unstable();
+    codes.dedup();
+    assert_eq!(
+        expected,
+        codes.len(),
+        "two errors share a code: {:?}",
+        codes
+    );
 }

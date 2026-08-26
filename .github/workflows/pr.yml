@@ -93,6 +93,37 @@ jobs:
           components: clippy
       - run: cargo clippy -- -D warnings
 
+  ffiHeader:
+    name: Compile the FFI header and example (C and C++)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - name: Build the FFI dylib
+        run: cargo build --release -p cfn-guard-ffi
+      # The header shipped with two defects that only a compiler finds, so nothing had ever compiled
+      # it: `int32_t` with no `#include <stdint.h>`, which broke the example it ships next to, and a
+      # parameter named `template`, which is a C++ keyword and broke the `#include` itself. Both are
+      # one-line fixes, and both come back the moment someone edits the header unless something
+      # compiles it.
+      - name: Header alone, as C and as C++
+        run: |
+          set -e
+          cd guard-ffi/example
+          printf '#include "cfn_guard.h"\nint main(void){return 0;}\n' > /tmp/header_only.c
+          printf '#include "cfn_guard.h"\nint main(){return 0;}\n' > /tmp/header_only.cpp
+          gcc -std=c11 -Wall -Wextra -Werror -c /tmp/header_only.c -I. -o /dev/null
+          g++ -std=c++17 -Wall -Wextra -Werror -c /tmp/header_only.cpp -I. -o /dev/null
+      # Links as well as compiles, which is what checks the `extern "C"` guard: without it a C++
+      # caller gets C++ name mangling and fails at the link step rather than the compile step.
+      - name: Example, linked against the dylib and run
+        run: |
+          set -e
+          cd guard-ffi/example
+          gcc -std=c11 -Wall -Wextra -Werror cfn_guard_test.c -I. -o /tmp/cfn_guard_test \
+            -L../../target/release -lcfn_guard_ffi -Wl,-rpath,"$PWD/../../target/release"
+          /tmp/cfn_guard_test
+
   typocheck:
     name: Spell Check with Typos
     runs-on: ubuntu-latest
