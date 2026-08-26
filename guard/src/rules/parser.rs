@@ -308,7 +308,8 @@ impl NestingGuard {
                 context: format!(
                     "cfn-guard reads rules files nested at most {MAX_NESTING_DEPTH} levels deep, and \
                      this file goes deeper: the {construct} opened at line {} column {} is at level \
-                     {level}. The deepest rules file in AWS's own rules registry is 6 levels.",
+                     {level}. Real rules files nest a handful of levels; nothing in AWS's own rules \
+                     registry comes close to this.",
                     input.location_line(),
                     input.get_utf8_column(),
                 ),
