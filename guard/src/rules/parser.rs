@@ -212,14 +212,23 @@ impl<'a> std::fmt::Display for ParserError<'a> {
 /// 128 is the value the data loader already enforces on the other kind of input this tool reads
 /// (`libyaml::loader::MAX_NESTING_DEPTH`), and there is no reason for the two answers to "how deeply may
 /// input nest" to differ. It is far above anything real: over both corpora -- every `.guard` and
-/// `.ruleset` in this repository and in the rules registry snapshot, 318 files -- the deepest is **7**
-/// levels, reached by two files, and 130 reach only 1. The distribution over levels 1 to 7 is 130, 103,
-/// 50, 25, 4, 3, 2; the one remaining file is `invalid_regex.guard`, a fixture that does not parse at all.
-/// So the bound clears the whole corpus by more than an order of magnitude rather than merely clearing its
-/// maximum, and that is the form of the claim worth keeping: an example file twice as deep as today's
-/// deepest would still not approach 128, and this paragraph would not need rewriting. Re-derive by setting
-/// this constant to N, rebuilding, and parsing every file -- a file's level count is the smallest N that
-/// accepts it. And it is below every abort above, the nearest of which is 1107.
+/// `.ruleset` in this repository and in the rules registry snapshot -- the deepest is **7** levels, and
+/// nothing reaches 8. Two files tie at 7: `guard-examples/cross-account/sns-cross-account.guard` and the
+/// registry's `cloudfront_origin_access_identity_enabled.guard`. So the bound clears the whole corpus by
+/// more than an order of magnitude rather than merely clearing its maximum, and that is the form of the
+/// claim worth keeping: an example file twice as deep as today's deepest would still not approach 128. And
+/// it is below every abort above, the nearest of which is 1107.
+///
+/// Deliberately no file counts here, and no per-level histogram. Re-derive instead: set this constant to
+/// N, rebuild, and parse every file, taking a file's level to be the smallest N that accepts it; N = 8
+/// admitting nothing further is the check that the maximum has been found. Two cautions, both learned by
+/// getting this wrong. A few fixtures are deliberately unparseable and `parse-tree --rules` refuses them at
+/// every N -- list them by taking the files no N accepts -- so bucket a file only once some N has accepted
+/// it, because one that trips the depth bound at N = 1 and then fails for syntax will otherwise land in the
+/// N = 2 bucket and inflate it. And a count of the files in this repository does not survive being written
+/// down inside it: adding a fixture is the most ordinary change there is and nothing connects the two, so
+/// each of the last revisions of this paragraph carried a total that a later commit in the same pull request
+/// invalidated.
 ///
 /// The argument for 128 is that no real file is near it, and deliberately not that files past it would
 /// have been unusable anyway. That second argument is what the deleted carve-out above rested on, and it
