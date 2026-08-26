@@ -313,7 +313,7 @@ jobs:
 
           $SKIPPED_RULE_COUNT = $SKIPPED_RULES.Length
           if ($SKIPPED_RULE_COUNT -gt 0) {
-              echo "The following `$SKIPPED_RULE_COUNT.Length` rule(s) were skipped because they contained only comments:"
+              echo "The following $SKIPPED_RULE_COUNT rule(s) were skipped because they contained only comments:"
               echo $SKIPPED_RULES
           }
 
