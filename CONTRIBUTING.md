@@ -37,13 +37,56 @@ To send us a pull request, please:
    cargo install cargo-about
    cargo about generate about.hbs > ATTRIBUTION
    ```
-5. Commit to your fork using clear commit messages.
+5. Commit to your fork using clear commit messages that follow [Conventional Commits](#commit-messages).
 6. Send us a pull request, answering any default questions in the pull request interface.
 7. Pay attention to any automated CI failures reported in the pull request, and stay involved in the conversation.
 8. If your pull request includes rules for the Examples, please review the [Examples README](guard-examples/README.md) for the acceptance criteria.
 
 GitHub provides additional document on [forking a repository](https://help.github.com/articles/fork-a-repo/) and
 [creating a pull request](https://help.github.com/articles/creating-a-pull-request/).
+
+
+## Commit messages
+
+Commit messages follow [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/): a type, an
+optional scope, then a short description.
+
+```
+fix: prevent silent policy enforcement failures
+fix(deps): update undici to 6.28.0
+feat: add a --structured flag to validate
+chore: bump version to 3.2.1
+```
+
+The accepted types are `build`, `bump`, `chore`, `ci`, `docs`, `feat`, `fix`, `perf`, `refactor`, `revert`,
+`style` and `test`. A scope in parentheses is optional, as in `fix(deps):`. A `!` before the colon, as in
+`feat!:`, marks a breaking change. Version bumps in this repository have used `chore:` rather than `bump:`.
+
+**Pull requests are squash-merged, so the pull request title becomes the commit message on `main`.** That title
+is what CI checks; the individual commits on your branch are not checked, so you are free to commit however
+suits you while you work.
+
+[commitizen](https://commitizen-tools.github.io/commitizen/) is configured to help with both writing and
+checking messages:
+
+```bash
+pip install -r requirements-dev.txt
+
+cz commit          # prompts for type, scope and description, then commits
+cz check --rev-range origin/main..HEAD    # check what you have written so far
+```
+
+To have your messages checked as you commit, install the git hooks once:
+
+```bash
+pre-commit install
+```
+
+If you installed the hooks before commitizen was added, run `pre-commit install` again — the message check runs
+at the `commit-msg` stage, which is a hook type that has to be installed separately from the others.
+
+Version numbers and tags are not managed by commitizen; `.github/workflows/release.yml` owns those. `cz bump
+--dry-run` is still a convenient way to see which version the commits since the last release imply.
 
 
 ## Finding contributions to work on

@@ -2,3 +2,37 @@
 line-length = 100
 target-version = ['py37']
 include = '\.pyi?$'
+
+# Conventional Commits, via commitizen-tools/commitizen.
+#
+# `cz commit` prompts for a well-formed message; `cz check` validates one. Both
+# are described in CONTRIBUTING.md. The settings below describe how this
+# repository already releases, so that anything commitizen derives from history
+# agrees with what is actually tagged.
+[tool.commitizen]
+name = "cz_conventional_commits"
+
+# Releases are tagged bare, without a `v` prefix: 3.2.1, 3.2.0, 3.1.12. Two other
+# tag families exist for the sub-artifacts, `action-v*` and `pre-commit-v*`, and
+# they are deliberately not matched by this pattern.
+tag_format = "$version"
+
+# The version lives in git tags, and `.github/workflows/release.yml` is what puts
+# it there: it takes the version as a workflow input, rewrites the `[package]`
+# version in each crate's Cargo.toml, commits, tags and publishes. Pointing
+# commitizen at the tags rather than at a version stored here keeps that workflow
+# the single thing that decides a version, instead of adding a second place that
+# has to be kept in step with it.
+#
+# `cz bump` is therefore not wired into CI. `cz bump --dry-run` is still useful
+# locally: it reports the version the commits since the last tag imply, which is
+# a reasonable way to choose the input to give the release workflow.
+version_provider = "scm"
+
+# Conventional Commits became the practice here partway through the project's
+# history: of the 120 commits before this change, 81 satisfy `cz check` and 39 do
+# not, the latter being older bracket-style subjects such as `[BUG] Update
+# Toolchain` and dependabot's `Bump <dep> from x to y`. A changelog generated
+# across that boundary would be missing the earlier half rather than describing
+# it, so generation starts from the current release.
+changelog_start_rev = "3.2.1"
