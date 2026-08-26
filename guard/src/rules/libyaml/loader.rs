@@ -920,12 +920,23 @@ fn tagged_container_wrapper(loc: Location, fn_ref: &str) -> MarkedValue {
 
 fn handle_type_ref(val: String, loc: Location, type_ref: &str) -> MarkedValue {
     match type_ref {
-        // Through the same set as a plain scalar. This read `str::parse::<bool>`, which takes
-        // `true` and `false` and nothing else, so an explicit tag was stricter than the untagged
-        // resolution it should agree with: `!!bool yes` was the string "yes" while a bare `yes` was
-        // already a boolean. The fallback to a string for a value outside the set is unchanged.
+        // Through the same set as a plain scalar, and refused when the payload is outside it.
+        //
+        // This read `str::parse::<bool>`, which takes `true` and `false` and nothing else, so an
+        // explicit tag was stricter than the untagged resolution it should have agreed with. Moving
+        // it to `parse_bool` fixed that half but left the other one: a payload outside the set fell
+        // back to a *string*, which is the one answer that neither reads the node as the boolean the
+        // author asked for nor says it could not be read as one. `!!bool yes` became the string
+        // "yes", silently, where `!!int abc` next door is a loud `BadValue`.
+        //
+        // Measured, `serde_yaml` -- the loader `guard test` and the public `run_checks` reach on the
+        // same bytes -- accepts exactly these six spellings under `!!bool` and refuses every other
+        // payload outright, `y`, `on`, `off`, `no`, `0`, `1` and `tRuE` included. So refusing here is
+        // what makes the two agree. PyYAML errors on an out-of-set payload too, though it takes the
+        // YAML 1.1 words: it is a 1.1 implementation, and following it would put the boolean
+        // vocabulary of a document under the control of whether a tag was written.
         "tag:yaml.org,2002:bool" => match parse_bool(&val) {
-            None => MarkedValue::String(val, loc),
+            None => MarkedValue::BadValue(val, loc),
             Some(v) => MarkedValue::Bool(v, loc),
         },
         "tag:yaml.org,2002:int" => match val.parse::<i64>() {

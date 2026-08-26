@@ -571,7 +571,6 @@ fn a_scalar_outside_the_boolean_set_is_still_a_string(#[case] scalar: &str) -> R
 
 /// An explicit `!!bool` tag went through `str::parse::<bool>`, which takes `true` and `false` and
 /// nothing else, so the tagged path was stricter than the untagged one it should agree with:
-/// `!!bool yes` loaded as the string "yes" while a bare `yes` was already a boolean, and
 /// `!!bool True` loaded as the string "True". Both paths now read the same set.
 #[rstest::rstest]
 #[case::lowercase("true", true)]
@@ -599,6 +598,43 @@ fn an_explicitly_tagged_bool_reads_the_same_set_as_a_plain_one(
         scalar,
         loaded,
         expected
+    );
+
+    Ok(())
+}
+
+/// A payload outside the boolean set under an explicit `!!bool` is refused, not turned into a string.
+///
+/// Narrowing `parse_bool` to the YAML 1.2 core set made the `!!bool` arm's fallback reachable, and it
+/// returned a *string*: `!!bool yes` became "yes", which neither reads the node as the boolean the
+/// author asked for nor says it could not be read as one. `!!int abc` two arms below is a loud
+/// `BadValue`, so one out-of-set payload under an explicit type tag was a hard error and the other a
+/// silent type change.
+///
+/// `serde_yaml` -- the loader `guard test` and the public `run_checks` reach on the same bytes --
+/// refuses every one of these outright, so this closes a divergence rather than opening one. Measured
+/// against it payload by payload, including `tRuE`, which neither accepts.
+#[rstest::rstest]
+#[case::a_yaml_1_1_word("yes")]
+#[case::a_yaml_1_1_letter("y")]
+#[case::a_yaml_1_1_switch("off")]
+#[case::mixed_case("tRuE")]
+#[case::a_number("1")]
+#[case::not_a_boolean_at_all("maybe")]
+fn a_bool_tag_over_something_outside_the_set_is_refused(#[case] scalar: &str) -> Result<()> {
+    let value = Loader::new().load(format!("check: !!bool {scalar}"))?;
+
+    let map = match &value {
+        MarkedValue::Map(m, ..) => m,
+        _ => unreachable!("a single mapping loads as a map"),
+    };
+    let (.., loaded) = map.first().unwrap();
+
+    assert!(
+        matches!(loaded, MarkedValue::BadValue(v, ..) if v == scalar),
+        "!!bool {} loaded as {:?}, not a BadValue holding the payload",
+        scalar,
+        loaded
     );
 
     Ok(())
