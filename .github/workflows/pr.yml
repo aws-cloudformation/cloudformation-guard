@@ -246,9 +246,19 @@ jobs:
           repository: aws-cloudformation/aws-guard-rules-registry
           path: aws-guard-rules-registry
           ref: main
+      # `if (<command>)` does not test a command's exit code in PowerShell. The parenthesized
+      # expression captures the command's stdout, and `if` coerces that to a boolean, where a
+      # collection of more than one element is always true. `cfn-guard test -d` prints thousands of
+      # lines of results against this ruleset, so the condition could never be false: the `else` was
+      # unreachable, and the step logged "have passed" for a run that had exited non-zero. Only the
+      # `exit $LASTEXITCODE` that Actions appends to every pwsh step still reported that failure,
+      # and the reverse case -- exit 0 with no output at all -- took the `else` and failed the step
+      # outright. The linux/macos twin above is `if <command>; then`, which does test exit status,
+      # so the two legs of one check were checking different things.
       - name: Run integration tests using test command
         run: |
-          if (cloudformation-guard/target/release/cfn-guard test -d aws-guard-rules-registry/rules) {
+          cloudformation-guard/target/release/cfn-guard test -d aws-guard-rules-registry/rules
+          if ($LASTEXITCODE -eq 0) {
               echo "The integration tests for test command have passed."
           }
           else {
@@ -265,16 +275,24 @@ jobs:
 
           $rules  = @(Get-ChildItem -Path .\ -Filter *.guard -Recurse -File)
 
+          # `elseif (<command>)` had the same defect as the test-command step above: it read the
+          # parse tree that `parse-tree` prints on stdout as the verdict, rather than the exit code.
+          # That happened to give the right answer for the two outcomes this command has today,
+          # because the success path always prints a non-empty tree and both failure paths print
+          # only to stderr -- but it silently passed any run that wrote partial output and then
+          # failed, and it left $LASTEXITCODE from such a run to be picked up by the epilogue, so
+          # the step could print "All the rules have succeeded" and still exit non-zero.
           Foreach ($rule in $rules) {
               $rule_files_without_comments = (Get-Content $rule.FullName) -replace '^[ \s]*#.*$', ''
-              if ([String]::IsNullOrWhiteSpace($rule_files_without_comments)){
-              $SKIPPED_RULES += "$rule"
-          }
-          elseif (../../cloudformation-guard/target/release/cfn-guard parse-tree --rules $rule.FullName) {
-              continue
-          } else {
-              $FAILED_RULES += "$rule"
-            }
+              if ([String]::IsNullOrWhiteSpace($rule_files_without_comments)) {
+                  $SKIPPED_RULES += "$rule"
+                  continue
+              }
+
+              ../../cloudformation-guard/target/release/cfn-guard parse-tree --rules $rule.FullName
+              if ($LASTEXITCODE -ne 0) {
+                  $FAILED_RULES += "$rule"
+              }
           }
 
           $SKIPPED_RULE_COUNT = $SKIPPED_RULES.Length
