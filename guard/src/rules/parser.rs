@@ -123,10 +123,11 @@ impl<'a> std::fmt::Display for ParserError<'a> {
 /// ```
 ///
 /// (The map and list rows are coarse: the ladder was 2000/4000/8000, and the exact threshold does not
-/// matter for a bound three orders of magnitude below it. The filter row skips 1113, which is the one
-/// depth that is not repeatable: five runs there gave three aborts and two passes. Whether the process's
-/// output was discarded or read made no difference to that, checked five runs each way, so it is
-/// stack-start jitter and not the harness.) They share no
+/// matter for a bound three orders of magnitude below it. The filter row skips 1113 because each binary
+/// has exactly one unrepeatable rung, sitting at its own boundary -- 1113 here, 1106 before the exponent
+/// was fixed -- where repeated runs of the same file both abort and pass. That the band is one rung wide
+/// in both is why stack-start jitter is the explanation rather than merely an available one. Whether the
+/// output was discarded or read makes no difference, checked five runs each way.) They share no
 /// single function, which is why the count is kept per open construct in a thread-local rather than passed
 /// down as a parameter: the level is opened in [`block`], which every `{ ... }` body reaches, and in
 /// [`parse_list`] and [`parse_map`], which no block passes through. Threading a depth argument instead
@@ -144,11 +145,12 @@ impl<'a> std::fmt::Display for ParserError<'a> {
 /// The exponent is gone -- one `access` parse now serves both readings of a clause, the cost is linear,
 /// and level 128 takes 0.03 seconds -- so that arithmetic no longer holds. But the argument was already
 /// wrong before that, because the abort never depended on the exponent: the stack overflows on the way
-/// *down*, before any backtracking has been paid for. On the commit before the exponent was fixed, 1106
-/// levels did not return and 1107 aborted in about three seconds -- a depth the doubling was supposed to
-/// have put out of reach, killing the process in less time than level 22 took to parse successfully,
-/// which was 58 seconds. Removing the exponent moved that boundary from 1107 to 1114, half a dozen levels
-/// deeper rather than shallower, so it did not bring the abort any closer.
+/// *down*, before any backtracking has been paid for. On the commit before the exponent was fixed the
+/// boundary sat at 1107: 1105 never aborted, 1107 always did, and 1106 went either way between runs. That
+/// is a depth the doubling was supposed to have put out of reach, and it killed the process in about three
+/// seconds -- less time than level 22 took to parse successfully, which was 58. Removing the exponent
+/// moved the boundary to 1114, half a dozen levels deeper rather than shallower, so it did not bring the
+/// abort any closer.
 ///
 /// A bound of 128 would fire on such a file and refuse it, which is what should happen. The only reason
 /// this path still opens no level is that `enter` is called at three sites and this is not the only
