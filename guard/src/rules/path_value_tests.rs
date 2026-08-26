@@ -766,6 +766,66 @@ fn equality_is_symmetric_for_ranges() {
     assert!(compare_eq(&value, &range).unwrap());
 }
 
+/// A `Char` compares with a string, which is the only spelling the rules language has for a character.
+///
+/// `parse_char` is a shipped guard-language function and its documented example is
+/// `let converted = parse_char(%sg.Properties.Char)` then `%converted == '1'`. That failed for every
+/// input with `not comparable char, String`, blaming the template's type for a comparison the language
+/// cannot express any other way: `parse_scalar_value` has no `Char` alternative, so `'1'` and `"1"` are
+/// both `Value::String` and the single-quote spelling is not a character literal. `parse_char` was the
+/// only one of the five converters whose result could not be checked against a literal.
+///
+/// In `compare_values`, so ordering and equality agree. Asserted through all five comparison functions
+/// for that reason -- a fix in `compare_eq` alone would leave `%c == "b"` deciding and `%c < "c"`
+/// refusing.
+#[test]
+fn a_char_compares_with_a_one_character_string() {
+    fn chr(c: char) -> PathAwareValue {
+        PathAwareValue::Char((Path::root(), c))
+    }
+    fn txt(s: &str) -> PathAwareValue {
+        PathAwareValue::String((Path::root(), s.to_string()))
+    }
+
+    // The documented example, both quotings, which reach the same `Value::String`.
+    assert!(compare_eq(&chr('1'), &txt("1")).unwrap());
+    assert!(compare_eq(&txt("1"), &chr('1')).unwrap());
+    assert!(!compare_eq(&chr('1'), &txt("2")).unwrap());
+    assert!(!compare_eq(&txt("2"), &chr('1')).unwrap());
+
+    // Ordering, in both operand positions, and consistent with equality rather than separate from it.
+    assert!(compare_lt(&chr('b'), &txt("c")).unwrap());
+    assert!(!compare_lt(&chr('b'), &txt("a")).unwrap());
+    assert!(compare_gt(&txt("c"), &chr('b')).unwrap());
+    assert!(compare_le(&chr('b'), &txt("b")).unwrap());
+    assert!(compare_ge(&chr('b'), &txt("b")).unwrap());
+
+    // A longer string is not equal to a character and still orders against it, rather than the
+    // comparison refusing on a length the types do not carry.
+    assert!(!compare_eq(&chr('b'), &txt("bc")).unwrap());
+    assert!(compare_lt(&chr('b'), &txt("bc")).unwrap());
+    assert!(compare_gt(&chr('b'), &txt("")).unwrap());
+
+    // The answer a `Char` gets is the answer the same value gets before conversion. That equivalence is
+    // the reason to compare as strings: applying `parse_char` must not change a verdict the language
+    // could already reach.
+    for other in ["1", "2", "b", "bc", ""] {
+        assert_eq!(
+            compare_values(&chr('b'), &txt(other)).unwrap(),
+            compare_values(&txt("b"), &txt(other)).unwrap(),
+            "a Char ordered differently from the same one-character string against {:?}",
+            other
+        );
+    }
+
+    // Same-kind comparison is untouched, and a kind with no arm still refuses -- the new arms are a
+    // pair of types, not a general loosening.
+    assert!(compare_eq(&chr('b'), &chr('b')).unwrap());
+    assert!(compare_lt(&chr('b'), &chr('c')).unwrap());
+    assert!(compare_eq(&chr('b'), &PathAwareValue::Int((Path::root(), 15))).is_err());
+    assert!(compare_eq(&chr('b'), &PathAwareValue::Bool((Path::root(), true))).is_err());
+}
+
 /// `==` answers a scalar against a range the same way whichever side the range is on, and `compare_eq`
 /// on its own deliberately does not.
 ///

@@ -1424,6 +1424,40 @@ fn compare_values(first: &PathAwareValue, other: &PathAwareValue) -> Result<Orde
         }
 
         (PathAwareValue::Char((_, f)), PathAwareValue::Char((_, s))) => Ok(f.cmp(s)),
+
+        // A `Char` against a `String`, ordered as the one-character string it is.
+        //
+        // Without these two arms `parse_char`'s output could not be checked against anything a rules
+        // file can write. There is no `Char` literal in the language: `parse_scalar_value` is
+        // `alt((parse_string, parse_float, parse_int_value, parse_bool, parse_regex))`, and
+        // `parse_char` is reachable from `range_value` only, so `'1'` and `"1"` both parse as
+        // `Value::String`. The documented example for the function --
+        // `let converted = parse_char(..)` then `%converted == '1'` -- therefore failed for every
+        // input, with `not comparable char, String` blaming the template's type. It is the only one of
+        // the five converters whose result cannot be compared with a literal; `parse_int`,
+        // `parse_float`, `parse_boolean` and `parse_string` all produce a value that matches one.
+        //
+        // In `compare_values` rather than in `compare_eq`, so that ordering gets the same answer as
+        // equality. Adding it to `compare_eq` alone would have left `%c == "b"` deciding while
+        // `%c < "c"` refused, which is the shape of asymmetry this file has had to fix twice.
+        //
+        // Ordered as strings, not gated on the string's length. Refusing a multi-character string would
+        // make comparability depend on a value rather than on a pair of types, and `<` needs a total
+        // order to be any use. `'b'` against `"bc"` is Less, which is what the same two values would
+        // have compared as if `parse_char` had not been applied -- and that equivalence is the point:
+        // conversion should not change the answer to a comparison the language could already make.
+        // Byte-wise `str` ordering agrees with code-point ordering under UTF-8, so this is consistent
+        // with the `(Char, Char)` arm above.
+        //
+        // The narrowest fix, and not the only candidate. `parse_char` could have returned a
+        // one-character `String` instead, which needs no new arms -- but a `String` does not compare
+        // with a `RangeChar` either (`"b" in r[a,z]` refuses), so that would break `%c in r[a,z]`,
+        // which works today and is the other half of what the function is for. Whether `Char` should
+        // exist in the value space at all is a real question, and a `String`-against-`RangeChar` arm is
+        // what would settle it; that is a wider change than this finding.
+        (PathAwareValue::Char((_, c)), PathAwareValue::String((_, s))) => Ok(c.to_string().cmp(s)),
+        (PathAwareValue::String((_, s)), PathAwareValue::Char((_, c))) => Ok(s.cmp(&c.to_string())),
+
         (_, _) => Err(Error::NotComparable(format!(
             "PathAwareValues are not comparable {}, {}",
             first.type_info(),
