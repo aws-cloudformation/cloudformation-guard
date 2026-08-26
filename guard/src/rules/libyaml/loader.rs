@@ -200,7 +200,18 @@ impl Loader {
                     // `Float(NaN)` is not equal to itself. A NaN-keyed entry can never be
                     // found again, and no comparison against one can be answered, so a clause
                     // that guards on it cannot decide either way.
-                    Ok(f) if f.is_finite() => MarkedValue::Float(f, location),
+                    //
+                    // `underflowed_to_zero` is the other half of the same rule, and it was
+                    // missing. `is_finite` rejects the overflow -- `1e400` is infinite and falls
+                    // through to a string -- but it accepts the underflow, because `1e-400`
+                    // parses to a perfectly finite `0.0`. So the value the author wrote as
+                    // positive answered `== 0` with a PASS, silently, where the overflow at the
+                    // other end of the same exponent range refused. Both ends now keep the
+                    // literal, which is what `rules::parser`'s float parser already claims the
+                    // document side does.
+                    Ok(f) if f.is_finite() && !underflowed_to_zero(&val, f) => {
+                        MarkedValue::Float(f, location)
+                    }
                     _ => match parse_bool(&val) {
                         Some(b) => MarkedValue::Bool(b, location),
                         // The empty scalar belongs in this set. It is the value of a key written
@@ -445,6 +456,30 @@ fn describe_key(key: &MarkedValue) -> String {
         // naming the variant is as specific as this can honestly be.
         other => format!("a {other:?}"),
     }
+}
+
+/// Whether a float literal reached zero only because it was too small to represent.
+///
+/// `f64::from_str` signals overflow by returning an infinity, which `is_finite` catches. It signals
+/// underflow by returning zero and saying nothing, so `1e-400` and `0` are indistinguishable by
+/// value: the scalar the author wrote as a small positive number answered `== 0` with a PASS while
+/// `> 0` failed. The overflow at the other end of the same exponent range already refused, so the
+/// two ends of one rule disagreed.
+///
+/// The discriminator is the mantissa, not the whole literal. A zero result is genuine when every
+/// significant digit is zero -- `0`, `0.0`, `-0.0`, `0.000` -- and an underflow when one of them is
+/// not. The exponent has to be excluded from the test, or `0e400` would be read as an underflow on
+/// account of the `4`.
+fn underflowed_to_zero(literal: &str, parsed: f64) -> bool {
+    if parsed != 0.0 {
+        return false;
+    }
+
+    let mantissa = literal
+        .split_once(['e', 'E'])
+        .map_or(literal, |(mantissa, _)| mantissa);
+
+    mantissa.chars().any(|c| c.is_ascii_digit() && c != '0')
 }
 
 /// What `resolve_int` decided about a plain scalar.

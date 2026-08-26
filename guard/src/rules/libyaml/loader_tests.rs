@@ -1274,3 +1274,83 @@ fn a_bare_non_specific_tag_is_not_a_function(#[case] content: &str) -> Result<()
 
     Ok(())
 }
+
+/// A float literal that reached zero only because it was too small to represent keeps its text.
+///
+/// `f64::from_str` signals overflow with an infinity, which the `is_finite` gate caught, and
+/// underflow with a silent zero, which it did not. So `1e-400` became `Float(0.0)` and answered
+/// `== 0` with a PASS while `> 0` failed -- a value the author wrote as positive, read as zero, at
+/// exit 0. The other end of the same exponent range already refused, so one rule disagreed with
+/// itself.
+///
+/// The zero cases are the control and they are the reason the test is on the mantissa rather than on
+/// the literal: `0e400` is a genuine zero whose exponent contains a nonzero digit.
+#[rstest::rstest]
+#[case::underflow("1e-400", false)]
+#[case::negative_underflow("-1e-400", false)]
+#[case::underflow_with_a_fraction("1.5e-400", false)]
+#[case::underflow_from_a_small_mantissa("0.0001e-400", false)]
+#[case::plain_zero("0", true)]
+#[case::zero_with_a_point("0.0", true)]
+#[case::negative_zero("-0.0", true)]
+#[case::zero_with_places("0.000", true)]
+#[case::zero_with_a_big_exponent("0e400", true)]
+#[case::zero_with_a_small_exponent("0.0e-400", true)]
+#[case::zero_exponent("0e0", true)]
+fn a_float_that_underflowed_to_zero_keeps_its_text(
+    #[case] scalar: &str,
+    #[case] is_a_real_zero: bool,
+) -> Result<()> {
+    let value = Loader::new().load(format!("check: {scalar}"))?;
+
+    let map = match &value {
+        MarkedValue::Map(m, ..) => m,
+        other => unreachable!("a mapping loads as a map, got {:?}", other),
+    };
+    let (.., loaded) = map.first().expect("the key is present");
+
+    if is_a_real_zero {
+        assert!(
+            matches!(loaded, MarkedValue::Int(0, ..))
+                || matches!(loaded, MarkedValue::Float(f, ..) if *f == 0.0),
+            "{} loaded as {:?}, but every significant digit in it is zero",
+            scalar,
+            loaded
+        );
+    } else {
+        assert!(
+            matches!(loaded, MarkedValue::String(s, ..) if s == scalar),
+            "{} loaded as {:?}; read as a number it answers `== 0` for a value the document \
+             writes as non-zero",
+            scalar,
+            loaded
+        );
+    }
+
+    Ok(())
+}
+
+/// The control for the case above: a small float that is still representable stays a float. Without
+/// it the fix is also satisfied by refusing every negative exponent.
+#[rstest::rstest]
+#[case::subnormal("1e-320")]
+#[case::small_but_normal("1e-300")]
+#[case::ordinary("1.5")]
+fn a_small_float_that_is_still_representable_stays_a_float(#[case] scalar: &str) -> Result<()> {
+    let value = Loader::new().load(format!("check: {scalar}"))?;
+
+    let map = match &value {
+        MarkedValue::Map(m, ..) => m,
+        other => unreachable!("a mapping loads as a map, got {:?}", other),
+    };
+    let (.., loaded) = map.first().expect("the key is present");
+
+    assert!(
+        matches!(loaded, MarkedValue::Float(f, ..) if *f != 0.0),
+        "{} loaded as {:?}, but it is representable and non-zero",
+        scalar,
+        loaded
+    );
+
+    Ok(())
+}
