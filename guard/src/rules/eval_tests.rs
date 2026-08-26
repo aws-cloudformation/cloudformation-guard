@@ -3543,6 +3543,149 @@ fn ensure_all_map_values_access_on_empty_fails() -> Result<()> {
     Ok(())
 }
 
+fn eval_one_rule(rules: &str, data: &str) -> Result<Status> {
+    let rules_file = RulesFile::try_from(rules)?;
+    let value = PathAwareValue::try_from(data)?;
+    let mut root = root_scope(&rules_file, Rc::new(value));
+    eval_rules_file(&rules_file, &mut root, None)
+}
+
+/// Both flavours of empty selection answer the same way.
+///
+/// A selection can come up empty two ways, and they used to disagree. A filter that runs and keeps
+/// nothing returns no values and the clause reports SKIP. A collection that is absent or empty never
+/// reached the filter at all: it produced an unresolved marker, the clause's operator ran on *that*,
+/// and `not exists` read it as vacuously true -- so the first two rows below reported PASS. A document
+/// containing nothing was called compliant while a document containing one unrelated resource
+/// correctly reported the rule inapplicable, which is less information yielding the stronger claim.
+///
+/// The last two rows are why this is a consistency fix and not a licence to skip: the rule still
+/// passes what it should pass and, above all, still fails what it should fail.
+#[test]
+fn both_flavours_of_empty_selection_agree() -> Result<()> {
+    const RULE: &str = r#"rule H {
+    Resources.*[ Type == 'AWS::DynamoDB::Table' ].Properties.TableName not exists
+}"#;
+
+    let cases: [(&str, &str, Status); 5] = [
+        ("no Resources key at all", r#"{}"#, Status::SKIP),
+        (
+            "Resources present but empty",
+            r#"{"Resources":{}}"#,
+            Status::SKIP,
+        ),
+        (
+            "one resource of an unrelated type, filtered away",
+            r#"{"Resources":{"B":{"Type":"AWS::S3::Bucket","Properties":{"BucketName":"b"}}}}"#,
+            Status::SKIP,
+        ),
+        (
+            "one compliant table",
+            r#"{"Resources":{"T":{"Type":"AWS::DynamoDB::Table","Properties":{"KeySchema":[]}}}}"#,
+            Status::PASS,
+        ),
+        (
+            "one violating table",
+            r#"{"Resources":{"T":{"Type":"AWS::DynamoDB::Table","Properties":{"TableName":"t"}}}}"#,
+            Status::FAIL,
+        ),
+    ];
+
+    for (label, data, expected) in cases {
+        assert_eq!(
+            expected,
+            eval_one_rule(RULE, data)?,
+            "{label}: the two flavours of empty selection must agree"
+        );
+    }
+
+    Ok(())
+}
+
+/// The empty-selection SKIP reaches only a selection, never a subject.
+///
+/// This is the narrowing half of `both_flavours_of_empty_selection_agree`, and every row is a shape
+/// that must keep failing. A missing *property* is represented by the same unresolved marker an empty
+/// selection used to produce, so answering SKIP for both would retire `Properties.X exists` -- the
+/// single most common clause in any real ruleset. The discriminator is whether a filter is still
+/// pending: with one, the query is choosing subjects and an empty result means the rule does not
+/// apply; without one, the query is projecting a property of a subject already chosen and an empty
+/// result is an answer about that subject.
+///
+/// The `filter_then_empty_tags` row is the one that pins the direction of that test rather than its
+/// mere presence: the filter has already run and matched, so the empty `Tags` belongs to a selected
+/// bucket and the clause fails. Searching the whole query for a filter instead of the part of it that
+/// is still ahead would turn that row into SKIP.
+#[test]
+fn an_empty_selection_never_excuses_a_missing_subject() -> Result<()> {
+    const BUCKET: &str =
+        r#"{"Resources":{"B":{"Type":"AWS::S3::Bucket","Properties":{"BucketName":"b"}}}}"#;
+    const TAGS_EMPTY: &str =
+        r#"{"Resources":{"B":{"Type":"AWS::S3::Bucket","Properties":{"Tags":[]}}}}"#;
+    const TAGS_OK: &str = r#"{"Resources":{"B":{"Type":"AWS::S3::Bucket","Properties":{"Tags":[{"Key":"PROD","Value":"v"}]}}}}"#;
+
+    let cases: [(&str, &str, &str, Status); 8] = [
+        // A missing leaf property, with and without a filter that matched.
+        (
+            "missing property under a wildcard",
+            "Resources.*.Properties.BucketEncryption exists",
+            BUCKET,
+            Status::FAIL,
+        ),
+        (
+            "missing property under a filter that matched",
+            "Resources.*[ Type == 'AWS::S3::Bucket' ].Properties.BucketEncryption exists",
+            BUCKET,
+            Status::FAIL,
+        ),
+        // An empty collection that is itself the subject of the clause.
+        (
+            "empty tag list is not an excuse for !empty",
+            "Resources.*.Properties.Tags[*] !empty",
+            TAGS_EMPTY,
+            Status::FAIL,
+        ),
+        (
+            "empty tag list is not an excuse for a tag-content check",
+            "Resources.*.Properties.Tags[*].Key == /PROD/",
+            TAGS_EMPTY,
+            Status::FAIL,
+        ),
+        (
+            "a filter that already ran does not make a later empty collection a selection",
+            "Resources.*[ Type == 'AWS::S3::Bucket' ].Properties.Tags[*].Key == /PROD/",
+            TAGS_EMPTY,
+            Status::FAIL,
+        ),
+        (
+            "the same clause still passes when the tag is there",
+            "Resources.*[ Type == 'AWS::S3::Bucket' ].Properties.Tags[*].Key == /PROD/",
+            TAGS_OK,
+            Status::PASS,
+        ),
+        // A bare wildcard with no filter anywhere: not a selection, so unchanged.
+        (
+            "empty Resources under a wildcard with no filter",
+            "Resources.*.Properties exists",
+            r#"{"Resources":{}}"#,
+            Status::FAIL,
+        ),
+        (
+            "absent Resources under a wildcard with no filter",
+            "Resources.*.Properties exists",
+            r#"{}"#,
+            Status::FAIL,
+        ),
+    ];
+
+    for (label, clause, data, expected) in cases {
+        let rule = format!("rule G {{\n    {clause}\n}}\n");
+        assert_eq!(expected, eval_one_rule(&rule, data)?, "{label}");
+    }
+
+    Ok(())
+}
+
 fn find_failed_clauses<'event, 'value>(
     root: &'event EventRecord<'value>,
 ) -> Vec<&'event EventRecord<'value>> {
@@ -9481,39 +9624,40 @@ fn generated_rule_shapes_hold_the_evaluator_invariants() -> Result<()> {
     // All of them are an undecidable *comparison* used as a gate -- a query that does not resolve, or
     // a type mismatch -- which is the case `f3c919f` records as needing a status meaning "could not
     // tell". That is #720's `Outcome` lattice, where `Unevaluatable` is a value a gate can return
-    // instead of collapsing into "did not match". Unchanged from the merge-base, so none of these is a
-    // regression from this branch.
+    // instead of collapsing into "did not match". None of the entries below is a regression from this
+    // branch.
     //
     // No `empty_on_scalar` cell appears here, which is the point of the list: that clause used to
     // disarm its body in every one of these shapes, and it is what a reviewer found by hand.
+    //
+    // The eight `absent_root` cells that used to be listed here are gone, and not because a gate
+    // stopped losing a verdict -- because there is no longer a verdict to lose. `absent_root` carries
+    // no `Resources` key and `FILTER` selects from it, so on that template the *body alone* used to
+    // report FAIL: "a volume is unencrypted", about a document containing no volumes. An empty
+    // selection now reports SKIP, which is what a filter that keeps nothing has always reported, so
+    // the body is inapplicable rather than violated and this loop's `body_alone != FAIL` guard drops
+    // the cell before it can be counted. Measured both ways rather than reasoned: on the merge-base
+    // the body alone is FAIL and the gated form SKIP, and with the empty-selection fix both are SKIP.
     //
     // `in_list` has no `string_size` entry, and the reason is worth knowing: `IN` against a type it
     // cannot compare answers FAIL while `NOT IN` answers PASS, so the pair is not recognised as
     // undecidable and the invariant skips those cells. That disagreement between the two operators is
     // itself a defect -- `every_operator_and_operand_shape_agrees_with_a_stated_oracle` records it --
     // and closing it would add two entries here rather than remove any.
-    const DISARMED_BY_AN_UNDECIDABLE_COMPARISON: [&str; 22] = [
+    const DISARMED_BY_AN_UNDECIDABLE_COMPARISON: [&str; 14] = [
         "eq_int/gate/absent_property",
-        "eq_int/gate/absent_root",
         "eq_int/gate/string_size",
         "eq_int/nested_when/absent_property",
-        "eq_int/nested_when/absent_root",
         "eq_int/nested_when/string_size",
         "gt_int/gate/absent_property",
-        "gt_int/gate/absent_root",
         "gt_int/gate/string_size",
         "gt_int/nested_when/absent_property",
-        "gt_int/nested_when/absent_root",
         "gt_int/nested_when/string_size",
         "in_list/gate/absent_property",
-        "in_list/gate/absent_root",
         "in_list/nested_when/absent_property",
-        "in_list/nested_when/absent_root",
         "le_float/gate/absent_property",
-        "le_float/gate/absent_root",
         "le_float/gate/string_size",
         "le_float/nested_when/absent_property",
-        "le_float/nested_when/absent_root",
         "le_float/nested_when/string_size",
     ];
     let mut disarmed: Vec<String> = Vec::new();

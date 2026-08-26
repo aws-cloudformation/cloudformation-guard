@@ -4,7 +4,7 @@ Name: Empty, SKIP
    `- Rule(S3_BUCKET_SERVER_SIDE_ENCRYPTION_ENABLED, Status=SKIP)[Context=S3_BUCKET_SERVER_SIDE_ENCRYPTION_ENABLED]
       `- Rule/When(Status=FAIL)[Context=Rule#S3_BUCKET_SERVER_SIDE_ENCRYPTION_ENABLED/When]
          `- GuardClauseBlock(Status = FAIL)[Context=GuardAccessClause#block %s3_buckets_server_side_encryption not EMPTY  ]
-            `- GuardClauseUnaryCheck(Status=FAIL, Comparison=not EMPTY, Value-At=(unresolved, Path=[L:0,C:0] Value={}))[Context= %s3_buckets_server_side_encryption not EMPTY  ]
+            `- GuardClause(Status=FAIL, Empty, )[Context= %s3_buckets_server_side_encryption not EMPTY  ]
   PASS Rules:
     S3_BUCKET_SERVER_SIDE_ENCRYPTION_ENABLED: Expected = SKIP
 
@@ -14,7 +14,7 @@ Name: No resources, SKIP
    `- Rule(S3_BUCKET_SERVER_SIDE_ENCRYPTION_ENABLED, Status=SKIP)[Context=S3_BUCKET_SERVER_SIDE_ENCRYPTION_ENABLED]
       `- Rule/When(Status=FAIL)[Context=Rule#S3_BUCKET_SERVER_SIDE_ENCRYPTION_ENABLED/When]
          `- GuardClauseBlock(Status = FAIL)[Context=GuardAccessClause#block %s3_buckets_server_side_encryption not EMPTY  ]
-            `- GuardClauseUnaryCheck(Status=FAIL, Comparison=not EMPTY, Value-At=(unresolved, Path=/Resources[L:0,C:0] Value={}))[Context= %s3_buckets_server_side_encryption not EMPTY  ]
+            `- GuardClause(Status=FAIL, Empty, )[Context= %s3_buckets_server_side_encryption not EMPTY  ]
   PASS Rules:
     S3_BUCKET_SERVER_SIDE_ENCRYPTION_ENABLED: Expected = SKIP
 
