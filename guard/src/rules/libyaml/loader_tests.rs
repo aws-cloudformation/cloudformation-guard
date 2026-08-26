@@ -648,9 +648,25 @@ fn a_bool_tag_over_something_outside_the_set_is_refused(#[case] scalar: &str) ->
 ///
 /// The cases below are the two shapes that matter: content in the first document, and an *empty*
 /// first document, which is the worse one because the loader then evaluated nothing whatsoever.
+///
+/// The empty-first-document case reads `---\n---\nb: 2\n---\nc: 3\n` rather than `---\n---\nb: 2\n`.
+/// The shorter file holds *one* document behind two separators, and refusing it was this fix
+/// overshooting: see `a_leading_separator_does_not_make_a_second_document`. The concern the case exists
+/// for -- an empty first document must not make the loader evaluate nothing -- is what that test
+/// asserts, and this one keeps the part that belongs here, which is that a leading separator does not
+/// stop a genuine two-document stream from being refused.
 #[rstest::rstest]
 #[case::two_documents_with_content("a: 1\n---\nb: 2\n", "holds 2 -- the second starts at L:2,C:1")]
-#[case::an_empty_first_document("---\n---\nb: 2\n", "holds 2 -- the second starts at L:2,C:1")]
+#[case::an_empty_first_document(
+    "---\n---\nb: 2\n---\nc: 3\n",
+    "holds 2 -- the second starts at L:4,C:1"
+)]
+// A written `null` at the leading end is content, the same as the trailing `~` case below, so the two
+// ends of the file agree on what "holds nothing" means. Both go through `is_empty_node`.
+#[case::a_leading_document_holding_an_explicit_null(
+    "--- null\n---\nb: 2\n",
+    "holds 2 -- the second starts at L:2,C:1"
+)]
 #[case::three_documents(
     "a: 1\n---\nb: 2\n---\nc: 3\n",
     "holds 3 -- the second starts at L:2,C:1"
@@ -719,7 +735,61 @@ fn a_trailing_separator_does_not_make_a_second_document(#[case] content: &str) -
     Ok(())
 }
 
-/// The control for the case above, and the reason it cannot be written as "reject any `---`".
+/// The other end of the file, and the same rule: a document holding only the empty node is a separator
+/// wherever it sits.
+///
+/// The trailing fix above was applied to one end only. `count_remaining_documents` skipped every empty
+/// document it scanned, but the document the caller already held was counted unconditionally, and a
+/// leading `---\n---\n` is exactly how that document comes to be empty. So the defect the fix had just
+/// closed came straight back: `---\n---\nResources: {}` reported "holds 2" where one document held
+/// anything, and the position it named as where "the second" starts was the start of the only document
+/// in the file -- so the advice, split them into separate files, put the template in file two and left
+/// file one holding a `---`.
+///
+/// The last case is the reachable one. A header comment block in its own document, ahead of the
+/// template, is an ordinary way to write a YAML file, and it arrives here as a leading empty document.
+#[rstest::rstest]
+#[case::a_leading_separator_pair("---\n---\na: 1\n")]
+#[case::two_leading_separator_pairs("---\n---\n---\na: 1\n")]
+#[case::a_leading_separator_at_both_ends("---\n---\na: 1\n---\n")]
+#[case::a_comment_block_in_its_own_document(
+    "---\n# a header block\n# describing the template\n---\na: 1\n"
+)]
+fn a_leading_separator_does_not_make_a_second_document(#[case] content: &str) -> Result<()> {
+    let value = Loader::new().load(content.to_string())?;
+
+    assert!(
+        matches!(&value, MarkedValue::Map(m, ..) if m.len() == 1),
+        "loading {:?} gave {:?}, not the single mapping it holds",
+        content,
+        value
+    );
+
+    Ok(())
+}
+
+/// A file of nothing but separators still loads, as the empty node, which is what a single `---` has
+/// always done. The rule above is that an empty document does not take the slot from one holding
+/// something; when nothing holds anything there is nothing to take it for.
+#[rstest::rstest]
+#[case::one_separator("---\n")]
+#[case::a_separator_pair("---\n---\n")]
+#[case::three_separators("---\n---\n---\n")]
+fn a_file_of_only_separators_loads_as_the_empty_node(#[case] content: &str) -> Result<()> {
+    let value = Loader::new().load(content.to_string())?;
+
+    assert!(
+        matches!(&value, MarkedValue::Null(..)),
+        "loading {:?} gave {:?}, not the empty node",
+        content,
+        value
+    );
+
+    Ok(())
+}
+
+/// The control for the trailing-separator case above, and the reason it cannot be written as "reject
+/// any `---`".
 /// A leading `---` is a directives-end marker opening the *first* document, not a separator, and
 /// comments before it do not start a document of their own. Every `*_tests.yml` in the rules
 /// registry has exactly this shape -- a `###` banner, then `---`, then one document -- so a fix

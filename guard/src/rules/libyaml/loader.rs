@@ -79,9 +79,33 @@ impl Loader {
     pub(crate) fn load(&mut self, content: String) -> rules::Result<MarkedValue> {
         let mut parser = Parser::new(Cow::Borrowed(content.as_bytes()));
         let mut document: Option<MarkedValue> = None;
+        // Whether the document in hand holds only the empty node, and the running answer for the
+        // document being read: how many events it has held, and whether any of them was something
+        // other than the empty node. The same three values `count_remaining_documents` keeps for the
+        // documents after the first, kept here for the first as well, because the two ends of the file
+        // have to agree on what "holds nothing" means.
+        let mut held_is_empty = false;
+        let mut events = 0;
+        let mut empty = true;
 
         loop {
             let (event, location) = parser.next()?;
+
+            // Decided before the match rather than inside its arms so that no event kind can be
+            // missed: anything that is not stream or document bookkeeping is content, except the empty
+            // node standing alone as a document's only event.
+            match &event {
+                Event::StreamStart
+                | Event::StreamEnd
+                | Event::DocumentStart
+                | Event::DocumentEnd => {}
+                Event::Scalar(scalar) if events == 0 && is_empty_node(scalar) => events += 1,
+                _ => {
+                    events += 1;
+                    empty = false;
+                }
+            }
+
             {
                 match event {
                     Event::StreamStart => {}
@@ -105,7 +129,18 @@ impl Loader {
                     // read, which is the actual defect. Neither corpus contains a multi-document
                     // file, so nothing that works today stops working.
                     Event::DocumentStart => {
-                        if document.is_some() {
+                        // `document.is_some() && !held_is_empty`: a document holding only the empty
+                        // node does not occupy the one slot, so it does not make the next document a
+                        // second one. `---\n---\nResources: {}` is a template behind two separators,
+                        // which is the same shape as `Resources: {}\n---\n` is in front of one, and a
+                        // header comment in its own document ahead of the template is the reachable
+                        // spelling of it. Counting the leading one reproduced, at the other end of the
+                        // file, exactly the defect the trailing `---` fix had closed: the count said 2
+                        // where one document held anything, and the position it named as where "the
+                        // second" starts was the start of the only document in the file, so the advice
+                        // -- split them into separate files -- put the template in file two and left
+                        // file one holding a `---`.
+                        if document.is_some() && !held_is_empty {
                             match count_remaining_documents(&mut parser, location) {
                                 // Every document after the first holds nothing, so the file holds
                                 // one document and some separators. libyaml emits a whole document
@@ -128,6 +163,9 @@ impl Loader {
                                 }
                             }
                         }
+
+                        events = 0;
+                        empty = true;
                     }
                     // Reaching the end of the stream with a document in hand is the ordinary exit.
                     // With none, no document was ever started -- a file of nothing but comments is
@@ -136,6 +174,12 @@ impl Loader {
                     // `YAML_NO_EVENT`, and that used to abort the process in `convert_event`.
                     Event::StreamEnd => return document.ok_or(Error::MissingDocument),
                     Event::DocumentEnd => {
+                        // Always replaces what is in hand, and that is not a loss: the only way to
+                        // reach a second `DocumentEnd` is for the first document to have been empty,
+                        // because a non-empty one in hand returns at the `DocumentStart` above. An
+                        // empty document is still kept when nothing else turns up, so a file that is
+                        // nothing but separators loads as null exactly as `---` alone always has.
+                        held_is_empty = empty;
                         document = Some(self.stack.pop().unwrap());
                         self.stack.clear();
                         self.last_container_index.clear();
@@ -672,8 +716,13 @@ enum Remaining {
 /// The position reported is the start of the second document that holds something, which is not
 /// necessarily the second `DocumentStart`: `a\n---\n---\nb\n` has an empty document between the two
 /// real ones.
+///
+/// Called only with a document in hand that holds something, which is what makes the count start at 1
+/// rather than at 0. `load` will not call this for an empty document in hand; when it did, the same
+/// off-by-one this function exists to prevent came back at the other end of the file -- a leading
+/// separator pair made a one-document file "hold 2".
 fn count_remaining_documents(parser: &mut Parser, second: Location) -> Remaining {
-    // The document the caller already holds.
+    // The document the caller already holds, which holds something; see above.
     let mut documents = 1;
     let mut first_with_content: Option<Location> = None;
     // The document being scanned: where it started, how many events it has held, and whether any of
