@@ -117,9 +117,12 @@ impl Loader {
         } else if style != ScalarStyle::Plain {
             MarkedValue::String(val, location)
         } else {
-            match val.parse::<i64>() {
-                Ok(i) => MarkedValue::Int(i, location),
-                Err(_) => match val.parse::<f64>() {
+            match resolve_int(&val) {
+                IntScalar::Resolved(i) => MarkedValue::Int(i, location),
+                // Short-circuits the float resolver on purpose. `"0755".parse::<f64>()` is 755.0,
+                // so falling through would swap one wrong number for another.
+                IntScalar::Unresolvable => MarkedValue::String(val, location),
+                IntScalar::NotAnInteger => match val.parse::<f64>() {
                     // `f64::from_str` also accepts `nan`, `inf` and `infinity`, none of which
                     // YAML resolves to a float. YAML spells the non-finite floats `.nan` and
                     // `.inf`, and those spellings already fall through to `String` here, so
@@ -226,6 +229,78 @@ impl Loader {
         self.stack
             .push(MarkedValue::Map(indexmap::IndexMap::new(), location));
         self.last_container_index.push(self.stack.len() - 1);
+    }
+}
+
+/// What `resolve_int` decided about a plain scalar.
+enum IntScalar {
+    /// An integer, and this is its value.
+    Resolved(i64),
+    /// Integer-shaped, but not a number this loader will commit to. It stays a string, and the float
+    /// resolver does not get a turn -- most of these parse as floats, so handing them on would swap
+    /// one wrong number for another.
+    Unresolvable,
+    /// Not integer-shaped. The float resolver gets its turn.
+    NotAnInteger,
+}
+
+/// Integer resolution for a plain scalar: the YAML 1.2 core schema
+/// (<https://yaml.org/spec/1.2.2/#103-core-schema>), which is `[-+]?[0-9]+` decimal, `0o[0-7]+`
+/// octal and `0x[0-9a-fA-F]+` hex, with two deliberate departures noted below.
+///
+/// This was `str::parse::<i64>`, which takes an optional sign and decimal digits and nothing else.
+/// So no radix prefix resolved as a number at all -- `0x1F` and `0o17` were strings, and a rule
+/// comparing a netmask or a permission bitmask to a number could not match -- while `0755` was read
+/// as decimal 755.
+///
+/// **A leading sign is accepted on the radix forms** even though the 1.2 regexes do not carry one, so
+/// `-0x10` is -16. No YAML version reads that text as a *different* number, and `serde_yaml` -- the
+/// loader `guard test` and `run_checks` reach on the same bytes -- resolves it too, so accepting it
+/// removes a divergence and cannot introduce a wrong value.
+///
+/// **A decimal integer with a redundant leading zero stays a string**, so `0755` is the text "0755".
+/// This is the one spelling where the two YAML versions assign *different values* to the same
+/// characters: 1.1 reads it as octal 493 (<https://yaml.org/type/int.html>), 1.2 core's decimal
+/// regex reads it as 755. A file mode or a netmask written `0755` almost certainly means 493, so
+/// resolving it either way silently produces a number the author did not write; keeping the literal
+/// is the only answer that cannot be quietly wrong, and it is also what `serde_yaml` does.
+///
+/// The prefixes are lowercase only, which is 1.2 core's regex exactly and what `serde_yaml` does:
+/// `0X1F` and `0O17` are strings. One divergence from `serde_yaml` is left standing on purpose:
+/// `0b101` is a string here and an integer there. YAML 1.2 core has no binary form -- it is 1.1's --
+/// and following the extension would mean re-adding a 1.1-ism of exactly the kind the boolean set
+/// dropped.
+fn resolve_int(val: &str) -> IntScalar {
+    let (negative, magnitude) = match val.strip_prefix('-') {
+        Some(rest) => (true, rest),
+        None => (false, val.strip_prefix('+').unwrap_or(val)),
+    };
+
+    let (radix, digits) = match magnitude.strip_prefix("0x") {
+        Some(rest) => (16, rest),
+        None => match magnitude.strip_prefix("0o") {
+            Some(rest) => (8, rest),
+            None => (10, magnitude),
+        },
+    };
+
+    if digits.is_empty() || !digits.chars().all(|c| c.is_digit(radix)) {
+        return IntScalar::NotAnInteger;
+    }
+
+    if radix == 10 && digits.len() > 1 && digits.starts_with('0') {
+        return IntScalar::Unresolvable;
+    }
+
+    let signed = if negative {
+        Cow::Owned(format!("-{digits}"))
+    } else {
+        Cow::Borrowed(digits)
+    };
+
+    match i64::from_str_radix(&signed, radix) {
+        Ok(i) => IntScalar::Resolved(i),
+        Err(_) => IntScalar::NotAnInteger,
     }
 }
 

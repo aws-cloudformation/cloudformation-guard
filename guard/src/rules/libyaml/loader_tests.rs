@@ -758,3 +758,69 @@ fn an_empty_plain_scalar_is_null_and_a_quoted_one_is_not(
 
     Ok(())
 }
+
+/// Integer resolution is the YAML 1.2 core schema's three forms, with a leading sign allowed on the
+/// radix ones and a redundant leading zero left as text.
+///
+/// This was `str::parse::<i64>`, which takes a sign and decimal digits and nothing else, so no radix
+/// prefix resolved as a number -- `0x1F` and `0o17` were strings and a rule comparing a netmask or a
+/// permission bitmask to a number could not match -- while `0755` was read as decimal 755. The
+/// leading-zero case is the one where the two YAML versions assign different *values* to the same
+/// characters, 493 under 1.1 and 755 under 1.2 core, so it stays the literal text rather than
+/// becoming either.
+///
+/// The `0X`/`0O`/`0b` cases are the boundary: 1.2 core's regexes are lowercase-only and have no
+/// binary form, and each of these would be a number under some other schema.
+#[rstest::rstest]
+#[case::decimal("42", Some(42))]
+#[case::signed_decimal("+42", Some(42))]
+#[case::negative_decimal("-7", Some(-7))]
+#[case::zero("0", Some(0))]
+#[case::negative_zero("-0", Some(0))]
+#[case::hex("0x1F", Some(31))]
+#[case::negative_hex("-0x10", Some(-16))]
+#[case::octal("0o17", Some(15))]
+#[case::negative_octal("-0o17", Some(-15))]
+#[case::i64_max("9223372036854775807", Some(i64::MAX))]
+#[case::i64_min("-9223372036854775808", Some(i64::MIN))]
+#[case::redundant_leading_zero("0755", None)]
+#[case::two_zeros("00", None)]
+#[case::signed_leading_zero("+0755", None)]
+#[case::uppercase_hex_prefix("0X1F", None)]
+#[case::uppercase_octal_prefix("0O17", None)]
+#[case::binary("0b101", None)]
+#[case::a_time("1:30", None)]
+#[case::underscored("1_000", None)]
+#[case::a_word("abc", None)]
+fn an_integer_resolves_by_the_1_2_core_forms(
+    #[case] scalar: &str,
+    #[case] expected: Option<i64>,
+) -> Result<()> {
+    let value = Loader::new().load(format!("check: {scalar}"))?;
+
+    let map = match &value {
+        MarkedValue::Map(m, ..) => m,
+        other => unreachable!("a single mapping loads as a map, got {:?}", other),
+    };
+    let (.., loaded) = map.first().expect("the key is present");
+
+    match expected {
+        Some(n) => assert!(
+            matches!(loaded, MarkedValue::Int(i, ..) if *i == n),
+            "{} loaded as {:?}, not the integer {}",
+            scalar,
+            loaded,
+            n
+        ),
+        // Not merely "is not an Int": the float resolver takes most of these if it is given a turn,
+        // and `Float(755.0)` for `0755` would be the same defect wearing another type.
+        None => assert!(
+            matches!(loaded, MarkedValue::String(s, ..) if s == scalar),
+            "{} loaded as {:?}, but no integer form of YAML 1.2 core resolves it",
+            scalar,
+            loaded
+        ),
+    }
+
+    Ok(())
+}
