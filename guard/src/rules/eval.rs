@@ -2235,9 +2235,21 @@ pub(in crate::rules) fn eval_parameterized_rule_call<'value, 'loc: 'value>(
 ) -> Result<Status> {
     let param_rule = resolver.find_parameterized_rule(&call_rule.named_rule.dependent_rule)?;
 
+    // An invariant check rather than the diagnostic for the mistake. `rules_file` compares every call
+    // site against the definition it names and rejects the file at exit 5, so a parsed file cannot
+    // reach here with the counts unequal; the check stays because the indexing below would otherwise
+    // panic, and because a `RulesFile` assembled some other way has no parser to have checked it.
+    //
+    // Reaching this therefore means cfn-guard let through a file it said it had validated, and the
+    // message says so: `Err` from a command propagates to `main`, which exits -1, and -1 --
+    // `INTERNAL_FAILURE` in `guard/tests/utils.rs` -- is the right code for a broken invariant. It was
+    // the wrong code while this was the *only* check, because then it was reporting an ordinary
+    // authoring mistake, and an unknown rule name on this same code path exited 5.
     if param_rule.parameter_names.len() != call_rule.parameters.len() {
         return Err(Error::IncompatibleError(format!(
-            "Arity mismatch for called parameter rule {}, expected {}, got {}",
+            "Arity mismatch for called parameter rule {}, expected {}, got {}. The rules file was \
+             accepted with a call this malformed, which is a defect in cfn-guard rather than in the \
+             file.",
             call_rule.named_rule.dependent_rule,
             param_rule.parameter_names.len(),
             call_rule.parameters.len()

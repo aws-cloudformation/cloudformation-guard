@@ -893,16 +893,14 @@ pub(crate) fn first_rule_reference_cycle<'value, 'loc: 'value>(
 
     let mut references = BTreeMap::new();
     for rule in rules() {
-        let mut names = BTreeSet::new();
-        if let Some(conditions) = &rule.conditions {
-            collect_conjunctions_rule_refs(conditions, &mut names);
-        }
-        collect_conjunctions_rule_refs(&rule.block.conjunctions, &mut names);
         references.insert(
             rule.rule_name.as_str(),
-            names
-                .into_iter()
+            rule_refs_in(rule)
+                .iter()
+                .map(RuleReference::name)
                 .filter(|name| declared.contains(name))
+                .collect::<BTreeSet<&str>>()
+                .into_iter()
                 .collect::<Vec<&str>>(),
         );
     }
@@ -911,6 +909,118 @@ pub(crate) fn first_rule_reference_cycle<'value, 'loc: 'value>(
         .map(|rule| rule.rule_name.as_str())
         .collect::<Vec<&str>>();
     first_cycle(&starts, &references)
+}
+
+/// A call site whose argument list does not agree with the definition it names.
+pub(crate) enum CallSiteMismatch<'value> {
+    /// A parameterized rule called with the wrong number of arguments.
+    Arity {
+        rule_name: &'value str,
+        expected: usize,
+        got: usize,
+    },
+    /// A rule declared without a parameter list, called as though it had one.
+    NotParameterized { rule_name: &'value str },
+}
+
+/// The first call site in the file that does not agree with the definition it names, or `None` if
+/// every one does.
+///
+/// Both conditions are decidable from the text, which is the whole argument for answering them here.
+/// The arity check in `eval_parameterized_rule_call` reached the same conclusion at evaluation time
+/// and returned `Error::IncompatibleError`, which no command classifies, so it propagated to `main`
+/// and exited -1 -- the code `guard/tests/utils.rs` names `INTERNAL_FAILURE` -- for a rule-authoring
+/// mistake. `parameter_names` already says so in its own doc comment about the duplicate-parameter
+/// case it fixed: the mistake was "a rule-authoring mistake the parser was holding in its hand".
+///
+/// Answering at parse time also settles a call site that is never reached. `rule MAIN { check(1, 2) }`
+/// only reported because something evaluated `MAIN`; the same mistake inside a rule nobody references,
+/// or behind a `when` that does not match, exited 0 with nothing said. And it removes the
+/// self-contradicting report the runtime error produced: stdout said `Status = FAIL` and listed the
+/// calling rule under "FAILED rules" while stderr said cfn-guard had broken.
+///
+/// Only names the file declares are checked. A call to a rule that does not exist stays
+/// `find_parameterized_rule`'s `Error::MissingValue`, which a4440ff classified as a rules-file error
+/// at exit 5 already; taking that over here would widen this check into rejecting a file for a
+/// reference that a `when` might never reach, which is a different decision from this one.
+pub(crate) fn first_call_site_mismatch<'value, 'loc: 'value>(
+    file: &'value RulesFile<'loc>,
+) -> Option<CallSiteMismatch<'value>> {
+    let declared_parameters = file
+        .parameterized_rules
+        .iter()
+        .map(|each| (each.rule.rule_name.as_str(), each.parameter_names.len()))
+        .collect::<BTreeMap<&str, usize>>();
+    let declared_plain = file
+        .guard_rules
+        .iter()
+        .map(|rule| rule.rule_name.as_str())
+        .collect::<BTreeSet<&str>>();
+
+    let rules = file
+        .guard_rules
+        .iter()
+        .chain(file.parameterized_rules.iter().map(|each| &each.rule));
+    for rule in rules {
+        for reference in rule_refs_in(rule) {
+            let call = match reference {
+                RuleReference::Parameterized(call) => call,
+                RuleReference::Plain(_) => continue,
+            };
+            let name = call.named_rule.dependent_rule.as_str();
+
+            if let Some(expected) = declared_parameters.get(name) {
+                if *expected != call.parameters.len() {
+                    return Some(CallSiteMismatch::Arity {
+                        rule_name: name,
+                        expected: *expected,
+                        got: call.parameters.len(),
+                    });
+                }
+            } else if declared_plain.contains(name) {
+                return Some(CallSiteMismatch::NotParameterized { rule_name: name });
+            }
+        }
+    }
+
+    None
+}
+
+/// Every rule reference in one rule, its `when` conditions included.
+///
+/// Both are evaluated by `eval_rule`, so a reference in either reaches the same machinery.
+fn rule_refs_in<'value, 'loc: 'value>(
+    rule: &'value Rule<'loc>,
+) -> Vec<RuleReference<'value, 'loc>> {
+    let mut references = vec![];
+    if let Some(conditions) = &rule.conditions {
+        collect_conjunctions_rule_refs(conditions, &mut references);
+    }
+    collect_conjunctions_rule_refs(&rule.block.conjunctions, &mut references);
+    references
+}
+
+/// One rule reference, as the text spells it.
+///
+/// The parameterized arm carries the whole clause rather than just the name, because
+/// [`first_call_site_mismatch`] needs its argument list and [`first_rule_reference_cycle`] needs only
+/// the name. One walk answering both is the point: enumerating where a reference can appear twice
+/// would leave two lists to keep in step, and a place missing from either is a defect its check
+/// cannot see.
+pub(crate) enum RuleReference<'value, 'loc: 'value> {
+    /// `dependent_rule`, with no argument list.
+    Plain(&'value str),
+    /// `dependent_rule(...)`.
+    Parameterized(&'value ParameterizedNamedRuleClause<'loc>),
+}
+
+impl<'value, 'loc: 'value> RuleReference<'value, 'loc> {
+    fn name(&self) -> &'value str {
+        match self {
+            RuleReference::Plain(name) => name,
+            RuleReference::Parameterized(call) => call.named_rule.dependent_rule.as_str(),
+        }
+    }
 }
 
 /// Every rule a clause references, at any nesting depth.
@@ -930,15 +1040,15 @@ pub(crate) fn first_rule_reference_cycle<'value, 'loc: 'value>(
 /// because the type permits what the parser does not produce -- a `Block<GuardClause>` can hold a
 /// `NamedRule` -- and a grammar change that admitted one would otherwise make a cycle invisible here
 /// instead of failing to compile.
-trait RuleRefs<'value> {
-    fn collect_rule_refs(&'value self, into: &mut BTreeSet<&'value str>);
+trait RuleRefs<'value, 'loc: 'value> {
+    fn collect_rule_refs(&'value self, into: &mut Vec<RuleReference<'value, 'loc>>);
 }
 
-fn collect_conjunctions_rule_refs<'value, T>(
+fn collect_conjunctions_rule_refs<'value, 'loc: 'value, T>(
     conjunctions: &'value Conjunctions<T>,
-    into: &mut BTreeSet<&'value str>,
+    into: &mut Vec<RuleReference<'value, 'loc>>,
 ) where
-    T: RuleRefs<'value>,
+    T: RuleRefs<'value, 'loc>,
 {
     for disjunctions in conjunctions {
         for clause in disjunctions {
@@ -947,15 +1057,15 @@ fn collect_conjunctions_rule_refs<'value, T>(
     }
 }
 
-impl<'value, 'loc: 'value> RuleRefs<'value> for GuardClause<'loc> {
-    fn collect_rule_refs(&'value self, into: &mut BTreeSet<&'value str>) {
+impl<'value, 'loc: 'value> RuleRefs<'value, 'loc> for GuardClause<'loc> {
+    fn collect_rule_refs(&'value self, into: &mut Vec<RuleReference<'value, 'loc>>) {
         match self {
             GuardClause::NamedRule(named) => {
-                into.insert(named.dependent_rule.as_str());
+                into.push(RuleReference::Plain(named.dependent_rule.as_str()))
             }
 
             GuardClause::ParameterizedNamedRule(call) => {
-                into.insert(call.named_rule.dependent_rule.as_str());
+                into.push(RuleReference::Parameterized(call))
             }
 
             GuardClause::BlockClause(block_clause) => {
@@ -972,8 +1082,8 @@ impl<'value, 'loc: 'value> RuleRefs<'value> for GuardClause<'loc> {
     }
 }
 
-impl<'value, 'loc: 'value> RuleRefs<'value> for RuleClause<'loc> {
-    fn collect_rule_refs(&'value self, into: &mut BTreeSet<&'value str>) {
+impl<'value, 'loc: 'value> RuleRefs<'value, 'loc> for RuleClause<'loc> {
+    fn collect_rule_refs(&'value self, into: &mut Vec<RuleReference<'value, 'loc>>) {
         match self {
             RuleClause::Clause(clause) => clause.collect_rule_refs(into),
 
@@ -992,15 +1102,15 @@ impl<'value, 'loc: 'value> RuleRefs<'value> for RuleClause<'loc> {
     }
 }
 
-impl<'value, 'loc: 'value> RuleRefs<'value> for WhenGuardClause<'loc> {
-    fn collect_rule_refs(&'value self, into: &mut BTreeSet<&'value str>) {
+impl<'value, 'loc: 'value> RuleRefs<'value, 'loc> for WhenGuardClause<'loc> {
+    fn collect_rule_refs(&'value self, into: &mut Vec<RuleReference<'value, 'loc>>) {
         match self {
             WhenGuardClause::NamedRule(named) => {
-                into.insert(named.dependent_rule.as_str());
+                into.push(RuleReference::Plain(named.dependent_rule.as_str()))
             }
 
             WhenGuardClause::ParameterizedNamedRule(call) => {
-                into.insert(call.named_rule.dependent_rule.as_str());
+                into.push(RuleReference::Parameterized(call))
             }
 
             WhenGuardClause::Clause(_) => {}

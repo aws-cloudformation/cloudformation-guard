@@ -2224,6 +2224,49 @@ fn rule_cycle_message(cycle: &[&str]) -> String {
     )
 }
 
+/// The diagnostic for a call site that does not agree with the definition it names.
+///
+/// Both arms name the rule and both counts, because the exit code was carrying the whole message
+/// before: an arity mismatch reached `main` as `Error::IncompatibleError` and exited -1, which says
+/// cfn-guard broke rather than naming a rule to edit.
+///
+/// The `NotParameterized` arm exists because the old message contradicted itself. `check()` against
+/// `rule check { ... }` reported `Parameterized Rule with name check was not found, candidate []`
+/// three lines under a report listing `check PASS` -- the lookup consulted the parameterized-rule
+/// table only, and its empty candidate list was the tell. `check` was never missing.
+fn call_site_mismatch_message(mismatch: &CallSiteMismatch<'_>) -> String {
+    match mismatch {
+        CallSiteMismatch::Arity {
+            rule_name,
+            expected,
+            got,
+        } => format!(
+            "Rule {name} is declared with {expected} {expected_noun}, and a call passes it {got} \
+             {got_noun}. The counts have to match, or a reference to a parameter inside {name} cannot \
+             say which argument it means.",
+            name = rule_name,
+            expected = expected,
+            expected_noun = plural(*expected, "parameter"),
+            got = got,
+            got_noun = plural(*got, "argument"),
+        ),
+
+        CallSiteMismatch::NotParameterized { rule_name } => format!(
+            "Rule {name} is declared without a parameter list, so it cannot be called as \
+             {name}(...). Write {name} on its own to reference it. Parentheses name a parameterized \
+             rule, and there is no parameterized rule called {name} in this file.",
+            name = rule_name,
+        ),
+    }
+}
+
+fn plural(count: usize, noun: &str) -> String {
+    match count {
+        1 => noun.to_string(),
+        _ => format!("{}s", noun),
+    }
+}
+
 /// The `when` keyword, and it has to be a keyword rather than a tag because what follows it is `cut`.
 ///
 /// `tag("when")` matched the first four characters of `whenever`, the whitespace `when_conditions` requires
@@ -2907,6 +2950,22 @@ pub(crate) fn rules_file(input: Span) -> Result<Option<RulesFile>, Error> {
     // this one keys a graph by it.
     if let Some(cycle) = first_rule_reference_cycle(&rules_file) {
         return Err(Error::ParseError(rule_cycle_message(&cycle)));
+    }
+
+    // A call site read against the definition it names, which is the last thing in this file decidable
+    // from the text that was being left to evaluation. `eval_parameterized_rule_call` reached the same
+    // conclusion about the argument count and returned `Error::IncompatibleError`, which no command
+    // classifies, so it propagated to `main` and exited -1 -- `INTERNAL_FAILURE` in
+    // `guard/tests/utils.rs` -- for an authoring mistake, while an unknown rule name on the same code
+    // path exited 5. `parameter_names` says the same thing about the duplicate-parameter case it
+    // rejects: the mistake was one "the parser was holding in its hand".
+    //
+    // Two things beyond the exit code come with answering it here. A call site nothing evaluates is
+    // now checked, where before `rule MAIN { check(1, 2) }` only reported because something evaluated
+    // `MAIN`. And the report no longer contradicts itself: the runtime error wrote `Status = FAIL` and
+    // the calling rule under "FAILED rules" to stdout, then said on stderr that cfn-guard had broken.
+    if let Some(mismatch) = first_call_site_mismatch(&rules_file) {
+        return Err(Error::ParseError(call_site_mismatch_message(&mismatch)));
     }
 
     Ok(Some(rules_file))

@@ -6008,6 +6008,108 @@ fn a_rule_that_references_itself_is_rejected() -> Result<(), Error> {
     Ok(())
 }
 
+/// A parameterized call is read against the definition it names, and both ways of disagreeing with it
+/// are rejected by the parser rather than at evaluation.
+///
+/// The arity mismatch used to be `Error::IncompatibleError` from `eval_parameterized_rule_call`, which
+/// no command classifies, so it propagated to `main` and exited -1 -- `INTERNAL_FAILURE` in
+/// `guard/tests/utils.rs` -- for an authoring mistake, while an unknown rule name on the same code path
+/// exited 5. Calling a rule that has no parameter list reported that the rule "was not found", with an
+/// empty candidate list, three lines under a report listing that same rule as PASS.
+///
+/// Both are decidable from the text, so both are answered here. The two accepted cases at the end are
+/// what keeps this check from taking over the undeclared-name path.
+#[test]
+fn a_parameterized_call_must_match_the_rule_it_names() -> Result<(), Error> {
+    for rules in [
+        // More arguments than parameters, and fewer.
+        "rule check(t) {\n  Resources !empty\n}\nrule MAIN {\n  check(1, 2)\n}",
+        "rule check(t, u) {\n  Resources !empty\n}\nrule MAIN {\n  check(1)\n}",
+        // No arguments at all, against a rule that takes one. `call_expr` accepts an empty argument
+        // list, so this parses and only the counts say it is wrong.
+        "rule check(t) {\n  Resources !empty\n}\nrule MAIN {\n  check()\n}",
+        // A rule declared without a parameter list, called as though it had one.
+        "rule check {\n  Resources !empty\n}\nrule MAIN {\n  check()\n}",
+        "rule check {\n  Resources !empty\n}\nrule MAIN {\n  check(1)\n}",
+        // A call site in a `when` condition rather than a body.
+        "rule check(t) {\n  Resources !empty\n}\nrule MAIN when check(1, 2) {\n  Resources !empty\n}",
+        // A call site inside a rule nothing references. This is the case evaluation could not reach:
+        // it exited 0 with nothing said, because the mistake only reported where something ran it.
+        "rule check(t) {\n  Resources !empty\n}\nrule unused {\n  check(1, 2)\n}\nrule MAIN {\n  Resources !empty\n}",
+    ] {
+        assert!(
+            rules_file(from_str2(rules)).is_err(),
+            "a call that does not match the rule it names must be rejected: {}",
+            rules
+        );
+    }
+
+    // Both counts are named, with the noun agreeing, because the exit code was carrying the whole
+    // message before.
+    let too_many = rules_file(from_str2(
+        "rule check(t) {\n  Resources !empty\n}\nrule MAIN {\n  check(1, 2)\n}",
+    ))
+    .expect_err("too many arguments is rejected")
+    .to_string();
+    assert!(
+        too_many
+            .contains("Rule check is declared with 1 parameter, and a call passes it 2 arguments"),
+        "the message names the rule and both counts: {}",
+        too_many
+    );
+
+    let too_few = rules_file(from_str2(
+        "rule check(t, u) {\n  Resources !empty\n}\nrule MAIN {\n  check(1)\n}",
+    ))
+    .expect_err("too few arguments is rejected")
+    .to_string();
+    assert!(
+        too_few.contains("declared with 2 parameters, and a call passes it 1 argument"),
+        "the nouns agree with their counts in both directions: {}",
+        too_few
+    );
+
+    // The rule exists, so the message must not say it was not found -- that was the old message, and
+    // it contradicted a report listing the same rule as PASS.
+    let not_parameterized = rules_file(from_str2(
+        "rule check {\n  Resources !empty\n}\nrule MAIN {\n  check()\n}",
+    ))
+    .expect_err("calling a rule with no parameter list is rejected")
+    .to_string();
+    assert!(
+        not_parameterized.contains("Rule check is declared without a parameter list"),
+        "the message says what is actually wrong: {}",
+        not_parameterized
+    );
+    assert!(
+        !not_parameterized.contains("was not found"),
+        "the rule is right there in the file, so nothing may claim it is missing: {}",
+        not_parameterized
+    );
+
+    // A call to a name the file does not declare at all is left alone. It stays
+    // `find_parameterized_rule`'s undeclared-name error, which already reports at exit 5 and which a
+    // `when` might never reach; rejecting the file for it here would be a different decision.
+    assert!(rules_file(from_str2("rule MAIN {\n  nosuch()\n}"))?.is_some());
+
+    // A call that does match is untouched, at one and at two parameters.
+    assert!(rules_file(from_str2(
+        "rule check(t) {\n  Resources !empty\n}\nrule MAIN {\n  check(1)\n}"
+    ))?
+    .is_some());
+    assert!(rules_file(from_str2(
+        "rule check(t, u) {\n  Resources !empty\n}\nrule MAIN {\n  check(1, 2)\n}"
+    ))?
+    .is_some());
+
+    // A plain reference to a plain rule is not a call and is not checked against a parameter list.
+    assert!(rules_file(from_str2(
+        "rule check {\n  Resources !empty\n}\nrule MAIN {\n  check\n}"
+    ))?
+    .is_some());
+    Ok(())
+}
+
 /// A filter over a property named `keys` parses, and a key filter still does.
 ///
 /// `map_keys_match` committed with `cut` as soon as it had seen `keys`, so a following token that was not
