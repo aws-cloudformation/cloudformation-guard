@@ -295,15 +295,39 @@ impl PartialEq for PathAwareValue {
             // a `Result` from `is_match` because a pattern with a lookaround or a backreference
             // runs on its backtracking engine, and a nested quantifier can then exceed the
             // backtrack limit on a long value -- `/(?!zzz)(\w+\s?)+!/` against eighty characters
-            // holding no `!` did it, at exit 101, for the whole file.
+            // holding no `!` did it, at exit 101, for the whole file. That is the failure the
+            // `unwrap_or(false)` answers.
+            //
+            // The two `false`s here are not the same `false`, and only one of them is live.
+            // `Regex::new` failing is a pattern that will not *compile*, and that is `Err(_)`;
+            // `is_match` returning `Err` is a pattern that compiled and then could not be
+            // *evaluated*, and that is the `unwrap_or`. Measured by making each panic in turn:
+            // `Err(_)` leaves the whole suite green, and the `unwrap_or` fails the three cases of
+            // `a_regex_in_a_list_literal_fails_the_clause_instead_of_aborting`.
+            //
+            // `Err(_) => false` is unreachable as things stand, by construction rather than by
+            // luck. Only two arms build a `PathAwareValue::Regex`: one from `MarkedValue::Regex`,
+            // which nothing in the crate ever constructs, and one from `Value::Regex`, which
+            // `parse_regex_inner` builds only after `Regex::try_from` has accepted the pattern --
+            // it answers `nom::Err::Failure` otherwise, so a rules file holding `/a(/` exits 5 at
+            // parse time and never reaches an evaluator. JSON and YAML have no regex spelling, so a
+            // data file or `--input-parameters` cannot smuggle one past that check either.
+            //
+            // It stays, and as `false` rather than `unreachable!()`. What makes it unreachable is a
+            // property of the callers and not of this match, so it returns the moment anything
+            // builds a `PathAwareValue::Regex` without compiling it first: a `MarkedValue::Regex`
+            // that starts being constructed, a parser that stops refusing, or a third construction
+            // site. `unreachable!()` would turn each of those into a panic inside a comparison,
+            // which is the abort the first paragraph is about avoiding.
             //
             // `false` is a compromise and not the honest answer, so it is worth being plain about
             // what it costs. `PartialEq` returns `bool` and cannot report anything, and the arms
             // cannot simply go: `contained_in` in `eval/operators.rs` decides `X in [/re/]` by
             // asking `elem == rest` for each element before it asks anything else, so a panic in
-            // these arms takes a run down. Pinned by
+            // these arms takes a run down. Reached by
             // `a_regex_in_a_list_literal_fails_the_clause_instead_of_aborting` and by the four
-            // `IN`/`NOT IN` cases of `an_ordinary_regex_comparison_is_unchanged`.
+            // `IN`/`NOT IN` cases of `an_ordinary_regex_comparison_is_unchanged`, of which only the
+            // first reaches the error path.
             //
             // The compromise survives because `eq` is not the last word on that path.
             // `contained_in` asks `compare_eq` for each element `eq` turned down, and `compare_eq`
