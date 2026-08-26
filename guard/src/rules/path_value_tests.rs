@@ -766,6 +766,108 @@ fn equality_is_symmetric_for_ranges() {
     assert!(compare_eq(&value, &range).unwrap());
 }
 
+/// No comparison against a NaN answers, including the four range-membership ones that used to.
+///
+/// `libyaml/loader.rs` keeps `Float(NaN)` out of the value space and states why: the type asserts `Eq`
+/// and hashes its own contents, and a NaN is not equal to itself. The `serde_yaml` conversion, which is
+/// what `cfn-guard test` and the library entry point read a document through, has no such gate, so a
+/// NaN is reachable and the comparison layer has to behave.
+///
+/// Ordering and scalar equality already refused, through `compare_values` and `compare_int_to_float`.
+/// Range membership did not: `is_within` is `le`/`lt`/`ge`/`gt`, all false for a NaN, and
+/// `float_within_int_range` reads `compare_int_to_float`'s `None` through a `_ => false` arm. Both
+/// answered "not in the range", which is a decision -- and `!=` and `NOT IN` invert a decision, so
+/// `A not in r[-1,1]` *passed* for a NaN and a denylist admitted a value that is not a number.
+///
+/// Asserted as "every operator refuses", not as a verdict, because a refusal is what fails both
+/// polarities and so cannot be inverted into a pass.
+#[test]
+fn nothing_compares_against_a_nan() {
+    const BOTH: u8 = LOWER_INCLUSIVE | UPPER_INCLUSIVE;
+    let nan = PathAwareValue::Float((Path::root(), f64::NAN));
+    let range_f = PathAwareValue::RangeFloat((
+        Path::root(),
+        RangeType {
+            lower: -1.0f64,
+            upper: 1.0f64,
+            inclusive: BOTH,
+        },
+    ));
+    let range_i = PathAwareValue::RangeInt((
+        Path::root(),
+        RangeType {
+            lower: -1i64,
+            upper: 1i64,
+            inclusive: BOTH,
+        },
+    ));
+
+    let others = [
+        (
+            "another NaN",
+            PathAwareValue::Float((Path::root(), f64::NAN)),
+        ),
+        ("a float", PathAwareValue::Float((Path::root(), 0.0))),
+        ("an integer", PathAwareValue::Int((Path::root(), 0))),
+        ("a float range", range_f),
+        ("an integer range", range_i),
+    ];
+
+    for (label, other) in &others {
+        assert!(
+            compare_eq(&nan, other).is_err(),
+            "compare_eq answered a NaN against {}",
+            label
+        );
+        assert!(
+            compare_eq_symmetric(&nan, other).is_err(),
+            "compare_eq_symmetric answered a NaN against {}",
+            label
+        );
+    }
+
+    // The ordering comparators take no range, so they are checked against the scalars only. All four,
+    // because each reads `compare_values`'s `Ordering` through its own match and a missing arm in any
+    // one of them would answer.
+    for (label, other) in others.iter().take(3) {
+        for (name, cmp) in [
+            (
+                "lt",
+                compare_lt as fn(&PathAwareValue, &PathAwareValue) -> crate::rules::Result<bool>,
+            ),
+            ("le", compare_le),
+            ("gt", compare_gt),
+            ("ge", compare_ge),
+        ] {
+            assert!(
+                cmp(&nan, other).is_err(),
+                "compare_{} answered a NaN against {}",
+                name,
+                label
+            );
+        }
+    }
+
+    // A finite float in the same ranges still decides, so the gate is on the value and not on the arm.
+    let inside = PathAwareValue::Float((Path::root(), 0.5));
+    let outside = PathAwareValue::Float((Path::root(), 5.5));
+    for (label, range) in [
+        ("a float range", &others[3].1),
+        ("an integer range", &others[4].1),
+    ] {
+        assert!(
+            compare_eq(&inside, range).unwrap(),
+            "a float inside {} stopped matching",
+            label
+        );
+        assert!(
+            !compare_eq(&outside, range).unwrap(),
+            "a float outside {} started matching",
+            label
+        );
+    }
+}
+
 /// A `Char` compares with a string, which is the only spelling the rules language has for a character.
 ///
 /// `parse_char` is a shipped guard-language function and its documented example is

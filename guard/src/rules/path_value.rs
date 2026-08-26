@@ -1399,6 +1399,15 @@ fn float_as_exact_i64(f: f64) -> Option<i64> {
     Some(f as i64)
 }
 
+/// The refusal for a float that cannot be ordered, which in practice is a NaN.
+///
+/// Shared so that the range-membership arms of `compare_eq` refuse in the same words `compare_values`
+/// does. The message says "Float values" rather than naming NaN because the condition it reports is
+/// `partial_cmp` answering `None`, and that is what the caller can act on.
+fn float_is_not_comparable() -> Error {
+    Error::NotComparable("Float values are not comparable".to_owned())
+}
+
 fn compare_values(first: &PathAwareValue, other: &PathAwareValue) -> Result<Ordering, Error> {
     match (first, other) {
         //
@@ -1409,9 +1418,7 @@ fn compare_values(first: &PathAwareValue, other: &PathAwareValue) -> Result<Orde
         (PathAwareValue::String((_, s)), PathAwareValue::String((_, o))) => Ok(s.cmp(o)),
         (PathAwareValue::Float((_, f)), PathAwareValue::Float((_, s))) => match f.partial_cmp(s) {
             Some(o) => Ok(o),
-            None => Err(Error::NotComparable(
-                "Float values are not comparable".to_owned(),
-            )),
+            None => Err(float_is_not_comparable()),
         },
 
         // A number is a number. Without these two arms `Size > 10` reports the template's own
@@ -1562,8 +1569,27 @@ pub(crate) fn compare_eq(first: &PathAwareValue, second: &PathAwareValue) -> Res
             return Ok(value.is_within(r))
         }
 
+        // A NaN refuses rather than answering false, which is what the four range-membership
+        // comparisons on a float would otherwise do. `is_within` is `le`/`lt`/`ge`/`gt` and
+        // `float_within_int_range` reads `compare_int_to_float`'s `None` through a `_ => false` arm, so
+        // every one of them reports "not in the range" for a value that cannot be ordered against
+        // either bound. That is a decision, and `!=` and `NOT IN` then invert it into a pass: with a
+        // `Float(NaN)` in the document, `A not in r[-1,1]` succeeded, so a denylist admitted a value
+        // that is not a number. Every other comparison against a NaN already refuses, through
+        // `compare_values` and `compare_int_to_float`, and both polarities of a refusal fail the
+        // clause -- these four were the only ones answering.
+        //
+        // Only the scalar is tested. A range's bounds come from `parse_range` in the rules parser,
+        // which builds them with `parse_float`, and that rejects a literal which is not finite -- so a
+        // `RangeFloat` cannot hold a NaN bound and a guard for one would be unreachable.
+        //
+        // The reason text is `compare_values`'s own for the same condition, because it is the same
+        // condition: a float that cannot be ordered.
         (PathAwareValue::Float((_, value)), PathAwareValue::RangeFloat((_, r))) => {
-            return Ok(value.is_within(r))
+            return match value.is_nan() {
+                true => Err(float_is_not_comparable()),
+                false => Ok(value.is_within(r)),
+            }
         }
 
         (PathAwareValue::Int((_, value)), PathAwareValue::RangeFloat((_, r))) => {
@@ -1571,7 +1597,10 @@ pub(crate) fn compare_eq(first: &PathAwareValue, second: &PathAwareValue) -> Res
         }
 
         (PathAwareValue::Float((_, value)), PathAwareValue::RangeInt((_, r))) => {
-            return Ok(float_within_int_range(*value, r))
+            return match value.is_nan() {
+                true => Err(float_is_not_comparable()),
+                false => Ok(float_within_int_range(*value, r)),
+            }
         }
 
         (PathAwareValue::Char((_, value)), PathAwareValue::RangeChar((_, r))) => {
