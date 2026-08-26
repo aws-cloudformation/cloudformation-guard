@@ -103,14 +103,27 @@ impl Loader {
                     // file, so nothing that works today stops working.
                     Event::DocumentStart => {
                         if document.is_some() {
-                            let (documents, exact) = count_remaining_documents(&mut parser);
-
-                            return Err(Error::UnsupportedDocument(format!(
-                                "cfn-guard evaluates one document per file, and this file holds {}{} \
-                                 -- the second starts at {location}. Split them into separate files.",
-                                if exact { "" } else { "at least " },
-                                documents
-                            )));
+                            match count_remaining_documents(&mut parser, location) {
+                                // Every document after the first holds nothing, so the file holds
+                                // one document and some separators. libyaml emits a whole document
+                                // -- start, empty scalar, end -- for a `---` with nothing after it,
+                                // so a template followed by a trailing separator was a two-document
+                                // stream by this test, and the refusal asked the reader to split out
+                                // a document that is not there. The scan drained the stream, so
+                                // returning here cannot report compliance for bytes libyaml never
+                                // read, which is what the refusal exists to prevent.
+                                Remaining::Separators => {
+                                    return document.ok_or(Error::MissingDocument)
+                                }
+                                Remaining::Documents { count, exact, at } => {
+                                    return Err(Error::UnsupportedDocument(format!(
+                                        "cfn-guard evaluates one document per file, and this file \
+                                         holds {}{count} -- the second starts at {at}. Split them \
+                                         into separate files.",
+                                        if exact { "" } else { "at least " },
+                                    )));
+                                }
+                            }
                         }
                     }
                     // Reaching the end of the stream with a document in hand is the ordinary exit.
@@ -568,7 +581,23 @@ fn describe_key(key: &MarkedValue) -> String {
     }
 }
 
-/// How many documents the stream holds, counted from the second `DocumentStart` onwards.
+/// What the stream holds after the document already in hand.
+enum Remaining {
+    /// Nothing but separators. Every document from the second onwards holds only the empty node, so
+    /// there is one document in the file however many `---` lines it carries.
+    Separators,
+    /// A document with something in it, so the file really is a stream.
+    Documents {
+        /// How many documents hold something, the one in hand included.
+        count: usize,
+        /// False when libyaml stopped early, making `count` a lower bound.
+        exact: bool,
+        /// Where the *second* document that holds something starts.
+        at: Location,
+    },
+}
+
+/// Counts the documents that hold something, from the second `DocumentStart` onwards.
 ///
 /// The refusal is worth more if it says what the tool saw, because "more than one" leaves the reader
 /// to find out whether they have two documents or twenty. Counting means draining the rest of the
@@ -577,19 +606,81 @@ fn describe_key(key: &MarkedValue) -> String {
 /// libyaml stops early. Returning "at least n" is better than either abandoning the count or
 /// replacing a message about document structure with a syntax error from further down the file.
 ///
-/// The two already seen are added in by starting at two: the caller is inside the second
-/// `DocumentStart` when it asks.
-fn count_remaining_documents(parser: &mut Parser) -> (usize, bool) {
-    let mut documents = 2;
+/// A document holding only the empty node is not counted, and is why this returns
+/// [`Remaining::Separators`] rather than a count of zero further documents. libyaml emits a full
+/// document for a bare `---`, so counting every `DocumentStart` made a file of one template plus a
+/// trailing `---` "hold 2" -- a count wrong by one, attached to advice that cannot be carried out,
+/// because there is nothing at the `---` to split into a second file. A trailing separator is what a
+/// generator or a concatenation leaves behind.
+///
+/// The position reported is the start of the second document that holds something, which is not
+/// necessarily the second `DocumentStart`: `a\n---\n---\nb\n` has an empty document between the two
+/// real ones.
+fn count_remaining_documents(parser: &mut Parser, second: Location) -> Remaining {
+    // The document the caller already holds.
+    let mut documents = 1;
+    let mut first_with_content: Option<Location> = None;
+    // The document being scanned: where it started, how many events it has held, and whether any of
+    // them was something other than the empty node.
+    let mut start = second;
+    let mut events = 0;
+    let mut empty = true;
 
     loop {
         match parser.next() {
-            Ok((Event::DocumentStart, _)) => documents += 1,
-            Ok((Event::StreamEnd, _)) => return (documents, true),
-            Ok(_) => {}
-            Err(_) => return (documents, false),
+            Ok((Event::DocumentStart, location)) => {
+                start = location;
+                events = 0;
+                empty = true;
+            }
+            Ok((Event::DocumentEnd, _)) => {
+                if !empty {
+                    documents += 1;
+                    first_with_content = first_with_content.or(Some(start));
+                }
+                events = 0;
+                empty = true;
+            }
+            Ok((Event::StreamEnd, _)) => {
+                return match first_with_content {
+                    None => Remaining::Separators,
+                    Some(at) => Remaining::Documents {
+                        count: documents,
+                        exact: true,
+                        at,
+                    },
+                }
+            }
+            // The empty node, and only as a document's sole event -- a document whose *first* event
+            // is an empty scalar and whose second is anything else holds something.
+            Ok((Event::Scalar(scalar), _)) if events == 0 && is_empty_node(&scalar) => events += 1,
+            Ok(_) => {
+                events += 1;
+                empty = false;
+            }
+            Err(_) => {
+                let partial = usize::from(!empty);
+
+                return Remaining::Documents {
+                    // At least the one in hand, the second the caller was told about, and any
+                    // complete one the scan reached.
+                    count: (documents + partial).max(2),
+                    exact: false,
+                    at: first_with_content.unwrap_or(start),
+                };
+            }
         }
     }
+}
+
+/// Whether a scalar event is YAML's empty node: no tag, plain style, no characters.
+///
+/// This is what libyaml emits for a `---` with nothing after it, and for a key written with nothing
+/// after the colon. Deliberately narrower than the set `handle_scalar_event` resolves to
+/// `MarkedValue::Null`, which also holds `~` and `null`: those are written, so a document containing
+/// one holds something, and only a document containing *nothing* is a separator.
+fn is_empty_node(scalar: &Scalar) -> bool {
+    scalar.tag.is_none() && scalar.style == ScalarStyle::Plain && scalar.value.is_empty()
 }
 
 /// Whether a float literal reached zero only because it was too small to represent.

@@ -613,19 +613,74 @@ fn an_explicitly_tagged_bool_reads_the_same_set_as_a_plain_one(
 /// The cases below are the two shapes that matter: content in the first document, and an *empty*
 /// first document, which is the worse one because the loader then evaluated nothing whatsoever.
 #[rstest::rstest]
-#[case::two_documents_with_content("a: 1\n---\nb: 2\n")]
-#[case::an_empty_first_document("---\n---\nb: 2\n")]
-#[case::three_documents("a: 1\n---\nb: 2\n---\nc: 3\n")]
-#[case::a_later_document_that_is_not_yaml("a: 1\n---\nb: [ this is : not valid yaml {{{\n")]
-fn a_stream_holding_more_than_one_document_is_refused(#[case] content: &str) {
+#[case::two_documents_with_content("a: 1\n---\nb: 2\n", "holds 2 -- the second starts at L:2,C:1")]
+#[case::an_empty_first_document("---\n---\nb: 2\n", "holds 2 -- the second starts at L:2,C:1")]
+#[case::three_documents(
+    "a: 1\n---\nb: 2\n---\nc: 3\n",
+    "holds 3 -- the second starts at L:2,C:1"
+)]
+#[case::a_later_document_that_is_not_yaml(
+    "a: 1\n---\nb: [ this is : not valid yaml {{{\n",
+    "holds at least 2 -- the second starts at L:2,C:1"
+)]
+// A separator between two real documents is not one of them, so the count is 2 and the position is
+// the second real document rather than the empty one. Counting every `DocumentStart` said 3, at the
+// separator.
+#[case::a_separator_between_two_documents(
+    "a: 1\n---\n---\nb: 2\n",
+    "holds 2 -- the second starts at L:3,C:1"
+)]
+// `~` is written, so the document holding it holds something.
+#[case::a_trailing_document_holding_a_tilde(
+    "a: 1\n---\n~\n",
+    "holds 2 -- the second starts at L:2,C:1"
+)]
+fn a_stream_holding_more_than_one_document_is_refused(
+    #[case] content: &str,
+    #[case] expected: &str,
+) {
     let loaded = Loader::new().load(content.to_string());
 
+    let message = match &loaded {
+        Err(Error::UnsupportedDocument(m)) if m.contains("one document per file") => m.clone(),
+        other => panic!(
+            "loading {:?} gave {:?}, not the multiple-document error",
+            content, other
+        ),
+    };
+
     assert!(
-        matches!(loaded, Err(Error::UnsupportedDocument(ref m)) if m.contains("one document per file")),
-        "loading {:?} gave {:?}, not the multiple-document error",
+        message.contains(expected),
+        "loading {:?} said {:?}, which does not carry {:?}",
         content,
-        loaded
+        message,
+        expected
     );
+}
+
+/// A document holding only the empty node is a separator, not a document.
+///
+/// libyaml emits a whole document -- start, empty scalar, end -- for a `---` with nothing after it, so
+/// counting `DocumentStart` events made a file of one template plus a trailing `---` "hold 2". The
+/// count was wrong by one and the advice it carried -- split them into separate files -- could not be
+/// followed, because there is nothing at the `---` to put in the second file. A trailing separator is
+/// what a generator or a concatenation leaves behind.
+#[rstest::rstest]
+#[case::a_trailing_separator("a: 1\n---\n")]
+#[case::a_trailing_separator_and_a_blank_line("a: 1\n---\n\n")]
+#[case::two_trailing_separators("a: 1\n---\n---\n")]
+#[case::a_trailing_separator_and_a_comment("a: 1\n---\n# nothing here\n")]
+fn a_trailing_separator_does_not_make_a_second_document(#[case] content: &str) -> Result<()> {
+    let value = Loader::new().load(content.to_string())?;
+
+    assert!(
+        matches!(&value, MarkedValue::Map(m, ..) if m.len() == 1),
+        "loading {:?} gave {:?}, not the single mapping it holds",
+        content,
+        value
+    );
+
+    Ok(())
 }
 
 /// The control for the case above, and the reason it cannot be written as "reject any `---`".
