@@ -7001,10 +7001,10 @@ fn a_name_both_assigned_and_captured_in_one_scope_is_rejected() -> Result<(), Er
 ///
 /// The recursive descent recurses once per level and had no bound, so a deep enough file aborted the
 /// process: SIGABRT, "fatal runtime error: stack overflow" on stderr, reported as 134 by a shell and
-/// outside the exit codes this tool documents. Ten spellings reached it, at depths from 1603 down to
-/// 2000 for the bracket forms, and they share no single function, so each of the six places a level is
-/// opened is exercised here -- `block`, `parse_list`, `parse_map`, `predicate_filter_clauses`,
-/// `map_keys_match` and `call_expr`.
+/// outside the exit codes this tool documents. Ten spellings reached it, at depths from 1107 for a query
+/// filter up to 8000 for nested list literals, and they share no single function, so each of the six
+/// places a level is opened is exercised here -- `block`, `parse_list`, `parse_map`,
+/// `predicate_filter_clauses`, `map_keys_match` and `call_expr`.
 ///
 /// The first bound covered the first four spellings only. A query filter, a key filter and a function
 /// call each still recursed with nothing counting the levels, so each still aborted: the three cases
