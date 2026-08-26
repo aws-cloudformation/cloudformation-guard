@@ -3309,7 +3309,11 @@ mod validate_tests {
             .structured()
             .run(&mut writer, &mut reader);
 
-        assert_eq!(StatusCode::INTERNAL_FAILURE, status_code);
+        // `USAGE_ERROR`, not `INTERNAL_FAILURE`. Every case here is a combination of flags the command
+        // cannot honour, which is the caller's mistake; asserting 255 asserted that cfn-guard had
+        // fallen over. clap's own conflicts -- `-P -r`, `-z -v` -- already answered 2 for the same
+        // class of mistake, so the two layers disagreed about the same kind of error.
+        assert_eq!(StatusCode::USAGE_ERROR, status_code);
     }
 
     #[rstest::rstest]
@@ -3327,7 +3331,8 @@ mod validate_tests {
             .output_format(Option::from(output))
             .run(&mut writer, &mut reader);
 
-        assert_eq!(StatusCode::INTERNAL_FAILURE, status_code);
+        // See above: a usage mistake now carries a usage code.
+        assert_eq!(StatusCode::USAGE_ERROR, status_code);
     }
 
     #[rstest::rstest]

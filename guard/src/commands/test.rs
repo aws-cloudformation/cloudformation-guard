@@ -9,6 +9,7 @@ use crate::commands::reporters::JunitReport;
 use crate::commands::{
     Executable, SUCCESS_STATUS_CODE, TEST_ERROR_STATUS_CODE, TEST_FAILURE_STATUS_CODE,
 };
+use clap::builder::TypedValueParser;
 use clap::Args;
 use serde::{Deserialize, Serialize};
 use std::cmp::Reverse;
@@ -44,6 +45,9 @@ const DIRECTORY_HELP: &str = "Provide the root directory for rules";
 const ALPHABETICAL_HELP: &str = "Sort alphabetically inside a directory";
 const LAST_MODIFIED_HELP: &str = "Sort by last modified times within a directory";
 const VERBOSE_HELP: &str = "Verbose logging";
+const SINGLE_LINE_SUMMARY: &str = "single-line-summary";
+/// The output formats `test` has a reporter for. `sarif` is deliberately absent; see `output_format`.
+const SUPPORTED_OUTPUT_FORMATS: [&str; 4] = [SINGLE_LINE_SUMMARY, "json", "yaml", "junit"];
 
 #[derive(Debug, Clone, Eq, PartialEq, Args)]
 #[clap(about=ABOUT)]
@@ -96,7 +100,17 @@ pub struct Test {
     /// Specify the format in which the output should be displayed
     /// default is single-line-summary
     /// if junit, json or yaml are chosen, will conflict with verbose logging if set to true
-    #[arg(short, long, help=OUTPUT_FORMAT_HELP, value_enum, default_value_t=OutputFormatType::SingleLineSummary)]
+    //
+    // The accepted values are listed rather than taken from `OutputFormatType`'s `ValueEnum`, so that
+    // `sarif` -- which this command has no reporter for and rejects at `execute` -- stops appearing in
+    // `--help` as a possible value. It was advertised there while being the one value that could never
+    // produce output.
+    //
+    // `//` and not `///` on purpose: clap's derive prints a doc comment as the flag's `long_about`, so
+    // a rationale written with `///` lands in `--help` and expands the whole command's help layout.
+    #[arg(short, long, help=OUTPUT_FORMAT_HELP, default_value=SINGLE_LINE_SUMMARY,
+          value_parser=clap::builder::PossibleValuesParser::new(SUPPORTED_OUTPUT_FORMATS)
+              .map(|value| OutputFormatType::from(value.as_str())))]
     pub(crate) output_format: OutputFormatType,
 }
 

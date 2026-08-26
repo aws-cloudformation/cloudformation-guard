@@ -11,6 +11,7 @@ use cfn_guard::utils::reader::ReadBuffer::File as ReadFile;
 use cfn_guard::utils::reader::Reader;
 use cfn_guard::utils::writer::WriteBuffer::Vec as WBVec;
 use cfn_guard::utils::writer::Writer;
+use cfn_guard::Error;
 use clap::Parser;
 use fancy_regex::Regex;
 
@@ -52,6 +53,12 @@ impl StatusCode {
     pub const TEST_COMMAND_FAILURE: i32 = 7;
     pub const PARSING_ERROR: i32 = 5;
     pub const VALIDATION_ERROR: i32 = 19;
+    /// A combination of arguments the command cannot honour, which is the caller's mistake to fix.
+    ///
+    /// clap's own code for a usage error, and now also the code `main` gives an
+    /// `Error::IllegalArguments` raised after parsing. Both layers reject the same class of mistake,
+    /// so both answer with the same number; see `guard/README.md`.
+    pub const USAGE_ERROR: i32 = 2;
 }
 
 pub fn read_from_resource_file(path: &str) -> String {
@@ -181,9 +188,38 @@ pub trait CommandTestRunner {
                     res
                 });
 
-        let cfn_guard = CfnGuard::parse_from(command_options);
+        // `try_parse_from`, not `parse_from`. `parse_from` is the exiting entry point: a clap error
+        // there calls `std::process::exit(2)` and takes the whole test binary with it, so no
+        // clap-level rejection could be asserted at all, and a fix that made clap reject something a
+        // test passes would abort the binary rather than fail the one test. `--no-fail-fast` does not
+        // help with that, because the process is gone.
+        //
+        // `Error::exit_code()` is clap's own mapping and returns 2 for a usage error and 0 for
+        // `--help`/`--version`, which is what the binary does, so a test reads the same number a
+        // caller would.
+        let cfn_guard = match CfnGuard::try_parse_from(command_options) {
+            Ok(parsed) => parsed,
+            Err(e) => {
+                writer
+                    .write_err(e.render().to_string())
+                    .expect("failed to write to stderr");
+
+                return e.exit_code();
+            }
+        };
 
         match cfn_guard.execute(writer, reader) {
+            // Mirrors `main`: a combination the command cannot honour is the caller's mistake and
+            // gets clap's usage code, not the code that means cfn-guard fell over. Keeping the two
+            // mappings the same is the point -- a test that reads -1 where the binary exits 2 is
+            // asserting a fiction.
+            Err(Error::IllegalArguments(message)) => {
+                writer
+                    .write_err(format!("Error occurred {message}"))
+                    .expect("failed to write to stderr");
+
+                StatusCode::USAGE_ERROR
+            }
             Err(e) => {
                 writer
                     .write_err(format!("Error occurred {e}"))

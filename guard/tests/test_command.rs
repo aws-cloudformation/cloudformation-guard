@@ -678,7 +678,9 @@ mod test_command_tests {
             .verbose()
             .run(&mut writer, &mut reader);
 
-        assert_eq!(StatusCode::INTERNAL_FAILURE, status_code);
+        // A combination the command cannot honour is the caller's mistake, so it carries clap's usage
+        // code rather than the code that means cfn-guard fell over.
+        assert_eq!(StatusCode::USAGE_ERROR, status_code);
     }
 
     #[test]
@@ -1150,6 +1152,10 @@ mod test_command_tests {
             .output_format("sarif")
             .run(&mut writer, &mut reader);
 
-        assert_eq!(StatusCode::INTERNAL_FAILURE, status_code);
+        // Rejected by clap now, not at `execute`: `sarif` is no longer among `-o`'s possible values,
+        // because `test` has no SARIF reporter and `--help` was advertising the one value that could
+        // only ever fail. `USAGE_ERROR` rather than `INTERNAL_FAILURE` either way -- naming an output
+        // format the command does not have is the caller's mistake, not cfn-guard breaking.
+        assert_eq!(StatusCode::USAGE_ERROR, status_code);
     }
 }
