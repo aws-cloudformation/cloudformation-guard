@@ -6110,6 +6110,58 @@ fn a_parameterized_call_must_match_the_rule_it_names() -> Result<(), Error> {
     Ok(())
 }
 
+/// A parameterized rule cannot be declared with an empty parameter list, and says which spelling to
+/// use instead.
+///
+/// `rule r()` was already rejected, but only because `separated_list1` failed inside `var_name` on the
+/// `)`: the diagnostic had an empty "when handling" field and reported the whole remainder of the file
+/// as its fragment, so nothing in it said what a parameter list needs.
+///
+/// Kept illegal rather than admitted for symmetry with the call form, which accepts `r()` because
+/// `call_expr` uses `separated_list0`. A rule that takes no parameters already has a spelling, and a
+/// second one would not mean the same thing: a rule in `guard_rules` gets a verdict of its own in every
+/// report, while a parameterized rule is only evaluated where a clause invokes it. `rule r()` would be
+/// a way to write a rule that silently never reports, for no gain over `rule r`.
+#[test]
+fn a_parameterized_rule_needs_at_least_one_parameter() -> Result<(), Error> {
+    for rules in [
+        "rule check() {\n  Resources !empty\n}\nrule MAIN {\n  check()\n}",
+        // Whitespace inside the parentheses is still an empty list.
+        "rule check(  ) {\n  Resources !empty\n}\nrule MAIN {\n  check()\n}",
+        "rule check(\n) {\n  Resources !empty\n}\nrule MAIN {\n  check()\n}",
+    ] {
+        let rejected = rules_file(from_str2(rules))
+            .expect_err("an empty parameter list is rejected")
+            .to_string();
+        assert!(
+            rejected.contains("A parameterized rule needs at least one parameter"),
+            "the message has to name the spelling that works: {}",
+            rejected
+        );
+    }
+
+    // Dropping the parentheses is the spelling the message points at, and it parses. This is the
+    // control that shows the rejection is the empty list and not anything else on the line.
+    assert!(rules_file(from_str2(
+        "rule check {\n  Resources !empty\n}\nrule MAIN {\n  check\n}"
+    ))?
+    .is_some());
+
+    // One parameter still parses, so the empty-list check did not consume the list.
+    assert!(rules_file(from_str2(
+        "rule check(t) {\n  Resources !empty\n}\nrule MAIN {\n  check(1)\n}"
+    ))?
+    .is_some());
+
+    // A rule name that ends in something the empty-list peek could have misread, and a rule with no
+    // parameter list followed by a clause about a property named the same, both still parse.
+    assert!(rules_file(from_str2(
+        "rule check(t) {\n  Resources.*[ Type == %t ] !empty\n}\nrule MAIN {\n  check(\"AWS::EC2::Volume\")\n}"
+    ))?
+    .is_some());
+    Ok(())
+}
+
 /// A filter over a property named `keys` parses, and a key filter still does.
 ///
 /// `map_keys_match` committed with `cut` as soon as it had seen `keys`, so a following token that was not

@@ -2650,7 +2650,7 @@ fn rule_block(input: Span) -> IResult<Span, Rule> {
 //
 // parameter names
 //
-/// The parameter list of a parameterized rule, rejecting a name that appears twice.
+/// The parameter list of a parameterized rule, rejecting an empty list and a name that appears twice.
 ///
 /// Collecting straight into the `IndexSet` dropped the duplicate silently, so `rule r(a, a)` became a
 /// one-parameter rule. Nothing complained at the definition; the arity check then failed at every
@@ -2658,18 +2658,41 @@ fn rule_block(input: Span) -> IResult<Span, Rule> {
 /// mismatch for called parameter rule r, expected 1, got 2` -- and the run ended at 255, an internal
 /// failure, for a rule-authoring mistake the parser was holding in its hand.
 ///
-/// `Failure` rather than `Error` because `(` and a name list have already been
+/// The empty list is rejected on purpose rather than admitted for symmetry with the call form, which
+/// accepts `r()` because `call_expr` uses `separated_list0`. A rule with no parameters already has a
+/// spelling -- `rule r { ... }` -- and a second one would not mean the same thing: a rule in
+/// `guard_rules` gets a verdict of its own in every report, while a parameterized rule is only
+/// evaluated where a clause invokes it, which is the asymmetry
+/// `commands/reporters/test/mod.rs` has to explain to anyone whose test expectation names one. So
+/// `rule r()` would be a way to write a rule that silently never reports, for no gain over the form
+/// that does. What it needed was a message saying which spelling to use, and that is what this is:
+/// `separated_list1` already rejected it, but only by failing inside `var_name` on the `)`, which
+/// reported a nameless parse error whose "fragment" was the whole remainder of the file.
+///
+/// `Failure` rather than `Error` in both cases because `(` and a name list have already been
 /// consumed here -- a recoverable error would send `alt` back to try the non-parameterized rule form
 /// and report something unrelated about the line.
 fn parameter_names(input: Span) -> IResult<Span, indexmap::IndexSet<String>> {
-    let (remaining, names) = delimited(
-        char('('),
+    let (after_open, _open) = char('(')(input)?;
+    let (after_open, empty) = opt(peek(preceded(multispace0, char(')'))))(after_open)?;
+    if empty.is_some() {
+        return Err(nom::Err::Failure(ParserError {
+            context: String::from(
+                "A parameterized rule needs at least one parameter. Write the rule without a \
+                 parameter list, as \"rule my_rule { ... }\", for one that takes none.",
+            ),
+            kind: ErrorKind::SeparatedList,
+            span: input,
+        }));
+    }
+
+    let (remaining, names) = terminated(
         separated_list1(
             char(','),
             cut(delimited(multispace0, var_name, multispace0)),
         ),
         cut(char(')')),
-    )(input)?;
+    )(after_open)?;
 
     let unique = names
         .iter()
