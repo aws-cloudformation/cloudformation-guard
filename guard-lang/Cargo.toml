@@ -1,5 +1,5 @@
 [package]
-name = "guard-lang"
+name = "cloudformation-guard-lang"
 version = "1.0.0"
 edition = "2018"
 description = "Parser, AST, and evaluation types for the AWS CloudFormation Guard DSL"
