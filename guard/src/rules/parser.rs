@@ -232,6 +232,18 @@ thread_local! {
     /// costs *less* stack per level. An earlier version of this comment named the key filter, on a ladder
     /// too coarse to separate them -- 300 ok, 350 aborts brackets 291 and 317 both.
     ///
+    /// **The guard on that path costs about twelve of those levels, and the 291 above is the number with
+    /// the cost already in it.** Measured on one tree, three variants differing by one line: the guard as
+    /// written aborts first at 291; called but not held live across the recursive descent, 292; removed
+    /// entirely, 304, with 302 still passing. So holding the value accounts for one level and the call
+    /// itself for the rest -- `enter` takes a `Span` and a `&str` and returns
+    /// `Result<NestingGuard, nom::Err<ParserError>>`, and that return slot is per-frame on every level of
+    /// the descent, whether or not the bound ever fires. Worth writing down for two reasons. A reader
+    /// measuring this path on a build without the guard gets ~303 and would otherwise think one of the two
+    /// numbers wrong; that is exactly the nine-rung disagreement that produced this paragraph. And the
+    /// headroom figure below is the honest one, because it is computed from the guarded build rather than
+    /// from an unguarded ceiling the shipped parser never has.
+    ///
     /// At 128 that leaves the tests about 2.3x of headroom (290/128) rather than the 8.7x the CLI figures
     /// imply, which is still ample, and nothing can recurse past the bound anyway. It matters if anyone
     /// raises [`MAX_NESTING_DEPTH`] past ~290, because the failure mode there is not a failing assertion:
