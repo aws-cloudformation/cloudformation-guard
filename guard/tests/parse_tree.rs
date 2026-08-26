@@ -4,18 +4,23 @@ pub(crate) mod utils;
 
 #[cfg(test)]
 mod parse_tree_tests {
-    use cfn_guard::commands::{PRINT_JSON, PRINT_YAML, RULES};
+    use cfn_guard::commands::{CfnGuard, PRINT_JSON, PRINT_YAML, RULES};
     use cfn_guard::utils::reader::Reader;
     use cfn_guard::utils::writer::{WriteBuffer::Vec as WBVec, Writer};
+    use clap::Parser;
     use pretty_assertions::assert_eq;
 
     use crate::utils::{get_full_path_for_resource_file, Command, CommandTestRunner, StatusCode};
     use crate::{assert_output_from_file_eq, assert_output_from_str_eq};
 
-    #[allow(dead_code)]
     #[derive(Default)]
     struct ParseTreeTestRunner<'args> {
         rules: &'args str,
+        // Never read: the `output` setter below assigns to `self.rules`, and `build_args` never emits
+        // `--output`. Left as it was found, with the lint silenced on the field rather than on the whole
+        // struct, so that removing the struct-wide allow could surface `print_yaml` being unused -- which
+        // is what it did.
+        #[allow(dead_code)]
         output: Option<&'args str>,
         print_json: bool,
         print_yaml: bool,
@@ -33,7 +38,6 @@ mod parse_tree_tests {
             self
         }
 
-        #[allow(dead_code)]
         fn print_yaml(&'args mut self) -> &'args mut ParseTreeTestRunner {
             self.print_yaml = true;
             self
@@ -67,6 +71,106 @@ mod parse_tree_tests {
 
     fn get_path_for_resource_file(file: &str) -> String {
         get_full_path_for_resource_file(&format!("resources/{}", file))
+    }
+
+    /// `--print-yaml` selects YAML, and asking for both formats is an error rather than a coin toss.
+    ///
+    /// `self.print_yaml` was declared and read nowhere: the output was chosen by
+    /// `match self.print_json`, so YAML was the fall-through rather than a thing anyone could ask for.
+    /// There was no input for which `--print-yaml` changed the output, `-y` was indistinguishable from
+    /// passing nothing, and `-p -y` -- two contradictory format requests -- resolved silently to JSON.
+    /// The field's own comment said "default true" while clap's default for a `bool` is `false`, which
+    /// is why the dead flag read as intentional.
+    ///
+    /// No flags still means YAML. That is not incidental: this repository's own CI runs
+    /// `cfn-guard parse-tree --rules $rule` with no format flag.
+    #[test]
+    fn print_yaml_selects_yaml_and_no_flag_still_means_yaml() {
+        const RULES: &str = "validate/rules-dir/s3_bucket_server_side_encryption_enabled.guard";
+
+        let mut default_writer = Writer::new(WBVec(vec![])).expect("Failed to create writer.");
+        let default_code = ParseTreeTestRunner::default()
+            .rules(RULES)
+            .run(&mut default_writer, &mut Reader::default());
+
+        let mut yaml_writer = Writer::new(WBVec(vec![])).expect("Failed to create writer.");
+        let yaml_code = ParseTreeTestRunner::default()
+            .print_yaml()
+            .rules(RULES)
+            .run(&mut yaml_writer, &mut Reader::default());
+
+        let mut json_writer = Writer::new(WBVec(vec![])).expect("Failed to create writer.");
+        let json_code = ParseTreeTestRunner::default()
+            .print_json()
+            .rules(RULES)
+            .run(&mut json_writer, &mut Reader::default());
+
+        assert_eq!(StatusCode::SUCCESS, default_code);
+        assert_eq!(StatusCode::SUCCESS, yaml_code);
+        assert_eq!(StatusCode::SUCCESS, json_code);
+
+        let default_out = default_writer.stripped().expect("failed to read stdout");
+        let yaml_out = yaml_writer.stripped().expect("failed to read stdout");
+        let json_out = json_writer.stripped().expect("failed to read stdout");
+
+        assert_eq!(
+            default_out, yaml_out,
+            "--print-yaml must select the format that no flag already selects"
+        );
+        assert_ne!(
+            default_out, json_out,
+            "--print-json must select a different format"
+        );
+        serde_yaml::from_str::<serde_yaml::Value>(&yaml_out).expect("--print-yaml must emit YAML");
+        serde_json::from_str::<serde_json::Value>(&json_out).expect("--print-json must emit JSON");
+    }
+
+    /// `--print-json` and `--print-yaml` together are refused.
+    ///
+    /// They named two formats and one silently won. Asserted through `try_parse_from` because the
+    /// rejection is clap's; `ParseTree::output_format` refuses the same pair for library callers, whose
+    /// builder sets the two fields independently and validates nothing.
+    #[test]
+    fn print_json_and_print_yaml_together_are_refused() {
+        let error = CfnGuard::try_parse_from(vec![
+            "cfn-guard",
+            "parse-tree",
+            "-r",
+            "some-rules.guard",
+            "-p",
+            "-y",
+        ])
+        .expect_err("two contradictory format flags must not parse");
+
+        assert_eq!(StatusCode::USAGE_ERROR, error.exit_code());
+    }
+
+    /// A directory handed to `--rules` is a rules file that cannot be used, which this command calls 5.
+    ///
+    /// A directory opens successfully and then fails in `read_to_string` with EISDIR, which `?` carried
+    /// to `main` as -1 -- "Is a directory (os error 21)", naming neither the path nor the flag, and
+    /// using the code this command otherwise reserves for cfn-guard failing.
+    ///
+    /// `PARSING_ERROR` for the reason `parse_tree` already gives for a rules file the parser rejects: a
+    /// mistake in what the caller named is reported in this command's own vocabulary. `test` answers
+    /// the same mistake with its 1 and `validate` walks the directory, which is its documented
+    /// behaviour -- three subcommands, three documented codes, exactly as they already differ on a
+    /// rules file the parser rejects.
+    #[test]
+    fn a_directory_given_to_rules_is_reported_as_an_unusable_rules_file() {
+        let mut writer =
+            Writer::new_with_err(WBVec(vec![]), WBVec(vec![])).expect("Failed to create writer.");
+        let status_code = ParseTreeTestRunner::default()
+            .rules("validate/rules-dir")
+            .run(&mut writer, &mut Reader::default());
+
+        assert_eq!(StatusCode::PARSING_ERROR, status_code);
+        let stderr = writer.err_to_stripped().expect("failed to read stderr");
+        assert!(
+            stderr.contains("a directory is not a rules file"),
+            "the message must say what was wrong with the path, got: {}",
+            stderr
+        );
     }
 
     #[test]

@@ -35,12 +35,60 @@ pub struct ParseTree {
     pub(crate) output: Option<String>,
     // print output in json
     // default false
-    #[arg(short=PRINT_JSON.1, long=PRINT_JSON.0, help=PRINT_JSON_HELP)]
+    // `name=` as well as `long=`, on both this flag and `print_yaml` below. clap derives an argument's
+    // *id* from the field name unless `name=` overrides it, so these two ids were `print_json` and
+    // `print_yaml` while `PRINT_JSON.0` and `PRINT_YAML.0` are the hyphenated spellings a caller types.
+    // `conflicts_with` takes an id, so naming the long flag there is a conflict clap never applies and
+    // never reports -- it simply does not fire, in exactly the way the empty `ArgGroup` in `test.rs`
+    // did not fire. Setting `name=` makes the constants the ids, so there is one spelling of each flag
+    // rather than two that differ by a hyphen. Neither id reaches `--help`, because a boolean flag has
+    // no value placeholder to name.
+    #[arg(name=PRINT_JSON.0, short=PRINT_JSON.1, long=PRINT_JSON.0, help=PRINT_JSON_HELP,
+          conflicts_with=PRINT_YAML.0)]
     pub(crate) print_json: bool,
-    // print output in yaml
-    // default true
-    #[arg(short=PRINT_YAML.1, long=PRINT_YAML.0, help=PRINT_YAML_HELP)]
+    // print output in yaml, which is also what this command does when neither flag is given
+    //
+    // Deliberately `//` and not `///`: clap's derive turns a doc comment into the flag's own
+    // `long_about`, so a rationale written here is printed to anyone running `--help` and switches the
+    // whole command's help to the expanded layout.
+    //
+    // This comment used to say "default true", and clap's default for a `bool` flag is `false`. It was
+    // describing YAML being the fall-through of `match self.print_json`, and that mismatch is why
+    // nobody noticed the field was read nowhere: `--print-yaml` could not change any output, for any
+    // input. `-p -y` -- two contradictory format requests -- resolved silently to JSON, and `-y` alone
+    // was indistinguishable from passing nothing.
+    //
+    // `conflicts_with` on `print_json` is what makes the contradiction an error instead of a coin
+    // toss, and `ParseTree::output_format` is what makes this field decide something. YAML stays the
+    // format when neither flag is given, so `parse-tree --rules x` is unchanged -- this repository's
+    // own CI invokes exactly that.
+    #[arg(name=PRINT_YAML.0, short=PRINT_YAML.1, long=PRINT_YAML.0, help=PRINT_YAML_HELP)]
     pub(crate) print_yaml: bool,
+}
+
+/// The format `parse-tree` writes, which is JSON only when asked for it.
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+enum ParseTreeFormat {
+    Json,
+    Yaml,
+}
+
+impl ParseTree {
+    /// Which format to write, and an error for the one combination that names two.
+    ///
+    /// Reached from `execute`, so the library path gets the same answer as the CLI. clap rejects
+    /// `-p -y` first for a CLI caller, but `ParseTreeBuilder` sets the two fields independently and
+    /// validates nothing, so without this check a library caller could still ask for both and be
+    /// given JSON without being told.
+    fn output_format(&self) -> Result<ParseTreeFormat> {
+        match (self.print_json, self.print_yaml) {
+            (true, true) => Err(crate::rules::errors::Error::IllegalArguments(String::from(
+                "Cannot provide both --print-json and --print-yaml; they name different formats",
+            ))),
+            (true, false) => Ok(ParseTreeFormat::Json),
+            (false, true) | (false, false) => Ok(ParseTreeFormat::Yaml),
+        }
+    }
 }
 
 impl Executable for ParseTree {
@@ -52,7 +100,34 @@ impl Executable for ParseTree {
     /// - parse errors occur in the rule file
     fn execute(&self, writer: &mut Writer, reader: &mut Reader) -> Result<i32> {
         let mut file: Box<dyn std::io::Read> = match &self.rules {
-            Some(file) => Box::new(std::io::BufReader::new(File::open(file)?)),
+            Some(path) => {
+                let opened = File::open(path)?;
+
+                // A directory opens successfully and then fails in `read_to_string` with EISDIR,
+                // which `?` carried to `main` as -1 -- a code this command otherwise reserves for
+                // cfn-guard failing, and one that said "Is a directory (os error 21)" without naming
+                // the path or the flag.
+                //
+                // `ERROR_STATUS_CODE` for the same reason the parse error below takes it: a rules
+                // path that cannot be used as a rules file is a mistake in what the caller named, and
+                // this command's vocabulary for that is 5. `test` answers the identical mistake with
+                // its own 1 and `validate` walks the directory, which is its documented behaviour --
+                // three answers, each in the subcommand's own documented codes, exactly as the three
+                // already differ on a rules file the parser rejects.
+                //
+                // A missing path still keeps the -1 from `File::open` above, which all three
+                // subcommands agree on.
+                if !opened.metadata()?.is_file() {
+                    writer.write_err(format!(
+                        "Parsing error handling rule file = {}, Error = a directory is not a rules file\n---",
+                        file_name_of(Path::new(path)).underline(),
+                    ))?;
+
+                    return Ok(ERROR_STATUS_CODE);
+                }
+
+                Box::new(std::io::BufReader::new(opened))
+            }
             None => Box::new(reader),
         };
 
@@ -96,9 +171,9 @@ impl Executable for ParseTree {
             }
         };
 
-        match self.print_json {
-            true => serde_json::to_writer_pretty(writer, &rules)?,
-            false => serde_yaml::to_writer(writer, &rules)?,
+        match self.output_format()? {
+            ParseTreeFormat::Json => serde_json::to_writer_pretty(writer, &rules)?,
+            ParseTreeFormat::Yaml => serde_yaml::to_writer(writer, &rules)?,
         }
 
         Ok(SUCCESS_STATUS_CODE)
