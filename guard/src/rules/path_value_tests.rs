@@ -766,6 +766,132 @@ fn equality_is_symmetric_for_ranges() {
     assert!(compare_eq(&value, &range).unwrap());
 }
 
+/// `==` answers a scalar against a range the same way whichever side the range is on, and `compare_eq`
+/// on its own deliberately does not.
+///
+/// All five membership arms are written scalar-on-the-left and `compare_values` has none, so asked
+/// directly with the range on the left the pair reaches the incomparable catch-all: `A == r[80,90]` was
+/// PASS and `%l == A` for the same two values refused with `not comparable range(int, int), int`. `==`
+/// is a symmetric relation -- the `Eq` comment on this type calls the identical shape in `PartialEq` a
+/// symmetry bug -- so `compare_eq_symmetric` puts the operands in the order the table expects, and the
+/// `==` operator asks that instead.
+///
+/// The one-directional table is asserted too, in the same test and on purpose. Mirroring it was tried
+/// and reaches four other callers; three of them then answer a different question than the one written,
+/// and six `IN`/`NOT IN` cells of the operator matrix moved. Anyone who "fixes" the asymmetry by adding
+/// the five reverse arms has to delete an assertion that says why not.
+///
+/// Both bound types on both sides, because the mixed int/float pairings go through
+/// `int_within_float_range` and `float_within_int_range` rather than `WithinRange`, and covering only
+/// the same-type pairs would leave two of the four numeric cells asymmetric.
+#[test]
+fn range_membership_is_answered_in_both_operand_orders() {
+    const BOTH: u8 = LOWER_INCLUSIVE | UPPER_INCLUSIVE;
+    fn int(i: i64) -> PathAwareValue {
+        PathAwareValue::Int((Path::root(), i))
+    }
+    fn flt(f: f64) -> PathAwareValue {
+        PathAwareValue::Float((Path::root(), f))
+    }
+    fn chr(c: char) -> PathAwareValue {
+        PathAwareValue::Char((Path::root(), c))
+    }
+    let range_i = PathAwareValue::RangeInt((
+        Path::root(),
+        RangeType {
+            lower: 80i64,
+            upper: 90i64,
+            inclusive: BOTH,
+        },
+    ));
+    let range_f = PathAwareValue::RangeFloat((
+        Path::root(),
+        RangeType {
+            lower: 80.0f64,
+            upper: 90.0f64,
+            inclusive: BOTH,
+        },
+    ));
+    let range_c = PathAwareValue::RangeChar((
+        Path::root(),
+        RangeType {
+            lower: 'a',
+            upper: 'z',
+            inclusive: BOTH,
+        },
+    ));
+
+    // (label, scalar, range, inside)
+    let cases = [
+        ("int in int range", int(85), &range_i, true),
+        ("int outside int range", int(95), &range_i, false),
+        ("float in float range", flt(85.5), &range_f, true),
+        ("float outside float range", flt(95.5), &range_f, false),
+        ("int in float range", int(85), &range_f, true),
+        ("int outside float range", int(95), &range_f, false),
+        ("float in int range", flt(85.5), &range_i, true),
+        ("float outside int range", flt(95.5), &range_i, false),
+        ("char in char range", chr('b'), &range_c, true),
+        ("char outside char range", chr('1'), &range_c, false),
+    ];
+
+    for (label, scalar, range, inside) in cases {
+        // Explicit format arguments: this crate is edition 2018, where `panic!` with a single string
+        // literal passes it through unformatted, so an implicit capture would print the braces.
+        let forward = compare_eq(&scalar, range).unwrap_or_else(|e| {
+            panic!(
+                "scalar on the left refused, which it never did: {}: {}",
+                label, e
+            )
+        });
+        assert_eq!(forward, inside, "scalar on the left: {}", label);
+
+        // What `==` asks. Both orders, so this is symmetry rather than a second spelling of the
+        // forward case.
+        let sym_forward = compare_eq_symmetric(&scalar, range)
+            .unwrap_or_else(|e| panic!("symmetric, scalar on the left: {}: {}", label, e));
+        let sym_reversed = compare_eq_symmetric(range, &scalar)
+            .unwrap_or_else(|e| panic!("symmetric, range on the left: {}: {}", label, e));
+        assert_eq!(sym_forward, inside, "symmetric, scalar first: {}", label);
+        assert_eq!(sym_reversed, inside, "symmetric, range first: {}", label);
+
+        // And the table itself stays one-directional, which is what keeps `IN` reading `%range in
+        // [15]` as "the range is one of these elements" rather than "15 is inside the range".
+        assert!(
+            compare_eq(range, &scalar).is_err(),
+            "compare_eq answered a range on the left, which would leak into IN: {}",
+            label
+        );
+    }
+
+    // The swap is by pairing, not a blanket "a range is comparable with anything". A range against a
+    // scalar of a kind its bounds are not still refuses, through the symmetric wrapper as well.
+    let text = PathAwareValue::String((Path::root(), "85".to_string()));
+    assert!(compare_eq(&text, &range_i).is_err());
+    assert!(compare_eq_symmetric(&text, &range_i).is_err());
+    assert!(compare_eq_symmetric(&range_i, &text).is_err());
+    assert!(compare_eq_symmetric(&int(85), &range_c).is_err());
+    assert!(compare_eq_symmetric(&range_c, &int(85)).is_err());
+
+    // And a pair with no reverse arm keeps the operand order it arrived in, so the reason reads in the
+    // order the clause is written. Swapping unconditionally is the obvious spelling of this function and
+    // it reworded forty refusals into naming the right-hand kind first -- the same wrong-operand defect
+    // as F10, introduced while fixing an asymmetry.
+    let reason = compare_eq_symmetric(&range_i, &text)
+        .unwrap_err()
+        .to_string();
+    assert!(
+        reason.contains("range(int, int), String"),
+        "the refusal named the operands in the opposite order to the clause: {}",
+        reason
+    );
+
+    // Two ranges are already symmetric, so the wrapper must leave that pair alone rather than swapping
+    // it and changing which one is read as the range.
+    assert!(compare_eq_symmetric(&range_i, &range_i.clone()).unwrap());
+    assert!(compare_eq_symmetric(&range_i, &range_f).is_err());
+}
+
 /// A range equals itself, which `impl Eq for PathAwareValue` promises and none of the three range
 /// variants delivered.
 ///

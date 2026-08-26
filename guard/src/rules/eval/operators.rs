@@ -567,9 +567,19 @@ impl Comparator for EqOperation {
         rhs: &[QueryResult],
     ) -> crate::rules::Result<EvalResult> {
         let mut results = Vec::with_capacity(lhs.len());
+        // `compare_eq_symmetric` throughout, not `compare_eq`. `compare_eq`'s five range arms are
+        // written scalar-on-the-left because every other caller has a subject and a pattern, and `==`
+        // does not -- so with a range on the left of `==` the pair reached the incomparable catch-all
+        // and `%l == Port` refused where `Port == r[80,90]` passed. The wrapper puts the scalar on the
+        // left for this operator only, which is why `IN` and the map key filters, for which
+        // one-directional is correct, keep asking `compare_eq` directly.
         match (is_literal(lhs), is_literal(rhs)) {
             (Some(ref l), Some(ref r)) => {
-                results.push(match_value(Rc::clone(l), Rc::clone(r), compare_eq));
+                results.push(match_value(
+                    Rc::clone(l),
+                    Rc::clone(r),
+                    compare_eq_symmetric,
+                ));
             }
 
             (Some(l), None) => {
@@ -586,7 +596,7 @@ impl Comparator for EqOperation {
                 match &*l {
                     PathAwareValue::List(_) => {
                         for each in rhs {
-                            results.push(match_value(Rc::clone(&l), each, compare_eq));
+                            results.push(match_value(Rc::clone(&l), each, compare_eq_symmetric));
                         }
                     }
 
@@ -598,7 +608,7 @@ impl Comparator for EqOperation {
                                         results.push(match_value(
                                             Rc::new(single_value.clone()),
                                             Rc::new(each_rhs.clone()),
-                                            compare_eq,
+                                            compare_eq_symmetric,
                                         ));
                                     }
                                 }
@@ -607,7 +617,7 @@ impl Comparator for EqOperation {
                                     results.push(match_value(
                                         Rc::new(single_value.clone()),
                                         Rc::new(rest_rhs.clone()),
-                                        compare_eq,
+                                        compare_eq_symmetric,
                                     ));
                                 }
                             }
@@ -629,10 +639,14 @@ impl Comparator for EqOperation {
                                 results.push(match_value(
                                     each,
                                     Rc::new(rhsl[0].clone()),
-                                    compare_eq,
+                                    compare_eq_symmetric,
                                 ))
                             } else {
-                                results.push(match_value(each, Rc::clone(&r), compare_eq));
+                                results.push(match_value(
+                                    each,
+                                    Rc::clone(&r),
+                                    compare_eq_symmetric,
+                                ));
                             }
                         }
                     }
@@ -644,14 +658,14 @@ impl Comparator for EqOperation {
                                     results.push(match_value(
                                         Rc::new(each_lhs.clone()),
                                         Rc::new(single_value.clone()),
-                                        compare_eq,
+                                        compare_eq_symmetric,
                                     ));
                                 }
                             } else {
                                 results.push(match_value(
                                     each.clone(),
                                     Rc::clone(&r.clone()),
-                                    compare_eq,
+                                    compare_eq_symmetric,
                                 ));
                             }
                         }

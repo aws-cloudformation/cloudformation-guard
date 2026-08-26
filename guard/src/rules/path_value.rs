@@ -411,7 +411,11 @@ impl PartialEq for PathAwareValue {
 /// Range membership used to be answered here too, which broke symmetry outright:
 /// `Int(50) == RangeInt(5..100)` held while the reverse did not, there being no reverse arm. Those
 /// arms were removed rather than mirrored, because membership is `compare_eq`'s job and it keeps its
-/// own range table.
+/// own range table. That table is one-directional for the same reason these arms were, so `==`
+/// inherited the asymmetry `eq` had been relieved of; `compare_eq_symmetric` is where `==` gets the
+/// operand order put right, because `compare_eq` is shared with `IN`, for which one-directional is
+/// correct. The arms still do not belong here either way: `eq` is `Vec::contains`'s comparator, and a
+/// range reaching it that way needs the structural answer rather than the membership one.
 ///
 /// A range nested in a list literal does still arrive here, through `Vec::contains` in
 /// `contained_in`, and that is what the removed arms were not reaching: `contains` asks
@@ -1546,6 +1550,54 @@ pub(crate) fn compare_eq(first: &PathAwareValue, second: &PathAwareValue) -> Res
     match match_result {
         Ok(is_match) => Ok(is_match),
         Err(error) => Err(Error::from(Box::new(error))),
+    }
+}
+
+/// `compare_eq` with the operands put in the order its range table expects, for the operators that
+/// have no left and right.
+///
+/// `compare_eq` is a match function rather than an equality function, whatever its name says: its five
+/// range arms ask "is this scalar inside that range", and they are all written scalar-on-the-left
+/// because every caller but one has a subject and a pattern. `IN` does -- `Port IN r[80,90]` tests
+/// `Port` against the range and never the reverse -- and so do the map key filters and the `NOT IN`
+/// deprecation probe.
+///
+/// `==` is the exception. It relates two values with no subject among them, and it is symmetric by
+/// contract; `impl Eq for PathAwareValue` says so, and calls the identical one-directional shape in
+/// `PartialEq` a symmetry bug. Asked directly, `compare_eq` gave `Resources.R.Properties.A ==
+/// r[80,90]` a PASS and `%l == Resources.R.Properties.A` for the same two values `not comparable
+/// range(int, int), int`.
+///
+/// So the swap lives here, at the operator that needs it, rather than as five more arms in the table.
+/// Mirroring the table was tried first and reaches four other callers, three of which then answer a
+/// question nobody asked: `%range in [15]` becomes "15 is inside the range" instead of "the range is
+/// one of these elements", `in_cmp`'s list loop the same, and `incomparable_membership` stops emitting
+/// its `NOT IN` deprecation notice because the comparison it probes with now succeeds. Measured, not
+/// predicted -- the mirrored version moved six `IN`/`NOT IN` cells of the operator matrix, and `in`
+/// membership is exactly what must not move.
+///
+/// Exactly the five pairings the table has, and no others. Swapping every range-against-non-range pair
+/// was the first version and it moved the wording of forty refusals: a range against a `bool` has no arm
+/// in either order, so the swap changed nothing about the verdict and made `compare_values` report
+/// `not comparable bool, range(char, char)` for a clause written `%range == true`. Naming the operands
+/// in the opposite order to the clause is the defect F10 is about; a fix for one asymmetry must not
+/// introduce it somewhere else. So a pair with no reverse arm keeps the order it arrived in, and its
+/// reason still reads left-to-right.
+///
+/// Two ranges are left alone as well. `compare_eq` relates them structurally and is already symmetric
+/// there, and swapping would only change which of the two the message names first.
+pub(crate) fn compare_eq_symmetric(
+    first: &PathAwareValue,
+    second: &PathAwareValue,
+) -> Result<bool, Error> {
+    match (first, second) {
+        (
+            PathAwareValue::RangeInt(_) | PathAwareValue::RangeFloat(_),
+            PathAwareValue::Int(_) | PathAwareValue::Float(_),
+        )
+        | (PathAwareValue::RangeChar(_), PathAwareValue::Char(_)) => compare_eq(second, first),
+
+        _ => compare_eq(first, second),
     }
 }
 

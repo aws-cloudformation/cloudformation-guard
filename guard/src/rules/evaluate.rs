@@ -510,13 +510,18 @@ impl<'loc> Evaluate for GuardAccessClause<'loc> {
             //
             // ==, !=
             //
+            // `compare_eq_symmetric`, matching `EqOperation` on the other evaluation path: `==` has no
+            // subject among its two operands and `compare_eq`'s range arms are written
+            // scalar-on-the-left, so a range on the left refused a pair the same clause decides when
+            // it is written the other way round. `IN` below keeps `compare_eq`, where
+            // one-directional is what membership means.
             CmpOperator::Eq => compare(
                 &lhs,
                 &clause.access_clause.query.query,
                 &rhs,
                 rhs_query,
                 invert_closure(
-                    super::path_value::compare_eq,
+                    super::path_value::compare_eq_symmetric,
                     clause.access_clause.comparator.1,
                     clause.negation,
                 ),
