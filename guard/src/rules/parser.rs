@@ -111,40 +111,58 @@ impl<'a> std::fmt::Display for ParserError<'a> {
 /// depth on the same file. This is the same defect class, and the same argument, as the `let` cycle and
 /// rule-reference cycle checks: an authoring mistake that killed the process rather than being refused.
 ///
-/// Nested blocks are not the only recursion that reaches it. Four spellings were measured to abort, at
-/// four different depths, so a bound on any one of them would have left the others fatal:
+/// Nested blocks are not the only recursion that reaches it. Five spellings were measured to abort, at
+/// five different depths, so a bound on any one of them would have left the others fatal:
 ///
 /// ```text
-/// nested block clauses    Resources { Resources { ... } }      parses 1601, aborts 1602
-/// nested `when` blocks    when Type == "x" { when ... { } }    parses 2000, aborts 4000
-/// nested map literals     Type == {k: {k: ... } }              parses 2000, aborts 4000
-/// nested list literals    Type == [[[ ... ]]]                  parses 4000, aborts 8000
+/// nested block clauses    Resources { Resources { ... } }      parses 1601, aborts 1602   bounded
+/// nested `when` blocks    when Type == "x" { when ... { } }    parses 2000, aborts 4000   bounded
+/// nested map literals     Type == {k: {k: ... } }              parses 2000, aborts 4000   bounded
+/// nested list literals    Type == [[[ ... ]]]                  parses 4000, aborts 8000   bounded
+/// query filters           q[ q[ ... ] exists ] exists          parses 1110, aborts 1115   NOT bounded
 /// ```
 ///
-/// (The last two are coarse: the ladder was 2000/4000/8000, and the exact threshold does not matter for
-/// a bound three orders of magnitude below it.) They share no single function, which is why the count is
-/// kept per open construct in a thread-local rather than passed down as a parameter: the level is opened
-/// in [`block`], which every `{ ... }` body reaches, and in [`parse_list`] and [`parse_map`], which no
-/// block passes through. Threading a depth argument instead would have changed the signature of every
-/// function on all four paths -- `clause`, `access`, `cnf_clauses`, `disjunction_clauses`, `parse_value`
-/// and everything between -- and of the `pub(crate)` ones the tests call directly, to carry one integer.
+/// (The map and list rows are coarse: the ladder was 2000/4000/8000, and the exact threshold does not
+/// matter for a bound three orders of magnitude below it. The filter row is bracketed to five levels,
+/// and its boundary is not exact either -- it shifted by a few levels when the same file was run with
+/// `parse-tree` output piped rather than discarded, the output at that depth being 148 MB.) They share no
+/// single function, which is why the count is kept per open construct in a thread-local rather than passed
+/// down as a parameter: the level is opened in [`block`], which every `{ ... }` body reaches, and in
+/// [`parse_list`] and [`parse_map`], which no block passes through. Threading a depth argument instead
+/// would have changed the signature of every function on all of those paths -- `clause`, `access`,
+/// `cnf_clauses`, `disjunction_clauses`, `parse_value` and everything between -- and of the `pub(crate)`
+/// ones the tests call directly, to carry one integer.
 ///
-/// One recursion is deliberately *not* bounded here: a query filter (`q[ q[ ... ] ]`) recurses through
-/// `predicate_filter_clauses`, and it never gets deep enough to abort because it becomes unusable first.
-/// Timed on this build, level 14 takes 0.25 seconds and every further level doubles it -- 0.48, 0.97,
-/// 1.92, 3.85, 7.66, 15.46, 30.67 at level 21 -- with every one of them exiting 0. So it is exponential
-/// in the depth rather than linear, and level 128 would be 2^107 times thirty seconds. A bound at any
-/// value that admits real files could never fire on it, and one low enough to fire would not be a depth
-/// bound but a workaround for the backtracking. That is a separate defect and it needs a separate fix.
-/// The deepest `[` nesting in either corpus is 3.
+/// The last row is the one to read carefully, because this comment used to give a reason for leaving it
+/// unbounded and the reason was wrong twice over. It said a query filter (`q[ q[ ... ] ]`, recursing
+/// through `predicate_filter_clauses`) "never gets deep enough to abort because it becomes unusable
+/// first", on the strength of the filter being exponential in the depth: 0.25 seconds at level 14,
+/// doubling every level to 30 at level 21, so level 128 would be 2^107 times thirty seconds and
+/// therefore "a bound at any value that admits real files could never fire on it".
+///
+/// The exponent is gone -- one `access` parse now serves both readings of a clause, the cost is linear,
+/// and level 128 takes 0.03 seconds -- so that arithmetic no longer holds. But the argument was already
+/// wrong before that, because the abort never depended on the exponent: the stack overflows on the way
+/// *down*, before any backtracking has been paid for. On the commit before the exponent was fixed, 1105
+/// levels did not return and 1110 aborted in about three seconds -- a depth the doubling was supposed to
+/// have put out of reach, killing the process in less time than level 22 took to parse successfully,
+/// which was 58 seconds. Removing the exponent moved that boundary to between 1110 and 1115, five levels
+/// deeper rather than shallower, so it did not bring the abort any closer.
+///
+/// A bound of 128 would fire on such a file and refuse it, which is what should happen. The only reason
+/// this path still opens no level is that `enter` is called at three sites and this is not the only
+/// recursion that misses it, so the fix belongs with the others rather than here alone. Adding
+/// `NestingGuard::enter` to `predicate_filter_clauses` turns the last row of the table above `bounded`
+/// and makes these three paragraphs deletable. Until then, a filter between 128 and 1110 levels parses
+/// where this constant says it may not, and one past 1115 aborts where it should have been refused. The
+/// deepest `[` nesting in either corpus is 3.
 ///
 /// 128 is the value the data loader already enforces on the other kind of input this tool reads
 /// (`libyaml::loader::MAX_NESTING_DEPTH`), and there is no reason for the two answers to "how deeply may
 /// input nest" to differ. It is far above anything real: over both corpora -- every `.guard` and
 /// `.ruleset` in this repository and in the rules registry snapshot, 318 files -- the deepest is **6**
 /// levels, reached by four files, and 172 of the 318 reach only 1. And it is far below every abort above,
-/// the nearest of which is 1602. Nothing between 6 and 128 is a file anyone writes, and nothing between
-/// 128 and 1602 was ever going to be evaluated anyway.
+/// the nearest of which is 1115. Nothing between 6 and 128 is a file anyone writes.
 const MAX_NESTING_DEPTH: usize = 128;
 
 thread_local! {
