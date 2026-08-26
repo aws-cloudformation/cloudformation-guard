@@ -7045,6 +7045,12 @@ fn a_name_both_assigned_and_captured_in_one_scope_is_rejected() -> Result<(), Er
 #[case::map_one_past_the_limit("maps", MAX_NESTING_DEPTH + 1, false)]
 #[case::map_past_where_it_used_to_abort("maps", 4000, false)]
 #[case::filter_well_inside_the_limit("filters", 9, true)]
+// Asserted at the limit like every other shape. It was not, until the exponential
+// backtracking in this same integration was fixed: 127 nested filters used to be 2^127 units
+// of work and a 124-level file did not finish inside 60 seconds, so the accepted side could
+// only be checked far inside the limit. It now parses in 0.05s. This is the shape whose abort
+// is nearest the limit, so it is the one whose accepted side most wants asserting there.
+#[case::filter_exactly_the_limit("filters", MAX_NESTING_DEPTH, true)]
 #[case::filter_one_past_the_limit("filters", MAX_NESTING_DEPTH + 1, false)]
 #[case::filter_past_where_it_used_to_abort("filters", 2000, false)]
 #[case::key_filter_exactly_the_limit("key_filters", MAX_NESTING_DEPTH, true)]
