@@ -81,17 +81,33 @@ pub(crate) const MERGE_KEY: &str = "<<";
 /// So the bound belongs where the deep value is *built* rather than where it is consumed: refusing here
 /// means no deep `MarkedValue` is ever constructed for anything downstream to recurse over.
 ///
-/// The same recursion is also why depth is expensive well before it is fatal. Every node rebuilds its
-/// full path string from its parent's, so the bytes held grow with the square of the depth -- n nodes
-/// carrying a path of length up to n. The **time** grows faster than that. Measured optimized on
-/// `a: ` followed by n brackets: depth 400 took 0.60 s, 600 took 1.97, 800 took 4.64, 1131 took 13.0,
-/// 1600 took 36.8, 2000 took 71.8. Fitting consecutive pairs gives an exponent of **2.94 to 2.99 over
-/// all five intervals**, so this is cubic in the depth and not quadratic. An earlier revision of this
-/// paragraph offered the 800/1600/2000 timings as the demonstration of the square law; they reproduce
-/// to within 5% but they demonstrate a cube law, so the exponent is now stated separately from the
-/// bytes. A 40 KB file of nothing but brackets is about 20000 levels, which is past the ceiling above,
-/// and it kills the process. Bounding the depth bounds that cost too, which is why this is one change
-/// and not two.
+/// Depth is also expensive well before it is fatal, and the two costs have different causes. The **bytes**
+/// are the conversion: every node's `Path` is built from its parent's by `extend_usize`/`with_location`, so
+/// n nodes each carry a path of length up to n and the bytes held grow with the square of the depth. That
+/// is structural, and reading `try_from_marked` is how to check it.
+///
+/// The **time** is not the conversion, and two earlier revisions of this paragraph said it was. Measured
+/// optimized on `a: ` followed by n brackets, `validate` runs at depth 400 in 0.60 s, 600 in 1.97, 800 in
+/// 4.64, 1131 in 13.0, 1600 in 36.8, 2000 in 71.8 -- **indistinguishable from cubic**, with fitted
+/// exponents of 2.9 to 3.0 over the five intervals depending on how many digits the inputs are rounded to.
+/// But on the same document at depth 1601, in the same binary, load-plus-convert takes **0.017 s** and
+/// adding the recursive drop takes 0.017 s. The conversion is about 0.05% of that 36.8-second run, so it
+/// cannot be what makes it cubic.
+///
+/// One whole-tree `format!("{:?}")` of the converted value takes 0.034 s at depth 1601 and produces
+/// 2,648,693 characters, growing as the square of the depth. 36.8 / 0.034 is roughly a thousand of those,
+/// which makes the third factor **O(depth) whole-tree `Debug` renders** -- quadratic output rendered a
+/// per-level number of times. The bytes are quadratic because of the paths; the time is cubic because
+/// something renders the whole tree once per level.
+///
+/// So the closing paragraph's design argument holds for the bytes and not for the time: a repeated `{:?}`
+/// is removable without changing how paths are stored. **Do not chase it from here.** The bound already
+/// closes it: at 128 levels, the deepest this constant admits, the same `validate` run takes 0.037 s, and a
+/// file past the bound is refused in 0.005 s. Every timing above was taken with this constant raised to
+/// 1_000_000, so the cubic cost is the historical reason the bound exists rather than a live cost on the
+/// shipped binary. A 40 KB file of nothing but brackets is about 20000 levels, past the stack ceiling
+/// above, and it killed the process before the bound existed. Bounding the depth bounds that cost too,
+/// which is why this is one change and not two.
 ///
 /// 128 is not arbitrary. It is the limit serde already enforces on the *other* loader in this product,
 /// and at this value the two agree level for level: both accept a document nested 128 containers deep and
@@ -139,10 +155,12 @@ pub(crate) const MERGE_KEY: &str = "<<";
 /// gains a level. An earlier revision put these at 15 and 24, one too many each, with no method recorded
 /// for re-deriving either.
 ///
-/// A non-recursive conversion was the alternative. It would remove the crash but not the path-string
-/// cost above -- either the quadratic bytes or the cubic time -- which is inherent to storing a full path
-/// at every node and reaches into `Path`, `PathAwareValue` and every reporter that prints one. A bound
-/// fixes both, in the loader, and leaves that refactor free to happen on its own terms.
+/// A non-recursive conversion was the alternative. It would remove the crash but not the **quadratic
+/// bytes**, which are inherent to storing a full path at every node and reach into `Path`,
+/// `PathAwareValue` and every reporter that prints one. It would not touch the cubic time either, but for
+/// the opposite reason: that one is not inherent to anything here, being a repeated whole-tree render
+/// rather than a property of the path representation, and it is removable on its own terms. A bound fixes
+/// the crash and caps both costs, in the loader, and leaves either refactor free to happen separately.
 const MAX_NESTING_DEPTH: usize = 128;
 
 #[derive(Debug, Default)]
