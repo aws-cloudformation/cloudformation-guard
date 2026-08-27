@@ -130,7 +130,9 @@ pub(crate) const MERGE_KEY: &str = "<<";
 ///
 /// And it is far above anything real. Measured by this loader's own counting: set this constant to N,
 /// rebuild, and run `validate --data` over every `.yaml`, `.yml`, `.json` and `.template` file in both
-/// corpora, taking a file's level count to be the smallest N that accepts it.
+/// corpora, taking a file's level count to be the smallest N that accepts it. Raising the constant is not
+/// optional for any of it -- on a build that enforces the bound every probe past 128 is refused by the
+/// count, so nothing above it is observable and none of the figures in this comment could be taken.
 ///
 /// ```text
 /// rules registry snapshot            14   kms_no_wildcard_principal_tests.yml, and two others
