@@ -60,13 +60,23 @@ pub(crate) const MERGE_KEY: &str = "<<";
 /// bound, whose unoptimized ceiling of 67 sits *below* its 128, nothing here is refused by a stack before
 /// it is refused by the count, in either profile on either stack.
 ///
-/// `Loader::load` itself is iterative, and survives depth 20000 in both profiles: it needs 1087 KB
-/// unoptimized, so it fits a 2 MB thread. Dropping the resulting `MarkedValue` is recursive drop glue
-/// and does not: load-plus-drop at 20000 needs **4721 KB unoptimized**, which a 2 MB libtest thread
-/// aborts on and `main`'s 8 MB survives. Optimized, both fit 2 MB. At this bound the drop costs about
-/// 23 KB, so none of that reaches the shipped path -- it is recorded because "survives depth 20000" is a
-/// claim about the absence of a failure, and that one is true of `load` unconditionally and of the drop
-/// only above 2 MB unoptimized.
+/// `Loader::load` itself is iterative, and survives depth 20000 in both profiles on a **16 KB** thread --
+/// the smallest `thread::Builder::stack_size` will honour on glibc, so its true need is at most that and
+/// cannot be measured lower here. Dropping the resulting `MarkedValue` is recursive drop glue and is where
+/// the stack goes: load-plus-drop at 20000 needs **4699 KB unoptimized** and 1582 KB optimized, so a 2 MB
+/// libtest thread aborts on the unoptimized one and `main`'s 8 MB survives it. Drop glue is linear at
+/// 0.2349 KB per level unoptimized, which puts the whole of load-plus-drop at this bound around **30 KB**,
+/// so none of it reaches the shipped path.
+///
+/// Recorded because "survives depth 20000" is a claim about the absence of a failure, and it is true of
+/// `load` unconditionally and of the drop only above 2 MB unoptimized. An earlier revision put `load` at
+/// "1087 KB unoptimized, **so** it fits a 2 MB thread" -- a false figure offered as the reason for a true
+/// conclusion, which is the shape that survives review, because anyone checking the conclusion finds it
+/// holds. 1087 KB was the floor of the search that produced it: the bisection's lower bound was set at
+/// 1 MB, so no smaller answer was reachable and it returned that bound plus one granule. When a measured
+/// minimum lands within one step of the low end of its own search range, it is a report of the range.
+/// The figure beside it needed no correction, which is what made the pair look sound: 4721 against 4699
+/// here, 0.5% apart, from a bisection that was not against its floor.
 ///
 /// So the bound belongs where the deep value is *built* rather than where it is consumed: refusing here
 /// means no deep `MarkedValue` is ever constructed for anything downstream to recurse over.
