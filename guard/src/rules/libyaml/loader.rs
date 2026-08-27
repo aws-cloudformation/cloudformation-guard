@@ -94,20 +94,47 @@ pub(crate) const MERGE_KEY: &str = "<<";
 /// adding the recursive drop takes 0.017 s. The conversion is about 0.05% of that 36.8-second run, so it
 /// cannot be what makes it cubic.
 ///
-/// One whole-tree `format!("{:?}")` of the converted value takes 0.034 s at depth 1601 and produces
-/// 2,648,693 characters, growing as the square of the depth. 36.8 / 0.034 is roughly a thousand of those,
-/// which makes the third factor **O(depth) whole-tree `Debug` renders** -- quadratic output rendered a
-/// per-level number of times. The bytes are quadratic because of the paths; the time is cubic because
-/// something renders the whole tree once per level.
+/// Almost all of it is one `format!` whose output is thrown away. `Traversal::at` renders
+/// `self.nodes.range(pointer..)` with `{:?}` to build the `RetrievalError` for a path that misses, and
+/// `CfnAware::report_eval` probes `at("/Resources", root).is_ok()` on every data file to decide whether to
+/// report it as a CloudFormation template. So a document with no `Resources` section renders every node
+/// whose path sorts at or after `/Resources` -- each entry printing its whole subtree, each subtree node its
+/// full path -- and `is_ok()` discards the string. It is never printed: `did not yield value` appears zero
+/// times in the output of every run below.
 ///
-/// So the closing paragraph's design argument holds for the bytes and not for the time: a repeated `{:?}`
-/// is removable without changing how paths are stored. **Do not chase it from here.** The bound already
-/// closes it: at 128 levels, the deepest this constant admits, the same `validate` run takes 0.037 s, and a
-/// file past the bound is refused in 0.005 s. Every timing above was taken with this constant raised to
-/// 1_000_000, so the cubic cost is the historical reason the bound exists rather than a live cost on the
-/// shipped binary. A 40 KB file of nothing but brackets is about 20000 levels, past the stack ceiling
-/// above, and it killed the process before the bound existed. Bounding the depth bounds that cost too,
-/// which is why this is one change and not two.
+/// One `format!` per probe, not one per level. The cube comes from the size of what is rendered, not from
+/// the number of calls.
+///
+/// The control is a single character. Measured optimized at depth 1601, 1600 brackets in every document,
+/// rule verdict held constant:
+///
+/// ```text
+///                                            rule passes    rule fails
+/// a: [[[ ... ]]]      key sorts after  /R      36.818 s       39.146 s
+/// A: [[[ ... ]]]      key sorts before /R       0.023 s        2.323 s
+/// the same brackets under Resources/B/          0.023 s        2.349 s
+/// ```
+///
+/// `a` against `A` changes nothing but whether the top-level key sorts inside the probe's range, and it
+/// moves 36.8 seconds. Same bracket count, same depth, same bytes. The conversion is 0.017 s on any of them.
+///
+/// The 2.3 seconds in the right-hand column is a second, independent cost, and it is the one the closing
+/// paragraph's design argument is actually about. It appears only when a rule fails, is unaffected by the
+/// probe, and a stack sample lands in `GenericSummary::report_eval` -> `simplified_json_from_root` ->
+/// `report_all_failed_clauses_for_rules` -> `PathAwareValue::clone`, recursive, each cloned node copying its
+/// full path `String`. So "inherent to storing a full path at every node" is true of this 6% and false of
+/// the other 94%. Medium confidence on the attribution: one stack sample and an exponent, no control that
+/// isolates the clone.
+///
+/// **Do not chase either from here.** All three factors -- range size, subtree size, path length -- scale
+/// with depth, and depth is bounded at 128, so at any permitted depth the whole thing is about 0.02 s: the
+/// same `validate` run at 128 levels takes 0.037 s, and a file past the bound is refused in 0.005 s. A wide,
+/// shallow document has short paths and small subtrees and stays cheap too. Every timing above needed this
+/// constant raised to 1_000_000 to observe at all, so this paragraph is the historical justification for why
+/// bounding depth mattered, not a live cost on the shipped binary. The discarded-message waste is recorded
+/// as its own item in the known-defects write-up rather than fixed here. A 40 KB file of nothing but
+/// brackets is about 20000 levels, past the stack ceiling above, and it killed the process before the bound
+/// existed. Bounding the depth bounds all of it, which is why this is one change and not two.
 ///
 /// 128 is not arbitrary. It is the limit serde already enforces on the *other* loader in this product,
 /// and at this value the two agree level for level: both accept a document nested 128 containers deep and
@@ -159,10 +186,12 @@ pub(crate) const MERGE_KEY: &str = "<<";
 ///
 /// A non-recursive conversion was the alternative. It would remove the crash but not the **quadratic
 /// bytes**, which are inherent to storing a full path at every node and reach into `Path`,
-/// `PathAwareValue` and every reporter that prints one. It would not touch the cubic time either, but for
-/// the opposite reason: that one is not inherent to anything here, being a repeated whole-tree render
-/// rather than a property of the path representation, and it is removable on its own terms. A bound fixes
-/// the crash and caps both costs, in the loader, and leaves either refactor free to happen separately.
+/// `PathAwareValue` and every reporter that prints one -- and not the clone cost on the failure path
+/// either, which is the same property showing up as time. It would not touch the dominant cost at all:
+/// a discarded `{:?}` of a `BTreeMap` range is not a property of the path representation and is removable
+/// on its own terms. So "inherent" is the right word for one of the two costs above and the wrong word for
+/// the other, which is why they are separated. A bound fixes the crash and caps all of it, in the loader,
+/// and leaves either refactor free to happen separately.
 const MAX_NESTING_DEPTH: usize = 128;
 
 #[derive(Debug, Default)]
