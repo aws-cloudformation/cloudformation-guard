@@ -32,9 +32,10 @@ pub(crate) const MERGE_KEY: &str = "<<";
 /// `MarkedValue` is ever constructed for anything downstream to recurse over.
 ///
 /// Every figure below is rustc 1.77.2 on x86_64 Linux and carries its profile, because an unlabeled release
-/// figure in the parser's half of this bound hid a `cargo test` that aborted on three CI platforms. None of
-/// them is observable on a build that enforces the bound: every probe past 128 is refused by the count
-/// first, so re-deriving any of this means raising the constant.
+/// figure in the parser's half of this bound hid a `cargo test` that aborted on three CI platforms. Which
+/// build each one needs differs: the figures at 128 are observable on the stock binary, the ones above it
+/// need this constant raised, the corpus depths below it need it lowered, and the serde boundary does not
+/// depend on this constant at all.
 ///
 /// **The stack.** The conversion costs **1.493 KB per level optimized, 7.881 KB unoptimized**. Bisect an
 /// explicit `stack_size` at a fixed depth rather than the depth at a fixed stack; it is the same measurement
@@ -107,11 +108,10 @@ pub(crate) const MERGE_KEY: &str = "<<";
 ///
 /// The 23 is not a template. Every file here deeper than 11 levels is under an `output-dir/`, which is
 /// cfn-guard's own serialized parse trees and validate reports, and this loader never reads those. Nothing
-/// in either corpus shaped like a CloudFormation template passes 12, and the registry holds no template
-/// files at all: its data files are `test` specs whose `input:` blocks carry the templates, read by the
-/// serde loader rather than this one. So the bound clears real input by an order of magnitude and clears
-/// even this repository's serialized output several times over, which is the form of the claim that does not
-/// move when a fixture gains a level.
+/// in either corpus shaped like a CloudFormation template passes 12, and most of the registry's data files
+/// are `test` specs whose `input:` blocks carry the templates, read by the serde loader rather than this
+/// one. So the bound clears real input by an order of magnitude and clears even this repository's serialized
+/// output several times over, which is the form of the claim that does not move when a fixture gains a level.
 ///
 /// A non-recursive conversion was the alternative. It would remove the crash but not the quadratic bytes,
 /// and not the clone on the failure path either, which is the same property showing up as time: both are
