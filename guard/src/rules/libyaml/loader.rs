@@ -32,24 +32,31 @@ pub(crate) const MERGE_KEY: &str = "<<";
 /// for each, because the parser's half of this bound carried unlabeled release figures that turned out to
 /// be false unoptimized.
 ///
-/// The durable measurement is the cost per level, not the ceiling. Bisecting `RLIMIT_STACK` and reading
-/// off where conversion turns into SIGABRT gives **1.49 KB per level optimized and 7.70 KB unoptimized**,
-/// linear across 512, 1024 and 2048 KB in both profiles. That scales to any stack:
+/// The durable measurement is the cost per level, not the ceiling: **1.493 KB per level optimized and
+/// 7.881 KB unoptimized**, for the conversion. Measured by requesting an explicit `stack_size` on a spawned
+/// thread and bisecting it to 16 KB at each of four depths -- 500, 1000, 1500, 2000 -- which is linear to
+/// within 0.4% across all three intervals in both profiles. That scales to any stack:
 ///
 /// ```text
 ///                     8 MB (`main`)   2 MB (a Rust thread)
-/// optimized              ~5480               ~1360
-/// unoptimized            ~1050                ~255
+/// optimized              ~5480               ~1370
+/// unoptimized            ~1040                ~256
 /// ```
 ///
-/// The ceilings are given as approximate on purpose, because pinning one exactly is impractical rather
-/// than merely tedious: a probe near the 8 MB ceiling has to convert a 5000-level document, which costs
-/// 20 to 25 minutes for the reason in the next paragraph, so a bisection is hours. An earlier revision
-/// stated it as "depth 5281 converts, depth 5375 aborts". 5281 does convert -- measured, 1358 seconds --
-/// but so does 5375, in 1476, so the abort is not where that figure put it. Re-derive the per-level cost
-/// instead; each of its points takes seconds.
+/// Bisect the stack at a fixed depth, not the depth at a fixed stack. An earlier revision did the latter
+/// and reported 7.70 KB per level: it bracketed the abort depth to within 4 levels at 1024 and 2048 KB and
+/// took the slope from those two midpoints, which carries ±0.25 KB of error into the answer -- enough to
+/// miss by the 2% that separates 7.70 from 7.881. The stack figure is a four-digit number bisected to 16 KB;
+/// the depth figure is a three-digit number bracketed to 4. Same method, one axis, two orders of magnitude
+/// of precision between them.
 ///
-/// The entry that matters is the bottom right: **255 is still twice this bound**. So unlike the parser's
+/// The ceilings are approximate on purpose, because pinning one exactly is impractical rather than merely
+/// tedious: a probe near the 8 MB ceiling has to convert a 5000-level document, which costs 20 to 25
+/// minutes for the reason below, so a bisection is hours. An earlier revision stated it as "depth 5281
+/// converts, depth 5375 aborts". 5281 does convert -- 1358 seconds, optimized -- but so does 5375, in 1476,
+/// so the abort is not where that figure put it.
+///
+/// The entry that matters is the bottom right: **256 is still twice this bound**. So unlike the parser's
 /// bound, whose unoptimized ceiling of 67 sits *below* its 128, nothing here is refused by a stack before
 /// it is refused by the count, in either profile on either stack.
 ///
