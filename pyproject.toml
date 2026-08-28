@@ -3,6 +3,25 @@ line-length = 100
 target-version = ['py37']
 include = '\.pyi?$'
 
+# Ruff has to be told which Python this hook runs on. It normally infers the
+# floor from `project.requires-python`, which does not exist here: the hook is
+# packaged from setup.cfg, where `python_requires = >=3.8`. With nothing to infer
+# from, ruff assumes a current interpreter and its pyupgrade rules then propose
+# syntax that is invalid at the declared floor.
+#
+# This setting is load-bearing, not decoration. Removing it makes UP035 fire and
+# ask for `from collections.abc import Sequence`; ruff also asked for PEP 604
+# unions before `from __future__ import annotations` was added to cfn_guard.py,
+# and without that import `Sequence[str] | None` raises
+# `TypeError: unsupported operand type(s) for |` at import time on 3.9. CI runs
+# `python-version: '3.x'`, so it resolves to a modern interpreter where both
+# rewrites look fine -- nothing in CI would have caught either break.
+#
+# Because these rules are version-gated rather than disabled, they start applying
+# again on their own once the floor moves up. Keep this in step with setup.cfg.
+[tool.ruff]
+target-version = "py38"
+
 # Conventional Commits, via commitizen-tools/commitizen.
 #
 # `cz commit` prompts for a well-formed message; `cz check` validates one. Both
