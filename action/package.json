@@ -106,7 +106,7 @@
     "@vercel/ncc": "^0.38.4",
     "eslint": "^9.25.1",
     "eslint-plugin-github": "^5.1.8",
-    "eslint-plugin-jest": "^28.11.0",
+    "eslint-plugin-jest": "^29.16.5",
     "eslint-plugin-jsonc": "^2.20.0",
     "eslint-plugin-prettier": "^5.5.5",
     "globals": "^16.0.0",
