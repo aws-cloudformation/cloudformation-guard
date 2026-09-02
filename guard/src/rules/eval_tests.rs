@@ -5162,6 +5162,23 @@ fn using_resource_names_for_assessment() -> Result<()> {
     Ok(())
 }
 
+/// Substring `IN` where the right-hand side is a query rather than a literal: `%bucket_names[*]`
+/// resolves to `"s3"` and `Resource.'Fn::Sub'` to the longer `"aws:arn:s3::${s3}"`.
+///
+/// Broken rather than unimplemented. It passed when it was written -- measured on c2447bee, where
+/// every `IN` clause went through `in_cmp` in `eval.rs`, whose `(String, String)` arm is
+/// `rhs.contains(lhs)` however the two operands were obtained. `InOperation::compare` in
+/// `eval/operators.rs` replaced that path in 901d40a6 and reaches `string_in`, the substring check,
+/// only from the arms whose right-hand side satisfies `is_literal`; a query lands in the
+/// `(None, None)` arm, which asks `contained_in` alone, and two scalars there fall through to
+/// `compare_eq`. So a scalar query against a string literal holds while the same scalar query
+/// against a query resolving to that identical string fails, which puts neither `some` nor the
+/// filter capture in this. Fixing it is a semantic change with no documentation behind it:
+/// `docs/CLAUSES.md` describes `IN` as membership of a list and never mentions substrings.
+///
+/// The `#[ignore]` arrived in 1aca9003, in the same hunk that first gave the function `#[test]` --
+/// 901d40a6 had carried it in with no attribute at all, so nothing observed what that commit
+/// dropped, and no reason was recorded when it was finally parked.
 #[test]
 #[ignore]
 fn test_string_in_comparison() -> Result<()> {
