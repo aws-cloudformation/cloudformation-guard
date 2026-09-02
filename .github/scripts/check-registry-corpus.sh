@@ -77,7 +77,15 @@ for expected_file in "$expected_unchecked" "$expected_orphans"; do
     fi
 done
 
-work=$(mktemp -d "${TMPDIR:-/tmp}/cfn-guard-registry-check.XXXXXX")
+# `TMPDIR` is not necessarily a path this shell can use. On a Windows runner Git bash can inherit a value
+# carrying a drive letter and backslashes, which is not a directory from bash's point of view, and `mktemp`
+# then fails on the template prefix rather than on anything to do with the corpus. Fall back instead of
+# dying, because that failure mode is the worst kind to debug from a log: a bare `mktemp:` line, before any
+# condition has run, with no `FAIL: condition` to say which check was unhappy -- it reads as the checker
+# being broken rather than as the environment being unusual.
+tmproot=${TMPDIR:-/tmp}
+[ -d "$tmproot" ] || tmproot=/tmp
+work=$(mktemp -d "$tmproot/cfn-guard-registry-check.XXXXXX")
 readonly work
 trap 'rm -rf "$work"' EXIT
 
