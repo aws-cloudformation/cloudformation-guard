@@ -244,11 +244,17 @@ impl Executable for Test {
 
             let path = PathBuf::from(file);
 
-            let rule_file = File::open(&path)?;
-            // A directory opens successfully, so this is the check that catches it, and the error it
-            // raised was `ErrorKind::InvalidInput`. That rendered as "I/O error when reading invalid
-            // input parameter": it named no path, and "input parameter" is `validate`'s
-            // `--input-params`, a flag `test` does not have. It also exited 255, the code
+            // The check runs before the open, and through `fs::metadata` rather than through the open
+            // handle, because a directory is not openable everywhere. On Unix `File::open` on a
+            // directory succeeds and raises `ErrorKind::InvalidInput` on the first read. On Windows it
+            // does not open at all: `CreateFileW` requires `FILE_FLAG_BACKUP_SEMANTICS` to return a
+            // handle to a directory, which `File::open` does not pass and `fs::metadata` does. So
+            // checking through the handle only ever ran on Unix, and on Windows the `?` on the open
+            // reached `main` first.
+            //
+            // Both spellings said the wrong thing. The Unix one rendered as "I/O error when reading
+            // invalid input parameter": it named no path, and "input parameter" is `validate`'s
+            // `--input-params`, a flag `test` does not have. Both exited 255, the code
             // `guard/README.md` gives to cfn-guard itself failing.
             //
             // `TEST_ERROR_STATUS_CODE` instead, which that table defines for `test` as "an
@@ -259,7 +265,7 @@ impl Executable for Test {
             //
             // 255 stays on a path that does not exist, which `validate_path` above rejects before
             // this point and all three subcommands agree on.
-            if !rule_file.metadata()?.is_file() {
+            if !std::fs::metadata(&path)?.is_file() {
                 writer.write_err(format!(
                     "`{file}` is not a rules file. --rules-file takes one file; \
                      use --dir to walk a directory of rules files."
@@ -267,6 +273,8 @@ impl Executable for Test {
 
                 return Ok(TEST_ERROR_STATUS_CODE);
             }
+
+            let rule_file = File::open(&path)?;
 
             match self.output_format {
                 OutputFormatType::SingleLineSummary => handle_plaintext_single_file(

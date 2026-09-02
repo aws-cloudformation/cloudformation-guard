@@ -447,11 +447,39 @@ mod test_command_tests {
 
     /// The plaintext directory report writes one section per rules file, terminated by a `---` line.
     /// Returns the section that names `rule_file`.
+    ///
+    /// `rule_file` is a bare file name, matched anchored to the separator in front of it so that a
+    /// section naming `s3_encryption.guard` is not returned to a caller asking for `s3.guard`. The
+    /// anchor is `MAIN_SEPARATOR` and not `/`, because the report prints the path the walk built: the
+    /// directory keeps the separators it was passed on the command line, and each file name under it
+    /// is joined on with the platform's own. Every one of these searches was written with a literal
+    /// `/` and so found nothing on Windows, where the joined separator is `\`.
     fn section_for<'out>(stdout: &'out str, rule_file: &str) -> &'out str {
+        let anchored = format!("{}{}", std::path::MAIN_SEPARATOR, rule_file);
+
         stdout
             .split("\n---")
-            .find(|section| section.contains(rule_file))
-            .unwrap_or_else(|| panic!("no section mentions {} in:\n{}", rule_file, stdout))
+            .find(|section| section.contains(&anchored))
+            .unwrap_or_else(|| panic!("no section mentions {} in:\n{}", anchored, stdout))
+    }
+
+    /// The path the report prints for the file reached by walking from `dir` through `components`.
+    ///
+    /// Built the way the command builds it -- `dir` verbatim, then each component pushed on -- rather
+    /// than written out as one string literal, because a runtime path here has *both* separators. The
+    /// directory reaches the report exactly as these tests spell it, with `/`, while every component
+    /// the walk joins on is separated by `MAIN_SEPARATOR`, so on Windows the report says
+    /// `resources/test-command/orphaned-test-file\tests\s3_tests.yml`. An all-`/` literal and an
+    /// all-`\` literal are both wrong against that, and rewriting the separators in the report before
+    /// comparing would be normalising the side under test: the report's separators are part of what
+    /// these assertions are checking.
+    fn reported_path(dir: &str, components: &[&str]) -> String {
+        let mut path = std::path::PathBuf::from(dir);
+        for component in components {
+            path.push(component);
+        }
+
+        path.display().to_string()
     }
 
     /// The case names a section reported, which is the set of test files that rules file was paired
@@ -498,7 +526,7 @@ mod test_command_tests {
             stdout
         );
 
-        let encryption = section_for(&stdout, "/s3_encryption.guard");
+        let encryption = section_for(&stdout, "s3_encryption.guard");
         assert_eq!(
             suite_names_in(encryption),
             vec!["suite for s3 encryption"],
@@ -511,7 +539,7 @@ mod test_command_tests {
             encryption
         );
         assert_eq!(
-            suite_names_in(section_for(&stdout, "/s3.guard")),
+            suite_names_in(section_for(&stdout, "s3.guard")),
             vec!["suite for s3"],
             "s3.guard must keep only its own suite:\n{}",
             stdout
@@ -542,13 +570,13 @@ mod test_command_tests {
             stdout
         );
         assert_eq!(
-            suite_names_in(section_for(&stdout, "/s3.guard")),
+            suite_names_in(section_for(&stdout, "s3.guard")),
             vec!["suite for s3"],
             "s3.guard must be paired with its own suite only:\n{}",
             stdout
         );
         assert_eq!(
-            suite_names_in(section_for(&stdout, "/s3_encryption.guard")),
+            suite_names_in(section_for(&stdout, "s3_encryption.guard")),
             vec!["suite for s3 encryption"],
             "s3_encryption.guard must be paired with its own suite only:\n{}",
             stdout
@@ -571,12 +599,12 @@ mod test_command_tests {
     /// This one passes before the change as well as after. That is what it is for.
     #[test]
     fn a_rules_file_with_no_test_file_is_skipped_without_failing_the_run() {
+        const DIR: &str = "resources/test-command/rules-file-without-tests";
+
         let mut reader = Reader::default();
         let mut writer = Writer::new(WBVec(vec![])).expect("Failed to create writer.");
         let status_code = TestCommandTestRunner::default()
-            .directory(Option::from(
-                "resources/test-command/rules-file-without-tests",
-            ))
+            .directory(Option::from(DIR))
             .run(&mut writer, &mut reader);
 
         assert_eq!(
@@ -587,14 +615,15 @@ mod test_command_tests {
 
         let stdout = writer.stripped().expect("failed to read stdout");
         assert!(
-            stdout.contains(
-                "Guard File resources/test-command/rules-file-without-tests/orphan.guard did not have any tests associated, skipping."
-            ),
+            stdout.contains(&format!(
+                "Guard File {} did not have any tests associated, skipping.",
+                reported_path(DIR, &["orphan.guard"])
+            )),
             "the unpaired rules file must still be reported as skipped:\n{}",
             stdout
         );
         assert_eq!(
-            suite_names_in(section_for(&stdout, "/paired.guard")),
+            suite_names_in(section_for(&stdout, "paired.guard")),
             vec!["suite for paired"],
             "and the paired one must still run:\n{}",
             stdout
@@ -626,9 +655,9 @@ mod test_command_tests {
             stdout
         );
         for (rule_file, suite) in [
-            ("/a.guard", "suite for a"),
-            ("/a_b.guard", "suite for a_b"),
-            ("/a_b_c.guard", "suite for a_b_c"),
+            ("a.guard", "suite for a"),
+            ("a_b.guard", "suite for a_b"),
+            ("a_b_c.guard", "suite for a_b_c"),
         ] {
             assert_eq!(
                 suite_names_in(section_for(&stdout, rule_file)),
@@ -679,18 +708,20 @@ mod test_command_tests {
 
         let stderr = err_writer.err_to_stripped().expect("failed to read stderr");
         assert!(
-            stderr.contains(
-                "resources/test-command/orphaned-test-file/tests/s3_tests.yml did not match any rules file, so it was not run"
-            ),
+            stderr.contains(&format!(
+                "{} did not match any rules file, so it was not run",
+                reported_path(DIR, &["tests", "s3_tests.yml"])
+            )),
             "the ignored test file must be named, path included:\n{}",
             stderr
         );
 
         let stdout = out_writer.stripped().expect("failed to read stdout");
         assert!(
-            stdout.contains(
-                "Guard File resources/test-command/orphaned-test-file/s3_bucket.guard did not have any tests associated, skipping."
-            ),
+            stdout.contains(&format!(
+                "Guard File {} did not have any tests associated, skipping.",
+                reported_path(DIR, &["s3_bucket.guard"])
+            )),
             "and the existing line about the rules file must be unchanged:\n{}",
             stdout
         );
@@ -1103,7 +1134,8 @@ mod test_command_tests {
         );
         assert!(
             stdout.contains(&format!(
-                "Guard File {DIR}/logging.guard did not have any tests associated, skipping."
+                "Guard File {} did not have any tests associated, skipping.",
+                reported_path(DIR, &["logging.guard"])
             )),
             "and the sibling file must be shown taking no part in the run:\n{}",
             stdout

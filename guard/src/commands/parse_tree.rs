@@ -101,12 +101,20 @@ impl Executable for ParseTree {
     fn execute(&self, writer: &mut Writer, reader: &mut Reader) -> Result<i32> {
         let mut file: Box<dyn std::io::Read> = match &self.rules {
             Some(path) => {
-                let opened = File::open(path)?;
-
-                // A directory opens successfully and then fails in `read_to_string` with EISDIR,
-                // which `?` carried to `main` as -1 -- a code this command otherwise reserves for
-                // cfn-guard failing, and one that said "Is a directory (os error 21)" without naming
-                // the path or the flag.
+                // The path is tested before it is opened, because a directory is not openable
+                // everywhere. On Unix `File::open` on a directory succeeds and the failure surfaces
+                // later, in `read_to_string`, as EISDIR. On Windows it does not open at all:
+                // `CreateFileW` requires `FILE_FLAG_BACKUP_SEMANTICS` to return a handle to a
+                // directory and `File::open` does not pass it, so the `?` on the open carried an I/O
+                // error to `main` as -1 and this check was never reached. A check made through the
+                // open handle can only run on the platform where the open succeeds.
+                //
+                // `fs::metadata` answers on both: its Windows implementation opens with
+                // `FILE_FLAG_BACKUP_SEMANTICS` precisely so a directory can be stat'ed, and falls
+                // back to `FindFirstFileW` if even that is refused.
+                //
+                // Either way the caller was told an I/O error naming neither the path nor the flag,
+                // under the code this command otherwise reserves for cfn-guard itself failing.
                 //
                 // `ERROR_STATUS_CODE` for the same reason the parse error below takes it: a rules
                 // path that cannot be used as a rules file is a mistake in what the caller named, and
@@ -115,9 +123,11 @@ impl Executable for ParseTree {
                 // three answers, each in the subcommand's own documented codes, exactly as the three
                 // already differ on a rules file the parser rejects.
                 //
-                // A missing path still keeps the -1 from `File::open` above, which all three
-                // subcommands agree on.
-                if !opened.metadata()?.is_file() {
+                // A missing path still keeps -1, now through the `?` on `fs::metadata` rather than on
+                // the open: a path whose final component does not exist is `ENOENT` on Unix and
+                // `ERROR_FILE_NOT_FOUND` on Windows from either call, so the code and the message are
+                // the ones `validate`, `test` and `parse-tree` already agree on.
+                if !std::fs::metadata(path)?.is_file() {
                     writer.write_err(format!(
                         "Parsing error handling rule file = {}, Error = a directory is not a rules file\n---",
                         file_name_of(Path::new(path)).underline(),
@@ -126,7 +136,7 @@ impl Executable for ParseTree {
                     return Ok(ERROR_STATUS_CODE);
                 }
 
-                Box::new(std::io::BufReader::new(opened))
+                Box::new(std::io::BufReader::new(File::open(path)?))
             }
             None => Box::new(reader),
         };
