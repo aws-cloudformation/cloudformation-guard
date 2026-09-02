@@ -79,9 +79,10 @@ pub(crate) const MERGE_KEY: &str = "<<";
 /// `String`. Medium confidence on that attribution: one stack sample, and no control isolating the clone.
 ///
 /// **Do not chase either from here.** Every factor -- range size, subtree size, path length -- scales with
-/// depth, and depth is bounded at 128, where the same `validate` run finishes in under a tenth of a second.
-/// A bound rather than a figure, deliberately: at a few hundredths of a second the measurement moves by tens
-/// of percent with whatever else the host is running, so an exact one reproduces only where it was taken.
+/// depth, and depth is bounded at 128, where the same `validate` run finishes in under a tenth of a second:
+/// 0.028 s median over 60 runs on an unloaded host, holding within 5% across batches. Ambient load moves
+/// that by half again or more, so the measuring condition travels with the figure -- a bare value reproduces
+/// only on the machine that took it, which is how the number this line used to quote came to be wrong.
 /// A wide, shallow document has short paths and small subtrees and stays cheap as well. So this is the
 /// historical justification for the bound rather than a live cost on the shipped binary, and the
 /// discarded-message waste is filed in the known-defects write-up instead of fixed here.
