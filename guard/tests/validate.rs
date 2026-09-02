@@ -3236,14 +3236,28 @@ mod validate_tests {
     /// its leading `/` produced a relative reference with no `uriBaseId` to resolve it against, which
     /// named nothing at a code-scanning consumer's repository root.
     ///
-    /// Skipped on Windows for the reason `compare_write_buffer_with_file` skips there: the paths are
-    /// not POSIX-absolute and this assertion is about POSIX path-to-URI conversion.
+    /// The rootedness check below runs on every platform; the `file://` spelling check does not, and
+    /// the split is deliberate.
+    ///
+    /// This whole test used to return early on Windows, so the leak it exists to catch had no coverage
+    /// at all there -- and the three checks that stood in for it were weak on POSIX too. They were
+    /// `!contains("\"uri\": \"local/")` and the same for `home/` and `github/`: three directory names
+    /// a stripped absolute path happens to start with on the machines anyone had looked at. A checkout
+    /// under `/opt/build` would have satisfied all three while carrying exactly the defect. So the
+    /// three literals are gone, replaced by the property they were approximating -- an artifact
+    /// location must be rooted -- which is checkable without naming any directory and without assuming
+    /// a separator. That reads the same question on both platforms: a POSIX path that lost its leading
+    /// `/`, and a Windows path that lost its root name, are both `is_absolute() == false`.
+    ///
+    /// The `file://` check stays POSIX-only because the product genuinely emits something else on
+    /// Windows: `sanitize_path` returns any path not starting with `/` unchanged, so a Windows artifact
+    /// location is a bare `\\?\C:\...` with no scheme at all. That is very likely its own defect -- an
+    /// `artifactLocation.uri` that is not a URI -- but it is a defect in shipped code on a platform
+    /// this suite cannot exercise, so it is named here rather than guessed at. Gating one assertion is
+    /// not the same as skipping the test: the rootedness check is a real assertion that a rooted path
+    /// passes and a stripped one fails, on Windows as much as here.
     #[test]
     fn sarif_artifact_locations_are_resolvable_file_uris() {
-        if cfg!(windows) {
-            return;
-        }
-
         let mut reader = Reader::default();
         let mut writer = Writer::new(WBVec(vec![])).expect("Failed to create writer.");
 
@@ -3260,27 +3274,82 @@ mod validate_tests {
         assert_eq!(StatusCode::VALIDATION_ERROR, status_code);
 
         let output = writer.stripped().expect("failed to read the writer");
-        let expected = format!(
-            "\"uri\": \"file://{}\"",
-            get_full_path_for_resource_file(
-                "resources/validate/data-dir/s3-public-read-prohibited-template-non-compliant.yaml"
-            )
+
+        let uris = artifact_location_uris(&output);
+        assert!(
+            !uris.is_empty(),
+            "a run reporting no artifact location would satisfy the loop below without checking \
+             anything:\n{}",
+            output
         );
 
-        assert!(
-            output.contains(&expected),
-            "every artifact location must be a file:// URI naming the real file; expected to find\n\
-             {}\nin\n{}",
-            expected,
-            output
-        );
-        assert!(
-            !output.contains("\"uri\": \"local/")
-                && !output.contains("\"uri\": \"home/")
-                && !output.contains("\"uri\": \"github/"),
-            "no location may be an absolute path with its leading slash removed:\n{}",
-            output
-        );
+        for uri in &uris {
+            let path = uri.strip_prefix("file://").unwrap_or(uri);
+            assert!(
+                std::path::Path::new(path).is_absolute(),
+                "an artifact location that is not rooted resolves against whatever base the consumer \
+                 happens to use, which is the defect this pins; got {} among {} location(s) in\n{}",
+                uri,
+                uris.len(),
+                output
+            );
+        }
+
+        if !cfg!(windows) {
+            let expected = format!(
+                "\"uri\": \"file://{}\"",
+                get_full_path_for_resource_file(
+                    "resources/validate/data-dir/s3-public-read-prohibited-template-non-compliant.yaml"
+                )
+            );
+
+            assert!(
+                output.contains(&expected),
+                "every artifact location must be a file:// URI naming the real file; expected to find\n\
+                 {}\nin\n{}",
+                expected,
+                output
+            );
+        }
+    }
+
+    /// Every artifact location a SARIF run reports, in document order.
+    ///
+    /// Keyed on the `uri` member itself rather than on its parents, because the document spells the
+    /// same member two ways -- `artifacts[].location.uri` and
+    /// `results[].locations[].physicalLocation.artifactLocation.uri` -- and the driver's own two URIs
+    /// are `downloadUri` and `informationUri`, which are different member names. So every `uri` in the
+    /// document is an artifact location and none of the driver's metadata is picked up by accident.
+    ///
+    /// Parsed rather than scanned for a `"uri": "..."` substring: a percent-encoded path can contain
+    /// `%22`, and a scan would also have to decide what to do about the escaping that JSON applies to a
+    /// Windows path's backslashes. `serde_json` already answers both, and is a dependency of this crate
+    /// rather than something added for this.
+    fn artifact_location_uris(sarif: &str) -> Vec<String> {
+        fn collect(value: &serde_json::Value, found: &mut Vec<String>) {
+            match value {
+                serde_json::Value::Object(members) => {
+                    for (name, member) in members {
+                        match (name.as_str(), member.as_str()) {
+                            ("uri", Some(uri)) => found.push(uri.to_string()),
+                            _ => collect(member, found),
+                        }
+                    }
+                }
+                serde_json::Value::Array(items) => {
+                    items.iter().for_each(|item| collect(item, found))
+                }
+                _ => {}
+            }
+        }
+
+        let document: serde_json::Value =
+            serde_json::from_str(sarif).expect("the sarif output must be JSON");
+
+        let mut found = vec![];
+        collect(&document, &mut found);
+
+        found
     }
 
     #[test]

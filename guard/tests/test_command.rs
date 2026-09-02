@@ -482,6 +482,42 @@ mod test_command_tests {
         path.display().to_string()
     }
 
+    /// [`section_for`] requires a separator in front of the name, and nothing else here would notice
+    /// if it stopped.
+    ///
+    /// The anchor is the reason `section_for` takes a bare file name and not a substring, but until
+    /// this test existed, loosening it to a plain `contains(file_name)` broke no test -- measured, by
+    /// doing exactly that: all six callers stayed green. None of the fixtures can tell the difference,
+    /// because substring containment does not actually confuse the collision they are built from.
+    /// `s3_encryption.guard` does not *contain* `s3.guard`; prefix extension adds characters after the
+    /// stem, and a substring search for `s3.guard` needs `s3` immediately followed by `.guard`.
+    ///
+    /// The direction that does confuse it is the other one -- a name that *ends with* the name being
+    /// searched for. `my_s3.guard` contains `s3.guard`, so an unanchored search returns whichever of
+    /// the two sections the walk reported first. That is what this fixture is: two sections in walk
+    /// order, the suffix-extended one first, so an unanchored search picks the wrong one and an
+    /// anchored search skips it.
+    ///
+    /// Built as a string rather than as a directory of `.guard` files because the property under test
+    /// belongs to the helper, not to the command: what is being pinned is that `section_for` requires a
+    /// path-component boundary, and a fixture would make that depend on a real walk agreeing to report
+    /// two such names.
+    #[test]
+    fn section_for_requires_a_separator_in_front_of_the_name() {
+        let stdout = format!(
+            "Testing Guard File dir{sep}my_s3.guard\n  Name: suffix extension\n---\n\
+             Testing Guard File dir{sep}s3.guard\n  Name: the one asked for\n---\n",
+            sep = std::path::MAIN_SEPARATOR
+        );
+
+        assert_eq!(
+            suite_names_in(section_for(&stdout, "s3.guard")),
+            vec!["the one asked for"],
+            "a name ending in the one searched for must not answer the search:\n{}",
+            stdout
+        );
+    }
+
     /// The case names a section reported, which is the set of test files that rules file was paired
     /// with.
     fn suite_names_in(section: &str) -> Vec<&str> {
