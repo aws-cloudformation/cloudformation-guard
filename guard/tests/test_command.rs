@@ -1064,6 +1064,114 @@ mod test_command_tests {
         );
     }
 
+    /// Which of two conditions decides the exit code when a run carries both.
+    ///
+    /// An unchecked expectation outranks a genuine unmet one, so `both` owes
+    /// `INCORRECT_STATUS_ERROR` and not `TEST_COMMAND_FAILURE`. That is deliberate:
+    /// `TestResult::get_exit_code` in `guard/src/commands/reporters/test/structured.rs` asks whether
+    /// anything could not be evaluated before it asks whether anything failed, because an expectation
+    /// whose rule produced no verdict was never evaluated -- there was nothing to compare it against --
+    /// which is the same answer as a case that could not run rather than a weaker version of a failure.
+    ///
+    /// This exists because nothing pinned that decision and the code invites the opposite reading. The
+    /// write for an unchecked expectation is the last of three in the generic reporter's per-case loop
+    /// and, unlike the write for a failure two lines above it, carries no guard -- so it reads as an
+    /// oversight silently clobbering the 7, and the 7 really does disappear. It is not an oversight,
+    /// and inverting it is worse than it looks: within one file the reporter still knows *why* the code
+    /// was set and can discriminate, but across files only the number survives the merge in
+    /// `get_exit_code`, so the same two conditions would answer 7 packed in one file and 1 split across
+    /// two. The exit code would become a function of corpus layout.
+    ///
+    /// A table rather than one case. `both` alone would be satisfied by a change that deleted the
+    /// unchecked write, and `unmet_only` and `clean` are what catch that and its opposite.
+    ///
+    /// The exit code is asserted here and the diagnostic by
+    /// [`an_unchecked_expectation_is_named_even_when_a_failure_shares_the_run`], because the two come
+    /// from different lines and a change can take either one alone.
+    #[rstest]
+    #[case::unmet_only("unmet_only", StatusCode::TEST_COMMAND_FAILURE)]
+    #[case::unchecked_only("unchecked_only", StatusCode::INCORRECT_STATUS_ERROR)]
+    #[case::both("both", StatusCode::INCORRECT_STATUS_ERROR)]
+    #[case::clean("clean", StatusCode::SUCCESS)]
+    fn an_unchecked_expectation_outranks_an_unmet_one(
+        #[case] data: &str,
+        #[case] expected_code: i32,
+    ) {
+        let mut reader = Reader::default();
+        let mut writer = Writer::new(WBVec(vec![])).expect("Failed to create writer.");
+        let status_code = TestCommandTestRunner::default()
+            .test_data(Option::from(
+                format!("resources/test-command/exit-code-precedence/{data}.yaml").as_str(),
+            ))
+            .rules(Some(
+                "resources/test-command/exit-code-precedence/precedence.guard",
+            ))
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(
+            expected_code, status_code,
+            "{}.yaml exited {}, which is not the code this input owes",
+            data, status_code
+        );
+    }
+
+    /// The unchecked expectation is still named when a genuine failure shares the run.
+    ///
+    /// Asserted separately from the exit code because losing this is the more expensive of the two. The
+    /// code that `both.yaml` earns is the same code an unreadable rules file earns, so on its own it
+    /// does not tell the author that a rule name went stale; this sentence is the only thing that does,
+    /// and it is what found eleven dead assertions in the rules registry. A change could satisfy
+    /// [`an_unchecked_expectation_outranks_an_unmet_one`] while dropping the message entirely.
+    ///
+    /// The unmet expectation is asserted too, on stdout. The precedence decides which condition owns
+    /// the exit code, not which one gets reported, and a run that stopped mentioning the failure
+    /// because it lost the tie-break would be the same defect pointing the other way.
+    #[test]
+    fn an_unchecked_expectation_is_named_even_when_a_failure_shares_the_run() {
+        // `stripped` and `err_to_stripped` each consume the writer, so one run cannot be read for
+        // both streams. The command is deterministic over these files.
+        let run = || {
+            let mut reader = Reader::default();
+            let mut writer = Writer::new_with_err(WBVec(vec![]), WBVec(vec![]))
+                .expect("Failed to create writer.");
+            let status_code = TestCommandTestRunner::default()
+                .test_data(Option::from(
+                    "resources/test-command/exit-code-precedence/both.yaml",
+                ))
+                .rules(Some(
+                    "resources/test-command/exit-code-precedence/precedence.guard",
+                ))
+                .run(&mut writer, &mut reader);
+
+            (status_code, writer)
+        };
+
+        let (status_code, err_writer) = run();
+        let (_, out_writer) = run();
+
+        assert_eq!(
+            StatusCode::INCORRECT_STATUS_ERROR,
+            status_code,
+            "the expectation that was never evaluated owes the exit code"
+        );
+
+        let stderr = err_writer.err_to_stripped().expect("failed to read stderr");
+        assert!(
+            stderr.contains(
+                "No rule named R_TYPO is in this file, so its expectation was not checked"
+            ),
+            "the unchecked expectation must be named, not just counted in the exit code:\n{}",
+            stderr
+        );
+
+        let stdout = out_writer.stripped().expect("failed to read stdout");
+        assert!(
+            stdout.contains("R_ONE: Expected = PASS, Evaluated = [FAIL]"),
+            "and the expectation that was not met must still be reported:\n{}",
+            stdout
+        );
+    }
+
     /// An expectation for a parameterized rule is not told it names nothing.
     ///
     /// It does name something. `eval_rules_file` walks `guard_rules` only, and a parameterized rule
