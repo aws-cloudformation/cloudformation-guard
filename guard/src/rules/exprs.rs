@@ -254,12 +254,6 @@ pub(crate) struct BlockGuardClause<'loc> {
 }
 
 #[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize, Hash)]
-pub(crate) struct WhenGuardBlockClause<'loc> {
-    pub(crate) conditions: WhenConditions<'loc>,
-    pub(crate) block: Block<'loc, GuardClause<'loc>>,
-}
-
-#[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize, Hash)]
 pub(crate) struct ParameterizedNamedRuleClause<'loc> {
     pub(crate) parameters: Vec<LetValue<'loc>>,
     pub(crate) named_rule: GuardNamedRuleClause<'loc>,
@@ -389,6 +383,12 @@ impl<'loc> std::fmt::Display for GuardAccessClause<'loc> {
             self.access_clause
         )?;
         Ok(())
+    }
+}
+
+impl<'loc> std::fmt::Display for GuardNamedRuleClause<'loc> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Rule({}@{})", self.dependent_rule, self.location)
     }
 }
 

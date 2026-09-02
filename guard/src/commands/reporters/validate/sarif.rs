@@ -180,11 +180,6 @@ struct SarifLocation {
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
-struct SarifRule {
-    id: String,
-}
-
-#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct SarifReport {
     #[serde(rename = "$schema")]
     schema: String,
