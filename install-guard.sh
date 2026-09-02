@@ -13,10 +13,13 @@
 #                           against the token instead. The `gh` CLI, if installed and logged in, is
 #                           preferred over this and needs no setup.
 #   GUARD_DOWNLOAD_BASE_URL overrides where release archives are fetched from. Defaults to the
-#                           GitHub releases URL. Set it to a file:// or http:// prefix to install an
-#                           archive built locally, which is how the install scripts are tested
+#                           GitHub releases URL. Set it to a file:// or https:// prefix to install
+#                           an archive built locally, which is how the install scripts are tested
 #                           against the code under review rather than against the last release, and
-#                           what makes an air-gapped install possible.
+#                           what makes an air-gapped install possible. An http:// origin also works
+#                           but nothing here verifies a checksum or a signature, so whatever this
+#                           points at is installed as-is: over plaintext that is anyone on the
+#                           network path, not just the host you meant.
 
 # Total seconds we are willing to spend waiting across all retries. A primary rate limit can be up
 # to an hour from reset, and an installer that appears to hang for an hour is worse than one that
@@ -46,7 +49,15 @@ main() {
 	# Assigned rather than piped into a `while read` loop. err() exits, but when it was reached
 	# from the left side of a pipeline it only exited that subshell: the pipeline's status came
 	# from the loop, which had simply read nothing, so a failed release lookup left this script
-	# exiting 0 with nothing installed. Command substitution propagates the status instead.
+	# exiting 0 with nothing installed.
+	#
+	# Command substitution propagates a nonzero status, and that is what catches get_version's own
+	# failures, an unusable -v argument being the one to hand. It does not catch a failed release
+	# lookup. get_latest_release ends in a pipeline whose last command is awk, awk exits 0 having
+	# read nothing, and so get_version returns 0 with empty output and the `|| exit 1` below does
+	# not fire. The empty check is what turns an unresolved version into a nonzero exit, so it has
+	# to stay: without it, an exhausted API quota gets as far as requesting an archive from a URL
+	# built out of an empty version, and reports that 404 instead of the quota that caused it.
 	VERSION=$(get_version "$@") || exit 1
 	if [ -z "$VERSION" ]; then
 		err "unable to determine which cfn-guard version to install"
@@ -61,7 +72,7 @@ main() {
 	_archive="cfn-guard-v${MAJOR_VER}-${ARCH_TYPE}-${OS_TYPE}-latest.tar.gz"
 	_url="${_base_url}/${VERSION}/${_archive}"
 
-	download "$_url" >/tmp/guard.tar.gz ||
+	download "$_url" /tmp/guard.tar.gz ||
 		err "unable to download $_url"
 	tar -C ~/.guard/"$MAJOR_VER" -xzf /tmp/guard.tar.gz ||
 		err "unable to untar /tmp/guard.tar.gz"
@@ -261,17 +272,25 @@ check_cmd() {
 	command -v "$1" >/dev/null 2>&1
 }
 
-# Fetch a release archive to stdout. Retried, but never authenticated: see auth_header_args.
+# Fetch a release archive to the given path. Retried, and never authenticated: the archive
+# redirects to a separate download host and a credential has no business travelling there.
+#
+# The destination is an argument rather than a redirect on the caller's side. A redirect is opened
+# once, before this function is entered, so every attempt would write to the same already-advanced
+# descriptor: a retry after a transfer that died partway would append to the bytes the failed
+# attempt left behind and hand back a corrupt archive. Passing the path lets each attempt truncate
+# it, which is the only way the retry helps for the failure it exists for.
 download() {
 	_url="$1"
+	_out="$2"
 	_attempt=1
 	_delay="$BASE_DELAY"
 	_waited=0
 	while :; do
 		if check_cmd curl; then
-			curl -fsSL "$_url" && return 0
+			curl -fsSL -o "$_out" "$_url" && return 0
 		else
-			wget -qO- "$_url" && return 0
+			wget -qO "$_out" "$_url" && return 0
 		fi
 		if [ "$_attempt" -ge "$MAX_ATTEMPTS" ] || [ $((_waited + _delay)) -gt "$MAX_TOTAL_WAIT" ]; then
 			echo "error attempting to download from the github repository: $_url" >&2

@@ -12,10 +12,13 @@
 #                           it through no fault of the caller. The `gh` CLI, if installed and
 #                           logged in, is preferred over this and needs no setup.
 #   GUARD_DOWNLOAD_BASE_URL overrides where release archives are fetched from. Defaults to the
-#                           GitHub releases URL. Set it to a file:// or http:// prefix to install
+#                           GitHub releases URL. Set it to a file:// or https:// prefix to install
 #                           an archive built locally, which is how this script is tested against
 #                           the code under review rather than against the last release, and what
-#                           makes an air-gapped install possible.
+#                           makes an air-gapped install possible. An http:// origin also works but
+#                           nothing here verifies a checksum or a signature, so whatever this
+#                           points at is installed as-is: over plaintext that is anyone on the
+#                           network path, not just the host you meant.
 param(
   [string]$Version
 )
