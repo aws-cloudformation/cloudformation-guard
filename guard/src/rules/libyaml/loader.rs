@@ -56,8 +56,9 @@ pub(crate) const MERGE_KEY: &str = "<<";
 /// costs and only one of them is inherent.
 ///
 /// The **bytes** are the conversion, and they are structural: every node's `Path` is built from its parent's
-/// by `extend_usize`/`with_location`, so n nodes each hold a path of length up to n and the bytes grow with
-/// the square of the depth. Read `try_from_marked` to check it; no measurement required.
+/// by `extend_usize` for sequence children, `extend_string` for mapping children -- the dominant case in a
+/// template -- and `with_location` on both, so n nodes each hold a path of length up to n and the bytes grow
+/// with the square of the depth. Read `try_from_marked` to check it; no measurement required.
 ///
 /// The **time** was cubic, and it is not the conversion. It is one `format!` whose output is discarded.
 /// `Traversal::at` renders `self.nodes.range(pointer..)` with `{:?}` to build the `RetrievalError` for a
@@ -78,10 +79,12 @@ pub(crate) const MERGE_KEY: &str = "<<";
 /// `String`. Medium confidence on that attribution: one stack sample, and no control isolating the clone.
 ///
 /// **Do not chase either from here.** Every factor -- range size, subtree size, path length -- scales with
-/// depth, and depth is bounded at 128, where the same `validate` run takes 0.037 s. A wide, shallow document
-/// has short paths and small subtrees and stays cheap as well. So this is the historical justification for
-/// the bound rather than a live cost on the shipped binary, and the discarded-message waste is filed in the
-/// known-defects write-up instead of fixed here.
+/// depth, and depth is bounded at 128, where the same `validate` run finishes in under a tenth of a second.
+/// A bound rather than a figure, deliberately: at a few hundredths of a second the measurement moves by tens
+/// of percent with whatever else the host is running, so an exact one reproduces only where it was taken.
+/// A wide, shallow document has short paths and small subtrees and stays cheap as well. So this is the
+/// historical justification for the bound rather than a live cost on the shipped binary, and the
+/// discarded-message waste is filed in the known-defects write-up instead of fixed here.
 ///
 /// **Why 128.** It is the limit serde already enforces on the other loader in this product, and at this
 /// value the two agree exactly: both accept a document nested 128 containers deep and both refuse 129,
