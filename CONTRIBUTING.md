@@ -85,8 +85,26 @@ pre-commit install
 If you installed the hooks before commitizen was added, run `pre-commit install` again — the message check runs
 at the `commit-msg` stage, which is a hook type that has to be installed separately from the others.
 
-Version numbers and tags are not managed by commitizen; `.github/workflows/release.yml` owns those. `cz bump
---dry-run` is still a convenient way to see which version the commits since the last release imply.
+Version numbers and tags are not managed by commitizen; `.github/workflows/release.yml` owns those.
+
+Do not use `cz bump --dry-run` to pick a release version here. It reports a wrong version and exits 0 while
+doing it. Commitizen reads the current version from the newest tag that is an ancestor of `HEAD`, and the
+release tags are not ancestors: pull requests are squash-merged, so the commit `release.yml` tagged and the
+commit that landed on `main` are two different objects. The newest release tag reachable from `main` is
+therefore older than the actual latest release, and both halves of the output come from that wrong starting
+point — the version it calls current, and the increment it derives from the commits it believes are
+unreleased. When this was written it proposed 3.2.0, which had already been released, and it read the increment
+as minor from `feat:` commits that shipped in earlier releases.
+
+To choose a release version, read the latest tag and apply the increment implied by the Conventional Commits
+types merged since it — `fix:` is a patch, `feat:` is a minor, and a `!` is a major:
+
+```bash
+git tag --sort=-v:refname | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' | head -1
+```
+
+The filter matters: this repository also carries `action-v*`, `pre-commit-v*` and older `v`-prefixed tags, and
+an unfiltered `git tag --sort=-v:refname` sorts one of those to the top.
 
 
 ## Finding contributions to work on
