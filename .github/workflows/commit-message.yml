@@ -41,4 +41,21 @@ jobs:
           PR_TITLE: ${{ github.event.pull_request.title }}
         run: |
           printf '%s\n' "$PR_TITLE" > "$RUNNER_TEMP/pr-title.txt"
-          cz check --allow-abort --commit-msg-file "$RUNNER_TEMP/pr-title.txt"
+          # No `--allow-abort`, and `--allowed-prefixes` with an empty list. Each of
+          # those two defaults lets a title through without its format being checked,
+          # and the title is what becomes the squash commit on main.
+          #
+          # `cz check` skips the Conventional Commits regex outright for a message
+          # beginning with one of its default allowed prefixes (Merge, Revert, Pull
+          # request, fixup!, squash!, amend!), so `Merge pull request #1 from nonsense`
+          # passes unchecked. Those prefixes are there for messages git itself writes
+          # during a merge or a rebase, which a pull request title is not. Passing the
+          # flag with no values leaves the set empty, so nothing is exempt.
+          #
+          # `--allow-abort` permits an empty message, the way a commit is abandoned from
+          # an editor. Git comment lines are stripped before the regex runs, so a title
+          # of `# invalid title` reduces to an empty message, which `--allow-abort` then
+          # accepts.
+          #
+          # A rejected title exits 14, not 1.
+          cz check --commit-msg-file "$RUNNER_TEMP/pr-title.txt" --allowed-prefixes

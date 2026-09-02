@@ -2,4 +2,4 @@ pytest
 mypy
 black
 ruff>=0.16.4,<0.17
-commitizen
+commitizen==4.10.1
