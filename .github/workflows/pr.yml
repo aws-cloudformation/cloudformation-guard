@@ -285,9 +285,17 @@ jobs:
       # below is still pwsh and carries its own copy of that note, because its loop has nothing to
       # share with a twin.
       #
-      # Actions appends `exit $LASTEXITCODE` to a pwsh step, so the last command's code is the step's.
-      # Under bash the step's code is the shell's, and the script is the whole body, so its exit
-      # status is the step's with nothing after it to overwrite the number.
+      # Under `shell: bash` the step's status is the shell's, and the script is the whole body, so its
+      # exit status is the step's with nothing after it to overwrite the number. That follows from the
+      # invocation the workflow-syntax reference documents: `bash --noprofile --norc -eo pipefail {0}`,
+      # using the Git for Windows bash on this platform.
+      #
+      # How a pwsh step's exit code is derived is deliberately not asserted here. An earlier draft of
+      # this comment said Actions appends `exit $LASTEXITCODE` to every pwsh step; that is widely
+      # repeated and may well be true, but it could not be sourced -- the workflow-syntax reference
+      # truncates before any exit-code section and the add-scripts guide does not cover it. The
+      # observation above needs no such mechanism: the step logged "have passed" and the job was red,
+      # which is enough to establish that the condition was not testing what it appeared to.
       - name: Run integration tests using test command
         shell: bash
         run: |
@@ -309,8 +317,9 @@ jobs:
           # That happened to give the right answer for the two outcomes this command has today,
           # because the success path always prints a non-empty tree and both failure paths print
           # only to stderr -- but it silently passed any run that wrote partial output and then
-          # failed, and it left $LASTEXITCODE from such a run to be picked up by the epilogue, so
-          # the step could print "All the rules have succeeded" and still exit non-zero.
+          # failed, so the step could print "All the rules have succeeded" and still exit non-zero.
+          # How the non-zero reached the step's own status is not asserted here; see the note on the
+          # test-command step above for why the pwsh exit-code mechanism is left unstated.
           Foreach ($rule in $rules) {
               $rule_files_without_comments = (Get-Content $rule.FullName) -replace '^[ \s]*#.*$', ''
               if ([String]::IsNullOrWhiteSpace($rule_files_without_comments)) {
