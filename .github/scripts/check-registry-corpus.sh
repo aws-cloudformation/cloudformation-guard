@@ -59,8 +59,20 @@ readonly state_dir
 readonly expected_unchecked="$state_dir/unchecked-expectations.txt"
 readonly expected_orphans="$state_dir/orphaned-test-files.txt"
 
-# The Windows runner builds cfn-guard.exe, and the callers pass one path for all three platforms. Git
-# bash appends .exe when it *executes* a name, but `-x` does not, so the suffix is resolved here.
+# The Windows runner builds cfn-guard.exe, and the callers pass one path for all three platforms, so the
+# suffix is resolved here rather than in three call sites.
+#
+# Kept as belt and braces, not as a known necessity, and the distinction is worth recording because the
+# earlier note here got it backwards. It said `-x` does not append `.exe` where execution does. Cygwin's
+# documentation says the opposite -- `ls filename` and `stat("filename",..)` both report on
+# `filename.exe` when only that exists -- so on Git bash `-x` is most likely already true for the bare
+# name and this branch never fires on the one platform it was added for.
+#
+# It stays because that is an inference, not a measurement: the page documents Cygwin rather than MSYS2,
+# and names `stat()` rather than the `access()` that `-x` may use. If the resolution does not happen,
+# this branch is the difference between the check working and the run exiting 2 at "no cfn-guard binary
+# at". Exercised on Linux, where `-x` genuinely does not resolve the suffix, so the fallback is reachable
+# and tested there even if it is dead code on Windows.
 if [[ ! -x $guard_bin && -x "$guard_bin.exe" ]]; then
     guard_bin="$guard_bin.exe"
 fi
