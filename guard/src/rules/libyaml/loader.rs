@@ -73,16 +73,24 @@ pub(crate) const MERGE_KEY: &str = "<<";
 /// `/Resources` and lowercase after it, so the only difference is whether the top-level key falls inside the
 /// probe's range -- same depth, same bracket count, same bytes. The conversion is 0.017 s on either.
 ///
-/// A second, independent cost appears only when a rule fails: about 2.3 s on that same document, unaffected
-/// by the probe, with a stack sample in `GenericSummary::report_eval` -> `simplified_json_from_root` ->
-/// `report_all_failed_clauses_for_rules` -> `PathAwareValue::clone`, each cloned node copying its full path
-/// `String`. Medium confidence on that attribution: one stack sample, and no control isolating the clone.
+/// A second, independent cost appears only when a rule fails, and is unaffected by the probe:
+/// `GenericSummary::report_eval` -> `simplified_json_from_root` -> `report_all_failed_clauses_for_rules` ->
+/// `PathAwareValue::clone`, each cloned node copying its full path `String`. The verdict isolates it on the
+/// uppercase document, which is probe-free -- `/A` sorts before `/Resources`, so the probe's range is empty
+/// and a passing and a failing run differ only in the failure reporting. That difference is 2.2 s at 1600
+/// brackets, and it climbs with a log-log slope near 2.8 from 200 brackets up, so the cost is per-node work
+/// rather than a fixed one. The frame is still a single stack sample, though: the control sizes the cost
+/// without picking which of those four calls holds it.
 ///
 /// **Do not chase either from here.** Every factor -- range size, subtree size, path length -- scales with
 /// depth, and depth is bounded at 128, where the same `validate` run finishes in under a tenth of a second:
-/// 0.028 s median over 60 runs on an unloaded host, holding within 5% across batches. Ambient load moves
-/// that by half again or more, so the measuring condition travels with the figure -- a bare value reproduces
-/// only on the machine that took it, which is how the number this line used to quote came to be wrong.
+/// 0.028 s median over 60 runs on an unloaded host, holding within 5% across batches. Contention for the
+/// core is what moves that, rather than machine load as such: one competing process pinned to the same core
+/// doubles it, and each further one adds about the baseline again. Whole-machine load hardly registers next
+/// to that -- on 192 cores the figure was flat at 20 runnable processes and 1.36x at 220, so a busy machine
+/// costs nothing until its runnable count nears its core count. That is why the measuring condition travels
+/// with the figure -- a bare value reproduces only on the machine that took it, which is how the number this
+/// line used to quote came to be wrong.
 /// A wide, shallow document has short paths and small subtrees and stays cheap as well. So this is the
 /// historical justification for the bound rather than a live cost on the shipped binary, and the
 /// discarded-message waste is filed in the known-defects write-up instead of fixed here.
