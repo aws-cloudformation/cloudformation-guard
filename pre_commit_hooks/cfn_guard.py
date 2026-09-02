@@ -12,8 +12,8 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Sequence
 from urllib.request import Request, urlopen
 
 BIN_NAME = "cfn-guard"
@@ -101,9 +101,9 @@ def install_cfn_guard():
                 filename = os.path.basename(member.name)
                 # Join the install_dir path and the filename to get the full target path
                 file_path = os.path.join(install_dir, filename)
-                # Open the archived file, create a new file at file_path in write
-                # binary mode, and copy the archived contents into it
+                # Open the archived file, and a new file at file_path in write binary mode
                 with tar.extractfile(member) as source, open(file_path, "wb") as target:
+                    # Copy the contents of the archived file(s) to the target file
                     shutil.copyfileobj(source, target)
 
         binary_path = os.path.join(install_dir, binary_name)
