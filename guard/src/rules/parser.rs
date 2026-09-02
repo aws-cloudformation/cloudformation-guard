@@ -222,7 +222,7 @@ impl<'a> std::fmt::Display for ParserError<'a> {
 /// Deliberately no file counts here, and no per-level histogram. Re-derive instead: set this constant to
 /// N, rebuild, and parse every file, taking a file's level to be the smallest N that accepts it; N = 8
 /// admitting nothing further is the check that the maximum has been found. Two cautions, both learned by
-/// getting this wrong. A few fixtures are deliberately unparseable and `parse-tree --rules` refuses them at
+/// getting this wrong. A few fixtures are deliberately unparsable and `parse-tree --rules` refuses them at
 /// every N -- list them by taking the files no N accepts -- so bucket a file only once some N has accepted
 /// it, because one that trips the depth bound at N = 1 and then fails for syntax will otherwise land in the
 /// N = 2 bucket and inflate it. And a count of the files in this repository does not survive being written
