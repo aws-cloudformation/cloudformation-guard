@@ -34,8 +34,8 @@ fn test_json_parse() -> crate::rules::Result<()> {
     let results = eval.query(&query.query)?;
 
     match count(&results) {
-        PathAwareValue::Int((_, cnt)) => assert_eq!(cnt, 1),
-        _ => unreachable!(),
+        Some(PathAwareValue::Int((_, cnt))) => assert_eq!(cnt, 1),
+        other => panic!("expected a count, got {:?}", other),
     }
 
     let json = json_parse(&results)?;
@@ -78,8 +78,8 @@ fn test_regex_replace() -> crate::rules::Result<()> {
     let results = eval.query(&query.query)?;
 
     match count(&results) {
-        PathAwareValue::Int((_, cnt)) => assert_eq!(cnt, 1),
-        _ => unreachable!(),
+        Some(PathAwareValue::Int((_, cnt))) => assert_eq!(cnt, 1),
+        other => panic!("expected a count, got {:?}", other),
     }
 
     let replaced = regex_replace(
@@ -91,6 +91,69 @@ fn test_regex_replace() -> crate::rules::Result<()> {
     let path_value = replaced[0].as_ref().unwrap();
     if let PathAwareValue::String((_, val)) = path_value {
         assert_eq!("aws/123456789012/us-west-2/newservice-Table/extracted", val);
+    }
+
+    Ok(())
+}
+
+/// `regex_replace` keeps the text that the pattern did not match.
+///
+/// It used to expand the captures into a fresh empty string and return that, so everything outside the
+/// match was dropped: `regex_replace("prod-database-01", "database", "db")` answered `"db"` rather than
+/// `"prod-db-01"`. Every shipped example anchors its pattern with `^...$`, which makes the match span
+/// the whole string, so there was never any outside text to lose and no test noticed.
+///
+/// The no-match row is the one that mattered in practice. An unmatched pattern produced `""`, and `""`
+/// is a value, so it compares: a rule that normalised an optional prefix before checking a name got a
+/// pass on the name it meant to catch. Returning the input unchanged is what a replace does, and it
+/// falls out of copying the unmatched remainder rather than needing a case of its own.
+#[test]
+fn regex_replace_keeps_the_text_outside_the_match() -> crate::rules::Result<()> {
+    let cases = [
+        // (input, pattern, replacement, expected)
+        // A match in the middle. The prefix and the suffix both have to survive.
+        ("prod-database-01", "database", "db", "prod-db-01"),
+        // Several matches, each with a capture. The gaps between them are text too.
+        ("a1b2c3", r"(\d)", "<${1}>", "a<1>b<2>c<3>"),
+        // A match at one end only.
+        ("prod-database-01", "^prod-", "", "database-01"),
+        ("prod-database-01", "-01$", "", "prod-database"),
+        // No match at all: the input, unchanged. This is the fail-open case.
+        (
+            "MY_SECRET_BUCKET",
+            "^arn:aws:s3:::(.+)$",
+            "${1}",
+            "MY_SECRET_BUCKET",
+        ),
+        ("prod-database-01", "nothing-here", "x", "prod-database-01"),
+        // Anchored across the whole string, which is what the shipped fixtures and the doc example
+        // do. There is no outside text, so this answer is the same before and after.
+        (
+            "arn:aws:newservice:us-west-2:123456789012:Table/extracted",
+            r"^arn:(\w+):(\w+):([\w0-9-]+):(\d+):(.+)$",
+            "${1}/${4}/${3}/${2}-${5}",
+            "aws/123456789012/us-west-2/newservice-Table/extracted",
+        ),
+    ];
+
+    for (input, pattern, replacement, expected) in cases {
+        let value = PathAwareValue::String((Path::root(), String::from(input)));
+        let args = vec![QueryResult::Resolved(Rc::new(value))];
+
+        let result = regex_replace(&args, pattern, replacement)?;
+        assert_eq!(result.len(), 1, "one input, one answer");
+
+        match &result[0] {
+            Some(PathAwareValue::String((_, got))) => assert_eq!(
+                got, expected,
+                "regex_replace({:?}, {:?}, {:?})",
+                input, pattern, replacement
+            ),
+            other => panic!(
+                "regex_replace({:?}, {:?}, {:?}) gave {:?}, expected {:?}",
+                input, pattern, replacement, other, expected
+            ),
+        }
     }
 
     Ok(())
@@ -123,8 +186,8 @@ fn test_substring() -> crate::rules::Result<()> {
     let results = eval.query(&query.query)?;
 
     match count(&results) {
-        PathAwareValue::Int((_, cnt)) => assert_eq!(cnt, 1),
-        _ => unreachable!(),
+        Some(PathAwareValue::Int((_, cnt))) => assert_eq!(cnt, 1),
+        other => panic!("expected a count, got {:?}", other),
     }
 
     let replaced = substring(&results, 0, 3)?;

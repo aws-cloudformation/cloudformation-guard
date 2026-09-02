@@ -35,7 +35,13 @@ impl Loader {
             let (event, location) = parser.next()?;
             {
                 match event {
-                    Event::StreamStart | Event::StreamEnd | Event::DocumentStart => {}
+                    Event::StreamStart | Event::DocumentStart => {}
+                    // `DocumentEnd` below is the only arm that leaves the loop, so reaching the end
+                    // of the stream means no document was ever started -- a file of nothing but
+                    // comments is the ordinary way to get here. Treating it as a no-op left the
+                    // loop pulling events past the end of the stream, where libyaml answers with
+                    // `YAML_NO_EVENT`, and that used to abort the process in `convert_event`.
+                    Event::StreamEnd => return Err(Error::MissingDocument),
                     Event::DocumentEnd => {
                         self.documents.push(self.stack.pop().unwrap());
                         self.stack.clear();
@@ -86,8 +92,18 @@ impl Loader {
             match val.parse::<i64>() {
                 Ok(i) => MarkedValue::Int(i, location),
                 Err(_) => match val.parse::<f64>() {
-                    Ok(f) => MarkedValue::Float(f, location),
-                    Err(_) => match self.parse_bool(&val) {
+                    // `f64::from_str` also accepts `nan`, `inf` and `infinity`, none of which
+                    // YAML resolves to a float. YAML spells the non-finite floats `.nan` and
+                    // `.inf`, and those spellings already fall through to `String` here, so
+                    // accepting the Rust-only ones made the two halves disagree.
+                    //
+                    // Keeping `NaN` out of the value space is the part that matters:
+                    // `PathAwareValue` asserts `Eq` and hashes its own contents, and
+                    // `Float(NaN)` is not equal to itself. A NaN-keyed entry can never be
+                    // found again, and no comparison against one can be answered, so a clause
+                    // that guards on it cannot decide either way.
+                    Ok(f) if f.is_finite() => MarkedValue::Float(f, location),
+                    _ => match parse_bool(&val) {
                         Some(b) => MarkedValue::Bool(b, location),
                         None => match val.to_lowercase().as_str() {
                             "~" | "null" => MarkedValue::Null(location),
@@ -99,23 +115,6 @@ impl Loader {
         };
 
         self.stack.push(path_value);
-    }
-    fn is_bool_true(&self, s: &str) -> bool {
-        matches!(s, "true" | "yes" | "on" | "y")
-    }
-
-    fn is_bool_false(&self, s: &str) -> bool {
-        matches!(s, "false" | "no" | "off" | "n")
-    }
-
-    fn parse_bool(&self, val: &str) -> Option<bool> {
-        if self.is_bool_true(val) {
-            Some(true)
-        } else if self.is_bool_false(val) {
-            Some(false)
-        } else {
-            None
-        }
     }
 
     fn handle_sequence_end(&mut self) {
@@ -194,6 +193,53 @@ impl Loader {
     }
 }
 
+/// The spellings a plain scalar is read as boolean, which is the set YAML 1.1 defines at
+/// <https://yaml.org/type/bool.html>:
+///
+/// ```text
+/// y|Y|yes|Yes|YES|n|N|no|No|NO|true|True|TRUE|false|False|FALSE|on|On|ON|off|Off|OFF
+/// ```
+///
+/// Three casings of each word and no others, so `tRuE` is a string. Matching case-insensitively
+/// instead would have been shorter and would have accepted spellings no schema makes boolean.
+///
+/// `true`, `True`, `TRUE` and the three matching spellings of false are boolean under the YAML 1.2
+/// core schema as well, whose whole set is `true | True | TRUE | false | False | FALSE`
+/// (<https://yaml.org/spec/1.2.2/#103-core-schema>, which resolves everything else here to `str`).
+/// So those four were missing whichever version the loader meant. `yes`, `on` and the single
+/// letters are boolean only under 1.1, and the loader was already reading them that way, which is
+/// what settles the version question: the vocabulary was 1.1's with the capitalised spellings left
+/// out of it, not 1.2's with extras. Dropping `yes` and `on` to reach the 1.2 set instead would
+/// take a string a document writes today and start comparing it as a boolean, so it is a separate
+/// argument from this one.
+///
+/// This is the same defect `rules::parser::parse_bool` carries for the rules language, and it has
+/// the same consequences. The two sets need not be equal: that one parses a literal in cfn-guard's
+/// own grammar, this one resolves a scalar in someone else's document.
+fn parse_bool(val: &str) -> Option<bool> {
+    if is_bool_true(val) {
+        Some(true)
+    } else if is_bool_false(val) {
+        Some(false)
+    } else {
+        None
+    }
+}
+
+fn is_bool_true(s: &str) -> bool {
+    matches!(
+        s,
+        "y" | "Y" | "yes" | "Yes" | "YES" | "true" | "True" | "TRUE" | "on" | "On" | "ON"
+    )
+}
+
+fn is_bool_false(s: &str) -> bool {
+    matches!(
+        s,
+        "n" | "N" | "no" | "No" | "NO" | "false" | "False" | "FALSE" | "off" | "Off" | "OFF"
+    )
+}
+
 fn handle_single_value_func_ref(val: String, loc: Location, fn_ref: &str) -> Option<MarkedValue> {
     if SINGLE_VALUE_FUNC_REF.contains(fn_ref) {
         let mut map = indexmap::IndexMap::new();
@@ -226,9 +272,13 @@ fn handle_sequence_value_func_ref(loc: Location, fn_ref: &str) -> Option<MarkedV
 
 fn handle_type_ref(val: String, loc: Location, type_ref: &str) -> MarkedValue {
     match type_ref {
-        "tag:yaml.org,2002:bool" => match val.parse::<bool>() {
-            Err(_) => MarkedValue::String(val, loc),
-            Ok(v) => MarkedValue::Bool(v, loc),
+        // Through the same set as a plain scalar. This read `str::parse::<bool>`, which takes
+        // `true` and `false` and nothing else, so an explicit tag was stricter than the untagged
+        // resolution it should agree with: `!!bool yes` was the string "yes" while a bare `yes` was
+        // already a boolean. The fallback to a string for a value outside the set is unchanged.
+        "tag:yaml.org,2002:bool" => match parse_bool(&val) {
+            None => MarkedValue::String(val, loc),
+            Some(v) => MarkedValue::Bool(v, loc),
         },
         "tag:yaml.org,2002:int" => match val.parse::<i64>() {
             Err(_) => MarkedValue::BadValue(val, loc),

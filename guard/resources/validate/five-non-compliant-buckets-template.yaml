@@ -1,0 +1,28 @@
+# Five buckets, none of them named what the rule asks for, so all five are reported.
+#
+# The count is the point. The reporter aggregated resources into a `std::collections::HashMap` and
+# iterated it to write the output, and that hasher is seeded per process, so the order of the
+# `Resource = ...` blocks was different from run to run. With one non-compliant resource there is
+# nothing to reorder, which is why every existing fixture missed it; with five, an accidental
+# alphabetical order is one arrangement in a hundred and twenty.
+Resources:
+  Echo:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: echo
+  Charlie:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: charlie
+  Alpha:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: alpha
+  Delta:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: delta
+  Bravo:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: bravo

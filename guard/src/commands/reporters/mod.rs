@@ -11,13 +11,13 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     commands::{
-        reporters::test::structured::TestResult, validate::DataFile, ERROR_STATUS_CODE,
-        FAILURE_STATUS_CODE,
+        reporters::test::structured::TestResult,
+        validate::{more_severe, DataFile},
     },
     rules::{
         self,
         eval::eval_rules_file,
-        eval_context::{root_scope, simplified_json_from_root, Messages},
+        eval_context::{root_scope, simplified_json_from_root, Messages, RuleFileError},
         exprs::RulesFile,
         Status,
     },
@@ -88,18 +88,22 @@ impl<'report> JunitReport<'report> {
 struct JunitReporter<'reporter> {
     rules: Vec<(RulesFile<'reporter>, &'reporter str)>,
     data: Vec<DataFile>,
+    /// Rules files the parser rejected, which never reach `rules` and so would otherwise produce no
+    /// test case at all. Borrowed rather than owned so the names can be lent to `TestCase` without
+    /// tying those borrows to `&self`, which `update_exit_code` needs mutably.
+    rule_file_errors: &'reporter [RuleFileError],
     writer: &'reporter mut crate::utils::writer::Writer,
     exit_code: i32,
 }
 
 impl<'reporter> JunitReporter<'reporter> {
-    /// Update exit code only if code takes more precedence than current exit code
+    /// Update exit code only if code takes more precedence than current exit code.
+    ///
+    /// The precedence rule itself lives in `validate::more_severe`, which the single-line path also
+    /// uses. It was stated in both places; this reporter was the only one that had it right, so the
+    /// shared version is this one, moved rather than rewritten.
     fn update_exit_code(&mut self, code: i32) {
-        if code == ERROR_STATUS_CODE
-            || code == FAILURE_STATUS_CODE && self.exit_code != ERROR_STATUS_CODE
-        {
-            self.exit_code = code;
-        }
+        self.exit_code = more_severe(self.exit_code, code);
     }
 }
 
@@ -110,32 +114,71 @@ fn get_test_case<'rule>(
 ) -> crate::rules::Result<TestCase<'rule>> {
     let now = Instant::now();
     let mut root_scope = root_scope(rule, Rc::new(data.path_value.clone()));
-    let status = eval_rules_file(rule, &mut root_scope, Some(&data.name))?;
+    // A rule that cannot be evaluated is a test case in the `Error` state, not a reason to discard the
+    // whole report.
+    //
+    // Everything needed for that was already here: `TestCaseStatus::Error` exists, `xml.rs` counts it
+    // into the suite's `errors` total, and that total already sets `ERROR_STATUS_CODE`. Only this `?`
+    // stood in the way, so a junit run against a rules file with one unresolvable variable emitted no
+    // XML at all — and junit is a CI format, where "no report" means the job reports nothing rather
+    // than reports a problem.
+    //
+    // The arm further down builds this same variant for a report that could not be *rendered*. This one
+    // covers a rule that could not be *evaluated*, which is the case a reader actually hits.
+    let status = match eval_rules_file(rule, &mut root_scope, Some(&data.name)) {
+        Ok(status) => status,
+        Err(error) => {
+            return Ok(TestCase {
+                id: None,
+                name,
+                time: now.elapsed().as_millis(),
+                status: TestCaseStatus::Error {
+                    error: error.to_string(),
+                },
+            })
+        }
+    };
     let root_record = root_scope.reset_recorder().extract();
     let time = now.elapsed().as_millis();
 
     let tc = match simplified_json_from_root(&root_record) {
         Ok(report) => match status {
             Status::FAIL => {
-                let status = report.not_compliant.iter().fold(
-                    FailingTestCase {
-                        name: None,
-                        messages: vec![],
-                    },
-                    |mut test_case, failure| {
-                        failure.get_message().into_iter().for_each(|e| {
-                            if let rules::eval_context::ClauseReport::Rule(rule) = failure {
-                                let name = match rule.name.contains(".guard/") {
-                                    true => rule.name.split(".guard/").collect::<Vec<&str>>()[1],
-                                    false => rule.name,
-                                };
-                                test_case.name = Some(String::from(name));
+                // The failing rule names are accumulated, not assigned. `message` holds one value and
+                // the element body holds every rule's messages, so assigning once per message left the
+                // attribute naming whichever rule happened to be visited last: `message="gamma_fails"`
+                // on a body whose first message belongs to `alpha_fails`, so a reader who trusted the
+                // attribute attributed alpha's and beta's violations to gamma.
+                //
+                // The golden fixtures could not show this. Every rules file in the golden directory
+                // declares at most one rule, and last-rule-wins is always right when there is only one
+                // rule to win.
+                //
+                // A rule contributes its name once per message, hence the containment check. Guard rule
+                // names are identifiers, so order-preserving deduplication by equality is enough, and
+                // the order is the order the reader meets the messages in.
+                let mut rule_names: Vec<&str> = vec![];
+                let mut messages = vec![];
+
+                for failure in report.not_compliant.iter() {
+                    for message in failure.get_message() {
+                        if let rules::eval_context::ClauseReport::Rule(rule) = failure {
+                            let name = match rule.name.contains(".guard/") {
+                                true => rule.name.split(".guard/").collect::<Vec<&str>>()[1],
+                                false => rule.name,
                             };
-                            test_case.messages.push(e);
-                        });
-                        test_case
-                    },
-                );
+                            if !rule_names.contains(&name) {
+                                rule_names.push(name);
+                            }
+                        };
+                        messages.push(message);
+                    }
+                }
+
+                let status = FailingTestCase {
+                    name: (!rule_names.is_empty()).then(|| rule_names.join(", ")),
+                    messages,
+                };
 
                 TestCase {
                     id: None,
@@ -350,12 +393,23 @@ impl<'report, 'se: 'report> EventType<'report, 'se> {
                     let name = failure.name.as_ref();
                     let event = match failure.messages.is_empty() {
                         false => {
+                            // `custom_message` is `Some("")` rather than `None` for a clause with no
+                            // custom message, which is most of them. That was invisible while each
+                            // message was written as its own XML text event, because an empty event
+                            // writes nothing; once the messages are joined with a separator an empty
+                            // one becomes a blank line, and a leading empty one puts a newline
+                            // immediately after the `<failure>` tag. Dropping them here rather than at
+                            // the join also makes the emptiness test above mean what it says.
                             let messages = failure.messages.iter().fold(vec![], |mut acc, msg| {
                                 if let Some(custom_message) = &msg.custom_message {
-                                    acc.push(custom_message);
+                                    if !custom_message.is_empty() {
+                                        acc.push(custom_message);
+                                    }
                                 }
                                 if let Some(error_message) = &msg.error_message {
-                                    acc.push(error_message);
+                                    if !error_message.is_empty() {
+                                        acc.push(error_message);
+                                    }
                                 }
                                 acc
                             });
@@ -419,9 +473,19 @@ impl<'report, 'se: 'report> EventType<'report, 'se> {
     ) -> crate::rules::Result<()> {
         match self {
             EventType::Failure(Failure { messages, .. }) => {
-                for message in messages {
-                    writer.write_event(Event::Text(BytesText::new(message)))?;
-                }
+                // One text event with explicit separators, for the reason the `Skipped` arm below
+                // gives: adjacent text events concatenate with nothing between them. A custom message
+                // and the error message that follows it ran together into a non-word, so
+                // `...must be Enabled` plus `Check was not compliant...` read as `must be
+                // EnabledCheck was not compliant`, and the committed junit golden carried `].Check`
+                // five times over. With several failing rules in one test case there was also no
+                // boundary a consumer could split on to recover which message belonged to which.
+                let joined = messages
+                    .iter()
+                    .map(|message| message.as_str())
+                    .collect::<Vec<&str>>()
+                    .join("\n");
+                writer.write_event(Event::Text(BytesText::new(&joined)))?;
             }
             EventType::Skipped(reasons) => {
                 // One text event with explicit separators, not one event per reason. Adjacent text

@@ -5,7 +5,9 @@ use pretty_assertions::{assert_eq, assert_ne};
 use std::collections::HashMap;
 
 use crate::rules::eval_context::eval_context_tests::BasicQueryTesting;
-use crate::rules::eval_context::{root_scope, EventRecord, RecordTracker};
+use crate::rules::eval_context::{
+    root_scope, simplified_json_from_root, ClauseReport, EventRecord, RecordTracker,
+};
 
 use super::*;
 
@@ -316,7 +318,6 @@ fn query_empty_and_non_empty() -> Result<()> {
         "".to_string(),
         None,
         &mut eval,
-        ClauseRole::Assertion,
     )?;
     match status {
         EvaluationResult::QueryValueResult(expected) => {
@@ -341,7 +342,6 @@ fn query_empty_and_non_empty() -> Result<()> {
         "".to_string(),
         None,
         &mut eval,
-        ClauseRole::Assertion,
     )?;
     match status {
         EvaluationResult::QueryValueResult(_) => unreachable!(),
@@ -391,8 +391,8 @@ fn each_lhs_value_not_comparable() -> Result<()> {
     assert_eq!(result.len(), 1);
     let cmp_result = &result[0];
     match cmp_result {
-        ComparisonResult::NotComparable(NotComparableWithRhs {
-            pair: LhsRhsPair { rhs: value, .. },
+        RhsComparison::NotComparable(NotComparableWithRhs {
+            pair: ComparedPair { rhs: value, .. },
             ..
         }) => {
             let rhs_ptr = match &rhs[0] {
@@ -415,7 +415,7 @@ fn each_lhs_value_not_comparable() -> Result<()> {
     assert_eq!(result.len(), 1);
     let cmp_result = &result[0];
     match cmp_result {
-        ComparisonResult::Comparable(ComparisonWithRhs { outcome, .. }) => {
+        RhsComparison::Comparable(ComparisonWithRhs { outcome, .. }) => {
             assert!(!(*outcome));
         }
 
@@ -431,7 +431,7 @@ fn each_lhs_value_not_comparable() -> Result<()> {
     assert_eq!(result.len(), 1);
     let cmp_result = &result[0];
     match cmp_result {
-        ComparisonResult::Comparable(ComparisonWithRhs { outcome, .. }) => {
+        RhsComparison::Comparable(ComparisonWithRhs { outcome, .. }) => {
             assert!(*outcome);
         }
 
@@ -476,8 +476,8 @@ fn each_lhs_value_eq_compare() -> Result<()> {
     assert_eq!(result.len(), 2);
     for cmp_result in result {
         match cmp_result {
-            ComparisonResult::Comparable(ComparisonWithRhs {
-                pair: LhsRhsPair { rhs, .. },
+            RhsComparison::Comparable(ComparisonWithRhs {
+                pair: ComparedPair { rhs, .. },
                 outcome,
             }) => {
                 if outcome {
@@ -554,7 +554,7 @@ fn each_lhs_value_eq_compare_mixed_comparable() -> Result<()> {
                     &rhs_query_result,
                 )? {
                     match cmp_result {
-                        ComparisonResult::Comparable(ComparisonWithRhs { outcome, .. }) => {
+                        RhsComparison::Comparable(ComparisonWithRhs { outcome, .. }) => {
                             if !outcome {
                                 assert_eq!(lhs.self_path().0.as_str(), "/Resources/iam/Properties/PolicyDocument/Statement/0/Principal");
                             } else {
@@ -616,7 +616,7 @@ fn each_lhs_value_eq_compare_mixed_single_plus_array_form_correct_exec() -> Resu
                 for cmp_result in each_lhs_compare(compare_eq, Rc::clone(&lhs), &rhs_query_result)?
                 {
                     match cmp_result {
-                        ComparisonResult::Comparable(ComparisonWithRhs { outcome, .. }) => {
+                        RhsComparison::Comparable(ComparisonWithRhs { outcome, .. }) => {
                             if outcome {
                                 assert_eq!(lhs.self_path().0.as_str(), "/Resources/iam/Properties/PolicyDocument/Statement/0/Principal");
                             } else {
@@ -654,7 +654,7 @@ macro_rules! test_case {
                         &[QueryResult::Resolved(Rc::new(rhs_value.clone()))],
                     )? {
                         match cmp_result {
-                            ComparisonResult::Comparable(ComparisonWithRhs { outcome, .. }) => {
+                            RhsComparison::Comparable(ComparisonWithRhs { outcome, .. }) => {
                                 assert_eq!(outcome, $assert);
                             }
 
@@ -962,7 +962,7 @@ fn block_guard_pass() -> Result<()> {
         recorder: Some(&mut tracker),
     };
     let status = eval_guard_clause(&block_clauses, &mut eval, ClauseRole::Assertion)?;
-    assert_eq!(status, Status::FAIL);
+    assert_eq!(status.to_status(ClauseRole::Assertion), Status::FAIL);
     let top = tracker.extract();
     match top.container.as_ref() {
         Some(record) => {
@@ -1008,6 +1008,11 @@ fn block_guard_pass() -> Result<()> {
                                         comparison: (CmpOperator::Eq, true),
                                         from: QueryResult::Resolved(from_q),
                                         to: Some(QueryResult::Resolved(_)),
+                                        // Two comparable strings that were equal under a negated
+                                        // `!=`, so the operator applied and the clause is about the
+                                        // data. `message: None` above already pins that: the
+                                        // comparator records its own text when it cannot compare.
+                                        operands_not_comparable: false,
                                     },
                                 )) => {
                                     assert_eq!(msg, "No wildcard allowed for Principals");
@@ -1091,12 +1096,12 @@ fn test_guard_10_compatibility_and_diff() -> Result<()> {
     let clause_str = r#"Statement.*.Principal == '*'"#;
     let clause = GuardClause::try_from(clause_str)?;
     let status = eval_guard_clause(&clause, &mut eval, ClauseRole::Assertion)?;
-    assert_eq!(status, Status::FAIL);
+    assert_eq!(status.to_status(ClauseRole::Assertion), Status::FAIL);
 
     let clause_str = r#"SOME Statement.*.Principal == '*'"#;
     let clause = GuardClause::try_from(clause_str)?;
     let status = eval_guard_clause(&clause, &mut eval, ClauseRole::Assertion)?;
-    assert_eq!(status, Status::PASS);
+    assert_eq!(status.to_status(ClauseRole::Assertion), Status::PASS);
 
     let value_str = r###"
     Statement:
@@ -1112,7 +1117,7 @@ fn test_guard_10_compatibility_and_diff() -> Result<()> {
     // Evaluate the SOME clause again, it must pass with the value as well
     //
     let status = eval_guard_clause(&clause, &mut eval, ClauseRole::Assertion)?;
-    assert_eq!(status, Status::PASS);
+    assert_eq!(status.to_status(ClauseRole::Assertion), Status::PASS);
 
     Ok(())
 }
@@ -1152,7 +1157,7 @@ fn block_evaluation() -> Result<()> {
         recorder: None,
     };
     let status = eval_guard_clause(&clause, &mut eval, ClauseRole::Assertion)?;
-    assert_eq!(status, Status::PASS);
+    assert_eq!(status.to_status(ClauseRole::Assertion), Status::PASS);
     Ok(())
 }
 
@@ -1199,7 +1204,7 @@ fn block_evaluation_fail() -> Result<()> {
     "#;
     let clause = GuardClause::try_from(clause_str)?;
     let status = eval_guard_clause(&clause, &mut eval, ClauseRole::Assertion)?;
-    assert_eq!(status, Status::FAIL);
+    assert_eq!(status.to_status(ClauseRole::Assertion), Status::FAIL);
     Ok(())
 }
 
@@ -1239,6 +1244,1062 @@ fn variable_projections() -> Result<()> {
     let mut root_scope = root_scope(&rules_file, Rc::new(path_value));
     let status = eval_rules_file(&rules_file, &mut root_scope, None)?;
     assert_eq!(status, Status::PASS);
+
+    Ok(())
+}
+
+/// Build the rule the capture-scoping tests use, over a given spelling of the capturing selection.
+///
+/// The `or` is what makes an iteration able to capture nothing while still reaching the clause that
+/// reads the capture: a bucket with no *enabled* config takes the second disjunct, so the filter never
+/// selects an entry and no key is captured, and `some %cfg` is evaluated anyway.
+///
+/// Parameterised over the spelling because the two spellings reach the capture by different paths --
+/// `Properties.Config[ cfg | ... ]` filters the map directly, `Properties.Config[*][ cfg | ... ]`
+/// expands it first -- and a fix that covered only the first left the second answering with a previous
+/// resource's key at exit 0.
+fn config_capture_rule(selection: &str) -> String {
+    format!(
+        r#"
+rule configs_named_alpha {{
+    Resources.*[ Type == 'AWS::S3::Bucket' ] {{
+        {selection} !empty or
+        {selection} empty
+        some %cfg == "alpha"
+    }}
+}}
+"#,
+        selection = selection
+    )
+}
+
+const CONFIG_CAPTURE_SELECTIONS: [&str; 2] = [
+    "Properties.Config[ cfg | Enabled == true ]",
+    "Properties.Config[*][ cfg | Enabled == true ]",
+];
+
+/// `BucketA` has an enabled config named `alpha`; `BucketB` has one, but disabled.
+const COMPLIANT_BUCKET_FIRST: &str = r#"
+Resources:
+  BucketA:
+    Type: AWS::S3::Bucket
+    Properties:
+      Config:
+        alpha:
+          Enabled: true
+  BucketB:
+    Type: AWS::S3::Bucket
+    Properties:
+      Config:
+        beta:
+          Enabled: false
+"#;
+
+/// The same two resources as [`COMPLIANT_BUCKET_FIRST`], in the other order.
+const COMPLIANT_BUCKET_SECOND: &str = r#"
+Resources:
+  BucketB:
+    Type: AWS::S3::Bucket
+    Properties:
+      Config:
+        beta:
+          Enabled: false
+  BucketA:
+    Type: AWS::S3::Bucket
+    Properties:
+      Config:
+        alpha:
+          Enabled: true
+"#;
+
+/// `[*]` and `.*` followed by a filter agree on a map that is a single object.
+///
+/// Both wildcards expand a map into its entries, so for a `Statement` written as one object the value
+/// reaching the filter is a *field value* -- the string `Allow` -- and `Effect == 'Allow'` resolves
+/// nothing against it. `[*]` evaluated the predicate there anyway, selected nothing, and an assertion
+/// over the empty selection reported SKIP at exit 0 with the violation unflagged; `.*` reported the
+/// same input unresolved and failed. The `!empty` spelling caught it in both, which is why only the
+/// assertion form hid.
+#[rstest::rstest]
+#[case::all_indices("Statement[*][ Effect == 'Allow' ].Action == \"never\"", Status::FAIL)]
+#[case::all_values("Statement.*[ Effect == 'Allow' ].Action == \"never\"", Status::FAIL)]
+#[case::all_indices_not_empty("Statement[*][ Effect == 'Allow' ] !empty", Status::FAIL)]
+#[case::all_values_not_empty("Statement.*[ Effect == 'Allow' ] !empty", Status::FAIL)]
+fn a_filter_after_a_wildcard_reads_a_single_object_the_same_either_way(
+    #[case] clause: &str,
+    #[case] expected: Status,
+) -> Result<()> {
+    let rules = format!("rule statements_are_denied {{ {} }}", clause);
+    let rules_file = RulesFile::try_from(rules.as_str())?;
+    let single_object = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(
+        r#"
+        Statement:
+          Effect: Allow
+          Action: "s3:*"
+        "#,
+    )?)?;
+
+    let mut scope = root_scope(&rules_file, Rc::new(single_object));
+    assert_eq!(
+        eval_rules_file(&rules_file, &mut scope, None)?,
+        expected,
+        "{} must not answer differently from the other spelling of the same query",
+        clause
+    );
+
+    Ok(())
+}
+
+/// A value filter's capture binds the selected key whether or not a wildcard precedes it.
+///
+/// `Resources[ nm | ... ]` always worked, because `accumulate_map` hands the filter the entry's key.
+/// After a wildcard the map had already been expanded by the time the filter ran, so the key was gone
+/// and the filter was invoked with its capture name forced to `None`: `nm` was declared in a position
+/// the parser accepts and was then unresolvable, ending the run at exit 255 and losing the report for
+/// every other rule in the file.
+///
+/// All three spellings are cases of one test because the defect was that they disagreed.
+#[rstest::rstest]
+#[case::no_wildcard("Resources[ nm | Type == 'AWS::S3::Bucket' ] !empty")]
+#[case::all_indices("Resources[*][ nm | Type == 'AWS::S3::Bucket' ] !empty")]
+#[case::all_values("Resources.*[ nm | Type == 'AWS::S3::Bucket' ] !empty")]
+fn a_value_filter_capture_binds_its_key_after_a_wildcard(#[case] selection: &str) -> Result<()> {
+    let rules = format!(
+        "rule buckets_named_a {{\n    {}\n    some %nm == \"BucketA\"\n}}",
+        selection
+    );
+    let rules_file = RulesFile::try_from(rules.as_str())?;
+    let template = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(
+        r#"
+        Resources:
+          BucketA:
+            Type: AWS::S3::Bucket
+          SomeVolume:
+            Type: AWS::EC2::Volume
+        "#,
+    )?)?;
+
+    let mut scope = root_scope(&rules_file, Rc::new(template));
+    assert_eq!(
+        eval_rules_file(&rules_file, &mut scope, None)?,
+        Status::PASS,
+        "{} selects BucketA, so the capture reading it has a key to bind",
+        selection
+    );
+
+    Ok(())
+}
+
+/// A filter directly on a scalar still evaluates its predicate against that scalar.
+///
+/// This is the scalar leg of the array-or-single leniency, and the reason
+/// `filter_cannot_apply_to_expanded_entry` is limited to entries a wildcard expanded: `Tags` here is a
+/// bare string, so nothing was expanded and the value under the filter is the value the rule is about.
+/// A first version of the fix above reported every scalar under a wildcard unresolved and turned this
+/// rule from a pass into a failure.
+#[test]
+fn a_filter_on_an_unexpanded_scalar_still_tests_that_scalar() -> Result<()> {
+    let rules_file = RulesFile::try_from("rule tagged_x { Tags[*][ this == 'x' ] !empty }")?;
+    let scalar = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(
+        r#"
+        Tags: "x"
+        "#,
+    )?)?;
+
+    let mut scope = root_scope(&rules_file, Rc::new(scalar));
+    assert_eq!(
+        eval_rules_file(&rules_file, &mut scope, None)?,
+        Status::PASS
+    );
+
+    Ok(())
+}
+
+#[test]
+fn a_capture_does_not_leak_from_one_iteration_of_a_block_into_the_next() -> Result<()> {
+    for selection in CONFIG_CAPTURE_SELECTIONS {
+        let rules = config_capture_rule(selection);
+        let rules_file = RulesFile::try_from(rules.as_str())?;
+
+        // `BucketB` has a config but none that is enabled, so it captures no key and cannot satisfy
+        // `some %cfg == "alpha"`. It used to read the key `BucketA` captured and pass on it -- at
+        // exit 0, with the non-compliant bucket unnamed in the report.
+        let template = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(
+            COMPLIANT_BUCKET_FIRST,
+        )?)?;
+        let mut scope = root_scope(&rules_file, Rc::new(template));
+        assert_eq!(
+            eval_rules_file(&rules_file, &mut scope, None)?,
+            Status::FAIL,
+            "{} let a compliant resource's key satisfy a non-compliant one",
+            selection
+        );
+
+        // The same two resources the other way round. Whether a name is a capture is read from the
+        // rule text, so the verdict cannot depend on which resource the block iterated first: an
+        // earlier version of this fix learned the name at runtime and gave FAIL in one order and a
+        // file-fatal error in the other.
+        let template = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(
+            COMPLIANT_BUCKET_SECOND,
+        )?)?;
+        let mut scope = root_scope(&rules_file, Rc::new(template));
+        assert_eq!(
+            eval_rules_file(&rules_file, &mut scope, None)?,
+            Status::FAIL,
+            "{} answered differently with the resources in the other order",
+            selection
+        );
+    }
+
+    Ok(())
+}
+
+#[test]
+fn a_declared_capture_that_selected_nothing_fails_its_clause_rather_than_the_file() -> Result<()> {
+    let rules = config_capture_rule(CONFIG_CAPTURE_SELECTIONS[0]);
+    let rules_file = RulesFile::try_from(rules.as_str())?;
+    let no_enabled_config = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(
+        r#"
+        Resources:
+          BucketB:
+            Type: AWS::S3::Bucket
+            Properties:
+              Config:
+                beta:
+                  Enabled: false
+        "#,
+    )?)?;
+
+    // A name the rule text declares as a capture resolves to an empty selection when nothing matched,
+    // which fails the clause reading it. It used to be an unresolved-variable error, which takes the
+    // whole file down and loses the findings of every other rule in it.
+    //
+    // The split is deliberate: a name that appears *nowhere* as a capture -- a typo, or one belonging
+    // to another rule -- is still an error, because that is a broken ruleset rather than a
+    // non-compliant template.
+    let mut scope = root_scope(&rules_file, Rc::new(no_enabled_config));
+    assert_eq!(
+        eval_rules_file(&rules_file, &mut scope, None)?,
+        Status::FAIL
+    );
+
+    Ok(())
+}
+
+#[test]
+fn a_block_still_resolves_a_variable_it_does_not_declare_as_a_capture() -> Result<()> {
+    // The interception is limited to names the block's own clauses declare as filter captures, so a
+    // clause inside the block has to keep reaching past it to find a file-level assignment. Both
+    // channels are read by one clause here: `%cfg` from the filter, `%allowed` from outside.
+    let rules_file = RulesFile::try_from(
+        r#"
+    let allowed = "alpha"
+    rule configs_are_allowed {
+        Resources.*[ Type == 'AWS::S3::Bucket' ] {
+            Properties.Config[ cfg | Enabled == true ] !empty
+            some %cfg == %allowed
+        }
+    }
+    "#,
+    )?;
+    let bucket = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(
+        r#"
+        Resources:
+          BucketA:
+            Type: AWS::S3::Bucket
+            Properties:
+              Config:
+                alpha:
+                  Enabled: true
+        "#,
+    )?)?;
+
+    let mut scope = root_scope(&rules_file, Rc::new(bucket));
+    assert_eq!(
+        eval_rules_file(&rules_file, &mut scope, None)?,
+        Status::PASS
+    );
+
+    Ok(())
+}
+
+/// A capture written as a bare name in brackets is declared, so an iteration that did not make it
+/// answers empty instead of reading a neighbour's key.
+///
+/// `Properties.Tags[ tk ]` does not parse to `QueryPart::Filter`. `all_indices` is the first branch of
+/// `predicate_or_index` and it accepts a bare `var_name`, so the pipe-less spelling lands on
+/// `AllIndices(Some("tk"))` -- an arm that captures the entry's key at retrieval just as a filter does.
+/// `collect_query_capture_names` read names out of `Filter` and `MapKeyFilter` only, so no block
+/// declared `tk`, `BlockScope::resolve_variable` deferred to its parent, and the parent held the keys
+/// earlier iterations had merged up.
+///
+/// The nested `when` is what lets an iteration capture nothing without failing: `BucketB` has no
+/// `Tags`, so the capturing clause never runs, and `BucketB` is the only resource that reaches the
+/// clause reading `%tk`.
+///
+/// Three documents in one test because order independence is the property, and the leaky order was the
+/// one that passed. `BucketB` alone ended the run at 255, `BucketA` then `BucketB` exited 0 with
+/// `BucketB` credited with `BucketA`'s key, and the reverse order was 255 again. Adding a compliant
+/// resource is what made the non-compliant one pass, which is why a rule of this shape looks correct
+/// when it is tested one resource at a time.
+#[test]
+fn a_bare_name_capture_does_not_leak_across_iterations_of_a_block() -> Result<()> {
+    let rules_file = RulesFile::try_from(
+        r#"
+    rule tag_named {
+        Resources.*[ Type == 'AWS::S3::Bucket' ] {
+            when Properties.Tags exists {
+                Properties.Tags[ tk ] !empty
+            }
+            when Properties.Other exists {
+                some %tk == "Name"
+            }
+        }
+    }
+    "#,
+    )?;
+
+    // The names order the iteration, so the third document spells the same two resources as
+    // `ABucketB` and `ZBucketA` to put the non-compliant one first.
+    let arrangements = [
+        (
+            "the non-compliant bucket alone",
+            r#"
+        Resources:
+          BucketB:
+            Type: AWS::S3::Bucket
+            Properties:
+              Other: true
+        "#,
+        ),
+        (
+            "the compliant bucket first",
+            r#"
+        Resources:
+          BucketA:
+            Type: AWS::S3::Bucket
+            Properties:
+              Tags:
+                Name: alpha
+          BucketB:
+            Type: AWS::S3::Bucket
+            Properties:
+              Other: true
+        "#,
+        ),
+        (
+            "the compliant bucket second",
+            r#"
+        Resources:
+          ABucketB:
+            Type: AWS::S3::Bucket
+            Properties:
+              Other: true
+          ZBucketA:
+            Type: AWS::S3::Bucket
+            Properties:
+              Tags:
+                Name: alpha
+        "#,
+        ),
+    ];
+
+    for (arrangement, document) in arrangements {
+        let template =
+            PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(document)?)?;
+        let mut scope = root_scope(&rules_file, Rc::new(template));
+        assert_eq!(
+            eval_rules_file(&rules_file, &mut scope, None)?,
+            Status::FAIL,
+            "with {}, a bucket that captured no key under `tk` must not pass on another bucket's",
+            arrangement
+        );
+    }
+
+    Ok(())
+}
+
+/// A name that appears nowhere as a capture stays an unresolved-variable error.
+///
+/// The control on the test above, and it asserts behaviour that must not change rather than behaviour
+/// that does: `tk` is declared by `Properties.Tags[ tk ]`, so resolving it to nothing fails the clause
+/// reading it, while `absent` is a typo or a name belonging to another rule. Collapsing the second into
+/// the first would turn an unwritable rule into a quiet FAIL that reads like a finding about the
+/// template.
+#[test]
+fn a_capture_name_that_appears_nowhere_is_still_an_unresolved_variable() -> Result<()> {
+    let rules_file = RulesFile::try_from(
+        r#"
+    rule tag_named {
+        Resources.*[ Type == 'AWS::S3::Bucket' ] {
+            when Properties.Tags exists {
+                Properties.Tags[ tk ] !empty
+            }
+            when Properties.Other exists {
+                some %absent == "Name"
+            }
+        }
+    }
+    "#,
+    )?;
+    let template = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(
+        r#"
+        Resources:
+          BucketB:
+            Type: AWS::S3::Bucket
+            Properties:
+              Other: true
+        "#,
+    )?)?;
+
+    let mut scope = root_scope(&rules_file, Rc::new(template));
+    let error = eval_rules_file(&rules_file, &mut scope, None)
+        .expect_err("a name no filter declares must not resolve to an empty selection");
+    assert!(
+        error.to_string().contains("absent"),
+        "the error has to name the variable it could not resolve, got: {}",
+        error
+    );
+
+    Ok(())
+}
+
+/// Two buckets whose enabled configs are named `alpha` and `beta`.
+const ALPHA_THEN_BETA: &str = r#"
+Resources:
+  BucketA:
+    Type: AWS::S3::Bucket
+    Properties:
+      Config:
+        alpha:
+          Enabled: true
+  BucketB:
+    Type: AWS::S3::Bucket
+    Properties:
+      Config:
+        beta:
+          Enabled: true
+"#;
+
+/// The same two resources as [`ALPHA_THEN_BETA`], in the other order.
+const BETA_THEN_ALPHA: &str = r#"
+Resources:
+  BucketB:
+    Type: AWS::S3::Bucket
+    Properties:
+      Config:
+        beta:
+          Enabled: true
+  BucketA:
+    Type: AWS::S3::Bucket
+    Properties:
+      Config:
+        alpha:
+          Enabled: true
+"#;
+
+/// Two buckets that both satisfy `some %cfg == "alpha"` on their own keys.
+const BOTH_ALPHA: &str = r#"
+Resources:
+  BucketA:
+    Type: AWS::S3::Bucket
+    Properties:
+      Config:
+        alpha:
+          Enabled: true
+  BucketC:
+    Type: AWS::S3::Bucket
+    Properties:
+      Config:
+        alpha:
+          Enabled: true
+"#;
+
+/// A block that only reads `%cfg` does not get the keys an earlier block captured.
+///
+/// The third instance of one family. The per-iteration `captured` map stopped iteration two of a block
+/// reading iteration one's key; `capture_names` stopped an iteration that captured nothing under a name
+/// its own block declares from reaching past itself. This is the shape neither covers: a *sibling* block
+/// that declares no capture at all, so its lookup defers, and what it reached was the union
+/// `merge_captures_into_parent` had already handed to the enclosing scope. `BucketB`, whose only enabled
+/// config is `beta`, satisfied `some %cfg == "alpha"` on `BucketA`'s key at exit 0 in either document
+/// order.
+///
+/// The two readings hold different values, which is what makes the verdict say which one was used: the
+/// union is `["alpha", "beta"]` and the second block's own iteration has nothing. Both document orders
+/// are asserted because order independence is the property -- a first-iteration-wins artifact would
+/// answer differently in the two.
+///
+/// The last arrangement is the discriminator, and it is why `BOTH_ALPHA` exists: on a document where
+/// every bucket has its own `alpha`, the same assertion inside a block that *declares* the capture
+/// passes. So the FAILs above are the read resolving to nothing, not the rule being unsatisfiable or
+/// the document being wrong.
+#[test]
+fn a_sibling_block_does_not_read_a_capture_merged_out_of_an_earlier_block() -> Result<()> {
+    let reads_only = RulesFile::try_from(
+        r#"
+    rule configs_named_alpha {
+        Resources.*[ Type == 'AWS::S3::Bucket' ] {
+            Properties.Config[ cfg | Enabled == true ] !empty
+        }
+        Resources.*[ Type == 'AWS::S3::Bucket' ] {
+            some %cfg == "alpha"
+        }
+    }
+    "#,
+    )?;
+
+    for (arrangement, document) in [
+        ("the bucket with alpha first", ALPHA_THEN_BETA),
+        ("the bucket with alpha second", BETA_THEN_ALPHA),
+        ("both buckets carrying alpha", BOTH_ALPHA),
+    ] {
+        let template =
+            PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(document)?)?;
+        let mut scope = root_scope(&reads_only, Rc::new(template));
+        assert_eq!(
+            eval_rules_file(&reads_only, &mut scope, None)?,
+            Status::FAIL,
+            "with {}, a block that captures nothing under `cfg` must not read the keys the earlier \
+             block captured",
+            arrangement
+        );
+    }
+
+    let declares_it_too = RulesFile::try_from(
+        r#"
+    rule configs_named_alpha {
+        Resources.*[ Type == 'AWS::S3::Bucket' ] {
+            Properties.Config[ cfg | Enabled == true ] !empty
+        }
+        Resources.*[ Type == 'AWS::S3::Bucket' ] {
+            Properties.Config[ cfg | Enabled == true ] !empty
+            some %cfg == "alpha"
+        }
+    }
+    "#,
+    )?;
+    let template =
+        PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(BOTH_ALPHA)?)?;
+    let mut scope = root_scope(&declares_it_too, Rc::new(template));
+    assert_eq!(
+        eval_rules_file(&declares_it_too, &mut scope, None)?,
+        Status::PASS,
+        "the same assertion over the same document passes when the reading block captures its own \
+         key, so the failures above are the empty selection rather than an unsatisfiable rule"
+    );
+
+    Ok(())
+}
+
+/// A clause after the block still reads every iteration's keys, and a clause inside a nested block
+/// still reads only its own iteration's.
+///
+/// The two readings that `merge_captures_into_parent` is there to give, asserted over one document so
+/// that they cannot both be the same thing. `alpha` and `beta` are keys of *different* buckets: the
+/// rule-level clause after the block passes on either of them because it means the union, and the
+/// clause inside the nested block fails on `alpha` because `BucketB`'s iteration only has `beta`.
+///
+/// Splitting merged keys out of `captured` had to keep both. Withholding the union from every lookup
+/// would break the first; offering it to a nested block is the defect the split is for.
+#[test]
+fn a_capture_reads_as_the_union_after_its_block_and_per_iteration_inside_a_nested_one() -> Result<()>
+{
+    let after_the_block = |expected_key: &str| {
+        format!(
+            r#"
+    rule configs_named {{
+        Resources.*[ Type == 'AWS::S3::Bucket' ] {{
+            Properties.Config[ cfg | Enabled == true ] !empty
+        }}
+        some %cfg == "{}"
+    }}
+    "#,
+            expected_key
+        )
+    };
+
+    for (key, expected) in [
+        ("alpha", Status::PASS),
+        ("beta", Status::PASS),
+        ("gamma", Status::FAIL),
+    ] {
+        let rules = after_the_block(key);
+        let rules_file = RulesFile::try_from(rules.as_str())?;
+        let template =
+            PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(ALPHA_THEN_BETA)?)?;
+        let mut scope = root_scope(&rules_file, Rc::new(template));
+        assert_eq!(
+            eval_rules_file(&rules_file, &mut scope, None)?,
+            expected,
+            "a clause after the block reads the union of both iterations, so `{}` must be {:?}",
+            key,
+            expected
+        );
+    }
+
+    let nested = RulesFile::try_from(
+        r#"
+    rule configs_named_alpha {
+        Resources.*[ Type == 'AWS::S3::Bucket' ] {
+            Properties.Config[ cfg | Enabled == true ] !empty
+            Properties {
+                some %cfg == "alpha"
+            }
+        }
+    }
+    "#,
+    )?;
+    let template =
+        PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(ALPHA_THEN_BETA)?)?;
+    let mut scope = root_scope(&nested, Rc::new(template));
+    assert_eq!(
+        eval_rules_file(&nested, &mut scope, None)?,
+        Status::FAIL,
+        "the same document and the same key: a nested block reads the iteration it is inside, so \
+         `BucketB` must not pass on `BucketA`'s alpha"
+    );
+
+    let template =
+        PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(BOTH_ALPHA)?)?;
+    let mut scope = root_scope(&nested, Rc::new(template));
+    assert_eq!(
+        eval_rules_file(&nested, &mut scope, None)?,
+        Status::PASS,
+        "a nested block still reads the key its own iteration captured"
+    );
+
+    Ok(())
+}
+
+/// A key captured at rule-body level is readable inside a block, and stays so.
+///
+/// The other half of the precision the split buys. `nm` here is not per-iteration data at all: one
+/// query at rule-body level bound it, the way a `let` would, and the block reading it is asking about
+/// the whole selection rather than about the resource it is iterating. Withholding it would have turned
+/// this rule from a pass into a failure, so the line the split draws is between a key that left the
+/// block that made it and a key no block made.
+#[test]
+fn a_capture_made_at_rule_level_is_still_readable_inside_a_block() -> Result<()> {
+    for (expected_name, expected) in [("BucketA", Status::PASS), ("BucketZ", Status::FAIL)] {
+        let rules = format!(
+            r#"
+    rule buckets_named {{
+        Resources[ nm | Type == 'AWS::S3::Bucket' ] !empty
+        Resources.*[ Type == 'AWS::S3::Bucket' ] {{
+            some %nm == "{}"
+        }}
+    }}
+    "#,
+            expected_name
+        );
+        let rules_file = RulesFile::try_from(rules.as_str())?;
+        let template =
+            PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(ALPHA_THEN_BETA)?)?;
+        let mut scope = root_scope(&rules_file, Rc::new(template));
+        assert_eq!(
+            eval_rules_file(&rules_file, &mut scope, None)?,
+            expected,
+            "`{}` read inside the block must be {:?}",
+            expected_name,
+            expected
+        );
+    }
+
+    Ok(())
+}
+
+/// A key captured in a nested block is readable after the block that contains it.
+///
+/// The chain the split has to preserve: the nested block hands its keys to the block around it, and
+/// that block hands them on when it ends. A first version of the split took only `captured` on the way
+/// out, so a key that arrived as a merged one stopped one level short. The clause after the outer block
+/// then read an empty selection -- `capture_names` on the rule body includes names the nested block
+/// declares, so it failed the clause instead of erroring, which is a wrong FAIL and quiet with it.
+#[test]
+fn a_capture_from_a_nested_block_travels_past_the_block_around_it() -> Result<()> {
+    let rules_file = RulesFile::try_from(
+        r#"
+    rule configs_named_alpha {
+        Resources.*[ Type == 'AWS::S3::Bucket' ] {
+            Properties {
+                Config[ cfg | Enabled == true ] !empty
+            }
+        }
+        some %cfg == "beta"
+    }
+    "#,
+    )?;
+    let template =
+        PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(ALPHA_THEN_BETA)?)?;
+    let mut scope = root_scope(&rules_file, Rc::new(template));
+    assert_eq!(
+        eval_rules_file(&rules_file, &mut scope, None)?,
+        Status::PASS,
+        "`beta` is BucketB's key, captured two blocks in, and the clause after the outer block reads \
+         the union"
+    );
+
+    Ok(())
+}
+
+/// A capture name a block declares does not hide an enclosing binding of the same name.
+///
+/// `capture_names` used to answer the lookup itself, before asking the parent, so an outer `let` or an
+/// enclosing parameterized rule's parameter became unreachable for the whole block -- in every
+/// iteration, and even where the capturing clause provably never ran. Each case here is paired with a
+/// control that differs only in the capture's name, and the control passed while the collision failed at
+/// exit 19, on a variable whose `let` sits at the top of the file.
+///
+/// Three shapes because they reach the same short-circuit by different routes: a `when` block whose
+/// condition failed, so the capturing clause did not run; a wildcard over a list, where `accumulate` has
+/// an index rather than a key and the name can *never* be populated on any input; and a rule parameter,
+/// which lives in `ResolvedParameterContext` and is reachable only through the parent chain, so the
+/// argument the call site passed was never read.
+///
+/// Every case is asserted with its mirror, which is what shows the outer binding was read rather than
+/// the clause being skipped: `"fromlet"` passes and `"other"` fails, and the failing one reports
+/// `Value="fromlet"` as what it found.
+#[rstest::rstest]
+#[case::when_condition_failed(
+    r#"
+    let allowed = "fromlet"
+    rule r {
+        Resources.*[ Type == 'AWS::S3::Bucket' ] {
+            when Properties.Missing exists {
+                Properties.Config[ allowed | Enabled == true ] !empty
+            }
+            %allowed == "EXPECTED"
+        }
+    }
+    "#,
+    "bucket"
+)]
+#[case::wildcard_over_a_list(
+    r#"
+    let allowed = "fromlet"
+    rule r {
+        Resources.*[ Type == 'AWS::S3::Bucket' ] {
+            Properties.Ports[ allowed ] > 0
+            %allowed == "EXPECTED"
+        }
+    }
+    "#,
+    "ports"
+)]
+#[case::rule_parameter(
+    r#"
+    rule inner(allowed) {
+        Resources.*[ Type == 'AWS::S3::Bucket' ] {
+            when Properties.Missing exists {
+                Properties.Config[ allowed | Enabled == true ] !empty
+            }
+            %allowed == "EXPECTED"
+        }
+    }
+    rule caller {
+        inner("fromlet")
+    }
+    "#,
+    "bucket"
+)]
+fn a_declared_capture_does_not_hide_an_enclosing_binding_of_the_same_name(
+    #[case] rules: &str,
+    #[case] document: &str,
+) -> Result<()> {
+    let template = match document {
+        "ports" => {
+            r#"
+        Resources:
+          BucketA:
+            Type: AWS::S3::Bucket
+            Properties:
+              Ports:
+                - 80
+                - 443
+        "#
+        }
+        _ => {
+            r#"
+        Resources:
+          BucketA:
+            Type: AWS::S3::Bucket
+            Properties:
+              Config:
+                alpha:
+                  Enabled: true
+        "#
+        }
+    };
+
+    for (expected_value, expected) in [("fromlet", Status::PASS), ("other", Status::FAIL)] {
+        let rules = rules.replace("EXPECTED", expected_value);
+        let rules_file = RulesFile::try_from(rules.as_str())?;
+        let value = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(template)?)?;
+        let mut scope = root_scope(&rules_file, Rc::new(value));
+        assert_eq!(
+            eval_rules_file(&rules_file, &mut scope, None)?,
+            expected,
+            "the block declares `allowed` as a capture and captured nothing, so `%allowed` is the \
+             enclosing binding: comparing it with {:?} must be {:?}",
+            expected_value,
+            expected
+        );
+    }
+
+    Ok(())
+}
+
+/// A capture shadows a same-named assignment in an *enclosing* scope, and the parser accepts that.
+///
+/// The half of the assigned-and-captured collision that is left alone, and it needs asserting because
+/// the parser now refuses the other half: a name assigned and captured in one scope is rejected, since
+/// there the winner is decided by the kind of the assigned value. Across scopes the more local
+/// declaration wins, which is the one rule an author can carry between every other pair of nested
+/// bindings, so this file is accepted and `%cfg` reads the captured key.
+///
+/// Asserted with its mirror, because the two candidate values differ: the capture holds `alpha` and the
+/// file-level assignment holds `"fromlet"`, and only one of the two clauses can pass.
+#[rstest::rstest]
+#[case::the_capture_wins("alpha", Status::PASS)]
+#[case::the_enclosing_assignment_does_not("fromlet", Status::FAIL)]
+fn a_capture_shadows_an_enclosing_assignment_of_the_same_name(
+    #[case] expected_key: &str,
+    #[case] expected: Status,
+) -> Result<()> {
+    let rules = format!(
+        r#"
+    let cfg = "fromlet"
+
+    rule configs_named {{
+        Resources.*[ Type == 'AWS::S3::Bucket' ] {{
+            Properties.Config[ cfg | Enabled == true ] !empty
+            some %cfg == "{}"
+        }}
+    }}
+    "#,
+        expected_key
+    );
+    let rules_file = RulesFile::try_from(rules.as_str())?;
+    let template =
+        PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(BOTH_ALPHA)?)?;
+    let mut scope = root_scope(&rules_file, Rc::new(template));
+    assert_eq!(
+        eval_rules_file(&rules_file, &mut scope, None)?,
+        expected,
+        "`%cfg` inside the block is the captured key, so `{}` must be {:?}",
+        expected_key,
+        expected
+    );
+
+    Ok(())
+}
+
+/// One bucket and one instance, so that two filters over `Resources` select different keys.
+const BUCKET_AND_INSTANCE: &str = r#"
+Resources:
+  Alpha:
+    Type: AWS::S3::Bucket
+  Inst:
+    Type: AWS::EC2::Instance
+"#;
+
+/// A capture in a file-level assignment's query reads the same in every rule and at any clause
+/// position.
+///
+/// Two rules with the same two clauses used to give PASS and then an unresolved-variable error at exit
+/// 255, and swapping the two clauses in one rule did the same. The assignment's result is memoised for
+/// the file and never invalidated, so the second read of `%names` did not re-run the query and made no
+/// capture, while `reset_captures` had already discarded the keys the first read produced. A verdict
+/// that depends on which rule you are in, or on the order of two clauses that do not mention each
+/// other, is not one an author can reason about.
+///
+/// Reading the capture name now resolves the assignment that declares it, and the keys are kept for the
+/// file rather than for the rule. Each case below is asserted with its mirror, so the PASSes are the
+/// key `Alpha` being read rather than a clause that could not fail.
+#[rstest::rstest]
+#[case::assignment_then_capture("%names !empty\n        %nm == \"Alpha\"", Status::PASS)]
+#[case::capture_then_assignment("%nm == \"Alpha\"\n        %names !empty", Status::PASS)]
+#[case::assignment_then_capture_mirror("%names !empty\n        %nm == \"Inst\"", Status::FAIL)]
+#[case::capture_then_assignment_mirror("%nm == \"Inst\"\n        %names !empty", Status::FAIL)]
+#[case::capture_alone("%nm == \"Alpha\"", Status::PASS)]
+#[case::capture_alone_mirror("%nm == \"Inst\"", Status::FAIL)]
+fn a_file_level_capture_reads_the_same_in_every_rule_and_at_any_clause_position(
+    #[case] clauses: &str,
+    #[case] expected: Status,
+) -> Result<()> {
+    // Two rules with the same body, so that a capture bound only in the rule that first forced the
+    // assignment shows up as the two rules disagreeing.
+    let rules = format!(
+        r#"
+    let names = Resources[ nm | Type == 'AWS::S3::Bucket' ]
+
+    rule first {{
+        {clauses}
+    }}
+
+    rule second {{
+        {clauses}
+    }}
+    "#,
+        clauses = clauses
+    );
+    let rules_file = RulesFile::try_from(rules.as_str())?;
+    let template = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(
+        BUCKET_AND_INSTANCE,
+    )?)?;
+    let mut scope = root_scope(&rules_file, Rc::new(template));
+    assert_eq!(
+        eval_rules_file(&rules_file, &mut scope, None)?,
+        expected,
+        "both rules run the clauses `{}` and must agree",
+        clauses
+    );
+
+    Ok(())
+}
+
+/// A clause that mentions neither the capture nor anything it touches does not change what it holds.
+///
+/// Two assignments spelling their capture `nm` appended into one root-level list, so `%nm` held the keys
+/// of whichever assignments some clause had forced. Adding `%b_names !empty` -- which names nothing the
+/// assertion reads -- turned a PASS into a FAIL at exit 19, and nothing in the file says the two `nm`s
+/// are one binding.
+///
+/// Reading `%nm` now resolves every assignment that declares it, so the answer is the union either way.
+/// `some %nm == "Inst"` is the discriminator: it is false if only the bucket assignment contributed and
+/// true if both did, and it has to give the same answer with the extra clause and without it. The
+/// `all` spelling is asserted alongside because that is the shape that changed verdict.
+///
+/// The file declares one name twice in one scope, which `docs/QUERY_AND_FILTERING.md` forbids and the
+/// parser ought to refuse. The union is what makes the verdict independent of the clause list until it
+/// does; a parse rejection would supersede this test rather than contradict it.
+#[rstest::rstest]
+#[case::one_assignment_forced("%a_names !empty", "some %nm == \"Inst\"", Status::PASS)]
+#[case::both_assignments_forced(
+    "%a_names !empty\n        %b_names !empty",
+    "some %nm == \"Inst\"",
+    Status::PASS
+)]
+#[case::one_assignment_forced_all("%a_names !empty", "%nm == \"Alpha\"", Status::FAIL)]
+#[case::both_assignments_forced_all(
+    "%a_names !empty\n        %b_names !empty",
+    "%nm == \"Alpha\"",
+    Status::FAIL
+)]
+fn a_capture_two_file_level_assignments_declare_reads_as_the_union_of_both(
+    #[case] preamble: &str,
+    #[case] assertion: &str,
+    #[case] expected: Status,
+) -> Result<()> {
+    let rules = format!(
+        r#"
+    let a_names = Resources[ nm | Type == 'AWS::S3::Bucket' ]
+    let b_names = Resources[ nm | Type == 'AWS::EC2::Instance' ]
+
+    rule r {{
+        {preamble}
+        {assertion}
+    }}
+    "#,
+        preamble = preamble,
+        assertion = assertion
+    );
+    let rules_file = RulesFile::try_from(rules.as_str())?;
+    let template = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(
+        BUCKET_AND_INSTANCE,
+    )?)?;
+    let mut scope = root_scope(&rules_file, Rc::new(template));
+    assert_eq!(
+        eval_rules_file(&rules_file, &mut scope, None)?,
+        expected,
+        "`{}` must not answer differently for the clauses that ran before it",
+        assertion
+    );
+
+    Ok(())
+}
+
+/// A file-level capture whose query matched nothing fails its clause; a name declared nowhere is still
+/// an error.
+///
+/// The same split `BlockScope::lookup` makes for a name a block declares, applied at file level, and it
+/// is the reason the split has to be made twice: `%nm` resolved when the query matched and ended the
+/// run at exit 255 when it did not, so whether the file produced a report depended on the template it
+/// was run against.
+#[test]
+fn a_file_level_capture_that_matched_nothing_fails_its_clause_rather_than_the_file() -> Result<()> {
+    let matched_nothing = RulesFile::try_from(
+        r#"
+    let functions = Resources[ nm | Type == 'AWS::Lambda::Function' ]
+
+    rule r {
+        %nm == "Alpha"
+    }
+    "#,
+    )?;
+    let template = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(
+        BUCKET_AND_INSTANCE,
+    )?)?;
+    let mut scope = root_scope(&matched_nothing, Rc::new(template));
+    assert_eq!(
+        eval_rules_file(&matched_nothing, &mut scope, None)?,
+        Status::FAIL,
+        "no resource is a Lambda function, so `nm` has no keys and the clause reading it fails"
+    );
+
+    let declared_nowhere = RulesFile::try_from(
+        r#"
+    let names = Resources[ nm | Type == 'AWS::S3::Bucket' ]
+
+    rule r {
+        %absent == "Alpha"
+    }
+    "#,
+    )?;
+    let template = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(
+        BUCKET_AND_INSTANCE,
+    )?)?;
+    let mut scope = root_scope(&declared_nowhere, Rc::new(template));
+    let error = eval_rules_file(&declared_nowhere, &mut scope, None)
+        .expect_err("a name no assignment declares must not resolve to an empty selection");
+    assert!(
+        error.to_string().contains("absent"),
+        "the error has to name the variable it could not resolve, got: {}",
+        error
+    );
+
+    Ok(())
+}
+
+/// A filter predicate reading the capture its own filter declares terminates.
+///
+/// Resolving a capture name now resolves the assignment declaring it, which is a new way for one
+/// resolution to ask for another, so the loop it closes has to be checked rather than assumed absent.
+/// `Type == %nm` asks for `nm` while the assignment binding `nm` is the one being resolved. The
+/// in-progress set answers that inner ask by declining to resolve the assignment a second time, the
+/// predicate selects nothing, and the clause fails. Returning a verdict at all is the property; a
+/// stack overflow is not a verdict, and this rule text reaches the recursion in one line.
+#[test]
+fn a_filter_predicate_reading_its_own_capture_does_not_recurse() -> Result<()> {
+    let rules_file = RulesFile::try_from(
+        r#"
+    let names = Resources[ nm | Type == %nm ]
+
+    rule r {
+        %nm !empty
+    }
+    "#,
+    )?;
+    let template = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(
+        BUCKET_AND_INSTANCE,
+    )?)?;
+    let mut scope = root_scope(&rules_file, Rc::new(template));
+    assert_eq!(
+        eval_rules_file(&rules_file, &mut scope, None)?,
+        Status::FAIL,
+        "the filter selected nothing, so `nm` has no keys and `!empty` over it fails"
+    );
 
     Ok(())
 }
@@ -1567,7 +2628,7 @@ fn test_field_type_array_or_single() -> Result<()> {
         recorder: None,
     };
     let status = eval_guard_clause(&clause, &mut eval, ClauseRole::Assertion)?;
-    assert_eq!(status, Status::FAIL);
+    assert_eq!(status.to_status(ClauseRole::Assertion), Status::FAIL);
 
     let statements = r#"{
         Statement: {
@@ -1583,24 +2644,24 @@ fn test_field_type_array_or_single() -> Result<()> {
         recorder: None,
     };
     let status = eval_guard_clause(&clause, &mut eval, ClauseRole::Assertion)?;
-    assert_eq!(status, Status::FAIL);
+    assert_eq!(status.to_status(ClauseRole::Assertion), Status::FAIL);
 
     let clause = GuardClause::try_from(r#"Statement[*].Action[*] != '*'"#)?;
     let status = eval_guard_clause(&clause, &mut eval, ClauseRole::Assertion)?;
-    assert_eq!(status, Status::FAIL);
+    assert_eq!(status.to_status(ClauseRole::Assertion), Status::FAIL);
 
     // Test old format
     let clause = GuardClause::try_from(r#"Statement.*.Action.* != '*'"#)?;
     let status = eval_guard_clause(&clause, &mut eval, ClauseRole::Assertion)?;
-    assert_eq!(status, Status::FAIL);
+    assert_eq!(status.to_status(ClauseRole::Assertion), Status::FAIL);
 
     let clause = GuardClause::try_from(r#"some Statement[*].Action == '*'"#)?;
     let status = eval_guard_clause(&clause, &mut eval, ClauseRole::Assertion)?;
-    assert_eq!(status, Status::PASS);
+    assert_eq!(status.to_status(ClauseRole::Assertion), Status::PASS);
 
     let clause = GuardClause::try_from(r#"some Statement[*].Action != '*'"#)?;
     let status = eval_guard_clause(&clause, &mut eval, ClauseRole::Assertion)?;
-    assert_eq!(status, Status::FAIL);
+    assert_eq!(status.to_status(ClauseRole::Assertion), Status::FAIL);
 
     Ok(())
 }
@@ -1629,19 +2690,19 @@ fn test_for_in_and_not_in() -> Result<()> {
         r#"mainSteps[*].action !IN ["aws:updateSsmAgent", "aws:updateAgent"]"#,
     )?;
     let status = eval_guard_clause(&clause, &mut eval, ClauseRole::Assertion)?;
-    assert_eq!(status, Status::FAIL);
+    assert_eq!(status.to_status(ClauseRole::Assertion), Status::FAIL);
 
     let clause = GuardClause::try_from(
         r#"mainSteps[*].action IN ["aws:updateSsmAgent", "aws:updateAgent"]"#,
     )?;
     let status = eval_guard_clause(&clause, &mut eval, ClauseRole::Assertion)?;
-    assert_eq!(status, Status::FAIL);
+    assert_eq!(status.to_status(ClauseRole::Assertion), Status::FAIL);
 
     let clause = GuardClause::try_from(
         r#"some mainSteps[*].action IN ["aws:updateSsmAgent", "aws:updateAgent"]"#,
     )?;
     let status = eval_guard_clause(&clause, &mut eval, ClauseRole::Assertion)?;
-    assert_eq!(status, Status::PASS);
+    assert_eq!(status.to_status(ClauseRole::Assertion), Status::PASS);
 
     Ok(())
 }
@@ -1669,7 +2730,7 @@ fn test_rule_with_range_test_and_this() -> Result<()> {
         recorder: None,
     };
     let status = eval_rule(&rule, &mut eval, ClauseRole::Assertion)?;
-    assert_eq!(status, Status::PASS);
+    assert_eq!(status.to_status(ClauseRole::Assertion), Status::PASS);
 
     let value_str = r#"
     InputParameter:
@@ -1685,7 +2746,7 @@ fn test_rule_with_range_test_and_this() -> Result<()> {
         recorder: None,
     };
     let status = eval_rule(&rule, &mut eval, ClauseRole::Assertion)?;
-    assert_eq!(status, Status::FAIL);
+    assert_eq!(status.to_status(ClauseRole::Assertion), Status::FAIL);
 
     Ok(())
 }
@@ -1736,7 +2797,7 @@ fn test_inner_when_skipped() -> Result<()> {
         recorder: None,
     };
     let status = eval_rule(&rule, &mut eval, ClauseRole::Assertion)?;
-    assert_eq!(status, Status::FAIL);
+    assert_eq!(status.to_status(ClauseRole::Assertion), Status::FAIL);
 
     let value_str = r#"
     Resources:
@@ -1758,7 +2819,7 @@ fn test_inner_when_skipped() -> Result<()> {
         recorder: None,
     };
     let status = eval_rule(&rule, &mut eval, ClauseRole::Assertion)?;
-    assert_eq!(status, Status::SKIP);
+    assert_eq!(status.to_status(ClauseRole::Assertion), Status::SKIP);
 
     let value_str = r#"
     Resources: {}
@@ -1769,7 +2830,7 @@ fn test_inner_when_skipped() -> Result<()> {
         recorder: None,
     };
     let status = eval_rule(&rule, &mut eval, ClauseRole::Assertion)?;
-    assert_eq!(status, Status::SKIP);
+    assert_eq!(status.to_status(ClauseRole::Assertion), Status::SKIP);
 
     let value_str = r#"{}"#;
     let value = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(value_str)?)?;
@@ -1778,7 +2839,7 @@ fn test_inner_when_skipped() -> Result<()> {
         recorder: None,
     };
     let status = eval_rule(&rule, &mut eval, ClauseRole::Assertion)?;
-    assert_eq!(status, Status::FAIL);
+    assert_eq!(status.to_status(ClauseRole::Assertion), Status::FAIL);
 
     Ok(())
 }
@@ -1870,7 +2931,7 @@ fn test_multiple_valued_clause_reporting() -> Result<()> {
         recorder: Some(&mut asserter),
     };
     let status = eval_rule(&rules, &mut root, ClauseRole::Assertion)?;
-    assert_eq!(status, Status::FAIL);
+    assert_eq!(status.to_status(ClauseRole::Assertion), Status::FAIL);
 
     let rule = r###"
     let resources = Resources.*
@@ -2225,10 +3286,10 @@ fn test_support_for_atleast_one_match_clause() -> Result<()> {
     };
 
     let status = eval_guard_clause(&clause_some, &mut eval, ClauseRole::Assertion)?;
-    assert_eq!(status, Status::PASS);
+    assert_eq!(status.to_status(ClauseRole::Assertion), Status::PASS);
 
     let status = eval_guard_clause(&clause, &mut eval, ClauseRole::Assertion)?;
-    assert_eq!(status, Status::FAIL);
+    assert_eq!(status.to_status(ClauseRole::Assertion), Status::FAIL);
 
     let values_str = r#"{ Tags: [] }"#;
     let values = PathAwareValue::try_from(values_str)?;
@@ -2237,10 +3298,10 @@ fn test_support_for_atleast_one_match_clause() -> Result<()> {
         recorder: None,
     };
     let status = eval_guard_clause(&clause_some, &mut eval, ClauseRole::Assertion)?;
-    assert_eq!(status, Status::FAIL);
+    assert_eq!(status.to_status(ClauseRole::Assertion), Status::FAIL);
 
     let status = eval_guard_clause(&clause, &mut eval, ClauseRole::Assertion)?;
-    assert_eq!(status, Status::FAIL);
+    assert_eq!(status.to_status(ClauseRole::Assertion), Status::FAIL);
 
     let values_str = r#"{ }"#;
     let values = PathAwareValue::try_from(values_str)?;
@@ -2249,10 +3310,10 @@ fn test_support_for_atleast_one_match_clause() -> Result<()> {
         recorder: None,
     };
     let status = eval_guard_clause(&clause_some, &mut eval, ClauseRole::Assertion)?;
-    assert_eq!(status, Status::FAIL);
+    assert_eq!(status.to_status(ClauseRole::Assertion), Status::FAIL);
 
     let status = eval_guard_clause(&clause, &mut eval, ClauseRole::Assertion)?;
-    assert_eq!(status, Status::FAIL);
+    assert_eq!(status.to_status(ClauseRole::Assertion), Status::FAIL);
 
     //
     // Trying out the selection filters
@@ -2358,7 +3419,7 @@ fn ensure_all_list_value_access_on_empty_fails() -> Result<()> {
         recorder: None,
     };
     let status = eval_guard_clause(&claused_failure_spec, &mut eval, ClauseRole::Assertion)?;
-    assert_eq!(status, Status::FAIL);
+    assert_eq!(status.to_status(ClauseRole::Assertion), Status::FAIL);
 
     let claused_failure_spec = GuardClause::try_from(r#"some Tags[*].Key == /Name/"#)?;
     let mut eval = BasicQueryTesting {
@@ -2366,7 +3427,7 @@ fn ensure_all_list_value_access_on_empty_fails() -> Result<()> {
         recorder: None,
     };
     let status = eval_guard_clause(&claused_failure_spec, &mut eval, ClauseRole::Assertion)?;
-    assert_eq!(status, Status::FAIL);
+    assert_eq!(status.to_status(ClauseRole::Assertion), Status::FAIL);
 
     let claused_failure_spec = GuardClause::try_from(r#"Tags[*] { Key == /Name/ }"#)?;
     let mut eval = BasicQueryTesting {
@@ -2374,7 +3435,7 @@ fn ensure_all_list_value_access_on_empty_fails() -> Result<()> {
         recorder: None,
     };
     let status = eval_guard_clause(&claused_failure_spec, &mut eval, ClauseRole::Assertion)?;
-    assert_eq!(status, Status::FAIL);
+    assert_eq!(status.to_status(ClauseRole::Assertion), Status::FAIL);
 
     let claused_failure_spec = GuardClause::try_from(r#"some Tags[*] { Key == /Name/ }"#)?;
     let mut eval = BasicQueryTesting {
@@ -2382,7 +3443,7 @@ fn ensure_all_list_value_access_on_empty_fails() -> Result<()> {
         recorder: None,
     };
     let status = eval_guard_clause(&claused_failure_spec, &mut eval, ClauseRole::Assertion)?;
-    assert_eq!(status, Status::FAIL);
+    assert_eq!(status.to_status(ClauseRole::Assertion), Status::FAIL);
 
     let claused_failure_spec = GuardClause::try_from(r#"Tags !empty"#)?;
     let mut eval = BasicQueryTesting {
@@ -2390,7 +3451,7 @@ fn ensure_all_list_value_access_on_empty_fails() -> Result<()> {
         recorder: None,
     };
     let status = eval_guard_clause(&claused_failure_spec, &mut eval, ClauseRole::Assertion)?;
-    assert_eq!(status, Status::FAIL);
+    assert_eq!(status.to_status(ClauseRole::Assertion), Status::FAIL);
 
     let claused_failure_spec = GuardClause::try_from(r#"Tags empty"#)?;
     let mut eval = BasicQueryTesting {
@@ -2398,7 +3459,7 @@ fn ensure_all_list_value_access_on_empty_fails() -> Result<()> {
         recorder: None,
     };
     let status = eval_guard_clause(&claused_failure_spec, &mut eval, ClauseRole::Assertion)?;
-    assert_eq!(status, Status::PASS);
+    assert_eq!(status.to_status(ClauseRole::Assertion), Status::PASS);
 
     let claused_failure_spec = GuardClause::try_from(r#"Tags[*] !empty"#)?;
     let mut eval = BasicQueryTesting {
@@ -2406,7 +3467,7 @@ fn ensure_all_list_value_access_on_empty_fails() -> Result<()> {
         recorder: None,
     };
     let status = eval_guard_clause(&claused_failure_spec, &mut eval, ClauseRole::Assertion)?;
-    assert_eq!(status, Status::FAIL);
+    assert_eq!(status.to_status(ClauseRole::Assertion), Status::FAIL);
 
     let claused_failure_spec = GuardClause::try_from(r#"Tags[*] empty"#)?;
     let mut eval = BasicQueryTesting {
@@ -2414,7 +3475,7 @@ fn ensure_all_list_value_access_on_empty_fails() -> Result<()> {
         recorder: None,
     };
     let status = eval_guard_clause(&claused_failure_spec, &mut eval, ClauseRole::Assertion)?;
-    assert_eq!(status, Status::PASS);
+    assert_eq!(status.to_status(ClauseRole::Assertion), Status::PASS);
 
     Ok(())
 }
@@ -2430,15 +3491,15 @@ fn ensure_all_map_values_access_on_empty_fails() -> Result<()> {
 
     let clause_failure_spec = GuardClause::try_from(r#"Resources.*.Properties exists"#)?;
     let status = eval_guard_clause(&clause_failure_spec, &mut eval, ClauseRole::Assertion)?;
-    assert_eq!(status, Status::FAIL);
+    assert_eq!(status.to_status(ClauseRole::Assertion), Status::FAIL);
 
     let clause_failure_spec = GuardClause::try_from(r#"Resources.* { Properties exists }"#)?;
     let status = eval_guard_clause(&clause_failure_spec, &mut eval, ClauseRole::Assertion)?;
-    assert_eq!(status, Status::FAIL);
+    assert_eq!(status.to_status(ClauseRole::Assertion), Status::FAIL);
 
     let clause_failure_spec = GuardClause::try_from(r#"Resources exists"#)?;
     let status = eval_guard_clause(&clause_failure_spec, &mut eval, ClauseRole::Assertion)?;
-    assert_eq!(status, Status::PASS);
+    assert_eq!(status.to_status(ClauseRole::Assertion), Status::PASS);
 
     //
     // Resources is empty, hence FAIL
@@ -2446,7 +3507,7 @@ fn ensure_all_map_values_access_on_empty_fails() -> Result<()> {
     let clause_failure_spec =
         GuardClause::try_from(r#"Resources[ Type == /Bucket/ ].Properties exists"#)?;
     let status = eval_guard_clause(&clause_failure_spec, &mut eval, ClauseRole::Assertion)?;
-    assert_eq!(status, Status::SKIP);
+    assert_eq!(status.to_status(ClauseRole::Assertion), Status::SKIP);
 
     //
     // Resource present filter did not select, SKIP
@@ -2464,7 +3525,7 @@ fn ensure_all_map_values_access_on_empty_fails() -> Result<()> {
         recorder: None,
     };
     let status = eval_guard_clause(&clause_failure_spec, &mut eval, ClauseRole::Assertion)?;
-    assert_eq!(status, Status::SKIP);
+    assert_eq!(status.to_status(ClauseRole::Assertion), Status::SKIP);
 
     //
     // No resources present
@@ -2477,7 +3538,150 @@ fn ensure_all_map_values_access_on_empty_fails() -> Result<()> {
     };
     let clause_failure_spec = GuardClause::try_from(r#"Resources exists"#)?;
     let status = eval_guard_clause(&clause_failure_spec, &mut eval, ClauseRole::Assertion)?;
-    assert_eq!(status, Status::FAIL);
+    assert_eq!(status.to_status(ClauseRole::Assertion), Status::FAIL);
+
+    Ok(())
+}
+
+fn eval_one_rule(rules: &str, data: &str) -> Result<Status> {
+    let rules_file = RulesFile::try_from(rules)?;
+    let value = PathAwareValue::try_from(data)?;
+    let mut root = root_scope(&rules_file, Rc::new(value));
+    eval_rules_file(&rules_file, &mut root, None)
+}
+
+/// Both flavours of empty selection answer the same way.
+///
+/// A selection can come up empty two ways, and they used to disagree. A filter that runs and keeps
+/// nothing returns no values and the clause reports SKIP. A collection that is absent or empty never
+/// reached the filter at all: it produced an unresolved marker, the clause's operator ran on *that*,
+/// and `not exists` read it as vacuously true -- so the first two rows below reported PASS. A document
+/// containing nothing was called compliant while a document containing one unrelated resource
+/// correctly reported the rule inapplicable, which is less information yielding the stronger claim.
+///
+/// The last two rows are why this is a consistency fix and not a licence to skip: the rule still
+/// passes what it should pass and, above all, still fails what it should fail.
+#[test]
+fn both_flavours_of_empty_selection_agree() -> Result<()> {
+    const RULE: &str = r#"rule H {
+    Resources.*[ Type == 'AWS::DynamoDB::Table' ].Properties.TableName not exists
+}"#;
+
+    let cases: [(&str, &str, Status); 5] = [
+        ("no Resources key at all", r#"{}"#, Status::SKIP),
+        (
+            "Resources present but empty",
+            r#"{"Resources":{}}"#,
+            Status::SKIP,
+        ),
+        (
+            "one resource of an unrelated type, filtered away",
+            r#"{"Resources":{"B":{"Type":"AWS::S3::Bucket","Properties":{"BucketName":"b"}}}}"#,
+            Status::SKIP,
+        ),
+        (
+            "one compliant table",
+            r#"{"Resources":{"T":{"Type":"AWS::DynamoDB::Table","Properties":{"KeySchema":[]}}}}"#,
+            Status::PASS,
+        ),
+        (
+            "one violating table",
+            r#"{"Resources":{"T":{"Type":"AWS::DynamoDB::Table","Properties":{"TableName":"t"}}}}"#,
+            Status::FAIL,
+        ),
+    ];
+
+    for (label, data, expected) in cases {
+        assert_eq!(
+            expected,
+            eval_one_rule(RULE, data)?,
+            "{label}: the two flavours of empty selection must agree"
+        );
+    }
+
+    Ok(())
+}
+
+/// The empty-selection SKIP reaches only a selection, never a subject.
+///
+/// This is the narrowing half of `both_flavours_of_empty_selection_agree`, and every row is a shape
+/// that must keep failing. A missing *property* is represented by the same unresolved marker an empty
+/// selection used to produce, so answering SKIP for both would retire `Properties.X exists` -- the
+/// single most common clause in any real ruleset. The discriminator is whether a filter is still
+/// pending: with one, the query is choosing subjects and an empty result means the rule does not
+/// apply; without one, the query is projecting a property of a subject already chosen and an empty
+/// result is an answer about that subject.
+///
+/// The `filter_then_empty_tags` row is the one that pins the direction of that test rather than its
+/// mere presence: the filter has already run and matched, so the empty `Tags` belongs to a selected
+/// bucket and the clause fails. Searching the whole query for a filter instead of the part of it that
+/// is still ahead would turn that row into SKIP.
+#[test]
+fn an_empty_selection_never_excuses_a_missing_subject() -> Result<()> {
+    const BUCKET: &str =
+        r#"{"Resources":{"B":{"Type":"AWS::S3::Bucket","Properties":{"BucketName":"b"}}}}"#;
+    const TAGS_EMPTY: &str =
+        r#"{"Resources":{"B":{"Type":"AWS::S3::Bucket","Properties":{"Tags":[]}}}}"#;
+    const TAGS_OK: &str = r#"{"Resources":{"B":{"Type":"AWS::S3::Bucket","Properties":{"Tags":[{"Key":"PROD","Value":"v"}]}}}}"#;
+
+    let cases: [(&str, &str, &str, Status); 8] = [
+        // A missing leaf property, with and without a filter that matched.
+        (
+            "missing property under a wildcard",
+            "Resources.*.Properties.BucketEncryption exists",
+            BUCKET,
+            Status::FAIL,
+        ),
+        (
+            "missing property under a filter that matched",
+            "Resources.*[ Type == 'AWS::S3::Bucket' ].Properties.BucketEncryption exists",
+            BUCKET,
+            Status::FAIL,
+        ),
+        // An empty collection that is itself the subject of the clause.
+        (
+            "empty tag list is not an excuse for !empty",
+            "Resources.*.Properties.Tags[*] !empty",
+            TAGS_EMPTY,
+            Status::FAIL,
+        ),
+        (
+            "empty tag list is not an excuse for a tag-content check",
+            "Resources.*.Properties.Tags[*].Key == /PROD/",
+            TAGS_EMPTY,
+            Status::FAIL,
+        ),
+        (
+            "a filter that already ran does not make a later empty collection a selection",
+            "Resources.*[ Type == 'AWS::S3::Bucket' ].Properties.Tags[*].Key == /PROD/",
+            TAGS_EMPTY,
+            Status::FAIL,
+        ),
+        (
+            "the same clause still passes when the tag is there",
+            "Resources.*[ Type == 'AWS::S3::Bucket' ].Properties.Tags[*].Key == /PROD/",
+            TAGS_OK,
+            Status::PASS,
+        ),
+        // A bare wildcard with no filter anywhere: not a selection, so unchanged.
+        (
+            "empty Resources under a wildcard with no filter",
+            "Resources.*.Properties exists",
+            r#"{"Resources":{}}"#,
+            Status::FAIL,
+        ),
+        (
+            "absent Resources under a wildcard with no filter",
+            "Resources.*.Properties exists",
+            r#"{}"#,
+            Status::FAIL,
+        ),
+    ];
+
+    for (label, clause, data, expected) in cases {
+        let rule = format!("rule G {{\n    {clause}\n}}\n");
+        assert_eq!(expected, eval_one_rule(&rule, data)?, "{label}");
+    }
 
     Ok(())
 }
@@ -3183,20 +4387,20 @@ fn test_iam_statement_clauses() -> Result<()> {
     // let clause = "Condition.*[ KEYS == /aws:[sS]ource(Vpc|VPC|Vpce|VPCE)/ ]";
     let parsed = GuardClause::try_from(clause)?;
     let status = eval_guard_clause(&parsed, &mut eval, ClauseRole::Assertion)?;
-    assert_eq!(Status::PASS, status);
+    assert_eq!(Status::PASS, status.to_status(ClauseRole::Assertion));
 
     let clause = r#"Statement[ Condition EXISTS
                                      Condition.*[ KEYS == /aws:[sS]ource(Vpc|VPC|Vpce|VPCE)/ ] !EMPTY ] NOT EMPTY
     "#;
     let parsed = GuardClause::try_from(clause)?;
     let status = eval_guard_clause(&parsed, &mut eval, ClauseRole::Assertion)?;
-    assert_eq!(Status::PASS, status);
+    assert_eq!(Status::PASS, status.to_status(ClauseRole::Assertion));
 
     let parsed = GuardClause::try_from(
         r#"SOME Statement[*].Condition.*[ THIS IS_STRUCT ][ KEYS ==  /aws:[sS]ource(Vpc|VPC|Vpce|VPCE)/ ] NOT EMPTY"#,
     )?;
     let status = eval_guard_clause(&parsed, &mut eval, ClauseRole::Assertion)?;
-    assert_eq!(Status::PASS, status);
+    assert_eq!(Status::PASS, status.to_status(ClauseRole::Assertion));
 
     let sample = r#"
     {
@@ -3214,7 +4418,7 @@ fn test_iam_statement_clauses() -> Result<()> {
         recorder: None,
     };
     let status = eval_guard_clause(&parsed, &mut eval, ClauseRole::Assertion)?;
-    assert_eq!(status, Status::FAIL);
+    assert_eq!(status.to_status(ClauseRole::Assertion), Status::FAIL);
 
     let sample = r#"
     {
@@ -3235,7 +4439,7 @@ fn test_iam_statement_clauses() -> Result<()> {
         recorder: None,
     };
     let status = eval_guard_clause(&parsed, &mut eval, ClauseRole::Assertion)?;
-    assert_eq!(status, Status::FAIL);
+    assert_eq!(status.to_status(ClauseRole::Assertion), Status::FAIL);
 
     let sample = r#"
     {
@@ -3257,7 +4461,7 @@ fn test_iam_statement_clauses() -> Result<()> {
         recorder: None,
     };
     let status = eval_guard_clause(&parsed, &mut eval, ClauseRole::Assertion)?;
-    assert_eq!(status, Status::PASS);
+    assert_eq!(status.to_status(ClauseRole::Assertion), Status::PASS);
 
     let value = PathAwareValue::try_from(SAMPLE)?;
     let parsed = GuardClause::try_from(clause)?;
@@ -3266,7 +4470,7 @@ fn test_iam_statement_clauses() -> Result<()> {
         recorder: None,
     };
     let status = eval_guard_clause(&parsed, &mut eval, ClauseRole::Assertion)?;
-    assert_eq!(Status::FAIL, status);
+    assert_eq!(Status::FAIL, status.to_status(ClauseRole::Assertion));
 
     Ok(())
 }
@@ -3329,7 +4533,7 @@ rule check_rest_api_private {
         recorder: None,
     };
     let status = eval_rule(&rule, &mut eval, ClauseRole::Assertion)?;
-    assert_eq!(status, Status::PASS);
+    assert_eq!(status.to_status(ClauseRole::Assertion), Status::PASS);
 
     Ok(())
 }
@@ -3394,7 +4598,7 @@ rule check_rest_api_private {
         recorder: None,
     };
     let status = eval_rule(&rule, &mut eval, ClauseRole::Assertion)?;
-    assert_eq!(status, Status::PASS);
+    assert_eq!(status.to_status(ClauseRole::Assertion), Status::PASS);
 
     let resources = r#"
     {
@@ -3438,7 +4642,7 @@ rule check_rest_api_private {
         recorder: None,
     };
     let status = eval_rule(&rule, &mut eval, ClauseRole::Assertion)?;
-    assert_eq!(status, Status::FAIL);
+    assert_eq!(status.to_status(ClauseRole::Assertion), Status::FAIL);
 
     Ok(())
 }
@@ -3833,7 +5037,7 @@ fn match_lhs_with_rhs_single_element_pass() -> Result<()> {
         recorder: None,
     };
     let status = eval_guard_clause(&guard_clause, &mut eval, ClauseRole::Assertion)?;
-    assert_eq!(status, Status::PASS);
+    assert_eq!(status.to_status(ClauseRole::Assertion), Status::PASS);
 
     let clause = r#"algorithms == ["KMS", "SSE"]"#;
     let value = r#"algorithms: KMS"#;
@@ -3844,7 +5048,7 @@ fn match_lhs_with_rhs_single_element_pass() -> Result<()> {
         recorder: None,
     };
     let status = eval_guard_clause(&guard_clause, &mut eval, ClauseRole::Assertion)?;
-    assert_eq!(status, Status::FAIL);
+    assert_eq!(status.to_status(ClauseRole::Assertion), Status::FAIL);
 
     Ok(())
 }
@@ -3957,8 +5161,37 @@ fn using_resource_names_for_assessment() -> Result<()> {
     Ok(())
 }
 
+/// An upstream failure parked in 2023 (commit `1aca9003`), diagnosed here but not fixed.
+///
+/// `IN` applies substring semantics only when its right-hand side is a literal string. When
+/// the right-hand side comes from a query it falls back to equality, so the same spelling
+/// means a different operator depending on where the value came from. Measured on this
+/// fixture:
+///
+///     <query>    in '<literal string>'   PASS   -- substring, via string_in
+///     'literal'  in <query>              FAIL   -- equality, via contained_in -> compare_eq
+///
+/// The mechanism is in `InOperation::compare`. A literal left side against a queried right
+/// side takes the `(Some(l), None)` arm, which for two scalars calls `contained_in`, and
+/// `contained_in`'s scalar/scalar case ends in `match_value(.., compare_eq)`. `string_in`,
+/// which is the function that does `rhs.contains(lhs)`, is only reached from the
+/// literal/literal arm and from the `(None, Some(r))` arm where the right side is a literal
+/// `PathAwareValue::String`.
+///
+/// This test writes `some %bucket_names[*] in ...'Fn::Sub'` -- a query on both sides -- so it
+/// gets equality and fails. Not the capture syntax and not the intrinsic: probing each
+/// separately shows `%s3_buckets`, `%bucket_names` and the
+/// `Properties.PolicyDocument.Statement.Resource.'Fn::Sub'` query all resolve, and the failure
+/// reproduces with a plain literal `'s3'` in place of the captured variable.
+///
+/// Left ignored because the fix is a semantics decision for upstream, not a local repair.
+/// Making scalar-against-query use `string_in` would turn every `IN` between a scalar and a
+/// queried value into a substring test -- `Properties.Name in Resources.*.Tags` would start
+/// matching on fragments -- and that is a visible behaviour change for every existing ruleset.
+/// docs/CLAUSES.md documents only scalar left-hand sides for `IN`, so it does not settle which
+/// reading is intended. Same family of question as the mirrored zero-selection asymmetry.
 #[test]
-#[ignore]
+#[ignore = "upstream, 2023: IN uses equality against a queried RHS but substring against a literal one"]
 fn test_string_in_comparison() -> Result<()> {
     let resources = r#"
     Resources:
@@ -4711,6 +5944,1005 @@ fn parameterized_rule_used_as_a_gate_does_not_disarm_the_block() -> Result<()> {
     Ok(())
 }
 
+/// A LIVE DEFECT INTRODUCED BY THIS BRANCH: a wrong FAIL across a named-rule gate.
+///
+/// This is the cost of the empty-collection FAIL, and it was not visible until a reviewer
+/// measured the *satisfiable-body* case. Earlier gate fixtures all used a failing body, so
+/// both "gate opened, body failed" and "gate closed, body dropped" exited 19 and the exit
+/// code could not tell them apart.
+///
+/// `vac_eq` compares an empty collection, so it FAILs (correctly, as an assertion). `body`
+/// gates on it. `eval_rule` treats any non-PASS condition as "rule does not apply", so
+/// `body` is dropped even though its own check would pass:
+///
+/// - v3.2.0: exit 0, both rules compliant -- but see below, that PASS is itself the defect.
+/// - this branch: exit 19, `not_compliant: [vac_eq]`, `not_applicable: [body]`.
+///
+/// The regression is the `not_applicable: [body]`, not the exit code, and the distinction is
+/// the point: exit 19 cannot tell "gate opened, body failed" from "gate closed, body dropped".
+/// v3.2.0's exit 0 is not the target to restore, because it comes from `Tags == 'Owner'`
+/// reporting *compliant* against `Tags: []` -- the empty-collection wrong PASS this branch
+/// removes. Asserting that status would make this test green exactly when the defect is
+/// reintroduced.
+///
+/// Cause was the named-rule boundary: `rule_status` evaluated a named rule's body with
+/// `ClauseRole::Assertion` whatever the reference site was, so the `role.is_strict()` guard
+/// on the empty-collection arm could not see that the rule was being used as a gate. At a
+/// *syntactic* `when` the guard already worked and the gate opened -- verified separately --
+/// so the defect was specific to the named-rule spelling.
+///
+/// Fixed by carrying the reference site's role through `rule_status` into `eval_rule`, and
+/// keying the `rules_status` cache on `(rule, role)` so a body reference and a gate
+/// reference to the same rule do not share a cache slot. Without the key change the fix
+/// would be order-dependent: whichever reference ran first would decide the cached answer
+/// for the other.
+///
+/// Reverting was rejected rather than untried: it restores the original wrong PASS, where
+/// `Tags == 'Owner'` certifies `Tags: []` as compliant, and a wrong PASS on a policy gate is
+/// worse than a wrong FAIL.
+#[test]
+fn a_named_rule_gate_does_not_drop_a_satisfiable_body() -> Result<()> {
+    // `Name` matches what `body` requires, so `body` is satisfiable. Only `Tags: []` is
+    // unusual, and it is what makes the gate condition fail.
+    let input = r#"
+    {
+        Resources: {
+            b: {
+                Type: 'AWS::S3::Bucket',
+                Properties: { Name: "publicbucket", Tags: [] }
+            }
+        }
+    }
+    "#;
+
+    // The named-rule spelling is the subject, so it has to stay, and `vac_eq` is therefore
+    // also a top-level rule subject to the file-level fold.
+    //
+    // Not because the language makes that unavoidable -- an earlier version of this comment
+    // claimed "every named rule in Guard is also top-level" and that is false. A
+    // *parameterized* rule lands in a separate `parameterized_rules` vec (`exprs.rs:283`)
+    // which the fold never iterates (the `for each_rule in &rule.guard_rules` loop in
+    // `eval_rules_file`), so `rule vac_eq(unused)` gated by
+    // `when vac_eq("x")` escapes the fold entirely.
+    //
+    // It escapes the defect too, which is the actual reason not to use it here: measured, that
+    // shape reports the gated rule as compliant with nothing dropped. The parameterized
+    // boundary threads the reference-site role correctly, so a fixture built on it pins the
+    // *working* path -- the same tell as the inline `when` spelling, and already covered by
+    // `parameterized_rule_used_as_a_gate_does_not_disarm_the_block` above.
+    let named_gate = r###"
+    rule vac_eq {
+        Resources.*[ Type == 'AWS::S3::Bucket' ].Properties.Tags == 'Owner'
+    }
+    rule body when vac_eq {
+        Resources.*[ Type == 'AWS::S3::Bucket' ].Properties.Name == 'publicbucket'
+    }
+    "###;
+
+    // Asserted on `body`'s own applicability, NOT on the file's status. Both halves of that
+    // choice are load-bearing.
+    //
+    // The file status cannot express this regression. `eval_rules_file` evaluates every
+    // top-level rule with `ClauseRole::Assertion` unconditionally -- the `eval_rule(..,
+    // ClauseRole::Assertion)` call in `eval_rules_file` -- and folds `fails > 0 -> FAIL` in
+    // that same function, so a `vac_eq` that fails strictly forces the file to
+    // FAIL however the gate behaves. Keying the rule-status cache on `(rule, role)` fixes the
+    // gate and cannot touch that fold.
+    //
+    // And the file status that *would* make this file PASS is itself the defect: on v3.2.0
+    // `Tags == 'Owner'` reports `compliant` against `Tags: []`, which is the empty-collection
+    // wrong PASS this branch removes. An earlier version of this test asserted exactly that
+    // PASS as its target -- so it would have gone green precisely when the defect was
+    // reintroduced, with a green suite certifying the opposite.
+    //
+    // What is both reachable and wrong-PASS-free is narrower: `body` is satisfiable, so it
+    // must not be reported not-applicable. `vac_eq` failing is correct and stays correct.
+    let report_for = |data: &str| -> Result<Vec<String>> {
+        let resources = PathAwareValue::try_from(data)?;
+        let rules_file = RulesFile::try_from(named_gate)?;
+        let mut root = root_scope(&rules_file, Rc::new(resources));
+        let _ = eval_rules_file(&rules_file, &mut root, None)?;
+        let top = root.reset_recorder().extract();
+        Ok(simplified_json_from_root(&top)?
+            .not_applicable
+            .into_iter()
+            .collect())
+    };
+
+    // Liveness first, for the reason recorded on the ordering reproduction: an absence claim
+    // is satisfied when nothing runs at all, so a query that stopped selecting would let the
+    // claim below pass while blind. With populated tags the gate opens on real evidence.
+    let populated = r#"
+    {
+        Resources: {
+            b: {
+                Type: 'AWS::S3::Bucket',
+                Properties: { Name: "publicbucket", Tags: ['Owner'] }
+            }
+        }
+    }
+    "#;
+    let live = report_for(populated)?;
+    assert!(
+        live.is_empty(),
+        "liveness: with `Tags: ['Owner']` both rules apply and nothing should be \
+         not-applicable, got {:?}. Anything else means the query stopped selecting and the \
+         claim below is meaningless.",
+        live
+    );
+
+    // The claim, stated name-independently: with the gate condition failing, NOTHING should be
+    // dropped. Not "nothing called `body`".
+    //
+    // An earlier version asserted `!dropped.iter().any(|name| name == "body")`, which is
+    // vacuously true the moment the gated rule is renamed -- measured: rename it and the test
+    // goes green with the defect fully live, the renamed rule sitting in `not_applicable`
+    // where nothing looks for it. The liveness row above cannot catch that, because
+    // `live.is_empty()` is itself name-independent and holds under any renaming.
+    //
+    // Worth being precise about what liveness does buy here, since it is not this. Rotting the
+    // query makes `body` not-applicable, which *violates* an absence claim rather than
+    // satisfying it -- so for the rot mutation liveness gives a clearer diagnostic, not
+    // false-green protection. The mutation that passes blind is the rename. The general form:
+    // an absence claim needs a mutation probe on its own matching key, and liveness guards the
+    // query rather than the key.
+    let dropped = report_for(input)?;
+    assert!(
+        dropped.is_empty(),
+        "a rule was reported not-applicable even though its own check passes: the failing \
+         gate condition swallowed it. not_applicable = {:?}",
+        dropped
+    );
+
+    Ok(())
+}
+
+/// Carrying the gate role into a named rule's body must not soften a real violation.
+///
+/// This is the adversarial case for the `(rule, role)` change. That change makes
+/// `rule_status` evaluate a referenced rule's body with the *reference site's* role, so a
+/// `when` condition now evaluates the body with `ClauseRole::Gate`. The obvious risk is that
+/// Gate strictness laundered every failure inside a gate into SKIP, which would open gates
+/// that ought to close and run bodies that ought to be dropped -- a wrong PASS, and strictly
+/// worse than the wrong FAIL being fixed.
+///
+/// It does not, and the reason is narrow enough to be worth pinning rather than asserting:
+/// `ClauseRole` is consulted for exactly one outcome, the unevaluatable one. `Outcome`'s
+/// doc puts it as "role matters for exactly one variant" and `to_status` only branches on
+/// `Unevaluatable`. A populated collection that genuinely violates its clause is `Violated`,
+/// which maps to FAIL under either role. So the gate still closes here, on real evidence.
+///
+/// Distinct from `a_named_rule_gate_does_not_drop_a_satisfiable_body`, which covers the
+/// *unevaluatable* input (`Tags: []`). This one covers populated, violating input, where the
+/// correct behaviour is the opposite: the gate must close.
+#[test]
+fn a_named_rule_gate_does_not_soften_a_real_violation() -> Result<()> {
+    // Populated and genuinely violating: Tags is ['Backup'], the gate wants 'Owner'. Nothing
+    // is unevaluatable, so role must not change the answer.
+    let violating = r#"
+    {
+        Resources: {
+            b: {
+                Type: 'AWS::S3::Bucket',
+                Properties: { Name: "publicbucket", Tags: ['Backup'] }
+            }
+        }
+    }
+    "#;
+    let satisfying = r#"
+    {
+        Resources: {
+            b: {
+                Type: 'AWS::S3::Bucket',
+                Properties: { Name: "publicbucket", Tags: ['Owner'] }
+            }
+        }
+    }
+    "#;
+
+    let rules = r###"
+    rule tags_name_owner {
+        Resources.*[ Type == 'AWS::S3::Bucket' ].Properties.Tags == 'Owner'
+    }
+    rule body when tags_name_owner {
+        Resources.*[ Type == 'AWS::S3::Bucket' ].Properties.Name == 'publicbucket'
+    }
+    "###;
+
+    // Liveness: with 'Owner' present the gate opens and both rules apply, so the referenced
+    // rule really is being consulted and the row below is not passing on a dead query.
+    assert_eq!(
+        status_of(rules, satisfying)?,
+        Status::PASS,
+        "liveness: the gate must open and the body pass when Tags == ['Owner']"
+    );
+
+    // The claim: a real violation inside a rule used as a gate is still a FAIL. If Gate
+    // strictness had laundered it to SKIP the file would come back SKIP, not FAIL.
+    assert_eq!(
+        status_of(rules, violating)?,
+        Status::FAIL,
+        "a populated, violating collection was softened by the gate role -- Gate strictness \
+         must only affect unevaluatable clauses, never real violations"
+    );
+
+    Ok(())
+}
+
+/// The same named rule referenced from a gate and from a body answers each independently.
+///
+/// This is what the `(rule, role)` cache key buys, and it is the part a role parameter alone
+/// would not fix. `rules_status` memoises a rule's status; keyed on the name alone, the first
+/// reference to reach a rule decided the cached value and every later reference reused it
+/// whatever role it was in. With one reference from a gate and one from a body in the same
+/// file, the answer would then depend on evaluation order -- and rule iteration order is not
+/// something a rule author controls or can see.
+///
+/// `vac` is unevaluatable (`Tags: []`), which is the one outcome where the two roles disagree,
+/// so this file forces both answers out of the same rule in a single run: `asserts` references
+/// it from a body and `gated` references it from a `when`.
+///
+/// Declaration order is load-bearing. `eval_rules_file` walks top-level rules in order, so
+/// `asserts` resolves `vac` first and populates the cache under the assertion role, where the
+/// answer is "failure". Keyed on the name alone that entry is what the later gate reference
+/// reads, the gate closes, and `gated` is dropped. Swapping the two rules hides it again, which
+/// is why the order is called out rather than left to look incidental.
+///
+/// That this test is the *only* thing pinning the cache key is measured, not assumed. Mutating
+/// `rule_status` to keep the role parameter but look up and store under a fixed
+/// `ClauseRole::Assertion` -- role threaded, cache keyed on the name -- leaves
+/// `a_named_rule_gate_does_not_drop_a_satisfiable_body` and
+/// `a_named_rule_gate_does_not_soften_a_real_violation` both green and fails only this one. So
+/// the original reproduction would have ratified a half-fix whose answer depends on rule
+/// declaration order.
+#[test]
+fn the_same_named_rule_answers_both_roles_independently() -> Result<()> {
+    let input = r#"
+    {
+        Resources: {
+            b: {
+                Type: 'AWS::S3::Bucket',
+                Properties: { Name: "publicbucket", Tags: [] }
+            }
+        }
+    }
+    "#;
+
+    // `asserts` before `gated`, deliberately -- see the note above on declaration order.
+    let rules = r###"
+    rule vac {
+        Resources.*[ Type == 'AWS::S3::Bucket' ].Properties.Tags == 'Owner'
+    }
+    rule asserts {
+        vac
+    }
+    rule gated when vac {
+        Resources.*[ Type == 'AWS::S3::Bucket' ].Properties.Name == 'publicbucket'
+    }
+    "###;
+
+    let report_for = |data: &str| -> Result<Vec<String>> {
+        let resources = PathAwareValue::try_from(data)?;
+        let rules_file = RulesFile::try_from(rules)?;
+        let mut root = root_scope(&rules_file, Rc::new(resources));
+        let _ = eval_rules_file(&rules_file, &mut root, None)?;
+        let top = root.reset_recorder().extract();
+        Ok(simplified_json_from_root(&top)?
+            .not_applicable
+            .into_iter()
+            .collect())
+    };
+
+    // Liveness: with `Tags: ['Owner']` every rule applies, so nothing is not-applicable. An
+    // absence claim is satisfied when nothing runs at all, so without this row a query that
+    // stopped selecting would let the claim below pass while blind.
+    let populated = r#"
+    {
+        Resources: {
+            b: {
+                Type: 'AWS::S3::Bucket',
+                Properties: { Name: "publicbucket", Tags: ['Owner'] }
+            }
+        }
+    }
+    "#;
+    let live = report_for(populated)?;
+    assert!(
+        live.is_empty(),
+        "liveness: with `Tags: ['Owner']` nothing should be not-applicable, got {:?}",
+        live
+    );
+
+    // The claim: the earlier assertion-role answer must not reach the gate. `gated`'s own
+    // check passes, so it must not be reported not-applicable.
+    let dropped = report_for(input)?;
+    assert!(
+        dropped.is_empty(),
+        "a rule was reported not-applicable: the assertion-role status of `vac` was reused \
+         for the gate reference, closing it. not_applicable = {:?}",
+        dropped
+    );
+
+    Ok(())
+}
+
+/// `IN` must not certify an empty collection as compliant. Was pre-existing in v3.2.0.
+///
+/// `Tags IN ['Owner']` against `Tags: []` used to exit 0 and report `"compliant"` with
+/// `not_applicable: []` -- an affirmative certification that the policy held. The mechanism
+/// was in `contained_in`: `diff` is "elements of the left side absent from the right", so an
+/// empty left side produced an empty `diff` and an affirmative `Success`. That made it a
+/// wrong Success to suppress rather than a missing entry to supply, so it needed a
+/// different fix from the empty-`statues` fold that `2224cb1` addressed for `==`.
+///
+/// Two measurements say the old behaviour was not merely a defensible reading of universal
+/// quantification:
+///
+/// - The same template under `==` failed (exit 19). One spelling of "the tag must be Owner"
+///   blocked the deployment and the other certified it.
+/// - `Tags not in ['Owner']` on the same empty list *also* failed (19). A proposition and
+///   its negation cannot both be unsatisfied, so the pair was internally inconsistent
+///   whatever the intended reading. That spelling now passes, which is the vacuous-truth
+///   reading and the consistent one.
+///
+/// Fixed by routing the empty collection through `elements_or_record_empty` to
+/// `EmptyLhsCollection`, which `binary_operation` resolves by role: an assertion fails, a
+/// gate contributes nothing and stays decided by its other conditions. Deciding it inside
+/// the comparator instead would close a `when` gate and drop the guarded body, which is how
+/// two earlier attempts regressed;
+/// `an_empty_collection_in_a_when_condition_does_not_disarm_the_guarded_block` pins that.
+#[test]
+fn in_does_not_certify_an_empty_collection() -> Result<()> {
+    let rules = r###"
+    rule tags_must_name_owner {
+        Resources.*[ Type == 'AWS::S3::Bucket' ].Properties.Tags IN ['Owner']
+    }
+    "###;
+
+    let input = r#"
+    {
+        Resources: {
+            b: {
+                Type: 'AWS::S3::Bucket',
+                Properties: { Name: "publicbucket", Tags: [] }
+            }
+        }
+    }
+    "#;
+
+    let resources = PathAwareValue::try_from(input)?;
+    let rules_file = RulesFile::try_from(rules)?;
+    let mut root = root_scope(&rules_file, Rc::new(resources));
+
+    // FAIL, matching what the same rule spelled with `==` already does. SKIP would also be
+    // arguable -- "no tags, so nothing to check" -- but PASS is not: it affirmatively
+    // certifies a bucket that carries none of the required tags.
+    assert_eq!(eval_rules_file(&rules_file, &mut root, None)?, Status::FAIL);
+
+    Ok(())
+}
+
+/// The ordering operators must not certify an empty collection. Was pre-existing in v3.2.0.
+///
+/// Same class as `in_does_not_certify_an_empty_collection` but a *different impl* --
+/// `CommonOperator`, not `contained_in` -- so a fix for `IN` alone would not have touched it.
+/// Worth its own test for that reason, and both now route through the one shared guard in
+/// `elements_or_record_empty`.
+///
+/// The argument that this is a defect rather than defensible vacuous truth is stronger here
+/// than for `IN`. `Ports <= 100` and `Ports > 100` are exact logical negations, and **both**
+/// returned PASS on the same `Ports: []`. Universal quantification over an empty set defends
+/// "every element satisfies P" for both P and not-P; it cannot defend certifying `x <= 100`
+/// and `x > 100` for the same x. `<` and `>=` behaved identically -- all four route through
+/// the same impl.
+///
+/// The gate hazard that blocked two earlier attempts is measured rather than inferred:
+/// `rule r when ...Ports <= 100 { ...Name == 'safe' }` exits 19 on `Ports: []` *because* the
+/// vacuous PASS opens the gate and the body then catches a violating name. Deciding the
+/// empty comparison inside the comparator turns that into exit 0 with the body dropped -- one
+/// unenforced clause traded for a disarmed block. Avoided by leaving the decision to
+/// `binary_operation`, which contributes nothing for a gate.
+#[test]
+fn ordering_operators_do_not_certify_an_empty_collection() -> Result<()> {
+    let input = r#"
+    {
+        Resources: {
+            sg: { Type: 'AWS::EC2::SecurityGroup', Properties: { Ports: [] } }
+        }
+    }
+    "#;
+
+    // Exact logical negations. At most one may pass for any given input.
+    let le = r###"
+    rule ports_must_be_low {
+        Resources.*[ Type == 'AWS::EC2::SecurityGroup' ].Properties.Ports <= 100
+    }
+    "###;
+    let gt = r###"
+    rule ports_must_be_high {
+        Resources.*[ Type == 'AWS::EC2::SecurityGroup' ].Properties.Ports > 100
+    }
+    "###;
+
+    // Liveness FIRST, and it is not decoration. An earlier version of this test asserted
+    // only `passes <= 1` over the two negations, which had two false greens:
+    //
+    // - Rename one character in the Type filter and both rules SKIP. SKIP is not PASS, so
+    //   `passes == 0` satisfied `<= 1` and the test went green while blind.
+    // - Add one resource that genuinely violates `<= 100`. The rule aggregates across
+    //   resources, so `> 100` becomes FAIL overall and `passes` drops to 1 -- green, with the
+    //   rule text unchanged and the empty resource still certified under both negations.
+    //   Verified from the blame paths that the empty resource is never named.
+    //
+    // Going absolute per operator kills the second but not the first: rot yields SKIP and
+    // `SKIP != PASS`, so an `assert_ne!(PASS)` claim alone still passes blind. The liveness
+    // rows are what close that -- under rot they fail before the claim is reached.
+    //
+    // `[9]` rather than `[80]` for the liveness row on purpose: `"9" <= "100"` is false
+    // lexicographically and true numerically, so this row also pins numeric comparison. That
+    // matters because an earlier measurement of this operator class was confounded by string
+    // ordering, and `[8080]` discriminates nothing -- it is false under both readings.
+    let live_low = r#"
+    { Resources: { sg: { Type: 'AWS::EC2::SecurityGroup', Properties: { Ports: [9] } } } }
+    "#;
+    let live_high = r#"
+    { Resources: { sg: { Type: 'AWS::EC2::SecurityGroup', Properties: { Ports: [8080] } } } }
+    "#;
+
+    let status_of_pair = |rules: &str, data: &str| -> Result<Status> {
+        let resources = PathAwareValue::try_from(data)?;
+        let rules_file = RulesFile::try_from(rules)?;
+        let mut root = root_scope(&rules_file, Rc::new(resources));
+        eval_rules_file(&rules_file, &mut root, None)
+    };
+
+    assert_eq!(
+        status_of_pair(le, live_low)?,
+        Status::PASS,
+        "liveness: `Ports <= 100` must pass on [9] -- numerically true, lexicographically \
+         false, so this also pins numeric semantics. A SKIP here means the query stopped \
+         selecting and every other row in this test is meaningless."
+    );
+    assert_eq!(
+        status_of_pair(le, live_high)?,
+        Status::FAIL,
+        "liveness: `Ports <= 100` must fail on [8080]"
+    );
+    assert_eq!(
+        status_of_pair(gt, live_high)?,
+        Status::PASS,
+        "liveness: `Ports > 100` must pass on [8080]"
+    );
+    assert_eq!(
+        status_of_pair(gt, live_low)?,
+        Status::FAIL,
+        "liveness: `Ports > 100` must fail on [9]"
+    );
+
+    // The claim, stated absolutely per operator rather than as a count. Each negation is
+    // asserted on its own, so no aggregation across resources and no SKIP can launder it.
+    assert_ne!(
+        status_of_pair(le, input)?,
+        Status::PASS,
+        "`Ports <= 100` certified an empty collection"
+    );
+    assert_ne!(
+        status_of_pair(gt, input)?,
+        Status::PASS,
+        "`Ports > 100` certified an empty collection"
+    );
+
+    Ok(())
+}
+
+/// The control for the ordering operators, which must keep passing.
+///
+/// Both polarities on populated collections, so a future fix for the empty case cannot
+/// quietly break ordinary numeric comparison. These are the rows that make the empty row
+/// above interpretable -- without them, a wrong answer on `[]` could just mean the rule or
+/// the query was malformed.
+///
+/// It also pins **numeric** rather than lexicographic comparison, which is a stronger
+/// guarantee than it looks and is load-bearing here: an earlier measurement of this operator
+/// class was discarded as confounded by string ordering. Note which fixtures carry that
+/// weight. `[8080]` discriminates nothing -- `8080 <= 100` and `"8080" <= "100"` are both
+/// false. `[80]` and `[9]` are the discriminating ones: `"80" <= "100"` and `"9" <= "100"` are
+/// both false lexicographically (`'8'`/`'9'` > `'1'` at index 0) and true numerically, so a
+/// PASS on either can only be numeric.
+#[test]
+fn ordering_operators_still_decide_populated_collections_correctly() -> Result<()> {
+    let rules = r###"
+    rule ports_must_be_low {
+        Resources.*[ Type == 'AWS::EC2::SecurityGroup' ].Properties.Ports <= 100
+    }
+    "###;
+
+    // Both discriminate numeric from lexicographic; `[9]` most sharply, since it is a single
+    // digit and cannot be read as "shorter string sorts first".
+    let low = r#"
+    { Resources: { sg: { Type: 'AWS::EC2::SecurityGroup', Properties: { Ports: [80] } } } }
+    "#;
+    let single_digit = r#"
+    { Resources: { sg: { Type: 'AWS::EC2::SecurityGroup', Properties: { Ports: [9] } } } }
+    "#;
+    let high = r#"
+    { Resources: { sg: { Type: 'AWS::EC2::SecurityGroup', Properties: { Ports: [8080] } } } }
+    "#;
+
+    let rules_file = RulesFile::try_from(rules)?;
+
+    for (data, want, why) in [
+        (
+            low,
+            Status::PASS,
+            "80 <= 100 numerically; false lexicographically",
+        ),
+        (
+            single_digit,
+            Status::PASS,
+            "9 <= 100 numerically; false lexicographically",
+        ),
+        (
+            high,
+            Status::FAIL,
+            "8080 <= 100 is false under either reading",
+        ),
+    ] {
+        let resources = PathAwareValue::try_from(data)?;
+        let mut root = root_scope(&rules_file, Rc::new(resources));
+        assert_eq!(
+            eval_rules_file(&rules_file, &mut root, None)?,
+            want,
+            "{}",
+            why
+        );
+    }
+
+    Ok(())
+}
+
+/// The control for the above, which must keep passing: `IN` on a populated collection.
+///
+/// Pinned separately so that a future fix for the empty case cannot quietly break the
+/// ordinary one. Both polarities are exercised -- a satisfying list passes, a violating list
+/// fails -- which is what establishes that the rule and query are well formed and that only
+/// the empty case is wrong.
+#[test]
+fn in_still_decides_populated_collections_correctly() -> Result<()> {
+    let rules = r###"
+    rule tags_must_name_owner {
+        Resources.*[ Type == 'AWS::S3::Bucket' ].Properties.Tags IN ['Owner']
+    }
+    "###;
+
+    let satisfying = r#"
+    { Resources: { b: { Type: 'AWS::S3::Bucket', Properties: { Tags: ['Owner'] } } } }
+    "#;
+    let violating = r#"
+    { Resources: { b: { Type: 'AWS::S3::Bucket', Properties: { Tags: ['Backup'] } } } }
+    "#;
+
+    let rules_file = RulesFile::try_from(rules)?;
+
+    let resources = PathAwareValue::try_from(satisfying)?;
+    let mut root = root_scope(&rules_file, Rc::new(resources));
+    assert_eq!(eval_rules_file(&rules_file, &mut root, None)?, Status::PASS);
+
+    let resources = PathAwareValue::try_from(violating)?;
+    let mut root = root_scope(&rules_file, Rc::new(resources));
+    assert_eq!(eval_rules_file(&rules_file, &mut root, None)?, Status::FAIL);
+
+    Ok(())
+}
+
+/// `NOT IN` over an empty collection is vacuously satisfied, a deliberate change from FAIL.
+///
+/// Before the shared empty-collection guard, `Tags not in ['Owner']` on `Tags: []` FAILed:
+/// `contained_in` built an affirmative Success out of the empty `diff` and the negation
+/// inverted it. That rejected a compliant template, since no element of `[]` is in
+/// `['Owner']` and there is nothing to collide with.
+///
+/// It now routes through `EmptyLhsCollection`, whose negated-assertion branch contributes
+/// `Outcome::NotApplicable`. Same path `!=` already took. That is a SKIP rather than the PASS
+/// an entry-less fold used to produce, which is what keeps the clause from absorbing an `or`
+/// -- see `a_vacuous_negated_clause_does_not_absorb_a_disjunction`.
+#[test]
+fn not_in_over_an_empty_collection_is_vacuously_satisfied() -> Result<()> {
+    let rules = r###"
+    rule tags_must_not_name_owner {
+        Resources.*[ Type == 'AWS::S3::Bucket' ].Properties.Tags not in ['Owner']
+    }
+    "###;
+
+    let colliding = r#"
+    { Resources: { b: { Type: 'AWS::S3::Bucket', Properties: { Tags: ['Owner'] } } } }
+    "#;
+    let clean = r#"
+    { Resources: { b: { Type: 'AWS::S3::Bucket', Properties: { Tags: ['Backup'] } } } }
+    "#;
+    let empty = r#"
+    { Resources: { b: { Type: 'AWS::S3::Bucket', Properties: { Tags: [] } } } }
+    "#;
+
+    // Liveness first. Without these two rows the empty-collection claim below would go
+    // green on a rule that stopped selecting anything at all.
+    assert_eq!(
+        status_of(rules, colliding)?,
+        Status::FAIL,
+        "liveness: `not in` must still catch a colliding tag"
+    );
+    assert_eq!(
+        status_of(rules, clean)?,
+        Status::PASS,
+        "liveness: `not in` must still pass a non-colliding tag"
+    );
+
+    // SKIP, not PASS. The old behaviour was FAIL, which rejected a compliant template; this
+    // asserted PASS when the comparator guard landed, and became SKIP when the fold moved
+    // onto `Outcome`.
+    //
+    // Either way the clause is not blamed, and the exit code is 0 for both. SKIP is the
+    // stronger answer because PASS would let this disjunct absorb an `or` and abandon its
+    // siblings -- see `a_vacuous_negated_clause_does_not_absorb_a_disjunction`.
+    assert_eq!(
+        status_of(rules, empty)?,
+        Status::SKIP,
+        "`not in` over an empty collection is vacuously satisfied and must not be blamed, but \
+         must not report PASS either -- PASS absorbs a disjunction"
+    );
+
+    Ok(())
+}
+
+/// The mirrored spelling of an ordering comparison must answer for an empty collection too.
+///
+/// `%limit >= ...Ports` and `...Ports <= %limit` mean the same thing, so certifying
+/// `Ports: []` under one and not the other leaves the defect reachable by writing the clause
+/// backwards -- legal Guard, and a rule author has no reason to think the two differ. This is
+/// why `CommonOperator::compare` routes *both* sides through `elements_or_record_empty`; a
+/// left-side-only fix satisfies `ordering_operators_do_not_certify_an_empty_collection` while
+/// leaving this shape wrong. Same argument `EqOperation` makes for its mirrored empty-RHS
+/// guard, pinned by `an_empty_collection_fails_when_it_is_the_right_hand_operand`.
+#[test]
+fn a_mirrored_empty_collection_fails_an_ordering_comparison() -> Result<()> {
+    let rules = r###"
+    let limit = 100
+    rule ports_must_be_low {
+        %limit >= Resources.*[ Type == 'AWS::EC2::SecurityGroup' ].Properties.Ports
+    }
+    "###;
+
+    let empty = r#"
+    { Resources: { sg: { Type: 'AWS::EC2::SecurityGroup', Properties: { Ports: [] } } } }
+    "#;
+    let live_low = r#"
+    { Resources: { sg: { Type: 'AWS::EC2::SecurityGroup', Properties: { Ports: [9] } } } }
+    "#;
+    let live_high = r#"
+    { Resources: { sg: { Type: 'AWS::EC2::SecurityGroup', Properties: { Ports: [8080] } } } }
+    "#;
+
+    // Liveness, and `[9]` rather than `[80]` for the same reason as the forward test:
+    // `"9" <= "100"` is false lexicographically and true numerically, so this row also pins
+    // numeric comparison in the mirrored direction.
+    assert_eq!(
+        status_of(rules, live_low)?,
+        Status::PASS,
+        "liveness: `%limit >= Ports` must pass on [9]"
+    );
+    assert_eq!(
+        status_of(rules, live_high)?,
+        Status::FAIL,
+        "liveness: `%limit >= Ports` must fail on [8080]"
+    );
+
+    // FAIL specifically, not merely "not PASS": as an assertion, `EmptyLhsCollection` is
+    // resolved to FAIL, so asserting the exact status confirms the mirrored guard fired
+    // rather than the clause having been skipped for some unrelated reason.
+    assert_eq!(
+        status_of(rules, empty)?,
+        Status::FAIL,
+        "the mirrored spelling certified an empty collection"
+    );
+
+    Ok(())
+}
+
+/// An empty collection in a `when` condition built on an ordering operator must not disarm
+/// the guarded block.
+///
+/// This is the measured hazard that reverted two earlier attempts, and it is specific to
+/// `CommonOperator` -- the existing coverage
+/// (`an_empty_collection_in_a_when_condition_does_not_disarm_the_guarded_block`) exercises
+/// `==` and so goes through `EqOperation`. Here the gate contributes no entry rather than a
+/// FAIL, so it stays open, the body runs, and the violating Name is caught. Deciding the
+/// empty comparison inside the comparator turns this into exit 0 with the body dropped:
+/// one unenforced clause traded for an entire disarmed block.
+#[test]
+fn an_empty_collection_in_an_ordering_gate_does_not_disarm_the_block() -> Result<()> {
+    let rules = r###"
+    rule name_must_be_safe when Resources.*[ Type == 'AWS::EC2::SecurityGroup' ].Properties.Ports <= 100 {
+        Resources.*[ Type == 'AWS::EC2::SecurityGroup' ].Properties.Name != 'insecure'
+    }
+    "###;
+
+    let input = r#"
+    {
+        Resources: {
+            sg: {
+                Type: 'AWS::EC2::SecurityGroup',
+                Properties: { Name: "insecure", Ports: [] }
+            }
+        }
+    }
+    "#;
+
+    // FAIL because the body ran and `insecure` violated it. SKIP would mean the gate closed
+    // and the violation went unreported.
+    assert_eq!(status_of(rules, input)?, Status::FAIL);
+
+    Ok(())
+}
+
+/// Every FAIL must state a reason. This asserts report *contents*, not just status.
+///
+/// The gap this closes: no test in the repository asserted anything about a report's
+/// `checks`, so a FAIL that produced an empty report was green in all 355 of them. The
+/// empty-collection FAIL added by `2224cb1` did exactly that -- `eval_context.rs`'s
+/// `QueryResult::Resolved` arm wrapped its whole body in `if let Some(to) = to` with no
+/// `else`, and that FAIL is the one construction site pairing a resolved `from` with
+/// `to: None`, so it pushed no `ClauseReport` at all.
+///
+/// The visible result was exit 19 with `checks: []` in JSON and YAML, `results: []` in
+/// SARIF, an empty `<failure/>` in JUnit, and "Number of non-compliant resources 0" on the
+/// console -- a blocked deployment with nothing to act on, and the message built at the
+/// construction site never reaching any output.
+///
+/// Written against the general property rather than the one operator that exposed it: any
+/// rule reporting FAIL must carry at least one clause explaining why.
+#[test]
+fn a_failing_rule_always_reports_at_least_one_reason() -> Result<()> {
+    // Three shapes that all FAIL, including both operand orders of the empty-collection
+    // case. The third is a plain scalar mismatch, which reported correctly all along and
+    // is here so the test would catch a regression in the normal path too.
+    let rulesets = [
+        r###"
+        rule tags_must_name_owner {
+            Resources.*[ Type == 'AWS::S3::Bucket' ].Properties.Tags == 'Owner'
+        }
+        "###,
+        r###"
+        let expected = 'Owner'
+        rule tags_must_name_owner_mirrored {
+            %expected == Resources.*[ Type == 'AWS::S3::Bucket' ].Properties.Tags
+        }
+        "###,
+        r###"
+        rule name_must_be_private {
+            Resources.*[ Type == 'AWS::S3::Bucket' ].Properties.Name == 'privatebucket'
+        }
+        "###,
+    ];
+
+    let input = r#"
+    {
+        Resources: {
+            bucketEmptyTags: {
+                Type: 'AWS::S3::Bucket',
+                Properties: { Name: "publicbucket", Tags: [] }
+            }
+        }
+    }
+    "#;
+
+    // Asserted through the serialized structured output rather than the internal report
+    // type, for two reasons: the builder is private to eval_context, and this is the
+    // artifact a user or a CI job actually consumes. `checks: []` under a FAIL is exactly
+    // what the defect looked like from outside.
+    for rules in rulesets {
+        let resources = PathAwareValue::try_from(input)?;
+        let rules_file = RulesFile::try_from(rules)?;
+        let mut root = root_scope(&rules_file, Rc::new(resources));
+        let status = eval_rules_file(&rules_file, &mut root, None)?;
+
+        assert_eq!(
+            status,
+            Status::FAIL,
+            "ruleset was expected to fail, ruleset was: {}",
+            rules
+        );
+
+        // Assert on the CONSTRUCTED report, not on the recorded evaluation tree.
+        //
+        // This distinction is the whole point. `eval.rs` always wrote a ClauseValueCheck
+        // record, so a test that walked the recorder passed even with the defect present --
+        // I wrote that test first and the mutation check caught it. The report builder in
+        // eval_context is where the record was dropped, so that is the layer to assert at.
+        let top = root.reset_recorder().extract();
+        let report = simplified_json_from_root(&top)?;
+
+        assert!(
+            !report.not_compliant.is_empty(),
+            "a failing file reported nothing non-compliant, ruleset was: {}",
+            rules
+        );
+        for clause in &report.not_compliant {
+            assert!(
+                !clause_report_is_empty(clause),
+                "rule reported FAIL with an empty report, so every format renders it as a \
+                 blocked deployment with no stated reason. Ruleset was: {}",
+                rules
+            );
+        }
+    }
+
+    Ok(())
+}
+
+/// True when a report names a failure but carries nothing explaining it.
+///
+/// Structural rather than message-keyed on purpose: the property is "the report has
+/// something in it", and asserting on wording would accept a report that says the wrong
+/// thing while rejecting a correct rewording.
+fn clause_report_is_empty(report: &ClauseReport<'_>) -> bool {
+    match report {
+        ClauseReport::Rule(rule) => {
+            rule.checks.is_empty() || rule.checks.iter().all(clause_report_is_empty)
+        }
+        // A block report is a leaf: it carries its own message rather than children.
+        ClauseReport::Block(_) => false,
+        ClauseReport::Disjunctions(disj) => {
+            disj.checks.is_empty() || disj.checks.iter().all(clause_report_is_empty)
+        }
+        // A leaf clause report is the thing that explains a failure, so reaching one means
+        // the report is not empty.
+        ClauseReport::Clause(_) => false,
+    }
+}
+
+/// A denylist written with a parameter did not block the value it named.
+///
+/// `LetValue::Value` -- a literal argument at the call site -- was bound as
+/// `QueryResult::Resolved`, while `resolve_variable` returns `let` literals as
+/// `QueryResult::Literal`. `is_literal` recognises only the latter, so the two spellings
+/// of the same literal took different comparator arms: `let` reached the element-wise
+/// `(None, Some(_))` arm, and a parameter reached `(None, None)`, which compares whole
+/// query results through `diff`. A list-valued left side was therefore compared against
+/// the scalar *as a list*, never matched, and the negation inverted that into a pass.
+///
+/// The blast radius is not empty collections. `Tags: ["PublicRead"]` -- a populated list
+/// holding exactly the banned value -- passed, while the byte-identical policy with the
+/// value inlined or bound with `let` correctly failed.
+#[test]
+fn a_denylist_passed_through_a_parameter_still_blocks_the_banned_value() -> Result<()> {
+    let rules = r###"
+    rule no_banned_tag(banned) {
+        Resources.*[ Type == 'AWS::S3::Bucket' ].Properties.Tags != %banned
+    }
+
+    rule main { no_banned_tag("PublicRead") }
+    "###;
+
+    let input = r#"
+    {
+        Resources: {
+            exposedBucket: {
+                Type: 'AWS::S3::Bucket',
+                Properties: { Name: "customerdata", Tags: ['PublicRead'] }
+            }
+        }
+    }
+    "#;
+
+    let resources = PathAwareValue::try_from(input)?;
+    let rules_file = RulesFile::try_from(rules)?;
+    let mut root = root_scope(&rules_file, Rc::new(resources));
+
+    assert_eq!(eval_rules_file(&rules_file, &mut root, None)?, Status::FAIL);
+
+    Ok(())
+}
+
+/// The positive half of the same defect: `==` through a parameter was inverted.
+///
+/// It failed the template that *did* match and passed the one that did not, for the same
+/// reason -- a whole-list-versus-scalar comparison whose result happened to be wrong in
+/// both directions. Asserted together with the negated form because a fix that corrects
+/// only one of them would leave the arm half-wrong in a way a single-polarity test cannot
+/// see.
+#[test]
+fn a_positive_comparison_through_a_parameter_matches_the_right_template() -> Result<()> {
+    let rules = r###"
+    rule tag_must_match(wanted) {
+        Resources.*[ Type == 'AWS::S3::Bucket' ].Properties.Tags == %wanted
+    }
+
+    rule main { tag_must_match("Keeper") }
+    "###;
+
+    let matching = r#"
+    {
+        Resources: {
+            b: { Type: 'AWS::S3::Bucket', Properties: { Tags: ['Keeper'] } }
+        }
+    }
+    "#;
+
+    let non_matching = r#"
+    {
+        Resources: {
+            b: { Type: 'AWS::S3::Bucket', Properties: { Tags: ['Other'] } }
+        }
+    }
+    "#;
+
+    let rules_file = RulesFile::try_from(rules)?;
+
+    let resources = PathAwareValue::try_from(matching)?;
+    let mut root = root_scope(&rules_file, Rc::new(resources));
+    assert_eq!(
+        eval_rules_file(&rules_file, &mut root, None)?,
+        Status::PASS,
+        "the template carrying the wanted tag must pass"
+    );
+
+    let resources = PathAwareValue::try_from(non_matching)?;
+    let mut root = root_scope(&rules_file, Rc::new(resources));
+    assert_eq!(
+        eval_rules_file(&rules_file, &mut root, None)?,
+        Status::FAIL,
+        "the template without the wanted tag must fail"
+    );
+
+    Ok(())
+}
+
+/// A literal argument must behave identically however it is spelled.
+///
+/// This is the property the fix restores, and the one whose absence made the defect
+/// invisible: every spelling other than the parameter form was already correct, so any
+/// fixture that inlined the value or used `let` passed.
+#[test]
+fn a_literal_argument_agrees_across_parameter_let_and_inline_spellings() -> Result<()> {
+    let input = r#"
+    {
+        Resources: {
+            b: { Type: 'AWS::S3::Bucket', Properties: { Tags: ['PublicRead'] } }
+        }
+    }
+    "#;
+
+    let parameterized = r###"
+    rule deny(banned) { Resources.*[ Type == 'AWS::S3::Bucket' ].Properties.Tags != %banned }
+    rule main { deny("PublicRead") }
+    "###;
+
+    let let_bound = r###"
+    let banned = 'PublicRead'
+    rule main { Resources.*[ Type == 'AWS::S3::Bucket' ].Properties.Tags != %banned }
+    "###;
+
+    let inlined = r###"
+    rule main { Resources.*[ Type == 'AWS::S3::Bucket' ].Properties.Tags != 'PublicRead' }
+    "###;
+
+    let mut statuses = Vec::new();
+    for rules in [parameterized, let_bound, inlined] {
+        let resources = PathAwareValue::try_from(input)?;
+        let rules_file = RulesFile::try_from(rules)?;
+        let mut root = root_scope(&rules_file, Rc::new(resources));
+        statuses.push(eval_rules_file(&rules_file, &mut root, None)?);
+    }
+
+    assert_eq!(
+        statuses,
+        vec![Status::FAIL, Status::FAIL, Status::FAIL],
+        "parameter, let and inline spellings of the same literal disagreed"
+    );
+
+    Ok(())
+}
+
 #[test]
 fn vacuous_negated_comparison_does_not_satisfy_a_disjunction() -> Result<()> {
     // Regression test for a wrong PASS found by review.
@@ -4906,14 +7138,27 @@ fn negation_composes_with_operator_not_flag() -> Result<()> {
 //
 // `not <rule>` where the dependent rule SKIPped.
 //
-// In a rule BODY this is an assertion, and a SKIPped rule is not evidence, so it
-// must not report compliance. It previously returned PASS -- and because the
-// enclosing rule then reported PASS rather than SKIP, the output gave no hint that
-// the check had never run.
+// In a rule BODY this is an assertion, and a SKIPped rule is not evidence, so it must not
+// report compliance. It once returned PASS -- and because the enclosing rule then reported
+// PASS rather than SKIP, the output gave no hint that the check had never run.
 //
-// In a `when` CONDITION the same shape is intentional ("apply this rule when that
-// other rule did not apply") and is covered by cross_rule_clause_when_checks, so
-// that behavior is deliberately preserved here.
+// This asserted FAIL for a while, on the reasoning that only failing closed prevents the
+// bypass. That over-corrected: FAIL does not merely withhold compliance, it reports a
+// violation, and there is none -- the input below holds one S3 bucket and no KMS key, so
+// `inner` is about nothing. Reporting a violation for an absent resource type is the same
+// false positive that `an_inapplicable_dependent_rule_does_not_fail_the_reference` covers
+// for the non-negated spelling, and it is the reason the assertion here is now SKIP.
+//
+// SKIP is not compliance, which is the property the FAIL was reaching for: the enclosing
+// rule reports SKIP rather than PASS, so the omission is still visible in the output, and
+// `find_skip_reason` names the rule that did not apply. What SKIP gives up is the exit code
+// -- 0 rather than 19 -- and that is the deliberate trade. A dependent rule that did not
+// apply is not applicable in either polarity, which is what makes it the identity of a
+// conjunction rather than something a rule can fail on.
+//
+// In a `when` CONDITION the same shape is intentional ("apply this rule when that other
+// rule did not apply"), is covered by cross_rule_clause_when_checks, and is deliberately
+// preserved -- see the test immediately below.
 //
 #[test]
 fn negated_reference_to_skipped_rule_does_not_pass_in_rule_body() -> Result<()> {
@@ -4944,11 +7189,11 @@ fn negated_reference_to_skipped_rule_does_not_pass_in_rule_body() -> Result<()> 
     let mut root = root_scope(&rules_file, Rc::new(resources));
     let status = eval_rules_file(&rules_file, &mut root, None)?;
 
-    // FAIL specifically. Before the fix this was PASS, manufactured from a dependent
-    // rule that never ran. "Not PASS" would also admit SKIP, and a SKIP would mean
-    // the negated reference had been made merely inert rather than fail-closed --
-    // still exit 0, so still a gate bypass. FAIL is the property that matters.
-    assert_eq!(status, Status::FAIL);
+    // SKIP specifically, asserted rather than "not PASS". PASS is the original defect --
+    // compliance manufactured from a dependent rule that never ran. FAIL is the
+    // over-correction -- a violation reported against a template that has no KMS key to
+    // violate anything. SKIP is the only answer that is neither.
+    assert_eq!(status, Status::SKIP);
 
     Ok(())
 }
@@ -4985,6 +7230,520 @@ fn negated_reference_to_skipped_rule_still_gates_a_when_condition() -> Result<()
 
     // The gate opens and the body (`Type exists`) holds, so this passes.
     assert_eq!(status, Status::PASS);
+
+    Ok(())
+}
+
+//
+// Empty collection on the left-hand side of a comparison.
+//
+// `flattened`/`selected` expand a list into its elements, so an empty list contributes
+// none. The comparison loop then pushed zero results and the enclosing fold read an empty
+// result vector as "nothing to check" and reported PASS -- so `Tags == 'Owner'` against
+// `Tags: []` was reported as *compliant*, not as not-applicable. It claimed to have
+// verified a property it never compared, while the same rule against a missing `Tags`
+// correctly failed. The weaker input was treated more leniently.
+//
+
+#[test]
+fn an_empty_collection_fails_a_positive_comparison_as_an_assertion() -> Result<()> {
+    let rules = r###"
+    rule tags_must_be_owner {
+        Resources.*[ Type == 'AWS::S3::Bucket' ].Properties.Tags == 'Owner'
+    }
+    "###;
+
+    let input = r#"
+    {
+        Resources: {
+            bucket: {
+                Type: 'AWS::S3::Bucket',
+                Properties: { Name: "publicbucket", Tags: [] }
+            }
+        }
+    }
+    "#;
+
+    let resources = PathAwareValue::try_from(input)?;
+    let rules_file = RulesFile::try_from(rules)?;
+    let mut root = root_scope(&rules_file, Rc::new(resources));
+    let status = eval_rules_file(&rules_file, &mut root, None)?;
+
+    // FAIL, not SKIP. SKIP would also exit 0, which is operationally identical to the
+    // PASS being fixed: the clause would still go unenforced at the gate.
+    assert_eq!(status, Status::FAIL);
+
+    Ok(())
+}
+
+/// The cardinality that a previous attempt at this fix silently failed to handle.
+///
+/// That attempt tested `lhs_flattened.is_empty()` -- the flattening of *all* query
+/// results together -- so a single sibling with a non-empty list made it non-empty and the
+/// guard never ran. It fired on single-resource templates and did nothing on the mixed
+/// templates that are the common real-world shape, while passing every test written for
+/// it, all of which had one resource.
+///
+/// This asserts the per-result behaviour directly: `BucketFull` genuinely satisfies the
+/// rule, so the file-level FAIL can only come from `BucketEmpty` being caught.
+#[test]
+fn an_empty_collection_is_caught_even_when_a_sibling_resource_satisfies_the_rule() -> Result<()> {
+    let rules = r###"
+    rule tags_must_be_owner {
+        Resources.*[ Type == 'AWS::S3::Bucket' ].Properties.Tags == 'Owner'
+    }
+    "###;
+
+    let input = r#"
+    {
+        Resources: {
+            bucketEmpty: {
+                Type: 'AWS::S3::Bucket',
+                Properties: { Name: "publicbucket", Tags: [] }
+            },
+            bucketFull: {
+                Type: 'AWS::S3::Bucket',
+                Properties: { Name: "privatebucket", Tags: ['Owner'] }
+            }
+        }
+    }
+    "#;
+
+    let resources = PathAwareValue::try_from(input)?;
+    let rules_file = RulesFile::try_from(rules)?;
+    let mut root = root_scope(&rules_file, Rc::new(resources));
+    let status = eval_rules_file(&rules_file, &mut root, None)?;
+
+    assert_eq!(status, Status::FAIL);
+
+    Ok(())
+}
+
+/// The counterpart, and the reason the fix is resolved by role rather than in the
+/// comparator.
+///
+/// `eval_rule` treats any non-PASS condition as "this rule does not apply" and drops the
+/// guarded body (the `if status != Status::PASS` branch in `eval_rule`). A fix that failed
+/// the empty comparison unconditionally
+/// would therefore turn this blocked template into a passing one -- trading one unenforced
+/// clause for an entire disarmed block. That is exactly how an earlier attempt regressed,
+/// and it exits 0, so nothing downstream notices.
+#[test]
+fn an_empty_collection_in_a_when_condition_does_not_disarm_the_guarded_block() -> Result<()> {
+    let rules = r###"
+    rule name_must_be_safe when Resources.*[ Type == 'AWS::S3::Bucket' ].Properties.Tags == 'Owner' {
+        Resources.*[ Type == 'AWS::S3::Bucket' ].Properties.Name != 'publicbucket'
+    }
+    "###;
+
+    let input = r#"
+    {
+        Resources: {
+            bucket: {
+                Type: 'AWS::S3::Bucket',
+                Properties: { Name: "publicbucket", Tags: [] }
+            }
+        }
+    }
+    "#;
+
+    let resources = PathAwareValue::try_from(input)?;
+    let rules_file = RulesFile::try_from(rules)?;
+    let mut root = root_scope(&rules_file, Rc::new(resources));
+    let status = eval_rules_file(&rules_file, &mut root, None)?;
+
+    // FAIL because the body ran and `publicbucket` violated it. A SKIP here would mean
+    // the gate closed and the violation went unreported.
+    assert_eq!(status, Status::FAIL);
+
+    Ok(())
+}
+
+/// The same defect written backwards, which the first version of this fix left open.
+///
+/// `'Owner' == Properties.Tags` is legal Guard and means what `Properties.Tags == 'Owner'`
+/// means, but it takes a different comparator arm: the literal is the left side, so the
+/// empty list arrives as the *right* operand and a separate loop pushes nothing. Fixing
+/// only the first spelling left the wrong PASS reachable by anyone who happened to write
+/// the operands in the other order -- measured 0 with the first fix in place, 19 now.
+///
+/// Found by asking which arms of `EqOperation` the fix did not touch, rather than by a
+/// failing test. The asymmetry is invisible from the rule author's side.
+#[test]
+fn an_empty_collection_fails_when_it_is_the_right_hand_operand() -> Result<()> {
+    let rules = r###"
+    let expected = 'Owner'
+    rule tags_must_be_owner {
+        %expected == Resources.*[ Type == 'AWS::S3::Bucket' ].Properties.Tags
+    }
+    "###;
+
+    let input = r#"
+    {
+        Resources: {
+            bucket: {
+                Type: 'AWS::S3::Bucket',
+                Properties: { Name: "publicbucket", Tags: [] }
+            }
+        }
+    }
+    "#;
+
+    let resources = PathAwareValue::try_from(input)?;
+    let rules_file = RulesFile::try_from(rules)?;
+    let mut root = root_scope(&rules_file, Rc::new(resources));
+    let status = eval_rules_file(&rules_file, &mut root, None)?;
+
+    assert_eq!(status, Status::FAIL);
+
+    Ok(())
+}
+
+/// The gate counterpart of the mirrored form. Same requirement as the un-mirrored gate
+/// test: the guarded body must still run, so the violation is still reported.
+#[test]
+fn a_mirrored_empty_collection_in_a_when_condition_does_not_disarm_the_block() -> Result<()> {
+    let rules = r###"
+    let expected = 'Owner'
+    rule name_must_be_safe when %expected == Resources.*[ Type == 'AWS::S3::Bucket' ].Properties.Tags {
+        Resources.*[ Type == 'AWS::S3::Bucket' ].Properties.Name != 'publicbucket'
+    }
+    "###;
+
+    let input = r#"
+    {
+        Resources: {
+            bucket: {
+                Type: 'AWS::S3::Bucket',
+                Properties: { Name: "publicbucket", Tags: [] }
+            }
+        }
+    }
+    "#;
+
+    let resources = PathAwareValue::try_from(input)?;
+    let rules_file = RulesFile::try_from(rules)?;
+    let mut root = root_scope(&rules_file, Rc::new(resources));
+    let status = eval_rules_file(&rules_file, &mut root, None)?;
+
+    assert_eq!(status, Status::FAIL);
+
+    Ok(())
+}
+
+/// A negated comparison over an empty collection is vacuously true, so it must not fail.
+///
+/// The empty-LHS record is emitted before the per-value inversion, so a FAIL raised there
+/// is one the `not` can never reach. Without the `!cmp.1` guard this reports FAIL, which
+/// is a wrong FAIL: `not (Tags == 'Owner')` is satisfied when there are no tags at all.
+#[test]
+fn a_negated_comparison_over_an_empty_collection_does_not_fail() -> Result<()> {
+    let rules = r###"
+    rule r {
+        Resources.*[ Type == 'AWS::S3::Bucket' ] {
+            not Properties.Tags == 'Owner'
+        }
+    }
+    "###;
+
+    let input = r#"
+    {
+        Resources: {
+            bucket: {
+                Type: 'AWS::S3::Bucket',
+                Properties: { Name: "n", Tags: [] }
+            }
+        }
+    }
+    "#;
+
+    let resources = PathAwareValue::try_from(input)?;
+    let rules_file = RulesFile::try_from(rules)?;
+    let mut root = root_scope(&rules_file, Rc::new(resources));
+    let status = eval_rules_file(&rules_file, &mut root, None)?;
+
+    // SKIP. Not FAIL is the property this test guards, and it is real: `not (Tags ==
+    // 'Owner')` over an empty collection is vacuously true, so the clause must not be blamed
+    // for having nothing to compare.
+    //
+    // This asserted PASS until the fold moved onto `Outcome`, and the comment here recorded
+    // that PASS as "a known defect" pointing at
+    // `a_vacuous_negated_clause_does_not_absorb_a_disjunction`. That is why: PASS
+    // short-circuits `eval_conjunction_clauses`, so a vacuously-satisfied disjunct satisfied
+    // an entire `or` and abandoned its siblings. SKIP is absorbed by the disjunction fold
+    // instead, so the siblings still run, and that reproduction now passes.
+    //
+    // Reporting SKIP was implemented and reverted twice before, both times because it closed
+    // a `when` gate -- the second time through a named rule. It holds now because the arm is
+    // split by role: an assertion contributes SKIP, a gate still contributes the PASS that
+    // keeps it open, and `(rule, role)` keying means the role survives the named-rule
+    // boundary.
+    //
+    // The user-visible effect is a reporting change, not an exit-code one: this rule moves
+    // from `compliant` to `not_applicable`, and both exit 0. Arguably the honest answer --
+    // nothing was verified.
+    //
+    // Exact rather than `assert_ne!(FAIL)` so any future change to this status is visible
+    // instead of silently admitted.
+    assert_eq!(status, Status::SKIP);
+
+    Ok(())
+}
+
+/// A vacuously-satisfied disjunct must not absorb an `or`. Pre-existing in v3.2.0.
+///
+/// `eval_conjunction_clauses` short-circuits on PASS (`continue 'conjunction'`) but absorbs
+/// SKIP (`=> {}`), so a vacuously-satisfied first disjunct reported as PASS satisfied the
+/// whole `or` and its siblings never ran. Here the sibling is a real failing check, so the
+/// file exited 0 while `Name` was `publicbucket`, reporting `"compliant"` rather than
+/// `"not_applicable"`.
+///
+/// Three fixes for it were worse than the defect before this one stuck. Returning SKIP from
+/// the empty-collection arm:
+///
+/// - Unconditionally: closed the direct `when Tags != 'Owner'` gate, 19 -> 0.
+/// - Narrowed to `role.is_strict()`: still closed a gate reached through a *named rule*,
+///   19 -> 0, because `rule_status` evaluated every named rule's body with
+///   `ClauseRole::Assertion` regardless of the reference site and cached the status per rule
+///   name, so the poisoned SKIP was reused by later references.
+/// - Applied to both polarities while converting the fold: closed five gates at once.
+///
+/// What made it hold: `rule_status` now carries the reference site's role and keys its cache
+/// on `(rule, role)`, so the role survives the named-rule boundary; and the empty-collection
+/// arm is split by that role -- an assertion contributes SKIP so it cannot absorb a
+/// disjunction, a gate still contributes the PASS that keeps it open. The fold itself runs
+/// through `Outcome::all`/`Outcome::any`, whose identity is `NotApplicable`, so a fold over
+/// zero elements no longer reports "satisfied".
+///
+/// Known weakness of this fixture, unchanged: see the note below on `assert_eq!(FAIL)`.
+///
+/// Known weakness, recorded rather than fixed. `assert_eq!(FAIL)` is satisfied by *any* part
+/// of the rule failing, so a one-line template edit reaches green without a fix: change
+/// `Tags: []` to `Tags: ['Owner']` and the second disjunct performs a real comparison, really
+/// fails, and the test passes while the vacuous-absorption defect is untouched. The rule is
+/// named `vacuous_ne_absorbs_or`, so the signal to a reader editing the template is at least
+/// present. Left as-is because tightening it would need the same liveness-plus-absolute shape
+/// as `ordering_operators_do_not_certify_an_empty_collection`, and the fixture here has only
+/// one meaningful data shape to vary -- the empty list is the whole point of it.
+///
+/// Note for anyone running `--ignored`: exactly one test is ignored in this crate now, and it
+/// is not ours. `test_string_in_comparison` is an upstream failure parked in 2023 (commit
+/// `1aca9003`, verified by `git blame`), failing identically on the pre-branch tree.
+///
+/// The other four that were ignored here all now pass and are asserted normally: this one,
+/// `a_named_rule_gate_does_not_drop_a_satisfiable_body`,
+/// `in_does_not_certify_an_empty_collection` and
+/// `ordering_operators_do_not_certify_an_empty_collection`. The last two keep companion
+/// controls pinning that populated collections still decide correctly, because a fix that
+/// stopped certifying empty collections by stopping evaluation altogether would satisfy them
+/// otherwise.
+#[test]
+fn a_vacuous_negated_clause_does_not_absorb_a_disjunction() -> Result<()> {
+    let rules = r###"
+    rule vacuous_ne_absorbs_or {
+        Resources.*[ Type == 'AWS::S3::Bucket' ].Properties.Tags != 'Owner'
+        or
+        Resources.*[ Type == 'AWS::S3::Bucket' ].Properties.Name == 'safebucket'
+    }
+    "###;
+
+    let input = r#"
+    {
+        Resources: {
+            bucket: {
+                Type: 'AWS::S3::Bucket',
+                Properties: { Name: "publicbucket", Tags: [] }
+            }
+        }
+    }
+    "#;
+
+    let resources = PathAwareValue::try_from(input)?;
+    let rules_file = RulesFile::try_from(rules)?;
+    let mut root = root_scope(&rules_file, Rc::new(resources));
+    let status = eval_rules_file(&rules_file, &mut root, None)?;
+
+    // FAIL, from the sibling disjunct that actually got evaluated.
+    assert_eq!(status, Status::FAIL);
+
+    Ok(())
+}
+
+/// A gate reached through a NAMED RULE, which is the shape that caught the reverted fix.
+///
+/// Every gate fixture in this file spells the condition inline (`rule r when <clause> {}`),
+/// where `eval_when_clause` hardcodes `ClauseRole::Gate`. This one references a rule
+/// instead, and that path is different in a way no inline fixture can show:
+/// `rule_status` evaluates a named rule's body with `ClauseRole::Assertion`
+/// whatever the reference site is, and caches the result per rule name.
+///
+/// So a fix that keys on `role.is_strict()` inside the clause sees "assertion" even though
+/// the rule is being used as a gate. The reverted `EmptyQueryResult(SKIP)` did exactly
+/// that: `vac_ne` returned SKIP, `eval_rule` read the non-PASS condition as "does not
+/// apply", and the guarded body was dropped -- 19 -> 0, with the violating `publicbucket`
+/// never examined and both rules reported `not_applicable`.
+///
+/// Guards the revert. If someone re-lands a SKIP-based fix without threading the
+/// reference-site role through rule evaluation, this fails.
+#[test]
+fn a_vacuous_negation_inside_a_named_rule_does_not_close_the_gate_referencing_it() -> Result<()> {
+    let rules = r###"
+    rule vac_ne {
+        Resources.*[ Type == 'AWS::S3::Bucket' ].Properties.Tags != 'Owner'
+    }
+
+    rule body_bad when vac_ne {
+        Resources.*[ Type == 'AWS::S3::Bucket' ].Properties.Name == 'privatebucket'
+    }
+    "###;
+
+    let input = r#"
+    {
+        Resources: {
+            bucketEmptyTags: {
+                Type: 'AWS::S3::Bucket',
+                Properties: { Name: "publicbucket", Tags: [] }
+            }
+        }
+    }
+    "#;
+
+    let resources = PathAwareValue::try_from(input)?;
+    let rules_file = RulesFile::try_from(rules)?;
+    let mut root = root_scope(&rules_file, Rc::new(resources));
+    let status = eval_rules_file(&rules_file, &mut root, None)?;
+
+    // FAIL because the gate opened and the body rejected `publicbucket`. SKIP would mean
+    // the gate closed and the violation went unreported at exit 0.
+    assert_eq!(status, Status::FAIL);
+
+    Ok(())
+}
+
+/// The counterpart that makes the fix above a role split rather than a status change.
+///
+/// A negated comparison over an empty collection opens its `when` gate *because* it folds
+/// to PASS. Reporting SKIP for it unconditionally -- which an earlier version of this fix
+/// did -- closes the gate, and `eval_rule` then drops every check in the guarded body
+/// (the `if status != Status::PASS` branch in `eval_rule`). Measured at that point: exit
+/// 19 -> 0, the rule moved to
+/// `not_applicable`, and the violating `publicbucket` was never examined. A worse defect
+/// than the wrong PASS being fixed, and it exits 0 so nothing downstream notices.
+///
+/// So the vacuous PASS is load-bearing in a gate and a defect in a body. `ClauseRole`
+/// carries exactly that asymmetry, and `vacuously_satisfied` is only set when
+/// `role.is_strict()`.
+#[test]
+fn a_vacuous_negated_gate_still_opens_and_runs_its_body() -> Result<()> {
+    let rules = r###"
+    rule gated_by_vacuous_ne when Resources.*[ Type == 'AWS::S3::Bucket' ].Properties.Tags != 'Owner' {
+        Resources.*[ Type == 'AWS::S3::Bucket' ].Properties.Name == 'privatebucket'
+    }
+    "###;
+
+    let input = r#"
+    {
+        Resources: {
+            bucket: {
+                Type: 'AWS::S3::Bucket',
+                Properties: { Name: "publicbucket", Tags: [] }
+            }
+        }
+    }
+    "#;
+
+    let resources = PathAwareValue::try_from(input)?;
+    let rules_file = RulesFile::try_from(rules)?;
+    let mut root = root_scope(&rules_file, Rc::new(resources));
+    let status = eval_rules_file(&rules_file, &mut root, None)?;
+
+    // FAIL because the gate opened and the body ran. SKIP here would mean the gate closed
+    // and the violation went unreported.
+    assert_eq!(status, Status::FAIL);
+
+    Ok(())
+}
+
+/// The SKIP return is guarded on `statues.is_empty()`, and this is why.
+///
+/// `vacuously_satisfied` is function-scoped: any iteration can set it, and it is read once
+/// at the end. When one query result is a vacuous negation and another produces a real
+/// comparison, the flag must be ignored -- otherwise one resource with `Tags: []` would
+/// suppress a genuine collision on its sibling and take the whole clause to SKIP.
+///
+/// Here `BucketEmpty` contributes the vacuous case and `BucketOwner` genuinely collides
+/// with `!= 'Owner'`. Verified from the JSON that both the real collision on
+/// `/Resources/BucketOwner/Properties/Tags/0` *and* the sibling disjunct on
+/// `/Resources/BucketEmpty/Properties/Name` were evaluated, so the vacuous result neither
+/// suppressed the failure nor absorbed the disjunction.
+#[test]
+fn a_vacuous_negation_does_not_suppress_a_real_result_from_a_sibling() -> Result<()> {
+    let rules = r###"
+    rule mixed_ne {
+        Resources.*[ Type == 'AWS::S3::Bucket' ].Properties.Tags != 'Owner'
+        or
+        Resources.*[ Type == 'AWS::S3::Bucket' ].Properties.Name == 'safebucket'
+    }
+    "###;
+
+    let input = r#"
+    {
+        Resources: {
+            bucketEmpty: {
+                Type: 'AWS::S3::Bucket',
+                Properties: { Name: "publicbucket", Tags: [] }
+            },
+            bucketOwner: {
+                Type: 'AWS::S3::Bucket',
+                Properties: { Name: "alsopublic", Tags: ['Owner'] }
+            }
+        }
+    }
+    "#;
+
+    let resources = PathAwareValue::try_from(input)?;
+    let rules_file = RulesFile::try_from(rules)?;
+    let mut root = root_scope(&rules_file, Rc::new(resources));
+    let status = eval_rules_file(&rules_file, &mut root, None)?;
+
+    assert_eq!(status, Status::FAIL);
+
+    Ok(())
+}
+
+/// A vacuous negation nested inside a `when` block must not leak the SKIP outward.
+///
+/// The outer gate is unrelated to the empty collection, and the inner gate is the vacuous
+/// negation. If the vacuous SKIP closed the inner gate, `privatebucket` would go unchecked
+/// and the file would exit 0 -- the same silent-drop shape the top-level gate test pins,
+/// one level down, where a `when` inside a `when` composes two gating decisions.
+#[test]
+fn a_vacuous_negation_nested_in_a_when_block_still_runs_the_inner_body() -> Result<()> {
+    let rules = r###"
+    rule nested_ne when Resources.*[ Type == 'AWS::S3::Bucket' ] !empty {
+        when Resources.*[ Type == 'AWS::S3::Bucket' ].Properties.Tags != 'Owner' {
+            Resources.*[ Type == 'AWS::S3::Bucket' ].Properties.Name == 'privatebucket'
+        }
+    }
+    "###;
+
+    let input = r#"
+    {
+        Resources: {
+            bucket: {
+                Type: 'AWS::S3::Bucket',
+                Properties: { Name: "publicbucket", Tags: [] }
+            }
+        }
+    }
+    "#;
+
+    let resources = PathAwareValue::try_from(input)?;
+    let rules_file = RulesFile::try_from(rules)?;
+    let mut root = root_scope(&rules_file, Rc::new(resources));
+    let status = eval_rules_file(&rules_file, &mut root, None)?;
+
+    assert_eq!(status, Status::FAIL);
 
     Ok(())
 }
@@ -5293,9 +8052,19 @@ fn every_recorded_explanation_has_a_rendering_path() {
     // `Attempting EMPTY operation on type bool that does not support it at
     // /Resources/Vol/Properties/Enabled` in the console reporter.
     //
+    // Twenty rather than the parent branch's nineteen: this branch's `eval_rule` records its own
+    // sentence for a condition it could not evaluate, where the parent carries that text inside the
+    // error it re-raises. Both reach the console through the rule-level explanation the parent added
+    // to `collect_unattributed_explanations`, which this branch inherits.
+    //
     // If this total changes, find the new site, note which variant it records against, and confirm
     // it reaches rendered output before updating the number.
-    const SITES_EXPECTED: usize = 19;
+    //
+    // Nineteen rather than eighteen on the parent branch: the NotComparable arm records
+    // `Some(nc.reason)` on a ClauseValueCheck, a variant that already had a rendering path.
+    // Checked rather than assumed -- `Properties.Size > 'not-a-number'` against an integer Size
+    // prints `Error = [... not comparable int, String]` in the console reporter.
+    const SITES_EXPECTED: usize = 20;
 
     assert_eq!(
         sites, SITES_EXPECTED,
@@ -6184,6 +8953,72 @@ fn an_index_after_an_interpolated_key_is_not_applied_twice() -> Result<()> {
     Ok(())
 }
 
+/// An index after an interpolated key counts the keys the variable names, not the results it resolved
+/// to.
+///
+/// The two differ when one result holds a list. `let k = Cfg.KeyList` over `KeyList: [Name, Owner]`
+/// resolves to a single result holding the whole list, and the expansion of that list into one key per
+/// element happens after the index has already been applied. So the length was one: `[0]` selected the
+/// list and then used *every* key in it, and `[1]` was out of bounds. Over
+/// `Tags: {Name: alpha, Owner: bob}`, `some Cfg.Tags.%k[0] == "bob"` passed at exit 0 although the 0th
+/// key is `Name` and names `alpha`.
+///
+/// The index was inert rather than off by one, which is what `list_bound_without_an_index` shows: the
+/// same rule with no index at all answers the same way, so `[0]` was selecting nothing. Under either
+/// reading of `[N]` -- the Nth key, or the Nth resolved value -- exactly one key must come back, and two
+/// came back.
+///
+/// Every clause is run against both spellings of the binding because the defect was that they
+/// disagreed. `Cfg.KeyList[*]` was always right: the projection makes one result per key, so there was
+/// nothing left to flatten. The pair is also why this survived, since the two spellings look
+/// interchangeable and only one of them was.
+///
+/// The `alpha` and negative cases matter even though their verdict did not move. Both passed before for
+/// the wrong reason -- every key was in play, so `alpha` was among the values and `[-1]` offset into a
+/// length of one and landed back on the whole list. They pin which key the index now selects, which a
+/// verdict that was already right cannot.
+#[rstest::rstest]
+#[case::zeroth_key_is_not_the_last_value("%k[0]", "\"bob\"", Status::FAIL)]
+#[case::zeroth_key_names_alpha("%k[0]", "\"alpha\"", Status::PASS)]
+#[case::first_key_names_bob("%k[1]", "\"bob\"", Status::PASS)]
+#[case::last_key_names_bob("%k[-1]", "\"bob\"", Status::PASS)]
+#[case::past_the_last_key("%k[2]", "\"bob\"", Status::FAIL)]
+#[case::without_an_index("%k", "\"bob\"", Status::PASS)]
+fn an_index_after_an_interpolated_key_counts_keys_not_results(
+    #[case] selection: &str,
+    #[case] expected_value: &str,
+    #[case] expected: Status,
+) -> Result<()> {
+    const CONFIG: &str = r#"
+Cfg:
+  KeyList: [Name, Owner]
+  Tags:
+    Name: alpha
+    Owner: bob
+"#;
+
+    // The same two keys reached two ways: bound as the list itself, and bound as its elements.
+    for preamble in ["let k = Cfg.KeyList", "let k = Cfg.KeyList[*]"] {
+        let rules = format!(
+            "{}\nrule tag_is_bob {{ some Cfg.Tags.{} == {} }}",
+            preamble, selection, expected_value
+        );
+        let rules_file = RulesFile::try_from(rules.as_str())?;
+        let config = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(CONFIG)?)?;
+
+        let mut scope = root_scope(&rules_file, Rc::new(config));
+        assert_eq!(
+            eval_rules_file(&rules_file, &mut scope, None)?,
+            expected,
+            "`{}` under `{}` must not answer differently from the other spelling of the same keys",
+            selection,
+            preamble
+        );
+    }
+
+    Ok(())
+}
+
 /// An unresolvable type block query must skip, not abort the rules file.
 ///
 /// This one is a regression this branch introduced and a defect it inherited, in the same place.
@@ -6317,8 +9152,14 @@ fn an_out_of_range_index_does_not_panic() -> Result<()> {
     }
 
     // In-range indices still answer what they always did, in case `unsigned_abs` changed more than
-    // the overflow case. Guard treats a negative index as its absolute value rather than as an
-    // offset from the end, which is surprising but long-standing, so `[-1]` and `[1]` agree.
+    // the overflow case.
+    //
+    // This comment used to say the opposite of the code: that a negative index is its absolute value
+    // rather than an offset from the end, "so `[-1]` and `[1]` agree". `index_offset` counts back
+    // from the end, and `docs/CLAUSES.md` documents that. The claim survived because the two
+    // readings cannot be told apart on a two-element list -- index 1 is also the last element -- so
+    // the assertion below held either way. `a_negative_index_counts_back_from_the_end` uses three
+    // elements, where they disagree.
     for (query, expected) in [
         ("Items[0]", Status::PASS),
         ("Items[1]", Status::FAIL),
@@ -6782,39 +9623,40 @@ fn generated_rule_shapes_hold_the_evaluator_invariants() -> Result<()> {
     // All of them are an undecidable *comparison* used as a gate -- a query that does not resolve, or
     // a type mismatch -- which is the case `f3c919f` records as needing a status meaning "could not
     // tell". That is #720's `Outcome` lattice, where `Unevaluatable` is a value a gate can return
-    // instead of collapsing into "did not match". Unchanged from the merge-base, so none of these is a
-    // regression from this branch.
+    // instead of collapsing into "did not match". None of the entries below is a regression from this
+    // branch.
     //
     // No `empty_on_scalar` cell appears here, which is the point of the list: that clause used to
     // disarm its body in every one of these shapes, and it is what a reviewer found by hand.
+    //
+    // The eight `absent_root` cells that used to be listed here are gone, and not because a gate
+    // stopped losing a verdict -- because there is no longer a verdict to lose. `absent_root` carries
+    // no `Resources` key and `FILTER` selects from it, so on that template the *body alone* used to
+    // report FAIL: "a volume is unencrypted", about a document containing no volumes. An empty
+    // selection now reports SKIP, which is what a filter that keeps nothing has always reported, so
+    // the body is inapplicable rather than violated and this loop's `body_alone != FAIL` guard drops
+    // the cell before it can be counted. Measured both ways rather than reasoned: on the merge-base
+    // the body alone is FAIL and the gated form SKIP, and with the empty-selection fix both are SKIP.
     //
     // `in_list` has no `string_size` entry, and the reason is worth knowing: `IN` against a type it
     // cannot compare answers FAIL while `NOT IN` answers PASS, so the pair is not recognised as
     // undecidable and the invariant skips those cells. That disagreement between the two operators is
     // itself a defect -- `every_operator_and_operand_shape_agrees_with_a_stated_oracle` records it --
     // and closing it would add two entries here rather than remove any.
-    const DISARMED_BY_AN_UNDECIDABLE_COMPARISON: [&str; 22] = [
+    const DISARMED_BY_AN_UNDECIDABLE_COMPARISON: [&str; 14] = [
         "eq_int/gate/absent_property",
-        "eq_int/gate/absent_root",
         "eq_int/gate/string_size",
         "eq_int/nested_when/absent_property",
-        "eq_int/nested_when/absent_root",
         "eq_int/nested_when/string_size",
         "gt_int/gate/absent_property",
-        "gt_int/gate/absent_root",
         "gt_int/gate/string_size",
         "gt_int/nested_when/absent_property",
-        "gt_int/nested_when/absent_root",
         "gt_int/nested_when/string_size",
         "in_list/gate/absent_property",
-        "in_list/gate/absent_root",
         "in_list/nested_when/absent_property",
-        "in_list/nested_when/absent_root",
         "le_float/gate/absent_property",
-        "le_float/gate/absent_root",
         "le_float/gate/string_size",
         "le_float/nested_when/absent_property",
-        "le_float/nested_when/absent_root",
         "le_float/nested_when/string_size",
     ];
     let mut disarmed: Vec<String> = Vec::new();
@@ -7149,29 +9991,32 @@ fn every_operator_and_operand_shape_agrees_with_a_stated_oracle() -> Result<()> 
     }
 
     // The cells that do not agree, split by whether the current answer contradicts the specification
-    // or merely contradicts this oracle. Conflating the two was misleading: 37 of the 48 are behaviour
-    // the documentation describes on purpose, and reading a single count of 48 as "48 defects"
-    // overstates the position by a factor of four.
+    // or merely contradicts this oracle. Conflating the two was misleading: 36 of the 42 are behaviour
+    // the documentation describes on purpose, and reading a single count as that many defects
+    // overstates the position by a factor of seven.
 
-    // Contradicts the specification. Each of these passes while comparing nothing.
+    // Seven cells left these lists on this branch and none joined, which is worth reading before
+    // trusting the counts. `e9b143c` is why: a comparison against an empty collection now fails in its
+    // plain polarity and answers SKIP in its negated one, because an empty fold returns
+    // `Outcome::identity()`, which is `NotApplicable`. Both are what the oracle asks for -- the plain
+    // form is a claim over nothing, and the negated form is vacuously true and asserts nothing -- so
+    // the six empty-collection assertion cells the parent branch violates are gone here.
     //
-    // `docs/QUERY_AND_FILTERING.md` lists `Tags: []` beside a missing key and an empty map as retrieval
-    // errors and states that all retrieval errors are failures. Measured, the other two do fail, so the
-    // empty-collection rows are the outlier rather than a design choice. #720 fixes them.
+    // The seventh is `in_list/empty_list/not/gate`, which the parent answers SKIP and this branch
+    // answers FAIL. The parent's SKIP is the collapse this PR exists to remove: its condition
+    // resolved to FAIL, `eval_rule` mapped that to a rule-level SKIP, and the guarded violation went
+    // unreported at exit 0.
     //
-    // `docs/CLAUSES.md` says a comparison across kinds that are not both numeric "cannot be decided,
-    // and the clause fails rather than guessing", and `docs/KNOWN_ISSUES.md` records the silent
-    // conversion to `false` as a tracked defect. `!=` honours that; `NOT IN` does not. Fixing it needs
-    // five registry rules to change first -- see the revert in `9a9600d` -- so both classes now emit a
-    // deprecation notice a release ahead of the change.
-    const VIOLATES_THE_SPEC: [&str; 12] = [
-        "eq_50/empty_list/not/assert",
-        "eq_50/empty_list/plain/assert",
-        "gt_10/empty_list/not/assert",
-        "gt_10/empty_list/plain/assert",
+    // What remains contradicts the specification: `docs/CLAUSES.md` says a comparison across kinds
+    // that are not both numeric "cannot be decided, and the clause fails rather than guessing", and
+    // `docs/KNOWN_ISSUES.md` records the silent conversion to `false` as a tracked defect. `!=`
+    // honours that; `NOT IN` does not, so a negated membership test against a string, a map, a
+    // boolean or null passes while comparing incomparable kinds. Fixing it changes five registry
+    // rules from FAIL to PASS -- see the revert in `9a9600d` -- so it emits a deprecation notice a
+    // release ahead of the change rather than breaking those rules here.
+    //
+    const VIOLATES_THE_SPEC: [&str; 6] = [
         "in_list/bool_true/not/assert",
-        "in_list/empty_list/not/assert",
-        "in_list/empty_list/plain/assert",
         "in_list/empty_map/not/assert",
         "in_list/empty_string/not/assert",
         "in_list/map/not/assert",
@@ -7189,7 +10034,7 @@ fn every_operator_and_operand_shape_agrees_with_a_stated_oracle() -> Result<()> 
     // They are still the wrong answer, and #720 changes it: `Outcome::Unevaluatable` lets a gate say
     // "could not tell" instead of collapsing into "did not match". That PR owns the rewrite of those
     // lines, so that no merged state has the document disagreeing with the code.
-    const CONFORMS_TO_THE_SPEC: [&str; 37] = [
+    const CONFORMS_TO_THE_SPEC: [&str; 36] = [
         "eq_50/absent/not/gate",
         "eq_50/absent/plain/gate",
         "eq_50/bool_true/not/gate",
@@ -7221,7 +10066,6 @@ fn every_operator_and_operand_shape_agrees_with_a_stated_oracle() -> Result<()> 
         "in_list/absent/not/gate",
         "in_list/absent/plain/gate",
         "in_list/bool_true/plain/gate",
-        "in_list/empty_list/not/gate",
         "in_list/empty_map/plain/gate",
         "in_list/empty_string/plain/gate",
         "in_list/map/plain/gate",
@@ -7302,50 +10146,1507 @@ fn every_operator_and_operand_shape_agrees_with_a_stated_oracle() -> Result<()> 
     Ok(())
 }
 
-#[test]
-fn probe_vacuous_pass_record_shape() -> Result<()> {
-    fn dump(r: &EventRecord<'_>, depth: usize) {
-        let kind = match &r.container {
-            Some(RecordType::FileCheck(n)) => format!("FileCheck {:?}", n.status),
-            Some(RecordType::RuleCheck(n)) => format!("RuleCheck {:?}", n.status),
-            Some(RecordType::GuardClauseBlockCheck(b)) => {
-                format!("GuardClauseBlockCheck {:?}", b.status)
+/// A range inside a list literal is a range.
+///
+/// `contained_in` decided list membership with `Vec::contains`, which compares by `PartialEq`, and
+/// `PartialEq` is asked `element == value` -- the direction that has no range arm, and must not get
+/// one, because `eq` has to stay symmetric while membership does not. So a range nested in a list
+/// literal matched nothing, in either polarity. For a `Port` of 85, `Port in [r[80,90]]` failed and
+/// `Port not in [r[80,90]]` passed: a denylist of port ranges that admits every port.
+///
+/// Unwrapped, the same question was always answered correctly, because `Port in r[80,90]` reaches
+/// `compare_eq`, which is where the range table lives. Both spellings are asserted here, since the
+/// two agreeing is the actual property.
+///
+/// Every cell has its opposite, so a fix that made membership always true, or always false, fails
+/// rather than passing half the table.
+#[rstest::rstest]
+#[case::covering_range_wrapped("in [r[80,90]]", Status::PASS)]
+#[case::covering_range_unwrapped("in r[80,90]", Status::PASS)]
+#[case::covering_range_wrapped_negated("not in [r[80,90]]", Status::FAIL)]
+#[case::covering_range_unwrapped_negated("not in r[80,90]", Status::FAIL)]
+#[case::excluding_range_wrapped("in [r[10,20]]", Status::FAIL)]
+#[case::excluding_range_wrapped_negated("not in [r[10,20]]", Status::PASS)]
+#[case::range_beside_a_matching_value("in [r[10,20], 85]", Status::PASS)]
+#[case::range_beside_a_non_matching_value("in [r[10,20], 99]", Status::FAIL)]
+#[case::two_ranges_one_covering("in [r[10,20], r[80,90]]", Status::PASS)]
+#[case::two_ranges_neither_covering("in [r[10,20], r[30,40]]", Status::FAIL)]
+fn a_range_inside_a_list_literal_is_a_range(
+    #[case] clause: &str,
+    #[case] expected: Status,
+) -> Result<()> {
+    const INPUT: &str = r#"
+    {
+        Resources: {
+            Vol: {
+                Type: 'AWS::EC2::Volume',
+                Properties: { Port: 85 }
             }
-            Some(RecordType::ClauseValueCheck(ClauseCheck::Success)) => {
-                "ClauseValueCheck Success".to_string()
-            }
-            Some(RecordType::ClauseValueCheck(_)) => "ClauseValueCheck other".to_string(),
-            Some(other) => format!("{:?}", std::mem::discriminant(other)),
-            None => "none".to_string(),
-        };
-        println!(
-            "PROBE {}{} children={}",
-            "  ".repeat(depth),
-            kind,
-            r.children.len()
-        );
-        for c in &r.children {
-            dump(c, depth + 1);
         }
     }
-    for (label, data) in [
+    "#;
+
+    // A plain template rather than `format!`, following the convention above: the rule is mostly
+    // braces and the escaping reads worse than the rule it describes.
+    let rules = "rule ranged { Resources.Vol.Properties.Port CLAUSE }".replace("CLAUSE", clause);
+
+    assert_eq!(
+        expected,
+        rule_status_in(&rules, INPUT, "ranged")?,
+        "clause: Port {}",
+        clause
+    );
+
+    Ok(())
+}
+
+/// `or` is decided by whichever disjunct can decide it, in either order.
+///
+/// `eval_conjunction_clauses` returned on the first disjunct that raised, so the rest of the
+/// disjunction never ran. With one disjunct undecidable and another decided true, the two spellings
+/// of the same condition disagreed: `true or undecidable` opened its gate and evaluated the body,
+/// and `undecidable or true` reported that the condition could not be evaluated and dropped the body.
+///
+/// The exit code cannot see this. Both spellings exit 19 on a document the body fails, because the
+/// rule fails either way -- only the reason differs, and only one of them is the real finding. So the
+/// body here is a clause that *holds*, which makes the two outcomes different statuses: PASS if the
+/// gate opened and the body ran, FAIL if the condition was treated as undecidable.
+///
+/// The last four cells are the controls. Two of them pin the case where nothing can decide the
+/// disjunction, which must still fail closed rather than skip, and in both orders.
+#[rstest::rstest]
+#[case::undecidable_or_true("UNDECIDABLE or TRUE", Status::PASS)]
+#[case::true_or_undecidable("TRUE or UNDECIDABLE", Status::PASS)]
+#[case::undecidable_or_false("UNDECIDABLE or FALSE", Status::FAIL)]
+#[case::false_or_undecidable("FALSE or UNDECIDABLE", Status::FAIL)]
+#[case::control_true_gate("TRUE", Status::PASS)]
+#[case::control_false_gate("FALSE", Status::SKIP)]
+#[case::control_undecidable_gate("UNDECIDABLE", Status::FAIL)]
+#[case::control_true_or_false("TRUE or FALSE", Status::PASS)]
+fn a_disjunction_is_decided_by_the_disjunct_that_can_decide_it(
+    #[case] gate: &str,
+    #[case] expected: Status,
+) -> Result<()> {
+    const INPUT: &str = r#"
+    {
+        Resources: {
+            Vol: {
+                Type: 'AWS::EC2::Volume',
+                Properties: { Enabled: true, Size: 50 }
+            }
+        }
+    }
+    "#;
+
+    // `Enabled` is a boolean, so `!EMPTY` on it is a question with no answer. The other two are
+    // ordinary decided clauses, and the body is one that holds, so the rule's status says whether
+    // the gate opened.
+    let rules = "rule guarded when GATE { Resources.Vol.Properties.Size == 50 }"
+        .replace("GATE", gate)
+        .replace("UNDECIDABLE", "Resources.Vol.Properties.Enabled !EMPTY")
+        .replace("TRUE", "Resources.Vol.Properties.Size == 50")
+        .replace("FALSE", "Resources.Vol.Properties.Size == 99");
+
+    assert_eq!(
+        expected,
+        rule_status_in(&rules, INPUT, "guarded")?,
+        "gate: {}\nrules:\n{}",
+        gate,
+        rules
+    );
+
+    Ok(())
+}
+
+/// A map key that reads as an integer is still a key.
+///
+/// Retrieval decided between "index" and "key name" by asking whether the key text parses as an
+/// `i64`, without looking at what it was being applied to. `Items.0` is index access written without
+/// brackets, which is why a key is read as a number at all -- but a map takes the same text as a name,
+/// and so any map key that reads as an integer was unaddressable. Quoting it changed nothing: the
+/// quotes are gone by the time retrieval sees a `Key`, which is why `"1.5"` resolved and `"80"` did
+/// not.
+///
+/// The shape that made this worth fixing is `Mappings`, where account ids are keys:
+/// `Mappings.AccountToEnv."123456789012".Env` matched nothing on a template holding exactly that key.
+/// Ports and status codes are the same shape.
+///
+/// The list cells are the controls that matter -- bracketless index access is the reason the number
+/// parse exists, so a fix that simply stopped parsing would break it, and `L.0 == "second"` fails so
+/// the index is doing real work rather than resolving to the first thing it finds.
+#[rstest::rstest]
+#[case::zero_key("M.\"0\" == \"zero\"", Status::PASS)]
+#[case::negative_key("M.\"-1\" == \"neg\"", Status::PASS)]
+#[case::integer_key("M.\"80\" == \"eighty\"", Status::PASS)]
+#[case::integer_key_wrong_value("M.\"80\" == \"wrong\"", Status::FAIL)]
+#[case::float_shaped_key("M.\"1.5\" == \"float\"", Status::PASS)]
+#[case::absent_integer_key("M.\"99\" exists", Status::FAIL)]
+#[case::list_index_without_brackets("L.0 == \"first\"", Status::PASS)]
+#[case::second_list_index("L.1 == \"second\"", Status::PASS)]
+#[case::list_index_discriminates("L.0 == \"second\"", Status::FAIL)]
+#[case::list_index_out_of_range("L.5 exists", Status::FAIL)]
+fn a_map_key_that_reads_as_an_integer_is_still_a_key(
+    #[case] clause: &str,
+    #[case] expected: Status,
+) -> Result<()> {
+    const INPUT: &str = r#"
+    {
+        Resources: {
+            Vol: {
+                Type: 'AWS::X::Y',
+                Properties: {
+                    M: { "0": "zero", "-1": "neg", "80": "eighty", "1.5": "float" },
+                    L: ["first", "second"]
+                }
+            }
+        }
+    }
+    "#;
+
+    let rules = "rule keyed { Resources.Vol.Properties.CLAUSE }".replace("CLAUSE", clause);
+
+    assert_eq!(
+        expected,
+        rule_status_in(&rules, INPUT, "keyed")?,
+        "clause: {}",
+        clause
+    );
+
+    Ok(())
+}
+
+/// A negative index counts back from the end, on a list long enough to prove it.
+///
+/// `eval_context.rs` names this test as what pins the behaviour, and it did not exist. The behaviour
+/// is real and documented -- `docs/CLAUSES.md` says `Items[-1]` is the last element and `Items[-2]` the
+/// one before it -- but the only test touching a negative index used a two-element list, where "the
+/// last element" and "the absolute value" are the same index. It held under either reading, and its
+/// comment asserted the reading the code does not use.
+///
+/// Three elements is the shortest list where `[-1]` and `[1]` disagree. `[-3]` is the first element
+/// under this reading and out of range under the other, and `[-4]` is out of range under both, so both
+/// ends of the range are pinned rather than just the near one.
+#[rstest::rstest]
+#[case::last_element("Items[-1]", "c", Status::PASS)]
+#[case::last_is_not_the_middle("Items[-1]", "b", Status::FAIL)]
+#[case::second_from_the_end("Items[-2]", "b", Status::PASS)]
+#[case::furthest_back_in_range("Items[-3]", "a", Status::PASS)]
+#[case::furthest_back_is_not_the_last("Items[-3]", "c", Status::FAIL)]
+#[case::one_past_the_start("Items[-4]", "a", Status::FAIL)]
+#[case::positive_index_control("Items[1]", "b", Status::PASS)]
+#[case::first_element_control("Items[0]", "a", Status::PASS)]
+fn a_negative_index_counts_back_from_the_end(
+    #[case] query: &str,
+    #[case] value_compared: &str,
+    #[case] expected: Status,
+) -> Result<()> {
+    const DATA: &str = r#"{ "Items": [ "a", "b", "c" ] }"#;
+
+    let rules = "rule r { QUERY == \"VALUE\" }"
+        .replace("QUERY", query)
+        .replace("VALUE", value_compared);
+    let rules_file = RulesFile::try_from(rules.as_str())?;
+    let value = PathAwareValue::try_from(DATA)?;
+    let mut root = root_scope(&rules_file, Rc::new(value));
+
+    assert_eq!(
+        eval_rules_file(&rules_file, &mut root, None)?,
+        expected,
+        "{} == {:?} against {}",
+        query,
+        value_compared,
+        DATA
+    );
+
+    Ok(())
+}
+
+/// `EMPTY` on a boolean is an incompatible type, in both polarities and for both values.
+///
+/// `element_empty_operation` names this test as what covers all four combinations, and it did not
+/// exist. The behaviour it describes is the one that mattered: the old arm computed
+/// `(*boolean).to_string().is_empty()`, and neither "true" nor "false" is the empty string, so `EMPTY`
+/// on a boolean was unconditionally false and `!EMPTY` unconditionally true -- a clause that reads like
+/// a check and cannot fail for any input.
+///
+/// All four cells assert FAIL, which is what distinguishes the fix from the defect: under the old arm
+/// the two `!EMPTY` cells passed. The wording of the diagnostic is covered by
+/// `every_recorded_explanation_has_a_rendering_path`, which is what makes sure it reaches a reporter at
+/// all; this test is about the verdict.
+#[rstest::rstest]
+#[case::empty_on_true("EMPTY", "true")]
+#[case::not_empty_on_true("!EMPTY", "true")]
+#[case::empty_on_false("EMPTY", "false")]
+#[case::not_empty_on_false("!EMPTY", "false")]
+fn boolean_empty_is_an_incompatible_type(#[case] operator: &str, #[case] flag: &str) -> Result<()> {
+    let input = "{ Resources: { Vol: { Type: 'AWS::X::Y', Properties: { Flag: FLAG } } } }"
+        .replace("FLAG", flag);
+    let rules = "rule flagged { Resources.Vol.Properties.Flag OP }".replace("OP", operator);
+
+    assert_eq!(
+        Status::FAIL,
+        rule_status_in(&rules, &input, "flagged")?,
+        "`Flag {}` on the boolean {} must fail rather than answer a question the operator cannot ask",
+        operator,
+        flag
+    );
+
+    Ok(())
+}
+
+/// A filter applied directly to an already-indexed value is reported, not a panic.
+///
+/// `predicate_or_index` lets an array index and a filter sit adjacent, so `Rules[0][ Action ==
+/// 'allow' ]` parses. Retrieval then reached a `_ => unreachable!()` whose match only handled a
+/// preceding wildcard or key, and the process died at exit 101 -- taking the finding with it. `this`
+/// and a map-key filter in the same position did the same.
+///
+/// Asserted as FAIL rather than as a specific message: what `[ ... ]` ought to mean when applied to one
+/// already-selected value is a language question -- on a map the operator filters the map's *entries*,
+/// which is not what an author writing `Rules[0][ ... ]` means -- so retrieval reports the query as
+/// unresolved and lets the clause fail closed rather than inventing an answer.
+#[rstest::rstest]
+#[case::filter_after_an_index("Resources.One.Properties.Rules[0][ Action == 'allow' ] !empty")]
+#[case::filter_after_a_filter(
+    "Resources.*[ Type == 'AWS::S3::Bucket' ][ Type == 'AWS::S3::Bucket' ] !empty"
+)]
+fn a_filter_applied_to_an_indexed_value_does_not_panic(#[case] clause: &str) -> Result<()> {
+    const INPUT: &str = r#"
+    {
+        Resources: {
+            One: {
+                Type: 'AWS::S3::Bucket',
+                Properties: { Rules: [ { Action: 'allow' } ] }
+            }
+        }
+    }
+    "#;
+
+    let rules = "rule filtered { CLAUSE }".replace("CLAUSE", clause);
+
+    assert_eq!(
+        Status::FAIL,
+        rule_status_in(&rules, INPUT, "filtered")?,
+        "{} must fail closed rather than abort the process",
+        clause
+    );
+
+    Ok(())
+}
+
+/// A scalar function argument whose query selects nothing fails the rule, and neither panics nor aborts.
+///
+/// `resolve_function` pushes the query's result verbatim, and an empty result is legitimate -- a filter
+/// that matches no resource produces one. Every scalar-positional argument then indexed `[0]` on it,
+/// which panicked at exit 101 *before* reaching the arm that already carried the right message. Five
+/// sites: two in `substring`, two in `regex_replace`, one in `join`.
+///
+/// The first argument was never affected, because it is passed as a slice rather than indexed, which is
+/// why this went unnoticed.
+///
+/// This asserted the message on the error out of `eval_rules_file`, because the arm reached instead of
+/// the panic reported `ParseError` and that class aborts the run. It is `IncompatibleError` now, which
+/// `is_unevaluatable` recognises, so the clause answers [`Outcome::Unevaluatable`] and the file keeps
+/// reporting -- there is no error to read the message off. The rule's verdict is the stronger assertion
+/// anyway: FAIL covers both the panic this was written for and the abort that replaced it, and it pins
+/// the one thing the argument's role decides, since `to_status` sends `Unevaluatable` to FAIL for an
+/// assertion and to SKIP for a gate.
+#[rstest::rstest]
+#[case::substring_from("let r = substring(%s, %empty_sel, 3)")]
+#[case::substring_to("let r = substring(%s, 1, %empty_sel)")]
+#[case::join_separator("let r = join(%s, %empty_sel)")]
+fn a_function_argument_that_selects_nothing_does_not_panic(#[case] call: &str) -> Result<()> {
+    const INPUT: &str = r#"
+    { Resources: { One: { Type: 'AWS::S3::Bucket' } } }
+    "#;
+
+    let rules = "let s = \"hello\"\nlet empty_sel = Resources[ Type == 'AWS::Nonexistent::Type' ]\nrule r {\n    CALL\n    %r == \"unused\"\n}\n"
+        .replace("CALL", call);
+
+    assert_eq!(
+        Status::FAIL,
+        rule_status_in(&rules, INPUT, "r")?,
+        "{} must fail closed rather than panic or abort",
+        call
+    );
+
+    Ok(())
+}
+
+/// A filter after a wildcard resolves its predicate against the element, not the document.
+///
+/// `accumulate` -- the helper that expands a list -- passed the resolver through unchanged, while every
+/// other expansion path rebuilds it as a `ValueScope` rooted at the element. Anything downstream that
+/// consults the scope's root rather than the value being traversed therefore saw the whole document, and
+/// a filter predicate is exactly that.
+///
+/// So `Items[*][ Sub == 2 ]` tested `Sub == 2` against the file root, matched nothing, and selected
+/// nothing, while `Items[ Sub == 2 ]` -- which reaches the filter's own List arm and rebases there -- was
+/// right. Two spellings of one query disagreed.
+///
+/// The empty selection is not the damage. An assertion whose query selects nothing is *not applicable*,
+/// so the guarded comparison reported SKIP and a violating value went unflagged at exit 0. That is the
+/// `assertion_over_the_selection` cell, and its control is the same assertion written the working way.
+///
+/// `predicate_naming_the_document_root` is the cell that distinguishes a wrong root from a genuine
+/// non-match: `Resources.One.Type` is unreachable from a list element, so it must NOT hold. It passed
+/// before the fix, which is what proved the root was the document rather than the element.
+#[rstest::rstest]
+#[case::wildcard_filter_matches(
+    "Resources.One.Properties.Items[*][ Sub == 2 ] !empty",
+    Status::PASS
+)]
+#[case::wildcard_filter_matches_other(
+    "Resources.One.Properties.Items[*][ Sub == 9 ] !empty",
+    Status::PASS
+)]
+#[case::wildcard_filter_no_match(
+    "Resources.One.Properties.Items[*][ Sub == 99 ] !empty",
+    Status::FAIL
+)]
+#[case::plain_filter_control("Resources.One.Properties.Items[ Sub == 2 ] !empty", Status::PASS)]
+#[case::predicate_naming_the_document_root(
+    "Resources.One.Properties.Items[*][ Resources.One.Type == 'AWS::S3::Bucket' ] !empty",
+    Status::FAIL
+)]
+#[case::assertion_over_the_selection(
+    "Resources.One.Properties.Items[*][ Sub == 2 ].Public == false",
+    Status::FAIL
+)]
+#[case::assertion_control(
+    "Resources.One.Properties.Items[ Sub == 2 ].Public == false",
+    Status::FAIL
+)]
+fn a_filter_after_a_wildcard_resolves_against_the_element(
+    #[case] clause: &str,
+    #[case] expected: Status,
+) -> Result<()> {
+    const INPUT: &str = r#"
+    {
+        Resources: {
+            One: {
+                Type: 'AWS::S3::Bucket',
+                Properties: {
+                    Items: [ { Sub: 2, Public: true }, { Sub: 9, Public: false } ]
+                }
+            }
+        }
+    }
+    "#;
+
+    let rules = "rule filtered { CLAUSE }".replace("CLAUSE", clause);
+
+    assert_eq!(
+        expected,
+        rule_status_in(&rules, INPUT, "filtered")?,
+        "clause: {}",
+        clause
+    );
+
+    Ok(())
+}
+
+/// A filter capture belongs to the iteration that made it.
+///
+/// `RootScope::add_variable_capture_key` appends and never resets, and both `BlockScope` and
+/// `ValueScope` used to hand captures up to it. So every key a filter captured outlived its iteration
+/// and piled up in one list for the whole file, and because `resolve_variable` reads
+/// `resolved_variables` before `variable_queries`, the grown list is what a later `%name` saw.
+///
+/// The result is a false PASS on the resource that should fail:
+///
+/// | template                       | before | correct |
+/// |--------------------------------|--------|---------|
+/// | BucketB alone (only `beta`)    | FAIL   | FAIL    |
+/// | BucketA + BucketB              | PASS   | FAIL    |
+/// | BucketA alone (has `alpha`)    | PASS   | PASS    |
+///
+/// The second row is the defect: adding a *compliant* resource made a non-compliant one pass, because
+/// BucketB saw `["alpha", "beta"]` and satisfied `some %cfg == "alpha"` on the strength of BucketA's
+/// key. What makes it dangerous is the first row -- tested on the offending resource alone, the rule
+/// looks like it works.
+///
+/// The third row is the liveness control, and it is the one that matters here: a fix that simply broke
+/// the capture would make every row FAIL and look correct without it.
+#[rstest::rstest]
+#[case::non_compliant_alone(false, true, Status::FAIL)]
+#[case::compliant_beside_non_compliant(true, true, Status::FAIL)]
+#[case::compliant_alone(true, false, Status::PASS)]
+fn a_filter_capture_does_not_outlive_its_iteration(
+    #[case] with_alpha: bool,
+    #[case] with_beta: bool,
+    #[case] expected: Status,
+) -> Result<()> {
+    // `alpha` is the config name the rule demands; `beta` is a bucket that has an enabled config under
+    // a different name, so it must fail.
+    let mut resources = vec![];
+    if with_alpha {
+        resources.push(
+            "BucketA: { Type: 'AWS::S3::Bucket', Properties: { Config: { alpha: { Enabled: true } } } }",
+        );
+    }
+    if with_beta {
+        resources.push(
+            "BucketB: { Type: 'AWS::S3::Bucket', Properties: { Config: { beta: { Enabled: true } } } }",
+        );
+    }
+    let input = format!("{{ Resources: {{ {} }} }}", resources.join(", "));
+
+    let rules = r###"
+    rule every_bucket_has_an_enabled_alpha_config {
+        Resources.*[ Type == 'AWS::S3::Bucket' ] {
+            Properties.Config[ cfg | Enabled == true ] !empty
+            some %cfg == "alpha"
+        }
+    }
+    "###;
+
+    assert_eq!(
+        expected,
+        rule_status_in(rules, &input, "every_bucket_has_an_enabled_alpha_config")?,
+        "alpha={} beta={} over {}",
+        with_alpha,
+        with_beta,
+        input
+    );
+
+    Ok(())
+}
+
+/// A key filter's capture name binds the keys it selected.
+///
+/// The arm bound the name as `_name` and no call site ever saw it, so
+/// `Resources[ mk | keys == /^Bucket/ ]` declared `mk` and left it unresolvable. The run then died at
+/// 255 with "Could not resolve variable by name mk", which blames the wrong thing -- the variable *was*
+/// declared, in a position the parser accepts.
+///
+/// A key filter is the one filter shape where the key is what the predicate tested, so it is the shape
+/// where capturing it is unambiguous.
+///
+/// `filtered_out_key` is the cell that makes this a test of the selection rather than of the plumbing:
+/// `TableC` exists in the template and must NOT be captured, because the predicate excluded it. And the
+/// all-must-match form fails over two captured keys, which shows the capture is a list rather than
+/// whichever key happened to be last.
+#[rstest::rstest]
+#[case::selected_key("some %mk == \"BucketA\"", Status::PASS)]
+#[case::other_selected_key("some %mk == \"BucketB\"", Status::PASS)]
+#[case::filtered_out_key("some %mk == \"TableC\"", Status::FAIL)]
+#[case::all_must_match_over_two_keys("%mk == \"BucketA\"", Status::FAIL)]
+fn a_key_filter_capture_binds_the_selected_keys(
+    #[case] clause: &str,
+    #[case] expected: Status,
+) -> Result<()> {
+    const INPUT: &str = r#"
+    {
+        Resources: {
+            BucketA: { Type: 'AWS::S3::Bucket', Properties: { BucketName: 'a' } },
+            BucketB: { Type: 'AWS::S3::Bucket', Properties: { BucketName: 'b' } },
+            TableC:  { Type: 'AWS::DynamoDB::Table', Properties: { TableName: 'c' } }
+        }
+    }
+    "#;
+
+    let rules = "rule keyed {\n    Resources[ mk | keys == /^Bucket/ ] !empty\n    CLAUSE\n}"
+        .replace("CLAUSE", clause);
+
+    assert_eq!(
+        expected,
+        rule_status_in(&rules, INPUT, "keyed")?,
+        "clause: {}",
+        clause
+    );
+
+    Ok(())
+}
+
+/// `[*]` on a map passes the map through, except when a filter comes next.
+///
+/// The pass-through is deliberate and load-bearing: a schema field that accepts "an array or a single
+/// value" is written once as `Statement[*].Action`, and handing the map onward is what makes that resolve
+/// when `Statement` is one object rather than a list. IAM policies are exactly that shape, and
+/// `test_field_type_array_or_single` pins it. Expanding the map unconditionally breaks that test and two
+/// join tests, which is how the first attempt at this was rejected.
+///
+/// A filter next is the one position where pass-through cannot be what was meant. The predicate was
+/// tested once against the whole map, matched nothing, and the filter selected nothing -- so
+/// `Resources[*][ Type == 'AWS::S3::Bucket' ]` selected no resources at all, and an assertion over that
+/// empty selection reported SKIP with the violation unflagged, while the `.*` spelling of the same query
+/// was right. Two spellings disagreed, and the wrong one failed open.
+///
+/// The leniency cells are the controls, and they are the reason this is keyed on what comes next rather
+/// than fixed by expanding: they must keep passing whether `Statement` is a list or a map.
+#[rstest::rstest]
+#[case::assertion_via_bracket_wildcard(
+    "Resources[*][ Type == 'AWS::S3::Bucket' ].Properties.Public == false",
+    Status::FAIL
+)]
+#[case::assertion_via_dot_wildcard(
+    "Resources.*[ Type == 'AWS::S3::Bucket' ].Properties.Public == false",
+    Status::FAIL
+)]
+#[case::filter_via_bracket_wildcard(
+    "Resources[*][ Type == 'AWS::S3::Bucket' ] !empty",
+    Status::PASS
+)]
+#[case::filter_via_dot_wildcard("Resources.*[ Type == 'AWS::S3::Bucket' ] !empty", Status::PASS)]
+#[case::filter_matching_nothing("Resources[*][ Type == 'AWS::None::Here' ] !empty", Status::FAIL)]
+fn a_bracket_wildcard_on_a_map_expands_only_for_a_filter(
+    #[case] clause: &str,
+    #[case] expected: Status,
+) -> Result<()> {
+    // BucketA is public, so an assertion that reaches it must fail. TableC is a different type, so the
+    // filter has something to exclude.
+    const INPUT: &str = r#"
+    {
+        Resources: {
+            BucketA: { Type: 'AWS::S3::Bucket', Properties: { Public: true } },
+            TableC:  { Type: 'AWS::DynamoDB::Table', Properties: { Public: false } }
+        }
+    }
+    "#;
+
+    let rules = "rule mapped { CLAUSE }".replace("CLAUSE", clause);
+
+    assert_eq!(
+        expected,
+        rule_status_in(&rules, INPUT, "mapped")?,
+        "clause: {}",
+        clause
+    );
+
+    Ok(())
+}
+
+/// The control for the case above: the array-or-single leniency must survive it.
+///
+/// `Statement[*].Action` has to resolve whether `Statement` is a list of statements or one statement
+/// object. A filter never follows the wildcard in this idiom -- a key does -- which is what lets the two
+/// cases be told apart.
+#[rstest::rstest]
+#[case::statement_is_a_list(r#"{ Statement: [ { Action: '*' } ] }"#)]
+#[case::statement_is_a_single_map(r#"{ Statement: { Action: '*' } }"#)]
+fn a_bracket_wildcard_still_accepts_an_array_or_a_single_value(#[case] input: &str) -> Result<()> {
+    let rules = "rule lenient { Statement[*].Action != '*' }";
+
+    assert_eq!(
+        Status::FAIL,
+        rule_status_in(rules, input, "lenient")?,
+        "`Statement[*].Action` must resolve for {}",
+        input
+    );
+
+    Ok(())
+}
+
+/// A filter capture is per-iteration inside its block and accumulated after it.
+///
+/// Two readings, both wanted, and getting one of them broke the other. Storing captures only in the
+/// block fixed the false PASS -- one resource's key satisfying another resource's clause -- but killed the
+/// name at the end of the block while the rule still referenced it. An unresolvable variable is an
+/// internal error, so a single rule took the whole file's report down at exit 255 rather than failing a
+/// clause.
+///
+/// So the block owns the captures while it runs, and hands them to the enclosing scope on the way out:
+///
+/// - `in_block_sees_only_its_own_iteration` is the false PASS. `BucketB` has no `alpha` config and must
+///   fail even though `BucketA` does.
+/// - `after_block_sees_every_iteration` reads the name after the block, where every iteration's keys are
+///   what such a clause means -- and what it saw before any of this.
+#[rstest::rstest]
+#[case::in_block_sees_only_its_own_iteration(true, Status::FAIL)]
+#[case::after_block_sees_every_iteration(false, Status::PASS)]
+fn a_filter_capture_is_scoped_to_its_block_and_survives_it(
+    #[case] read_inside_the_block: bool,
+    #[case] expected: Status,
+) -> Result<()> {
+    const INPUT: &str = r#"
+    {
+        Resources: {
+            BucketA: { Type: 'AWS::S3::Bucket', Properties: { Config: { alpha: { Enabled: true } } } },
+            BucketB: { Type: 'AWS::S3::Bucket', Properties: { Config: { beta:  { Enabled: true } } } }
+        }
+    }
+    "#;
+
+    let rules = if read_inside_the_block {
+        "rule scoped {\n    Resources.*[ Type == 'AWS::S3::Bucket' ] {\n        Properties.Config[ cfg | Enabled == true ] !empty\n        some %cfg == \"alpha\"\n    }\n}"
+    } else {
+        "rule scoped {\n    Resources.*[ Type == 'AWS::S3::Bucket' ] {\n        Properties.Config[ cfg | Enabled == true ] !empty\n    }\n    some %cfg == \"alpha\"\n}"
+    };
+
+    assert_eq!(
+        expected,
+        rule_status_in(rules, INPUT, "scoped")?,
+        "read {} the block",
+        if read_inside_the_block {
+            "inside"
+        } else {
+            "after"
+        }
+    );
+
+    Ok(())
+}
+
+/// A capture in a rule's `when` condition does not outlive the rule.
+///
+/// A rule condition is evaluated against the enclosing scope, so a capture made there landed in the
+/// file-wide map and survived its rule. Two rules using the same capture name in their conditions then
+/// interfered: the second saw the first's keys, and a clause reading the name failed on evidence from a
+/// rule it has nothing to do with.
+///
+/// `renamed_capture` is the cell that proves it: the two rulesets differ *only* in what the first rule
+/// calls its capture, and that changed the second rule's verdict. No rule should have to know what
+/// another rule named a local.
+#[rstest::rstest]
+#[case::same_capture_name("nm")]
+#[case::renamed_capture("other")]
+fn a_capture_in_a_rule_condition_does_not_outlive_the_rule(#[case] first_name: &str) -> Result<()> {
+    const INPUT: &str = r#"
+    { Resources: { A: { Type: 'AWS::S3::Bucket' }, B: { Type: 'AWS::EC2::Instance' } } }
+    "#;
+
+    let rules = "rule first when Resources[ FIRST | Type == 'AWS::S3::Bucket' ] !empty {\n    Resources.A.Type == 'AWS::S3::Bucket'\n}\nrule second when Resources[ nm | Type == 'AWS::EC2::Instance' ] !empty {\n    %nm == \"B\"\n}"
+        .replace("FIRST", first_name);
+
+    // `second` captures the instance key, which is "B", so it holds -- whatever the first rule called its
+    // own capture.
+    assert_eq!(
+        Status::PASS,
+        rule_status_in(&rules, INPUT, "second")?,
+        "second must not depend on what first named its capture (first used {:?})",
+        first_name
+    );
+
+    Ok(())
+}
+
+/// A filter applied to an already-indexed value fails closed in both polarities.
+///
+/// The first version of this reported the query as *unresolved*, which means "the value is not there" --
+/// and `!exists` and `empty` answer that with PASS. So an assertion failed closed only when it was written
+/// positively: `Tags[0][ Key == 'Name' ] exists` failed, and `... !exists` passed at exit 0 on a query
+/// the engine had explicitly refused to evaluate.
+///
+/// `IncompatibleError` is the branch's channel for "no answer either way". The clause arm fails an
+/// assertion closed in both polarities, so negating the clause cannot turn it into a pass.
+#[rstest::rstest]
+#[case::exists("Resources.One.Tags[0][ Key == 'Name' ] exists")]
+#[case::not_exists("Resources.One.Tags[0][ Key == 'Name' ] !exists")]
+#[case::empty("Resources.One.Tags[0][ Key == 'Name' ] empty")]
+#[case::not_empty("Resources.One.Tags[0][ Key == 'Name' ] !empty")]
+fn a_filter_on_an_indexed_value_fails_closed_in_both_polarities(
+    #[case] clause: &str,
+) -> Result<()> {
+    const INPUT: &str = r#"
+    { Resources: { One: { Tags: [ { Key: 'Name', Value: 'v1' } ] } } }
+    "#;
+
+    let rules = "rule indexed { CLAUSE }".replace("CLAUSE", clause);
+
+    assert_eq!(
+        Status::FAIL,
+        rule_status_in(&rules, INPUT, "indexed")?,
+        "{} must fail rather than pass on a query the engine refused to evaluate",
+        clause
+    );
+
+    Ok(())
+}
+
+/// The control for the case above: the supported spelling still decides normally.
+#[rstest::rstest]
+#[case::exists_holds("Resources.One.Tags[ Key == 'Name' ] exists", Status::PASS)]
+#[case::not_exists_does_not("Resources.One.Tags[ Key == 'Name' ] !exists", Status::FAIL)]
+fn a_filter_without_an_index_still_decides(
+    #[case] clause: &str,
+    #[case] expected: Status,
+) -> Result<()> {
+    const INPUT: &str = r#"
+    { Resources: { One: { Tags: [ { Key: 'Name', Value: 'v1' } ] } } }
+    "#;
+
+    let rules = "rule supported { CLAUSE }".replace("CLAUSE", clause);
+
+    assert_eq!(
+        expected,
+        rule_status_in(&rules, INPUT, "supported")?,
+        "clause: {}",
+        clause
+    );
+
+    Ok(())
+}
+
+/// A key filter after `[*]` keeps the map as its subject.
+///
+/// The wildcard-expands-for-a-filter arm briefly included key filters, and that was wrong for a reason
+/// worth keeping: a key filter's subject *is* the map whose keys are matched, so handing that map through
+/// is exactly right. Routing it into `accumulate_map` moves the subject down a level, onto each entry's
+/// own keys instead of the logical ids -- so `Resources[*][ keys == /^Bucket/ ]` stopped matching the
+/// bucket names and started matching `Type` and `Properties`.
+///
+/// It produced both failure directions at once: a false failure on `!empty`, and FAIL turning into SKIP on
+/// the assertion form -- the same silent miss the arm exists to remove.
+///
+/// `own_key_discriminator` is the cell that proves the mechanism rather than the symptom. `/^Type$/`
+/// matches no logical id and every resource's own key, so it must NOT hold; while the subject was one
+/// level down it did.
+#[rstest::rstest]
+#[case::key_filter_not_empty("Resources[*][ keys == /^Bucket/ ] !empty", Status::PASS)]
+#[case::key_filter_assertion(
+    "Resources[*][ keys == /^Bucket/ ].Type == \"never-matches\"",
+    Status::FAIL
+)]
+#[case::own_key_discriminator("Resources[*][ keys == /^Type$/ ] !empty", Status::FAIL)]
+#[case::control_without_a_wildcard("Resources[ keys == /^Bucket/ ] !empty", Status::PASS)]
+#[case::value_filter_still_expands(
+    "Resources[*][ Type == 'AWS::S3::Bucket' ].Properties.Public == false",
+    Status::FAIL
+)]
+fn a_key_filter_after_a_wildcard_keeps_the_map_as_its_subject(
+    #[case] clause: &str,
+    #[case] expected: Status,
+) -> Result<()> {
+    const INPUT: &str = r#"
+    {
+        Resources: {
+            BucketA: { Type: 'AWS::S3::Bucket', Properties: { Public: true } },
+            BucketB: { Type: 'AWS::S3::Bucket', Properties: { Public: false } }
+        }
+    }
+    "#;
+
+    let rules = "rule keyed { CLAUSE }".replace("CLAUSE", clause);
+
+    assert_eq!(
+        expected,
+        rule_status_in(&rules, INPUT, "keyed")?,
+        "clause: {}",
+        clause
+    );
+
+    Ok(())
+}
+
+/// Exhaustive coverage of the empty-collection decision surface, with the count asserted.
+///
+/// The empty-collection work on this branch is combinatorial: what a clause reports depends on
+/// the operator, the polarity, whether the clause is an assertion or a gate, and whether the
+/// left-hand collection is empty, satisfying or violating. Individual tests pin individual
+/// cells, and every defect found on this branch was a cell nobody had looked at -- `IN` and the
+/// four ordering operators certifying an empty collection, the mirrored spelling, the negated
+/// assertion absorbing a disjunction, the gate that dropped its body.
+///
+/// So the surface is enumerated here rather than sampled. The rows are generated by nested
+/// loops over the four axes, not written out, which makes a missing row impossible rather than
+/// unlikely; and `ROWS_EXPECTED` is asserted against the product of the axis lengths so that
+/// dropping an axis value fails instead of quietly shrinking coverage.
+///
+/// The expected value for each cell comes from `expected_status`, which is written as the
+/// *specification* -- role and polarity and emptiness composed from first principles -- rather
+/// than from observed behaviour. Two properties of that specification are asserted separately
+/// below, because they are the invariants the defects violated:
+///
+/// - role is irrelevant when the collection is populated. `ClauseRole` exists to decide what an
+///   *unevaluatable* clause reports; a real comparison must not depend on it. A fix that made
+///   populated comparisons role-sensitive would be a silent behaviour change.
+/// - an empty collection never reports PASS as an assertion. That is the wrong-PASS class in
+///   one line: `Ports <= 100` and `Ports > 100` are exact logical negations and both used to
+///   certify `Ports: []`.
+#[test]
+fn the_empty_collection_decision_surface_is_covered_exhaustively() -> Result<()> {
+    // (label, clause tail, satisfying value, violating value). Numeric fixtures throughout:
+    // the ordering operators are the reason this matrix exists and string ordering would
+    // confound them -- "8080" < "100" lexicographically but not numerically.
+    const OPERATORS: [(&str, &str, &str, &str); 6] = [
+        ("Eq", "== 50", "50", "8080"),
+        ("In", "IN [50]", "50", "8080"),
+        ("Lt", "< 100", "50", "8080"),
+        ("Le", "<= 100", "50", "8080"),
+        ("Gt", "> 100", "8080", "50"),
+        ("Ge", ">= 100", "8080", "50"),
+    ];
+    const NEGATED: [bool; 2] = [false, true];
+    const AS_GATE: [bool; 2] = [false, true];
+    const LHS: [&str; 3] = ["empty", "satisfying", "violating"];
+    const ROWS_EXPECTED: usize = 6 * 2 * 2 * 3;
+
+    /// The specification, not a transcript of current behaviour.
+    ///
+    /// An assertion reports the comparison: PASS when it holds, FAIL when it does not. Over an
+    /// empty collection there is nothing to compare, so a positive assertion FAILs -- it
+    /// claimed a property of every element and cannot establish it over none -- and a negated
+    /// one is vacuously true but not evidence, so it reports SKIP and cannot absorb a
+    /// disjunction.
+    ///
+    /// A gate is observed through whether its guarded body ran, so the value here is PASS when
+    /// the gate opens and SKIP when it closes. It opens when its condition holds, and over an
+    /// empty collection it opens in either polarity: `eval_rule` reads any non-PASS condition
+    /// as "rule does not apply" and drops every check inside, so a gate with nothing to
+    /// compare must not close.
+    fn expected_status(negated: bool, as_gate: bool, lhs: &str) -> Status {
+        let condition_holds = match lhs {
+            "empty" => {
+                return if as_gate {
+                    Status::PASS
+                } else if negated {
+                    Status::SKIP
+                } else {
+                    Status::FAIL
+                }
+            }
+            "satisfying" => !negated,
+            "violating" => negated,
+            other => unreachable!("unknown lhs state {}", other),
+        };
+        if as_gate {
+            if condition_holds {
+                Status::PASS
+            } else {
+                Status::SKIP
+            }
+        } else if condition_holds {
+            Status::PASS
+        } else {
+            Status::FAIL
+        }
+    }
+
+    let query = "Resources.*[ Type == 'AWS::EC2::SecurityGroup' ].Properties.Ports";
+    let mut rows = 0usize;
+    let mut failures: Vec<String> = vec![];
+
+    for (op_label, tail, satisfying, violating) in OPERATORS {
+        for negated in NEGATED {
+            for as_gate in AS_GATE {
+                for lhs in LHS {
+                    rows += 1;
+
+                    let ports = match lhs {
+                        "empty" => "[]".to_string(),
+                        "satisfying" => format!("[{satisfying}]"),
+                        "violating" => format!("[{violating}]"),
+                        other => unreachable!("unknown lhs state {}", other),
+                    };
+                    let clause = format!("{}{query} {tail}", if negated { "not " } else { "" });
+
+                    // The gate spelling wraps the clause in a `when` whose body is
+                    // unconditionally true for the selected resource, so the observable is
+                    // purely whether the body ran.
+                    let rules = if as_gate {
+                        format!(
+                            r###"
+                            rule gated when {clause} {{
+                                Resources.*[ Type == 'AWS::EC2::SecurityGroup' ].Type == 'AWS::EC2::SecurityGroup'
+                            }}
+                            "###
+                        )
+                    } else {
+                        format!(
+                            r###"
+                            rule asserted {{
+                                {clause}
+                            }}
+                            "###
+                        )
+                    };
+
+                    let input = format!(
+                        r#"
+                        {{
+                            Resources: {{
+                                sg: {{
+                                    Type: 'AWS::EC2::SecurityGroup',
+                                    Properties: {{ Ports: {ports} }}
+                                }}
+                            }}
+                        }}
+                        "#
+                    );
+
+                    let actual = status_of(rules.as_str(), input.as_str())?;
+                    let want = expected_status(negated, as_gate, lhs);
+                    if actual != want {
+                        failures.push(format!(
+                            "  {op_label:3} negated={negated:5} gate={as_gate:5} lhs={lhs:10} \
+                             want {want:?}, got {actual:?}"
+                        ));
+                    }
+                }
+            }
+        }
+    }
+
+    assert_eq!(
+        rows, ROWS_EXPECTED,
+        "the matrix enumerated {rows} rows but the axes multiply to {ROWS_EXPECTED}; an axis \
+         value was dropped and coverage shrank silently"
+    );
+
+    assert!(
+        failures.is_empty(),
+        "{}/{} cells of the empty-collection decision surface disagree with the \
+         specification:\n{}",
+        failures.len(),
+        rows,
+        failures.join("\n")
+    );
+
+    Ok(())
+}
+
+/// A populated comparison must not depend on whether the clause is an assertion or a gate.
+///
+/// `ClauseRole` exists to decide what an *unevaluatable* clause reports -- `Outcome::to_status`
+/// branches on it for exactly one variant. A real comparison over real values must give the
+/// same verdict either way, and this is asserted separately from the matrix because the matrix
+/// would still pass if a future change made populated comparisons role-sensitive in a way its
+/// specification happened to encode.
+#[test]
+fn role_does_not_change_a_populated_comparison() -> Result<()> {
+    const OPERATORS: [(&str, &str, &str); 6] = [
+        ("Eq", "== 50", "50"),
+        ("In", "IN [50]", "50"),
+        ("Lt", "< 100", "50"),
+        ("Le", "<= 100", "50"),
+        ("Gt", "> 100", "8080"),
+        ("Ge", ">= 100", "8080"),
+    ];
+    let query = "Resources.*[ Type == 'AWS::EC2::SecurityGroup' ].Properties.Ports";
+
+    for (label, tail, satisfying) in OPERATORS {
+        for negated in [false, true] {
+            let clause = format!("{}{query} {tail}", if negated { "not " } else { "" });
+            let input = format!(
+                r#"
+                {{
+                    Resources: {{
+                        sg: {{
+                            Type: 'AWS::EC2::SecurityGroup',
+                            Properties: {{ Ports: [{satisfying}] }}
+                        }}
+                    }}
+                }}
+                "#
+            );
+
+            let as_assertion = status_of(
+                format!("rule asserted {{ {clause} }}").as_str(),
+                input.as_str(),
+            )?;
+            let as_gate = status_of(
+                format!(
+                    r###"rule gated when {clause} {{
+                        Resources.*[ Type == 'AWS::EC2::SecurityGroup' ].Type == 'AWS::EC2::SecurityGroup'
+                    }}"###
+                )
+                .as_str(),
+                input.as_str(),
+            )?;
+
+            // A satisfying populated comparison holds, so a positive clause passes in both
+            // spellings. A negated one does not hold: as an assertion that is FAIL, and as a
+            // gate it closes, which is SKIP. Both are the comparison's verdict rather than a
+            // role-dependent reinterpretation of it.
+            let (want_assertion, want_gate) = if negated {
+                (Status::FAIL, Status::SKIP)
+            } else {
+                (Status::PASS, Status::PASS)
+            };
+
+            assert_eq!(
+                as_assertion, want_assertion,
+                "{label} negated={negated} as an assertion over populated data"
+            );
+            assert_eq!(
+                as_gate, want_gate,
+                "{label} negated={negated} as a gate over populated data"
+            );
+        }
+    }
+
+    Ok(())
+}
+
+/// The four cells of zero-selection, pinned so the asymmetry is intentional not incidental.
+///
+/// Measured on a template containing no S3 bucket at all, so the bucket query selects nothing:
+///
+///     <query> == %lit     SKIP
+///     %lit == <query>      FAIL
+///     <query> != %lit     SKIP
+///     %lit != <query>      FAIL
+///
+/// The rule the four cells follow is that Guard's comparison is not operand-symmetric even when
+/// the operator is. The left side is the subject being checked and the right side is the
+/// reference it is checked against, and only the subject's emptiness excuses the clause:
+///
+/// - no subject values: there is nothing to assert, so the rule does not apply. SKIP. This is
+///   what lets one ruleset run against templates that do not all contain the resource type.
+/// - no reference values: the clause cannot be decided, in either polarity, so it fails. FAIL.
+///   Making this SKIP is how an allowlist that resolved empty used to report compliance, which
+///   `positive_comparison_against_empty_reference_fails` exists to prevent.
+///
+/// The mirrored negated cell asserted SKIP until the semantics were settled in review on
+/// PR #717. The argument for SKIP was that the clause is vacuously satisfied -- nothing can
+/// collide with zero references -- and it was rejected because a wrong SKIP exits 0 and is
+/// indistinguishable from a pass in CI, so `Property != %empty_reference` silently enforced
+/// nothing. `negated_comparison_against_empty_reference_fails` carries the full reasoning.
+///
+/// That decision also removed the wrinkle this test used to record. A comment in
+/// `CmpOperator::compare` once called the mirrored FAIL a contradiction of
+/// docs/QUERY_AND_FILTERING.md:222, which says a query matching nothing makes block level
+/// clauses skip; the answer was that the doc sentence is about clauses whose *subject* is the
+/// empty query, and that the disagreement was confined to the positive spelling because both
+/// negated forms agreed at SKIP. The second half of that no longer holds: both negated forms
+/// now follow the same operand-role rule as the positive ones, so the split is clean and the
+/// doc sentence is simply about the subject side.
+///
+/// This remains pinned rather than "fixed". Collapsing the asymmetry means picking one side to
+/// break: making the mirrored form SKIP reintroduces the empty-allowlist wrong PASS, and making
+/// the forward form FAIL breaks every ruleset run against a template lacking the resource type.
+/// v3.2.0 exits 0 for all four, so it had the wrong PASS in both mirrored cells.
+#[test]
+fn zero_selection_is_asymmetric_by_operand_role() -> Result<()> {
+    let no_bucket =
+        r#"{ Resources: { q: { Type: 'AWS::SQS::Queue', Properties: { Name: "q" } } } }"#;
+    let one_bucket = r#"
+    { Resources: { b: { Type: 'AWS::S3::Bucket', Properties: { Tags: 'Owner' } } } }
+    "#;
+    let query = "Resources.*[ Type == 'AWS::S3::Bucket' ].Properties.Tags";
+
+    for (label, clause, want) in [
         (
-            "empty list  Size: []",
-            r#"{ "Resources": { "V": { "Type": "AWS::EC2::Volume", "Properties": { "Size": [] } } } }"#,
+            "forward positive",
+            format!("{query} == %expected"),
+            Status::SKIP,
         ),
         (
-            "normal pass Size: 50",
-            r#"{ "Resources": { "V": { "Type": "AWS::EC2::Volume", "Properties": { "Size": 50 } } } }"#,
+            "mirrored positive",
+            format!("%expected == {query}"),
+            Status::FAIL,
+        ),
+        (
+            "forward negated",
+            format!("{query} != %expected"),
+            Status::SKIP,
+        ),
+        (
+            "mirrored negated",
+            format!("%expected != {query}"),
+            Status::FAIL,
         ),
     ] {
-        let rules =
-            "rule r {\n    Resources.*[ Type == 'AWS::EC2::Volume' ].Properties.Size == 50\n}\n";
-        let rules_file = RulesFile::try_from(rules)?;
-        let values = PathAwareValue::try_from(data)?;
-        let mut root = root_scope(&rules_file, Rc::new(values));
-        let status = eval_rules_file(&rules_file, &mut root, None)?;
-        println!("PROBE === {} -> {:?}", label, status);
-        dump(&root.reset_recorder().extract(), 0);
+        let rules = format!("let expected = 'Owner'\nrule r {{ {clause} }}");
+
+        // Liveness first: with a bucket present the clause must actually decide, or the
+        // zero-selection row below is satisfied by a rule that never ran.
+        let live = status_of(rules.as_str(), one_bucket)?;
+        assert_ne!(
+            live,
+            Status::SKIP,
+            "liveness: `{clause}` must decide when a bucket is present, got SKIP -- the \
+             zero-selection assertion below would then prove nothing"
+        );
+
+        assert_eq!(
+            status_of(rules.as_str(), no_bucket)?,
+            want,
+            "{label}: `{clause}` against a template with no S3 bucket"
+        );
     }
+
+    Ok(())
+}
+
+/// A rules file whose lines end with a bare CR still enforces its rules.
+///
+/// `comment2` searched for `\n` alone while `multispace1` treats a lone `\r` as whitespace everywhere else, so
+/// in a CR-only file a comment ran to the end of the file. With the comment on the first line, every rule
+/// after it became comment text, the file parsed to no rules at all, and an empty rules file is not an error --
+/// so a violating template came back compliant at exit 0 with nothing printed on any channel. That is the
+/// shape of the unterminated-message defect fixed earlier on this branch, reached through line endings.
+///
+/// Asserted on the verdict, and on the rule count first so the failure says which of the two went wrong.
+#[test]
+fn a_cr_only_rules_file_still_enforces_its_rules() -> Result<()> {
+    const INPUT: &str = r#"
+    {
+        Resources: {
+            bucket: { Type: 'AWS::S3::Bucket', Properties: { Encrypted: false } }
+        }
+    }
+    "#;
+
+    let cr = "# encryption is mandatory\rrule encrypted {\r  Resources.*.Properties.Encrypted == true\r}\r";
+    let lf = cr.replace('\r', "\n");
+
+    for (spelling, rules) in [("CR", cr), ("LF", lf.as_str())] {
+        let parsed = crate::rules::parser::rules_file(crate::rules::parser::from_str2(rules))?
+            .unwrap_or_else(|| panic!("{} spelling parsed to no rules at all", spelling));
+        assert_eq!(
+            parsed.guard_rules.len(),
+            1,
+            "{} spelling lost the rule after the comment",
+            spelling
+        );
+        assert_eq!(
+            Status::FAIL,
+            rule_status_in(rules, INPUT, "encrypted")?,
+            "{} spelling must still fail the violating template",
+            spelling
+        );
+    }
+    Ok(())
+}
+
+/// A function call on the right of `keys` compares against the map's keys, like the other two right-hand sides.
+///
+/// `map_keys_match` took a value and an access there and not a function call, so `access` matched the
+/// function's name as a query, `close_array` failed recoverably on the `(`, and `predicate_filter_clauses` read
+/// the same text as an ordinary filter over a child property named `keys`. Both readings parse, so this is
+/// asserted on the verdict rather than on the tree: the document is built so the two disagree in both
+/// directions. Its one entry is keyed `alpha` and that entry has a child named `keys` whose value is `zulu`, so
+/// a key filter for `alpha` selects the entry and the property reading does not -- and for `zulu` it is the
+/// other way round. Each function case is paired with the literal spelling of the same question, which is the
+/// verdict it has to agree with.
+///
+/// Before the fix, `to_lower("ALPHA")` failed and `to_lower("ZULU")` passed. Both were the property reading
+/// answering a question nobody asked, at exit 19 and exit 0 respectively, with no diagnostic naming the key.
+/// Six of these cases held the opposite verdict before it: the four `==`/`!=` function cases and the `in` and
+/// `not in` ones. The literal spellings and the two quoted-property cases held already and are here as the
+/// references the function spellings have to agree with; `case_is_not_folded` also held already, by arriving at
+/// the same verdict through the wrong reading, and is here to pin that the function is evaluated at all.
+#[rstest::rstest]
+#[case::function_result_matches_the_key(
+    r#"Tags[ keys == to_lower("ALPHA") ] !empty"#,
+    Status::PASS
+)]
+#[case::literal_spelling_of_the_same_question(r#"Tags[ keys == "alpha" ] !empty"#, Status::PASS)]
+#[case::function_result_matches_no_key(r#"Tags[ keys == to_lower("ZULU") ] !empty"#, Status::FAIL)]
+#[case::literal_spelling_agrees_there_too(r#"Tags[ keys == "zulu" ] !empty"#, Status::FAIL)]
+#[case::case_is_not_folded(r#"Tags[ keys == to_upper("alpha") ] !empty"#, Status::FAIL)]
+#[case::not_equal_selects_the_other_key(r#"Tags[ keys != to_lower("ZULU") ] !empty"#, Status::PASS)]
+#[case::not_equal_excludes_the_only_key(
+    r#"Tags[ keys != to_lower("ALPHA") ] !empty"#,
+    Status::FAIL
+)]
+#[case::in_takes_a_function_too(r#"Tags[ keys in to_lower("ALPHA") ] !empty"#, Status::PASS)]
+#[case::not_in_takes_one(r#"Tags[ keys not in to_lower("ZULU") ] !empty"#, Status::PASS)]
+#[case::a_quoted_first_token_is_still_the_property(
+    r#"Tags[ "keys" == to_lower("ZULU") ] !empty"#,
+    Status::PASS
+)]
+#[case::and_the_property_reading_answers_about_the_child(
+    r#"Tags[ "keys" == to_lower("ALPHA") ] !empty"#,
+    Status::FAIL
+)]
+fn a_function_call_on_the_right_of_keys_compares_against_the_keys(
+    #[case] clause: &str,
+    #[case] expected: Status,
+) -> Result<()> {
+    const INPUT: &str = r#"
+    {
+        Tags: {
+            alpha: { keys: 'zulu' }
+        }
+    }
+    "#;
+
+    let rules = "rule keyed { CLAUSE }".replace("CLAUSE", clause);
+
+    assert_eq!(
+        expected,
+        rule_status_in(&rules, INPUT, "keyed")?,
+        "clause: {}",
+        clause
+    );
+
+    Ok(())
+}
+
+/// The same regex inside a list literal, which panicked at a second and independent site.
+///
+/// `IN [/re/]` does not reach `compare_eq` first. `contained_in` asks `Vec`-style membership, which
+/// is `PathAwareValue::eq`, and that arm held `regex.is_match(s).unwrap()` under the comment "given
+/// that we have already validated the regular expression". The premise is false: validation at
+/// parse time proves the pattern compiles and says nothing about whether a match completes. So this
+/// spelling aborted at `path_value.rs` while the unwrapped one aborted at `operators.rs`.
+///
+/// `PartialEq` returns `bool` and cannot report an error, and the arm cannot be removed -- the map
+/// key filter in `QueryResolver::select` decides `keys == /re/` through it. So `eq` answers `false`
+/// and `contained_in` asks `compare_eq` as well, reading the error `eq` had to swallow. That is
+/// what makes these three spellings agree with the four above rather than reporting a plain
+/// mismatch.
+#[rstest::rstest]
+#[case::in_a_list("IN [/(?!x)((a+)+)b/]")]
+#[case::not_in_a_list("NOT IN [/(?!x)((a+)+)b/]")]
+#[case::in_a_mixed_list("IN [/(?!x)((a+)+)b/, 5]")]
+fn a_regex_in_a_list_literal_fails_the_clause_instead_of_aborting(#[case] rhs: &str) {
+    let clause = format!("Resources.*[ Type == 'AWS::EC2::Volume' ].Properties.Size {rhs}");
+
+    let outcome =
+        std::panic::catch_unwind(|| status_and_messages(clause.as_str(), THIRTY_AS).unwrap());
+
+    let (status, messages) = match outcome {
+        Ok(pair) => pair,
+        Err(..) => panic!("`{}` panicked instead of returning a verdict", clause),
+    };
+
+    assert_eq!(
+        Status::FAIL,
+        status,
+        "`{}` must fail the clause, and must agree with the unwrapped spelling: one input \
+         answering differently depending on whether the regex is bracketed is its own defect",
+        clause
+    );
+    assert!(
+        messages
+            .iter()
+            .any(|m| m.contains("regular expression could not be evaluated")),
+        "`{}` should give the same reason the unwrapped spelling gives; recorded {:?}",
+        clause,
+        messages
+    );
+}
+
+/// A regex that cannot be evaluated fails its clause instead of aborting the process.
+///
+/// `fancy_regex` returns a `Result` from `is_match` rather than a `bool`, because a backtracking
+/// engine can run out of budget instead of answering. A pattern needs a lookaround or a
+/// backreference to be put on that engine at all, and then a nested quantifier makes the work grow
+/// with the length of the subject. `compare_eq` passed that error up as `Error::RegexError`, and
+/// `match_value` had arms for `Ok` and for `Error::NotComparable` and met everything else with
+/// `_ => unreachable!()`. So `Size == /(?!x)((a+)+)b/` against thirty characters aborted at exit
+/// 101, and every other rule in the file lost its verdict with it.
+///
+/// The four spellings here are the ones that reach `match_value`. The unwrapped `IN` and `NOT IN`
+/// arrive through `contained_in`'s final arm rather than through `EqOperation`, which is a second
+/// route to the same panic and would not be covered by `==` alone.
+///
+/// `catch_unwind` is what makes the absence of the panic explicit. Asserting on the status alone
+/// would not: an aborting build never returns a status to assert on, so the assertion would be
+/// unreachable rather than false.
+#[rstest::rstest]
+#[case::equals("==")]
+#[case::not_equals("!=")]
+#[case::in_bare("IN")]
+#[case::not_in_bare("NOT IN")]
+fn a_regex_that_exceeds_the_backtrack_limit_fails_the_clause_instead_of_aborting(
+    #[case] operator: &str,
+) {
+    let clause = format!(
+        "Resources.*[ Type == 'AWS::EC2::Volume' ].Properties.Size {operator} {CATASTROPHIC}"
+    );
+
+    let outcome =
+        std::panic::catch_unwind(|| status_and_messages(clause.as_str(), THIRTY_AS).unwrap());
+
+    let (status, messages) = match outcome {
+        Ok(pair) => pair,
+        Err(..) => panic!("`{}` panicked instead of returning a verdict", clause),
+    };
+
+    assert_eq!(
+        Status::FAIL,
+        status,
+        "`{}` must fail the clause; the comparison has no answer, so neither polarity gets to \
+         claim one",
+        clause
+    );
+    assert!(
+        messages
+            .iter()
+            .any(|m| m.contains("regular expression could not be evaluated")),
+        "`{}` should say the regex could not be evaluated, so the author can find the pattern; \
+         recorded {:?}",
+        clause,
+        messages
+    );
+    assert!(
+        messages.iter().any(|m| m.contains("backtracking")),
+        "`{}` should carry fancy_regex's own reason rather than the `RegexError` wrapper's text, \
+         which claims a parse error for a pattern that parsed; recorded {:?}",
+        clause,
+        messages
+    );
+}
+
+/// The control: an ordinary regex is unaffected, in both spellings and both polarities.
+///
+/// The fix reaches every regex comparison, so the ordinary cases need pinning too -- an
+/// unevaluatable pattern reporting correctly is worth nothing if a pattern that matches stopped
+/// matching. `IN [/re/]` is included because it is the spelling whose membership loop was
+/// restructured.
+#[rstest::rstest]
+#[case::equals_matching("== /prod/", Status::PASS)]
+#[case::equals_not_matching("== /nomatch/", Status::FAIL)]
+#[case::not_equals_matching("!= /prod/", Status::FAIL)]
+#[case::not_equals_not_matching("!= /nomatch/", Status::PASS)]
+#[case::in_list_matching("IN [/prod/]", Status::PASS)]
+#[case::in_list_not_matching("IN [/nomatch/]", Status::FAIL)]
+#[case::not_in_list_matching("NOT IN [/prod/]", Status::FAIL)]
+#[case::not_in_list_not_matching("NOT IN [/nomatch/]", Status::PASS)]
+fn an_ordinary_regex_comparison_is_unchanged(#[case] comparison: &str, #[case] expected: Status) {
+    const INPUT: &str = r#"
+    {
+        Resources: {
+            V: { Type: 'AWS::EC2::Volume', Properties: { Size: 'prod-volume' } }
+        }
+    }
+    "#;
+
+    let clause = format!("Resources.*[ Type == 'AWS::EC2::Volume' ].Properties.Size {comparison}");
+    let (status, _) = status_and_messages(clause.as_str(), INPUT).unwrap();
+
+    assert_eq!(expected, status, "clause: {}", clause);
+}
+
+/// Every comparison message recorded anywhere in the evaluation tree.
+fn recorded_comparison_messages(record: &EventRecord<'_>, out: &mut Vec<String>) {
+    if let Some(RecordType::ClauseValueCheck(ClauseCheck::Comparison(check))) = &record.container {
+        if let Some(message) = &check.message {
+            out.push(message.clone());
+        }
+    }
+    for child in &record.children {
+        recorded_comparison_messages(child, out);
+    }
+}
+
+/// Runs one clause and returns the rule's status together with the comparison messages recorded.
+fn status_and_messages(clause: &str, input: &str) -> Result<(Status, Vec<String>)> {
+    let rules = format!("rule r {{\n  {clause}\n}}");
+    let rules_file = RulesFile::try_from(rules.as_str())?;
+    let value = PathAwareValue::try_from(input)?;
+    let mut root = root_scope(&rules_file, Rc::new(value));
+    let status = eval_rules_file(&rules_file, &mut root, None)?;
+    let mut messages = Vec::new();
+    recorded_comparison_messages(&root.reset_recorder().extract(), &mut messages);
+    Ok((status, messages))
+}
+
+const CATASTROPHIC: &str = "/(?!x)((a+)+)b/";
+
+const THIRTY_AS: &str = r#"
+{
+    Resources: {
+        V: { Type: 'AWS::EC2::Volume', Properties: { Size: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' } }
+    }
+}
+"#;
+
+/// A reference to a rule that did not apply must not fail the referencing rule.
+///
+/// Decomposing a ruleset over disjoint resource types is the natural way to write one: a helper
+/// per type, each guarded by a `when` on its own type, and an aggregate that references them all.
+/// On any real template most helpers do not apply, and the aggregate used to fail once for every
+/// one of them -- exit 19, reason "dependent rule [H_B] did not PASS", against a template that
+/// violates nothing. That made the decomposition unusable, and neither workaround is
+/// behaviour-preserving: `H_A H_B` fails whenever any type is absent, and `H_A OR H_B` passes as
+/// soon as any single helper passes, which is a false negative in a compliance rule.
+///
+/// The clause path already answered this correctly -- a clause whose query selects nothing SKIPs,
+/// and `eval_conjunction_clauses` absorbs a SKIP. The reference path asked instead whether the
+/// dependent rule's status was PASS, and SKIP is not PASS.
+///
+/// All four combinations are asserted, not just the one that changed. The three unchanged ones are
+/// the point: a fix that made an inapplicable reference inert must not also make a *violated* one
+/// inert, or a reference would guarantee nothing at all.
+///
+/// Both spellings are asserted for the same reason as
+/// `a_named_rule_gate_on_a_skipped_rule_does_not_disarm_the_block`:
+/// `eval_parameterized_rule_call` carries its own copy of this arm, the two have drifted apart
+/// before, and a single-spelling test would pass against half a fix. The parameterized helpers
+/// reach inapplicability through their body rather than a `when`, because the parser does not
+/// accept a condition on a parameterized rule.
+#[test]
+fn an_inapplicable_dependent_rule_does_not_fail_the_reference() -> Result<()> {
+    let plain = r###"
+    rule H_A when Resources.*[ Type == 'AWS::IAM::Role' ] !empty {
+        Resources.*[ Type == 'AWS::IAM::Role' ].Properties.RoleName not exists
+    }
+    rule H_B when Resources.*[ Type == 'AWS::DynamoDB::Table' ] !empty {
+        Resources.*[ Type == 'AWS::DynamoDB::Table' ].Properties.TableName not exists
+    }
+    rule MAIN {
+        H_A
+        H_B
+    }
+    "###;
+
+    let parameterized = r###"
+    rule H_A(kind) {
+        Resources.*[ Type == %kind ].Properties.RoleName not exists
+    }
+    rule H_B(kind) {
+        Resources.*[ Type == %kind ].Properties.TableName not exists
+    }
+    rule MAIN {
+        H_A('AWS::IAM::Role')
+        H_B('AWS::DynamoDB::Table')
+    }
+    "###;
+
+    const CLEAN_ROLE: &str = r#"{ "Resources": {
+        "r": { "Type": "AWS::IAM::Role", "Properties": { "Path": "/" } } } }"#;
+    const NAMED_ROLE: &str = r#"{ "Resources": {
+        "r": { "Type": "AWS::IAM::Role", "Properties": { "RoleName": "static" } } } }"#;
+    const NAMED_ROLE_CLEAN_TABLE: &str = r#"{ "Resources": {
+        "r": { "Type": "AWS::IAM::Role", "Properties": { "RoleName": "static" } },
+        "t": { "Type": "AWS::DynamoDB::Table", "Properties": { "BillingMode": "PAY_PER_REQUEST" } } } }"#;
+    const CLEAN_BOTH: &str = r#"{ "Resources": {
+        "r": { "Type": "AWS::IAM::Role", "Properties": { "Path": "/" } },
+        "t": { "Type": "AWS::DynamoDB::Table", "Properties": { "BillingMode": "PAY_PER_REQUEST" } } } }"#;
+
+    let scenarios = [
+        (
+            "H_A holds and H_B does not apply",
+            CLEAN_ROLE,
+            Status::PASS,
+            "the reference to an inapplicable H_B contributes nothing, so MAIN is decided by \
+             H_A alone -- this is the case that used to FAIL with nothing violated",
+        ),
+        (
+            "H_A is violated and H_B does not apply",
+            NAMED_ROLE,
+            Status::FAIL,
+            "an inapplicable H_B must not rescue a violated H_A",
+        ),
+        (
+            "H_A is violated and H_B holds",
+            NAMED_ROLE_CLEAN_TABLE,
+            Status::FAIL,
+            "a reference to a rule that FAILs must still fail, which is the whole point of a \
+             reference",
+        ),
+        (
+            "both hold",
+            CLEAN_BOTH,
+            Status::PASS,
+            "unchanged, and the control for the other three",
+        ),
+    ];
+
+    for (spelling, rules) in [
+        ("plain reference", plain),
+        ("parameterized call", parameterized),
+    ] {
+        for (scenario, input, expected, why) in &scenarios {
+            let rules_file = RulesFile::try_from(rules)?;
+            let value = PathAwareValue::try_from(*input)?;
+            let mut root = root_scope(&rules_file, Rc::new(value));
+            assert_eq!(
+                eval_rules_file(&rules_file, &mut root, None)?,
+                *expected,
+                "{}, {}: {}",
+                spelling,
+                scenario,
+                why
+            );
+        }
+    }
+
     Ok(())
 }

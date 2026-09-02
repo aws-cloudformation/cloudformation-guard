@@ -66,6 +66,30 @@ We designed `cfn-guard` to be plugged into your build processes.
 If CloudFormation Guard validates the templates successfully, it gives you an exit status (`$?` in bash) of `0`. If CloudFormation Guard identifies a rule violation, it gives you a status report of the rules that failed.
 Use the verbose flag `-v` to see the detailed evaluation tree that shows how CloudFormation Guard evaluated each rule.
 
+## Exit codes
+
+`validate` and `parse-tree` use these:
+
+| Code | Meaning |
+|---|---|
+| `0` | Success. Everything evaluated, and nothing failed. |
+| `5` | The rules file cannot be used: it has a syntax error, or it names a variable, rule or parameterized rule that nothing declares. Your rules need fixing, not your template. |
+| `19` | The rules were evaluated and the data failed at least one of them. `validate` only. This is the code a policy gate should treat as a violation. |
+
+If a rule that parsed on an earlier version now exits `5`, check whether it spells `\\` inside a regular expression: the escaping rules for literals changed, and [Known Issues](../docs/KNOWN_ISSUES.md) says what to change it to.
+
+`test` reports in its own two codes, because "an expectation was not met" is not the same result as "a template was non-compliant":
+
+| Code | Meaning |
+|---|---|
+| `0` | Every expectation was met. |
+| `1` | An expectation could not be evaluated, or a rules or test file could not be read. |
+| `7` | An expectation was evaluated and not met. |
+
+Any other code means CloudFormation Guard itself failed rather than reaching a verdict. `255` is the usual one, and it also covers a path that does not exist. Distinguish `5` from `255` in a build step: the first is your file, the second is a defect worth reporting.
+
+When several rules files are given, the most severe code wins, and `5` is more severe than `19` — a ruleset that could not be evaluated is a different answer from one that returned a verdict you can waive.
+
 ## Modes of Operation
 
 `cfn-guard` has five modes of operation:

@@ -420,7 +420,7 @@ rule check when %security_group !EMPTY {
 
 This function converts strings, and ints to their char equivalents
 
-NOTE: this function will cause an error if the int is not 0 <= n <= 9, it will also error out if a string has a length > 1
+NOTE: this function will cause an error if the int is not 0 <= n <= 9, it will also error out if a string is longer than one character. Length is counted in characters, not bytes, so a single character that is not ASCII converts like any other.
 
 #### Argument(s)
 

@@ -1,16 +1,16 @@
 use fancy_regex::Regex;
 use std::convert::TryFrom;
-use std::fmt::{Display, Formatter, Result as FmtResult};
+use std::fmt::{Debug, Display, Formatter, Result as FmtResult};
 
 use indexmap::map::IndexMap;
 use nom::branch::alt;
-use nom::bytes::complete::{is_not, take_while, take_while1};
 use nom::bytes::complete::{tag, take_till};
+use nom::bytes::complete::{take_while, take_while1};
 use nom::character::complete::{alpha1, space1};
 use nom::character::complete::{anychar, digit1, one_of};
 use nom::character::complete::{char, multispace0, multispace1, space0};
 use nom::combinator::{all_consuming, cut, peek};
-use nom::combinator::{map, value};
+use nom::combinator::{map, recognize, value};
 use nom::combinator::{map_res, opt};
 use nom::error::context;
 use nom::error::ErrorKind;
@@ -20,7 +20,7 @@ use nom::number::complete::double;
 use nom::sequence::{delimited, preceded};
 use nom::sequence::{pair, terminated};
 use nom::sequence::{separated_pair, tuple};
-use nom::{FindSubstring, InputTake, Slice};
+use nom::InputTake;
 use nom_locate::LocatedSpan;
 
 use crate::rules::errors::Error;
@@ -107,8 +107,26 @@ impl<'a> std::fmt::Display for ParserError<'a> {
 //                                                                                                //
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
+/// A comment, ending at the end of its line -- and a bare CR ends a line here, as it does everywhere else in
+/// this parser.
+///
+/// `multispace1`, which `white_space_or_comment` reaches for the other half of its alternation, accepts
+/// `" \t\r\n"`, so a lone `\r` is a line ending as far as every whitespace position is concerned. This search
+/// stopped at `\n` alone, so in a file whose lines end with a bare CR a comment ran to the end of the file:
+/// the `}` closing the block the comment sat in was consumed as comment text, and the file was rejected for
+/// having no closing brace. Ten of thirteen constructs parsed in such a file and this was one of the three
+/// that did not, which is the worst shape for it to be in -- whether the file is readable depended on whether
+/// it happened to contain a comment.
+///
+/// A `\r` inside a comment in an otherwise LF file now ends the comment too, and that is the same judgement:
+/// this parser treats a bare CR as a line ending, so text after one is the next line rather than more comment.
+/// No rules file in this repository or in the AWS rule registry contains a CR of either kind.
 pub(in crate::rules) fn comment2(input: Span) -> IResult<Span, Span> {
-    delimited(char('#'), take_till(|c| c == '\n'), multispace0)(input)
+    delimited(
+        char('#'),
+        take_till(|c| c == '\n' || c == '\r'),
+        multispace0,
+    )(input)
 }
 //
 // This function extracts either white-space-CRLF or a comment
@@ -212,8 +230,12 @@ fn keyword<'a>(word: &'static str) -> impl Fn(Span<'a>) -> IResult<'a, Span<'a>,
 }
 
 pub(in crate::rules) fn parse_int_value(input: Span) -> IResult<Span, Value> {
-    let negative = map_res(preceded(tag("-"), digit1), |s: Span| {
-        s.fragment().parse::<i64>().map(|i| Value::Int(-i))
+    // Sign and digits together, because negating afterwards caps the magnitude at `i64::MAX` and
+    // `i64::MIN` is one larger. `-9223372036854775808` was rejected while `-9223372036854775807` and
+    // `9223372036854775807` were accepted -- a single expressible value that the parser refused. Loud, so
+    // never a wrong verdict, and one fewer thing an author has to discover.
+    let negative = map_res(recognize(preceded(tag("-"), digit1)), |s: Span| {
+        s.fragment().parse::<i64>().map(Value::Int)
     });
     let positive = map_res(digit1, |s: Span| {
         s.fragment().parse::<i64>().map(Value::Int)
@@ -223,32 +245,94 @@ pub(in crate::rules) fn parse_int_value(input: Span) -> IResult<Span, Value> {
     Ok((remaining, value))
 }
 
+/// Walks a delimited literal and returns its body along with the number of bytes it occupies, closing
+/// delimiter included.
+///
+/// The question a scanner has to answer at every delimiter is whether that delimiter is escaped, and the
+/// last byte of the text in front of it cannot answer it: `\` and `\\` both end in a backslash and mean
+/// opposite things there. Both `parse_string_inner` and `parse_regex_inner` decided from that last byte,
+/// so they got `\\` backwards -- they read the second backslash as escaping the delimiter, pushed the
+/// delimiter into the value, and carried on reading from after it. The literal then ended at the next
+/// matching character anywhere in the file, which for a rules file means an apostrophe in a comment or a
+/// slash in a URL. Everything between was absorbed into a value, so the clauses and rules written there
+/// were not evaluated, not reported, and the run exited 0.
+///
+/// Walking forward settles it: a backslash consumes the character after it whichever character that is,
+/// so a delimiter inside such a pair can never close the literal and one outside every pair always does.
+///
+/// `resolve` is handed the character a backslash consumed and appends what the pair contributes to the
+/// body. That is the whole of the escape vocabulary, and it is where strings and regular expressions
+/// differ.
+///
+/// `None` means the literal is not terminated -- the text ran to the end of its line, or to the end of
+/// input, with no unescaped delimiter. A backslash immediately before a line ending is the same answer,
+/// because there is no character on that line for it to escape. Stopping at the line ending is what
+/// keeps one missing delimiter from reaching the rest of the file, and it is the only reason a runaway
+/// literal is now loud rather than silent: a literal free to cross lines has every following clause
+/// available to swallow.
+fn scan_escaped_literal(
+    input: Span,
+    delimiter: char,
+    mut resolve: impl FnMut(char, &mut String),
+) -> Option<(usize, String)> {
+    let mut body = String::new();
+    let mut chars = input.fragment().char_indices();
+    while let Some((at, c)) = chars.next() {
+        match c {
+            '\\' => match chars.next() {
+                Some((_, escaped)) if escaped != '\n' && escaped != '\r' => {
+                    resolve(escaped, &mut body)
+                }
+                _ => return None,
+            },
+            '\n' | '\r' => return None,
+            _ if c == delimiter => return Some((at + c.len_utf8(), body)),
+            _ => body.push(c),
+        }
+    }
+    None
+}
+
+/// A string literal understands two escapes: `\\` for a backslash, and a backslash before the quote that
+/// opened the literal for that quote. A backslash before anything else is not an escape and stays in the
+/// value, which is what lets a regular expression written as a string -- `"^arn:(\w+):(\d+)$"`, the shape
+/// of all three such literals in this repository -- keep its own escapes without doubling them.
+///
+/// `\\` is the addition. With the quote as the only escape, a backslash's meaning depended on what came
+/// after it: `"a\\b"` was two literal backslashes, while those same two characters in front of the
+/// closing quote were one backslash plus an escaped quote. So no spelling produced a string ending in a
+/// backslash. `"x\\"`, `'C:\'`, `"C:\"` and `"x\\\\"` were all rejected, and the diagnostic named the
+/// right-hand side rather than the quote, which is the least useful place to look. Resolving `\\` here
+/// makes `'x\\'` mean `x\`.
+///
+/// It also changes `"a\\b"` from two backslashes to one. That is deliberate and it is user-visible. It is
+/// the same trade every language with a backslash escape has made, and it is what makes a backslash's
+/// meaning independent of its position. No rules file in this repository or in the AWS rule registry
+/// writes `\\` inside a string literal, and none writes a backslash before a quote, so no existing file
+/// changes meaning.
 fn parse_string_inner(ch: char) -> impl Fn(Span) -> IResult<Span, Value> {
     move |input: Span| {
-        let mut completed = String::new();
         let (input, _begin) = char(ch)(input)?;
-        let mut span = input;
-        loop {
-            let (remainder, upto) = take_while(|c| c != ch)(span)?;
-            let frag = *upto.fragment();
-            if frag.ends_with('\\') {
-                completed.push_str(frag.slice(0..frag.len() - 1));
-                completed.push(ch);
-
-                if remainder.is_empty() {
-                    return Err(nom::Err::Error(ParserError {
-                        context: String::from("Could not parse string"),
-                        kind: ErrorKind::Char,
-                        span: input,
-                    }));
-                }
-
-                span = remainder.slice(1..);
-                continue;
+        match scan_escaped_literal(input, ch, |escaped, body| match escaped {
+            '\\' => body.push('\\'),
+            c if c == ch => body.push(ch),
+            c => {
+                body.push('\\');
+                body.push(c);
             }
-            completed.push_str(frag);
-            let (remainder, _end) = cut(char(ch))(remainder)?;
-            return Ok((remainder, Value::String(completed)));
+        }) {
+            Some((consumed, value)) => Ok((input.take_split(consumed).0, Value::String(value))),
+            // `Failure`, because `cut(char(ch))` already made an unterminated string one and nothing
+            // else in the value alternation starts with a quote. Falling through could only produce some
+            // later parser's complaint about text that is plainly a string, which is what the old
+            // diagnostic did.
+            None => Err(nom::Err::Failure(ParserError {
+                context: format!(
+                    "String literal is not terminated: no closing {ch} before the end of the line. A backslash escapes the character after it, so write \\\\ for a literal backslash"
+                ),
+                kind: ErrorKind::Char,
+                span: input,
+            })),
         }
     }
 }
@@ -312,6 +396,48 @@ fn parse_float(input: Span) -> IResult<Span, Value> {
     let exponent = opt(tuple((one_of("eE"), opt(one_of("+-")), digit1)))(fraction.0)?;
     if (fraction.1).is_some() || (exponent.1).is_some() {
         let r = double(input)?;
+
+        // `double` never fails on an exponent it cannot represent: it saturates to an infinity, or
+        // rounds to zero. Either way the clause reads as one bound and means another. `Size < 1e999`
+        // cannot fail for any input and `Size > 1e999` cannot pass for any input -- the comparison
+        // even reports `ComparedWith = inf` -- and `Size == 1e-999` is satisfied by a `Size` of 0,
+        // because the literal rounded to zero on the way in.
+        //
+        // Underflow is only a problem when the author wrote a nonzero number, so the mantissa is what
+        // decides it: `0.0e5` is zero and means zero, while `1e-999` is not zero and does not.
+        //
+        // The document side does NOT draw this line, and the difference is deliberate rather than an
+        // oversight. A rule is authored, so refusing it tells the author something they can act on. A
+        // document is data, and rejecting an entire template over one field is out of proportion --
+        // there, `loader.rs` retypes the scalar to a string, which leaves every comparison against it
+        // incomparable and therefore failing closed, with the reporter naming the mismatch.
+        let consumed = input.fragment().len() - r.0.fragment().len();
+        let mantissa = input.fragment()[..consumed]
+            .split(|c| c == 'e' || c == 'E')
+            .next()
+            .unwrap_or_default();
+        let rounded_to_zero =
+            r.1 == 0.0 && mantissa.chars().any(|c| c.is_ascii_digit() && c != '0');
+
+        // `Failure`, not `Error`. A recoverable error sends `alt` back to try the other value
+        // productions, and `parse_int_value` then matches the leading digits and leaves the rest, so
+        // the reported problem was a stray fragment rather than the literal: `1.5e999` blamed
+        // `.5e999` with an empty context, and this message never reached the author at all. Same
+        // reasoning as `parse_range` below, which is `Failure` for the same reason.
+        if !r.1.is_finite() || rounded_to_zero {
+            return Err(nom::Err::Failure(ParserError {
+                context: match r.1.is_finite() {
+                    true => "Float literal is out of range for a 64 bit float: it rounds to zero"
+                        .to_string(),
+                    false => {
+                        "Float literal is out of range for a 64 bit float: it saturates to an infinity"
+                            .to_string()
+                    }
+                },
+                kind: ErrorKind::Float,
+                span: input,
+            }));
+        }
         let (remaining, _) = reject_trailing_identifier(r.0, input)?;
         return Ok((remaining, Value::Float(r.1)));
     }
@@ -322,47 +448,72 @@ fn parse_float(input: Span) -> IResult<Span, Value> {
     }))
 }
 
+/// A regular expression understands one escape: a backslash before the `/` delimiter, which stands for a
+/// plain `/`, since `fancy_regex` does not need that character escaped. A backslash before anything else
+/// is left exactly as written, backslash included, because the body is handed to a regex engine that has
+/// an escape layer of its own -- the `\d`, `\.`, `\-` and `\:` in the AWS rule registry have to arrive
+/// intact.
+///
+/// `\\` is left alone too, and reaches the engine as the two characters that mean one literal backslash
+/// there. What changes is that the pair now closes itself, so a `/` after it ends the regex instead of
+/// being read as one more escaped delimiter. `/^x\\/` used to run past its own closing slash.
+///
+/// The same reading makes `/a\//` and `/\//` parse. They were rejected -- `is_not("/")` needed at least
+/// one character and after the escape the cursor sat on the closing delimiter with none left -- so an
+/// escaped slash was writable everywhere in a regex except immediately before its end.
+///
+/// One construct in the corpus depended on the old misreading: `[A-Za-z0-9\\/+=]`, in this repository's
+/// `advanced_regex_negative_lookbehind_rule.guard` and a copy of it under `guard/ts-lib`, reached the
+/// engine as `[A-Za-z0-9\/+=]`. Under a scan that walks, the `\\` closes and the `/` behind it ends the
+/// regex early, which leaves an unterminated character class. That file is written `\/` now, which is the
+/// spelling that means what it always meant. There is no reading in which `\\/` both terminates in
+/// `/^x\\/` and does not terminate there -- the fixture and the swallow are one construct.
+///
+/// Both failures are `Failure`, not `Error`, for the reason `parse_float` gives above: a recoverable error
+/// sends `alt` back to the other value productions and the message never reaches the author. Neither of
+/// these did. `Hash == /a(/` reported the generic `expecting either a property access ... or value like
+/// ...` and the engine's `Opening parenthesis without closing parenthesis` appeared nowhere in the output,
+/// and `Hash == /abc` likewise said nothing about a missing delimiter. Both were formatted and discarded.
+///
+/// Nothing is given up by refusing to backtrack here. `parse_regex` is the last arm of
+/// `parse_scalar_value`, so no other value production was going to be tried, and none of them could match
+/// anyway: this function is only reached after `char('/')`, and every other production in the grammar
+/// starts a value with a quote, a digit, a sign, a keyword, `[`, or `{`, while a property access is
+/// alphanumeric or quoted. A literal beginning with `/` is a regular expression or it is nothing, so the
+/// recoverable error bought a worse diagnostic and no second chance.
 fn parse_regex_inner(input: Span) -> IResult<Span, Value> {
-    let mut regex = String::new();
-    let parser = is_not("/");
-    let mut span = input;
-    loop {
-        let (remainder, content) = parser(span)?;
-        let fragment = *content.fragment();
-
-        //
-        // if the last one has an escape, then we need to continue
-        //
-        if !fragment.is_empty() && fragment.ends_with('\\') {
-            regex.push_str(&fragment[0..fragment.len() - 1]);
-            regex.push('/');
-
-            if remainder.is_empty() {
-                return Err(nom::Err::Error(ParserError {
-                    context: "Could not parse regular expression".to_string(),
-                    kind: ErrorKind::RegexpMatch,
-                    span: input,
-                }));
+    let (consumed, regex) =
+        match scan_escaped_literal(input, '/', |escaped, body| match escaped {
+            '/' => body.push('/'),
+            c => {
+                body.push('\\');
+                body.push(c);
             }
-            span = remainder.take_split(1).0;
-            continue;
-        }
-
-        regex.push_str(fragment);
-
-        return match Regex::try_from(regex.as_str()) {
-            Ok(_) => Ok((remainder, Value::Regex(regex))),
-            Err(e) => Err(nom::Err::Error(ParserError {
-                context: format!("Could not parse regular expression: {}", e),
+        }) {
+            Some(found) => found,
+            None => return Err(nom::Err::Failure(ParserError {
+                context:
+                    "Could not parse regular expression: no closing / before the end of the line"
+                        .to_string(),
                 kind: ErrorKind::RegexpMatch,
                 span: input,
             })),
         };
+
+    match Regex::try_from(regex.as_str()) {
+        Ok(_) => Ok((input.take_split(consumed).0, Value::Regex(regex))),
+        Err(e) => Err(nom::Err::Failure(ParserError {
+            context: format!("Could not parse regular expression: {}", e),
+            kind: ErrorKind::RegexpMatch,
+            span: input,
+        })),
     }
 }
 
 fn parse_regex(input: Span) -> IResult<Span, Value> {
-    delimited(char('/'), parse_regex_inner, char('/'))(input)
+    // `preceded`, not `delimited`: the scan consumes the closing delimiter itself, because it is the
+    // thing that decided which delimiter closes the literal.
+    preceded(char('/'), parse_regex_inner)(input)
 }
 
 fn parse_char(input: Span) -> IResult<Span, Value> {
@@ -377,6 +528,111 @@ fn range_value(input: Span) -> IResult<Span, Value> {
     )(input)
 }
 
+/// Does the range admit any value at all?
+///
+/// A lower bound below the upper admits the values between them, whatever the two ends are. Equal
+/// bounds admit exactly that one value, and only when both ends are closed: `r[15,15]` is 15 and
+/// nothing else, while `r(15,15)`, `r[15,15)` and `r(15,15]` are empty. A lower bound above the
+/// upper is empty for every spelling.
+///
+/// Bounds that do not order against each other answer `false` and are therefore refused. No such
+/// bound reaches here today, because `parse_float` rejects the non-finite literals first, so this
+/// is the safe direction rather than a reachable case.
+fn range_admits_a_value<T: PartialOrd>(lower: &T, upper: &T, inclusive: u8) -> bool {
+    const BOTH_CLOSED: u8 = LOWER_INCLUSIVE | UPPER_INCLUSIVE;
+    if lower < upper {
+        return true;
+    }
+    lower == upper && inclusive & BOTH_CLOSED == BOTH_CLOSED
+}
+
+/// Refuse a range that no value can satisfy, naming both bounds.
+///
+/// `Failure`, not `Error`, for the reason given on `parse_float` above: a recoverable error sends
+/// `alt` back to the other value productions, and the author is told about a stray fragment instead
+/// of about the range they wrote.
+///
+/// The bounds are named through `Debug` rather than `Display`, so that a float keeps its point and a
+/// char is quoted. `Display` prints the `2.0` of `r[2.0,1.0]` as `2`, which does not match what the
+/// author wrote.
+fn reject_empty_range<'a, T: PartialOrd + Debug>(
+    lower: &T,
+    upper: &T,
+    inclusive: u8,
+    input: Span<'a>,
+) -> Result<(), nom::Err<ParserError<'a>>> {
+    if range_admits_a_value(lower, upper, inclusive) {
+        return Ok(());
+    }
+    let context = match lower == upper {
+        true => format!(
+            "Range literal is empty: both bounds are {lower:?} and at least one end is exclusive, so no value can satisfy it"
+        ),
+        false => format!(
+            "Range literal is empty: the lower bound {lower:?} is above the upper bound {upper:?}, so no value can satisfy it"
+        ),
+    };
+    Err(nom::Err::Failure(ParserError {
+        context,
+        kind: ErrorKind::IsNot,
+        span: input,
+    }))
+}
+
+/// Widen an integer bound so it can sit alongside a float bound in one `RangeType<f64>`.
+///
+/// `RangeType` holds a single type, so a range mixing the two kinds has to carry both bounds as
+/// floats, and the integer is the one that converts. `bound as f64` on its own is the conversion
+/// `compare_int_to_float` in `path_value.rs` refuses to make: above 2^53 an `i64` is not exactly
+/// representable, so the cast moves the bound, and on a range check a moved bound quietly admits or
+/// excludes a value at the edge. A bound that cannot be widened without moving is refused instead,
+/// which is what the surrounding parser already does with a number it cannot represent.
+fn widen_bound_to_float(bound: i64, input: Span<'_>) -> Result<f64, nom::Err<ParserError<'_>>> {
+    // 2^63. `i64::MAX as f64` rounds *up* to this value and casting it back saturates to
+    // `i64::MAX`, so a bare round-trip would report a bound it had moved as exact. Bound on 2^63
+    // itself, for the reason `compare_int_to_float` gives.
+    const TWO_POW_63: f64 = 9_223_372_036_854_775_808.0;
+    let widened = bound as f64;
+    if (-TWO_POW_63..TWO_POW_63).contains(&widened) && widened as i64 == bound {
+        return Ok(widened);
+    }
+    Err(nom::Err::Failure(ParserError {
+        context: format!(
+            "Range bound {bound} cannot be paired with a float bound: it does not fit a 64 bit float exactly, and widening it would move the bound"
+        ),
+        kind: ErrorKind::IsNot,
+        span: input,
+    }))
+}
+
+/// The four range forms, each over a lower and an upper bound.
+///
+/// Nothing compared the two bounds, so a transposed pair parsed and became a clause that no
+/// document can move. `Resources.SG.Properties.Size not in r[20,10]` exits 0 against every
+/// template, and the entire output at the default summary level is a two-line PASS banner: no
+/// clause, no range, nothing to notice. Turned around, `in r[20,10]` exits 19 against every
+/// template just as vacuously. Floats and chars transpose the same way, `r[2.0,1.0]` and `r[z,a]`,
+/// and `r(15,15)` reaches the same emptiness through equal bounds rather than through a swap.
+///
+/// The argument for refusing this rather than tolerating it is the one already made on
+/// `parse_float` above, where a non-finite literal is rejected because `Size < 1e999` cannot fail
+/// for any input and `Size > 1e999` cannot pass for any input. An empty range has that property,
+/// reached by a transposition typo instead of by an exponent. `docs/CLAUSES.md:189-192` defines all
+/// four forms in terms of a `<lower_limit>` and an `<upper_limit>` with the inequalities spelled
+/// out, so a range whose lower bound is above its upper is not one of the documented forms.
+///
+/// Equal bounds are treated on the same measure and split: `r[15,15]` admits exactly 15, which is a
+/// usable thing to write, and it is kept. The three spellings that put an open end on equal bounds
+/// admit nothing, so they go with the reversed ones. That line is drawn on purpose in
+/// `range_admits_a_value` rather than falling out of whichever comparison happened to be written.
+///
+/// The bound kinds pair off separately from that. A range mixing one integer bound and one float
+/// bound used to be refused here, while `docs/CLAUSES.md:201` promises that the two kinds "compare
+/// against each other as numbers. That includes range membership", and `path_value.rs` carries
+/// `int_within_float_range` and `float_within_int_range` to do exactly that. So `Size in r[1,2]`
+/// held for a `Size` of `1.5`, and `Size in r[0,20.5]` did not parse at all: the gate was narrower
+/// than the thing it was gating, the same shape of defect as the float shape test above. Both
+/// bounds widen to float when exactly one of them is a float.
 fn parse_range(input: Span) -> IResult<Span, Value> {
     let parsed = preceded(
         char('r'),
@@ -390,29 +646,68 @@ fn parse_range(input: Span) -> IResult<Span, Value> {
     let mut inclusive: u8 = if open == '[' { LOWER_INCLUSIVE } else { 0u8 };
     inclusive |= if close == ']' { UPPER_INCLUSIVE } else { 0u8 };
     let val = match (start, end) {
-        (Value::Int(s), Value::Int(e)) => Value::RangeInt(RangeType {
-            upper: e,
-            lower: s,
-            inclusive,
-        }),
+        (Value::Int(s), Value::Int(e)) => {
+            reject_empty_range(&s, &e, inclusive, input)?;
+            Value::RangeInt(RangeType {
+                upper: e,
+                lower: s,
+                inclusive,
+            })
+        }
 
-        (Value::Float(s), Value::Float(e)) => Value::RangeFloat(RangeType {
-            upper: e,
-            lower: s,
-            inclusive,
-        }),
+        (Value::Float(s), Value::Float(e)) => {
+            reject_empty_range(&s, &e, inclusive, input)?;
+            Value::RangeFloat(RangeType {
+                upper: e,
+                lower: s,
+                inclusive,
+            })
+        }
 
-        (Value::Char(s), Value::Char(e)) => Value::RangeChar(RangeType {
-            upper: e,
-            lower: s,
-            inclusive,
-        }),
+        (Value::Char(s), Value::Char(e)) => {
+            reject_empty_range(&s, &e, inclusive, input)?;
+            Value::RangeChar(RangeType {
+                upper: e,
+                lower: s,
+                inclusive,
+            })
+        }
 
+        // One integer bound and one float bound, widened to the float range the evaluator already
+        // knows how to check a value of either kind against.
+        (Value::Int(s), Value::Float(e)) => {
+            let s = widen_bound_to_float(s, input)?;
+            reject_empty_range(&s, &e, inclusive, input)?;
+            Value::RangeFloat(RangeType {
+                upper: e,
+                lower: s,
+                inclusive,
+            })
+        }
+
+        (Value::Float(s), Value::Int(e)) => {
+            let e = widen_bound_to_float(e, input)?;
+            reject_empty_range(&s, &e, inclusive, input)?;
+            Value::RangeFloat(RangeType {
+                upper: e,
+                lower: s,
+                inclusive,
+            })
+        }
+
+        // What is left is a bound pairing that is not two numbers, `r[0,z]` or `r[a,2.5]`, which no
+        // comparison decides.
+        //
+        // The span is `input` rather than the `parsed.0` it used to be. `parsed.0` is what follows
+        // the range, so the reporter put the caret one column past the closing bracket and quoted
+        // the lines after the offending literal instead of the literal: `let bounds = r[0,z]` puts
+        // the literal at column 16 and its `]` at column 21, and was reported at column 22 with an
+        // empty fragment. `parse_float` above already spans `input` for its equivalent failure.
         _ => {
             return Err(nom::Err::Failure(ParserError {
-                span: parsed.0,
+                span: input,
                 kind: ErrorKind::IsNot,
-                context: "Could not parse range".to_string(),
+                context: "Could not parse range: the bounds are not both numbers".to_string(),
             }))
         }
     };
@@ -568,14 +863,35 @@ pub(crate) fn parse_value(input: Span) -> IResult<Span, Value> {
 ///  access                     = variable_access /
 ///                               property_access
 ///
-///  not_keyword                = "NOT" / "not" / "!"
+///  not_keyword                = "NOT" 1*SP / "not" 1*SP / "!"
 ///  basic_cmp                  = "==" / ">=" / "<=" / ">" / "<"
 ///  other_operators            = "IN" / "EXISTS" / "EMPTY"
-///  not_other_operators        = not_keyword 1*SP other_operators
-///  not_cmp                    = "!=" / not_other_operators / "NOT_IN"
-///  special_operators          = "KEYS" 1*SP ("==" / other_operators / not_other_operators)
+///  not_other_operators        = not_keyword other_operators
+///  not_cmp                    = "!=" / not_other_operators
 ///
-///  cmp                        = basic_cmp / other_operators / not_cmp / special_operators
+///  cmp                        = basic_cmp / other_operators / not_cmp
+///
+///  Two productions came out of this grammar rather than into the parser, because neither was ever
+///  accepted and this block is normative: `NOT_IN` as a spelling of `not in`, and `KEYS` as a
+///  clause-level operator. `Resources.X NOT_IN ["a","b"]` and `Resources.X KEYS == /^a/` are both
+///  rejected -- `not in` is the spelling that works, and `keys ==` is valid only inside a filter, where
+///  `map_keys_match` handles it. Nothing in `docs/` or the README claims either form, so the grammar was
+///  the only thing saying they existed.
+///
+///  Two more lines were corrected against the parser rather than the other way round, and the space after a
+///  negation is the one worth reading twice. `not_keyword` used to be the three spellings alone, with
+///  `not_other_operators` requiring `1*SP` after any of them -- which admits `not empty` and `! empty` and
+///  does not admit `!empty`. `!empty` is the only spelling that exists: 82 occurrences across the 95 rules
+///  files here, every example in `docs/CLAUSES.md` and `docs/COMPLEX_COMPOSITION.md`, and no occurrence of
+///  `! ` before an operator anywhere. So the space belongs to the word spellings, where it is what keeps
+///  `notempty` from reading as a negated `empty`, and `!` needs none because a punctuation mark cannot run
+///  into an identifier. `A ! exists` stays rejected.
+///
+///  `type_block` used to say `*SP` between the type name and what follows it. The parser requires one space
+///  there, for the block and the clause form together -- they share a single requirement, before the optional
+///  `when` -- so `AWS::S3::Bucket{` is rejected. Nothing in the corpus or in `docs/` writes it that way, and
+///  the zero-space *clause* form is unwritable anyway, because `type_name` is greedy over alphanumerics and
+///  would absorb the property. `1*SP` is what the parser means.
 ///
 ///  clause                     = access 1*(LWSP/comment) cmp 1*(LWSP/comment) [(access/value)]
 ///  rule_clause                = rule_name / not_keyword rule_name / clause
@@ -583,7 +899,7 @@ pub(crate) fn parse_value(input: Span) -> IResult<Span, Value> {
 ///  rule_conjunction_clauses   = rule_clause 1*( (LSWP/comment) rule_clause )
 ///
 ///  type_clause                = type_name 1*SP clause
-///  type_block                 = type_name *SP [when] "{" *(LWSP/comment) 1*clause "}"
+///  type_block                 = type_name 1*SP [when] "{" *(LWSP/comment) 1*clause "}"
 ///
 ///  type_expr                  = type_clause / type_block
 ///
@@ -596,9 +912,17 @@ pub(crate) fn parse_value(input: Span) -> IResult<Span, Value> {
 ///  key_part                   = string / var_name
 ///  value                      = primitives / map_type / list_type
 ///
-///  string                     = DQUOTE <any char not DQUOTE> DQUOTE /
-///                               "'" <any char not '> "'"
-///  regex                      = "/" <any char not / or escaped by \/> "/"
+///  ; This said `<any char not DQUOTE>` for a string and gave the escape to the regex alone. Both have
+///  ; had one all along, and the disagreement is what let two defects sit here: see
+///  ; `scan_escaped_literal`. A backslash consumes the character after it, so an escaped delimiter never
+///  ; closes the literal. In a string `\\` resolves to one backslash, and a backslash before the quote
+///  ; that opened the literal resolves to that quote; every other backslash stays in the value together
+///  ; with the character it escaped. In a regex only `\/` resolves, to `/`, and every other backslash
+///  ; reaches the regex engine as written. Neither literal may cross a line ending.
+///  string                     = DQUOTE *( <any char not DQUOTE, \, LF or CR> / escape ) DQUOTE /
+///                               "'" *( <any char not ', \, LF or CR> / escape ) "'"
+///  regex                      = "/" *( <any char not /, \, LF or CR> / escape ) "/"
+///  escape                     = "\" <any char not LF or CR>
 ///
 ///  comment                    =  "#" *CHAR (LF/CR)
 ///  assignment                 = "let" one_or_more_ws  var_name zero_or_more_ws
@@ -660,7 +984,7 @@ fn var_name_access_inclusive(input: Span) -> IResult<Span, String> {
 // Comparison operators
 //
 fn in_keyword(input: Span) -> IResult<Span, CmpOperator> {
-    value(CmpOperator::In, alt((tag("in"), tag("IN"))))(input)
+    value(CmpOperator::In, alt((keyword("in"), keyword("IN"))))(input)
 }
 
 fn not(input: Span) -> IResult<Span, ()> {
@@ -708,42 +1032,61 @@ fn other_operations(input: Span) -> IResult<Span, (CmpOperator, bool)> {
 }
 
 fn is_list(input: Span) -> IResult<Span, CmpOperator> {
-    value(CmpOperator::IsList, alt((tag("IS_LIST"), tag("is_list"))))(input)
+    value(
+        CmpOperator::IsList,
+        alt((keyword("IS_LIST"), keyword("is_list"))),
+    )(input)
 }
 
 fn is_struct(input: Span) -> IResult<Span, CmpOperator> {
     value(
         CmpOperator::IsMap,
-        alt((tag("IS_STRUCT"), tag("is_struct"))),
+        alt((keyword("IS_STRUCT"), keyword("is_struct"))),
     )(input)
 }
 
 fn is_string(input: Span) -> IResult<Span, CmpOperator> {
     value(
         CmpOperator::IsString,
-        alt((tag("IS_STRING"), tag("is_string"))),
+        alt((keyword("IS_STRING"), keyword("is_string"))),
     )(input)
 }
 
 fn is_bool(input: Span) -> IResult<Span, CmpOperator> {
-    value(CmpOperator::IsBool, alt((tag("IS_BOOL"), tag("is_bool"))))(input)
+    value(
+        CmpOperator::IsBool,
+        alt((keyword("IS_BOOL"), keyword("is_bool"))),
+    )(input)
 }
 
 fn is_int(input: Span) -> IResult<Span, CmpOperator> {
-    value(CmpOperator::IsInt, alt((tag("IS_INT"), tag("is_int"))))(input)
+    value(
+        CmpOperator::IsInt,
+        alt((keyword("IS_INT"), keyword("is_int"))),
+    )(input)
 }
 
 fn is_float(input: Span) -> IResult<Span, CmpOperator> {
     value(
         CmpOperator::IsFloat,
-        alt((tag("IS_FLOAT"), tag("is_float"))),
+        alt((keyword("IS_FLOAT"), keyword("is_float"))),
     )(input)
 }
 
 fn is_null(input: Span) -> IResult<Span, CmpOperator> {
-    value(CmpOperator::IsNull, alt((tag("IS_NULL"), tag("is_null"))))(input)
+    value(
+        CmpOperator::IsNull,
+        alt((keyword("IS_NULL"), keyword("is_null"))),
+    )(input)
 }
 
+/// The type operators, and `in`, go through `keyword` for the reason `true`/`false`/`null` do.
+///
+/// `tag("IS_INT")` matches the first six characters of `IS_INTEGER` and leaves `EGER` behind, and a bare
+/// identifier is a valid clause -- a reference to a rule of that name. So `Size IS_INTEGER` parsed as
+/// `Size IS_INT` *and* a reference to a rule called `EGER`: loud when no such rule exists, and silently
+/// PASS at exit 0 when one does. Same shape as the `falseFlag` case these helpers were written for; the
+/// guard had simply not been applied to this group or to `in`.
 fn is_type_operations(input: Span) -> IResult<Span, CmpOperator> {
     alt((
         is_string, is_list, is_struct, is_bool, is_int, is_null, is_float,
@@ -783,8 +1126,93 @@ pub(crate) fn value_cmp(input: Span) -> IResult<Span, (CmpOperator, bool)> {
     ))(input)
 }
 
+/// The message text between `<<` and `>>`, delimited by the grammar the language actually uses.
+///
+/// Two forms occur. A census of all 233 messages in the AWS rule registry and this repository's fixtures
+/// found nothing else: 231 are block form, with the closing `>>` alone on its own line, and 2 are inline,
+/// with both tags on one line. In none of the 233 does anything follow `>>` on its line. So a `>>` on the
+/// opening line closes the message, and otherwise the message ends at the first later line whose trimmed
+/// text is exactly `>>`. A body with no terminator raises the error this function has always raised when
+/// there is no `>>` at all.
+///
+/// The history is worth carrying, because two earlier versions of this each looked right and each was
+/// wrong. Upstream searched all remaining input for `>>`. One forgotten closing tag therefore consumed
+/// every following rule as message text and those rules ceased to exist: a file whose second rule the
+/// template violated reported PASS at exit 0, with no diagnostic on any channel.
+///
+/// The first fix bounded the search at the first line whose first token is `}` or `rule`. It misses the same
+/// defect one scope in, because when the next `>>` belongs to the next clause of the same block, no such
+/// line sits between the two tags:
+///
+/// ```text
+/// rule one {
+///     Resources.One.Type == "AWS::S3::Bucket" << closing tag forgotten
+///     Resources.One.Properties.Encrypted == true << must be encrypted >>
+/// }
+/// ```
+///
+/// That exited 0 with the encryption check deleted. It also rejected a legitimate body quoting example
+/// JSON, because such a body has a line starting with `}`.
+///
+/// The second bounded at the next `<<`, which fixed both of those and broke a third case. With no second
+/// `<<` in the file the search ran on to a `>>` inside a *comment* and closed the message there:
+///
+/// ```text
+/// rule one {
+///     Resources.One.Type == "AWS::S3::Bucket" << closing tag forgotten
+/// }
+/// rule two {
+///     Resources.One.Properties.Encrypted == true
+///     # see the runbook for escalation >>
+/// }
+/// ```
+///
+/// That exited 0 against a template rule two violates, with rule two absent from the parse tree -- the
+/// original defect, reintroduced. A comment carrying `>>` at the end of the same block defeats both bounds
+/// at once, since neither a `}` line nor a second `<<` sits between the tags, and it exited 0 under each:
+///
+/// ```text
+/// rule one {
+///     A == 1 << forgot
+///     B == 2
+///     # trailing comment with >>
+/// }
+/// ```
+///
+/// This is not a third heuristic, which is why it replaces both bounds instead of combining them. Each
+/// bound inferred document structure from a token that may legitimately sit inside a message body, so each
+/// had a shape it read wrongly in both directions, and their intersection still admits the fourth shape
+/// above. A terminator line infers nothing: it is what a closing tag looks like in 231 of the 233 messages
+/// that exist. All four shapes are now rejected for one reason -- the opening line holds no `>>` and no
+/// later line is exactly `>>`.
+///
+/// One shape that used to parse no longer does: a block body whose closing `>>` shares its line with body
+/// text, as in `<< Violation: X` and then `Fix: Y >>`. No message in the corpus is written that way, and it
+/// cannot be admitted without reopening the defect, because the swallowed clause in the first example above
+/// is itself a line ending in `>>`. In exchange, a brace in a body is now just text, so the JSON-quoting
+/// message that the first bound rejected parses.
 fn extract_message(input: Span) -> IResult<Span, &str> {
-    match input.find_substring(">>") {
+    let fragment = input.fragment();
+    let opening_line_end = fragment.find('\n').unwrap_or(fragment.len());
+
+    let closing_tag = fragment[..opening_line_end].find(">>").or_else(|| {
+        let mut cursor = opening_line_end;
+        while cursor < fragment.len() {
+            let line_start = cursor + 1;
+            let line_end = fragment[line_start..]
+                .find('\n')
+                .map_or(fragment.len(), |offset| line_start + offset);
+            let line = &fragment[line_start..line_end];
+            let body = line.trim_start();
+            if body.trim_end() == ">>" {
+                return Some(line_start + (line.len() - body.len()));
+            }
+            cursor = line_end;
+        }
+        None
+    });
+
+    match closing_tag {
         None => Err(nom::Err::Failure(ParserError {
             span: input,
             kind: ErrorKind::Tag,
@@ -855,7 +1283,19 @@ fn all_indices(input: Span) -> IResult<Span, QueryPart> {
             QueryPart::AllIndices(None),
             preceded(zero_or_more_ws_or_comment, char('*')),
         ),
-        map(var_name, |name| QueryPart::AllIndices(Some(name))),
+        // Whitespace-tolerant like the `*` branch above, and it was not. Without the `preceded`, a leading
+        // space made this branch fail, `array_index` fail after it, and `map_key_lookup` -- which does skip
+        // whitespace -- catch the same identifier and return `AllValues(Some(name))` instead. So `[x]` and
+        // `[x ]` were one query part while `[ x]` and `[ x ]` were another.
+        //
+        // Two spaces were the whole difference between a working rule and an unevaluatable one, because the
+        // `%var` map-key interpolation arm in `eval_context.rs` accepts `AllIndices`, `Key` and `Index` after
+        // an interpolated variable and not `AllValues`: `Tags.%k[x] == "prod"` passed at exit 0 while
+        // `Tags.%k[ x ] == "prod"` bailed at exit 19 with "This type of query R based variable interpolation
+        // is not supported".
+        map(preceded(zero_or_more_ws_or_comment, var_name), |name| {
+            QueryPart::AllIndices(Some(name))
+        }),
     ))(input)?;
     let (input, _close) = close_array(input)?;
     Ok((input, query_part))
@@ -863,7 +1303,25 @@ fn all_indices(input: Span) -> IResult<Span, QueryPart> {
 
 fn array_index(input: Span) -> IResult<Span, QueryPart> {
     map(
-        delimited(open_array, parse_int_value, cut(close_array)),
+        delimited(
+            open_array,
+            // Whitespace-tolerant like every other bracket form, and it was not. `open_array` and
+            // `close_array` each skip whitespace, so a trailing space was fine and a leading one was not:
+            // `Names[0 ]` parsed and `Names[ 0]` did not, because the space reached `parse_int_value`, whose
+            // `digit1` cannot begin on one. The numeric index was the only bracket form with the omission --
+            // `[*]`, `[x]` and a filter all accepted the space.
+            //
+            // Nothing else in `predicate_or_index` reads a bare integer, so the query fell through to
+            // `predicate_filter_clauses` and the whole file was rejected with "There were no clauses
+            // present". Loud rather than misread, but `Names[ 0 ]` is an ordinary way to write it, and it
+            // took `Tags[ 0 ].Key` and an index inside a filter down with it.
+            //
+            // The `cut` below keeps its scope: a filter whose first token is an integer is not a clause in
+            // any spelling, `[0 == 1]` included, so accepting the space cannot commit to this branch for
+            // input another branch would have read.
+            preceded(zero_or_more_ws_or_comment, parse_int_value),
+            cut(close_array),
+        ),
         |idx| {
             let idx = match idx {
                 Value::Int(i) => i,
@@ -877,7 +1335,19 @@ fn array_index(input: Span) -> IResult<Span, QueryPart> {
 fn map_key_lookup(input: Span) -> IResult<Span, QueryPart> {
     let (input, _open) = open_array(input)?;
     let (input, query_part) = alt((
-        map(parse_string, |idx| {
+        // The same omission as `array_index` above, and the last bracket form carrying it. A quoted key
+        // names a property a bare identifier cannot spell -- `Resources["MyBucket"]` is `Key("MyBucket")`
+        // -- and `Resources[ "MyBucket" ]` was rejected, while `Resources["MyBucket" ]` parsed, because
+        // `open_array` and `close_array` skipped whitespace and `parse_string` did not.
+        //
+        // Widening this branch is not the same question as widening the index, because a string literal
+        // opens a clause as readily as it names a key: `[ "AWS::CloudFormation::Authentication" exists ]`
+        // is a filter, and one in the AWS rule registry. What keeps the two apart is `close_array` below
+        // carrying no `cut`. Consuming the string and then not finding `]` is a recoverable error, so a
+        // clause backtracks out of here with the string unconsumed and `predicate_filter_clauses` reads
+        // it. The token after the string decides, which is the same rule as before the change; only the
+        // spelling with spaces now reaches it.
+        map(preceded(zero_or_more_ws_or_comment, parse_string), |idx| {
             let idx = match idx {
                 Value::String(i) => i,
                 _ => unreachable!(),
@@ -904,7 +1374,17 @@ fn map_keys_match(input: Span) -> IResult<Span, QueryPart> {
     // The four comparators a key filter accepts. `MapKeyComparator` exists so this list and the
     // evaluator cannot disagree: anything absent here is unrepresentable downstream rather than an
     // unreachable match arm.
-    let (input, cmp) = cut(preceded(
+    //
+    // Not `cut`, and that is the fix. `keys` is only reserved for these four comparators, so a filter over a
+    // *property* named `keys` -- `[ keys EXISTS ]` -- is a different clause and the next branch of
+    // `predicate_or_index` parses it. Committing here stopped that branch from ever running, and the proof
+    // that nothing ambiguous forced the rejection is positional: `[ Size EXISTS keys EXISTS ]` was accepted,
+    // so the identical clause parsed one slot later. `[ keys EXISTS ]`, `[ keys EMPTY ]`, `[ keys IS_LIST ]`
+    // and `[ keys >= 1 ]` were all rejected in first position alone.
+    //
+    // The `cut`s below stay: once a key-filter comparator has been seen, this is a key filter and a missing
+    // right-hand side or closing bracket is an error rather than another reading.
+    let (input, cmp) = preceded(
         zero_or_more_ws_or_comment,
         alt((
             value(MapKeyComparator::Eq, tag("==")),
@@ -912,13 +1392,32 @@ fn map_keys_match(input: Span) -> IResult<Span, QueryPart> {
             value(MapKeyComparator::In, in_keyword),
             map(tuple((not, in_keyword)), |_m| MapKeyComparator::NotIn),
         )),
-    ))(input)?;
+    )(input)?;
+    // Value, then function call, then access -- the order and the set that `clause_with_map` and `let_value`
+    // use. The function call was missing here, and it is the one right-hand side of the three that changed
+    // what a clause means rather than rejecting it. `access` matched the function's name as a query and left
+    // `(...)` behind, `close_array` carries no `cut` so that failed recoverably, and
+    // `predicate_filter_clauses` -- the next branch of `predicate_or_index` -- then read the same text as an
+    // ordinary filter over a property named `keys`. So `Tags[ keys == to_lower("ALPHA") ]` asked whether a
+    // child property called `keys` equalled `alpha`, where the two spellings beside it asked what the author
+    // wrote. Against a document holding one entry keyed `alpha` whose `keys` child is `zulu`, the literal and
+    // the variable spellings pass at exit 0 and the function spelling failed at exit 19, blaming a value it
+    // named as `[null]`.
+    //
+    // Nothing downstream forced the narrower set: `MapKeyFilterClause::compare_with` is a `LetValue`, and the
+    // arm that resolves a `LetValue::FunctionCall` for a key filter is already there in
+    // `eval_context::query_retrieval_with_converter` -- it was unreachable because the parser could not build
+    // one.
     let (input, with) = cut(preceded(
         zero_or_more_ws_or_comment,
         alt((
             map(parse_value, |value| {
                 LetValue::Value(PathAwareValue::try_from(value).unwrap())
             }),
+            map(
+                preceded(zero_or_more_ws_or_comment, function_expr),
+                LetValue::FunctionCall,
+            ),
             map(
                 preceded(zero_or_more_ws_or_comment, access),
                 LetValue::AccessClause,
@@ -1011,9 +1510,33 @@ fn this_keyword(input: Span) -> IResult<Span, QueryPart> {
 //   access     =   (var_name / var_name_access) [dotted_access]
 //
 pub(crate) fn access(input: Span) -> IResult<Span, AccessQuery> {
+    access_query(input, true)
+}
+
+/// `access` with `some` read as a property name rather than as the modifier.
+///
+/// `some` is a legal property name, and `opt(some_keyword)` commits: once the modifier has matched, the
+/// remainder is parsed as though it were meant, and whatever fails afterwards fails for the whole clause.
+/// So `some == "bar"` failed inside `access` -- an operator cannot begin a query -- and `some exists` failed
+/// one step later in `clause_with_map`, where `exists` had already been taken as the query and no comparator
+/// was left. Neither is ambiguous: the modifier reading of both is a `some` with no clause after it.
+/// `someProperty` and `some.foo` were never affected, because `some_keyword` requires a space after the word.
+///
+/// This differs from `access` only when `some` or `SOME` is followed by whitespace, which is the only input
+/// `opt(some_keyword)` consumes anything on. Everywhere else the two are the same parser, so a clause parser
+/// built on this one can be tried after the ordinary one without widening the alternation for any other input.
+fn access_without_some_modifier(input: Span) -> IResult<Span, AccessQuery> {
+    access_query(input, false)
+}
+
+fn access_query(input: Span, some_modifier: bool) -> IResult<Span, AccessQuery> {
+    let (input, any) = match some_modifier {
+        true => opt(some_keyword)(input)?,
+        false => (input, None),
+    };
+    let match_all = any.is_none();
     map(
         tuple((
-            opt(some_keyword),
             alt((
                 this_keyword,
                 map(
@@ -1023,7 +1546,7 @@ pub(crate) fn access(input: Span) -> IResult<Span, AccessQuery> {
             )),
             opt(dotted_access),
         )),
-        |(any, first, remainder)| {
+        move |(first, remainder)| {
             let query_parts = match remainder {
                 Some(mut parts) => {
                     parts.insert(0, first.clone());
@@ -1044,7 +1567,7 @@ pub(crate) fn access(input: Span) -> IResult<Span, AccessQuery> {
             };
             AccessQuery {
                 query: query_parts,
-                match_all: any.is_none(),
+                match_all,
             }
         },
     )(input)
@@ -1294,11 +1817,27 @@ fn clause(input: Span) -> IResult<Span, GuardClause> {
             GuardClause::ParameterizedNamedRule,
         ),
         |i| clause_with(i, access),
+        // Last, and only reached when the reading above failed. `some` is a property name as well as the
+        // modifier, and `access` commits to the modifier as soon as it sees the word and a space, so
+        // `some == "bar"` and `some exists` -- clauses about a property named `some` -- could not be written.
+        // See `access_without_some_modifier`.
+        //
+        // This arm cannot take input `rule_clause` was reading, which is what the enclosing alternations try
+        // after this one: it succeeds only where a comparator follows the name, and `rule_clause` reads a bare
+        // name only when a newline, a comment, `{`, `}` or `or` follows it.
+        |i| clause_with(i, access_without_some_modifier),
     ))(input)
 }
 
 fn single_clause(input: Span) -> IResult<Span, WhenGuardClause> {
-    clause_with_map(input, access, WhenGuardClause::Clause)
+    match clause_with_map(input, access, WhenGuardClause::Clause) {
+        // The same fallback as the last arm of `clause`, for a condition in a `when`. Only on a recoverable
+        // error: a Failure means something further in committed, and retrying would report the wrong thing.
+        Err(nom::Err::Error(_)) => {
+            clause_with_map(input, access_without_some_modifier, WhenGuardClause::Clause)
+        }
+        result => result,
+    }
 }
 
 //
@@ -1312,17 +1851,30 @@ fn single_clause(input: Span) -> IResult<Span, WhenGuardClause> {
 //  parsing to see which of these forms is present for the rule clause
 //  to succeed
 //
-//      rule_name[ \t]*\n
+//      rule_name[ \t]*(\n / \r\n / \r)
 //      rule_name[ \t\n]+or[ \t\n]+
-//      rule_name(#[^\n]+)
+//      rule_name(#[^\n\r]+)
 //
 //      rule_name\s+<<msg>>[ \t\n]+or[ \t\n]+
 //
 //
 //
 
+/// The line endings `rule_clause` peeks for, which has to be the set the rest of the parser accepts.
+///
+/// A bare `\r` was missing. `zero_or_more_ws_or_comment` reaches `multispace1`, which accepts `" \t\r\n"`, so a
+/// lone CR is whitespace at every other position in this parser -- but a rule reference is read by peeking for
+/// one of a fixed set of following tokens, and anything outside that set falls to the `cut` on
+/// `custom_message`, whose Failure escapes the alternation. So in a file whose lines end with a bare CR, a
+/// comparison clause parsed and a rule reference on its own line did not, and the second term of a disjunction
+/// did not either. Measured across thirteen constructs in one such file, ten parsed and three did not, which
+/// makes readability depend on which construct happens to sit at the boundary. A uniform rejection would at
+/// least be predictable; this was not.
+///
+/// Longest first, so `\r\n` is never read as a bare `\r` with a stray `\n` after it. CRLF was already handled
+/// and is unaffected.
 fn newline(input: Span) -> IResult<Span, Span> {
-    alt((tag("\n"), tag("\r\n")))(input)
+    alt((tag("\r\n"), tag("\n"), tag("\r")))(input)
 }
 
 fn rule_clause(input: Span) -> IResult<Span, GuardClause> {
@@ -1339,12 +1891,17 @@ fn rule_clause(input: Span) -> IResult<Span, GuardClause> {
     // we peek to preserve the input, if it is or, space+newline or comment
     // we return
     //
+    // `}` is in the set, and it was not. Anything not peeked here falls to the `cut(custom_message)`
+    // below, whose Failure escapes the enclosing alternation -- so `rule b { a }` was rejected with an
+    // error naming `}` rather than the reference, while the same rule written over three lines parsed.
+    // Every other clause form works inline, which made this specific to rule references.
     let do_return = remaining.is_empty()
         || matches!(
             peek(alt((
                 preceded(space0, value((), newline)),
                 preceded(space0, value((), comment2)),
                 preceded(space0, value((), char('{'))),
+                preceded(space0, value((), char('}'))),
                 value((), or_join),
             )))(remaining),
             Ok((_same, _ignored))
@@ -1513,22 +2070,44 @@ fn clauses(input: Span) -> IResult<Span, Conjunctions<GuardClause>> {
 
 fn let_assignment_expr(input: Span) -> IResult<Span, String> {
     let (input, _let_keyword) = tag("let")(input)?;
-    let (input, (var_name, _eq_sign)) = tuple((
-        //
-        // if we have a pattern like "letproperty" that can be an access keyword
-        // then there is no space in between. This will error out.
-        //
-        preceded(one_or_more_ws_or_comment, var_name),
-        //
-        // if we succeed in reading the form "let <var_name>", it must be be
-        // followed with an assignment sign "=" or ":="
-        //
-        cut(preceded(
-            zero_or_more_ws_or_comment,
-            alt((tag("="), tag(":="))),
-        )),
-    ))(input)?;
-    Ok((input, var_name))
+    //
+    // if we have a pattern like "letproperty" that can be an access keyword
+    // then there is no space in between. This will error out.
+    //
+    let (at_name, _space) = one_or_more_ws_or_comment(input)?;
+    let (after_name, assigned) = var_name(at_name)?;
+
+    // The assignment sign is what identifies an assignment, so that is where the commitment belongs. It was a
+    // `cut`, and `let` is a legal property name: `let EXISTS` is a clause about that property, but `var_name`
+    // above reads the `EXISTS` as the variable being assigned, and the `cut` then made the missing sign a
+    // Failure that escaped the alternation instead of letting `clause` read the line. Every unary comparator
+    // was affected and no binary one was, because `let == "bar"` fails at `var_name`, which was already
+    // recoverable.
+    //
+    // What distinguishes the two readings is the name: `let` and a space followed by a comparator is the whole
+    // of the clause, and followed by anything else it is an assignment that has lost its sign. So only the
+    // first falls through, and `let x` still says what is wrong with it -- which it could not do by falling
+    // through, because the alternation's last error would name the line rather than the missing sign.
+    //
+    // Unlike `rule`, the name here cannot be separated from the construct by looking at what follows it, so
+    // the test is on the name itself.
+    match preceded(zero_or_more_ws_or_comment, alt((tag("="), tag(":="))))(after_name) {
+        Ok((input, _sign)) => Ok((input, assigned)),
+
+        Err(nom::Err::Error(recoverable)) => match peek(value_cmp)(at_name) {
+            Ok(_) => Err(nom::Err::Error(recoverable)),
+            Err(_) => Err(nom::Err::Failure(ParserError {
+                context: format!(
+                    "Expected = or := after let {}, as in \"let {} = 10\".",
+                    assigned, assigned
+                ),
+                kind: ErrorKind::Tag,
+                span: after_name,
+            })),
+        },
+
+        Err(e) => Err(e),
+    }
 }
 
 fn assignment(input: Span) -> IResult<Span, LetExpr> {
@@ -1576,8 +2155,62 @@ fn assignment(input: Span) -> IResult<Span, LetExpr> {
 //
 // when keyword
 //
+/// The first variable name assigned twice in a list of assignments, if any.
+///
+/// Order of declaration is what an author would expect to decide the winner, and it is not what does; see
+/// the call sites for the measurement. Returning the name rather than a bool so the diagnostic can say
+/// which one.
+fn first_duplicate_assignment(assignments: &[LetExpr<'_>]) -> Option<String> {
+    let mut seen = std::collections::HashSet::new();
+    assignments
+        .iter()
+        .find(|assignment| !seen.insert(assignment.var.as_str()))
+        .map(|assignment| assignment.var.clone())
+}
+
+/// The diagnostic for a cycle among `let` right-hand sides, shared by the two scopes that look for
+/// one so they cannot drift apart.
+///
+/// The chain is spelled out because the name alone does not say what to change in a longer ring: with
+/// `let a = %b` and `let b = %a`, either declaration is the one to edit and the author has to see
+/// both to pick. No scope phrase, unlike the duplicate-assignment messages -- a duplicate is only a
+/// problem relative to a scope, while a cycle is unresolvable wherever it sits, and the block-level
+/// site carries a span that says where.
+fn let_cycle_message(cycle: &[&str]) -> String {
+    if let [only] = cycle {
+        return format!(
+            "Variable {} is defined in terms of itself. Resolving it recurses until the stack is \
+             exhausted, so the file is rejected rather than run.",
+            only
+        );
+    }
+
+    format!(
+        "Variables {} are defined in terms of each other. Resolving any of them recurses until the \
+         stack is exhausted, so the file is rejected rather than run.",
+        cycle
+            .iter()
+            .chain(cycle.first())
+            .copied()
+            .collect::<Vec<&str>>()
+            .join(" -> ")
+    )
+}
+
+/// The `when` keyword, and it has to be a keyword rather than a tag because what follows it is `cut`.
+///
+/// `tag("when")` matched the first four characters of `whenever`, the whitespace `when_conditions` requires
+/// then failed, and the `cut` inside it turned that recoverable Error into a Failure -- which escapes both
+/// the `opt(when_conditions(..))` around it and the `alt` in `rules_file` that would otherwise have read the
+/// line as an ordinary clause. So any clause whose first identifier began with `when` or `WHEN` was an
+/// unrecoverable parse failure: `whenCreated EXISTS` was rejected at the `C`, while `createdWhen EXISTS` and
+/// `WhenCreated EXISTS` were fine, because only the exact-case prefixes reach the tag.
+///
+/// The tell-tale was that `rule whenever { ... }` *defined* fine and a `whenever` reference did not -- a rule
+/// you could declare and never call. `some`, `let` and `rule` were already safe from this, not by design but
+/// because their own whitespace requirement yields a recoverable Error with no cut behind it.
 fn when(input: Span) -> IResult<Span, ()> {
-    value((), alt((tag("when"), tag("WHEN"))))(input)
+    value((), alt((keyword("when"), keyword("WHEN"))))(input)
 }
 
 #[allow(clippy::redundant_closure)]
@@ -1593,17 +2226,30 @@ where
         //
         let (input, _when_keyword) = preceded(zero_or_more_ws_or_comment, when)(input)?;
 
+        // The space is required, and it is required *outside* the `cut`. That is the fix. `keyword("when")`
+        // rejects a trailing identifier character, so `whenCreated` no longer reaches here, but a trailing
+        // `.`, `[` or operator character is not an identifier character and still does: `when.foo == "bar"`
+        // matched the keyword, failed this requirement, and the `cut` turned that into a Failure that
+        // escaped both the `opt(when_conditions(..))` around it and the `alt` that would have read the line
+        // as a clause about a property named `when`. So half of the `whenever` defect was still live, in the
+        // half of the spellings `keyword` cannot see.
+        //
+        // A `when` block cannot be spelled without this space, so `when.`, `when[` and `when(` have exactly
+        // one reading each and letting them fall through admits nothing new. `some_keyword` and
+        // `let_assignment_expr` already require their space this way.
+        let (input, _space) = one_or_more_ws_or_comment(input)?;
+
         //
         // If there is "when" then parse conditions. It is an error not to have
         // clauses following it
         //
-        cut(
-            //
-            // when keyword must be followed by a space and then clauses. Fail if that
-            // is not the case
-            //
-            preceded(one_or_more_ws_or_comment, |s| condition_parser(s)),
-        )(input)
+        // The conditions stay committed. Once the space is there the line is no longer decidable from the
+        // `when` alone -- `when` on its own line is a reference to a rule of that name, `when == "bar"` is a
+        // clause, and `when { ... }` is a block clause over a property named `when` -- so falling through
+        // would turn a `when` block missing its conditions into a silently different rule rather than an
+        // error. `single_clauses` raises its own Failure for an empty condition list in any case, which is
+        // where those spellings are actually rejected; quoting the key reaches all three of them.
+        cut(|s| condition_parser(s))(input)
     }
 }
 
@@ -1645,6 +2291,55 @@ where
                 (None, Some(v)) => conjunctions.push(v),
                 (_, _) => unreachable!(),
             }
+        }
+
+        // The same argument as the duplicate rule-name check, and a worse case than it. A name declared
+        // twice in one scope was accepted, and `%name` then resolved to one of the two by a rule the author
+        // cannot see: `extract_variables` files literals, queries and function calls into three separate
+        // maps, each `insert` overwriting silently, and `resolve_variable` consults them in a fixed order.
+        // So the winner is decided by *kind precedence*, not by which declaration came first.
+        //
+        // With `Size: 1` in the template and both declarations in one scope:
+        //
+        //     let v = 1     then  let v = 999   ->  exit 19
+        //     let v = 999   then  let v = 1     ->  exit 0
+        //
+        // and when the two are of different kinds, reordering them changes nothing at all -- the query wins
+        // over the literal wherever it sits. Unlike the rule-name case, which could not move the exit code,
+        // this one flips the verdict.
+        //
+        // Every nested scope reaches this function, so one check here covers rule bodies and blocks inside
+        // them; file-level declarations are checked where they are collected in `rules_file`.
+        if let Some(duplicate) = first_duplicate_assignment(&assignments) {
+            return Err(nom::Err::Failure(ParserError {
+                span: input,
+                kind: ErrorKind::Tag,
+                context: format!(
+                    "Variable {} is assigned more than once in the same scope. Which assignment wins \
+                     depends on the kind of each value rather than on their order, so the file is \
+                     rejected rather than guessed at.",
+                    duplicate
+                ),
+            }));
+        }
+
+        // The same argument again, and a worse symptom than either duplicate case. A right-hand side
+        // that reads a name this scope declares recurses with nothing to stop it, and the process
+        // aborts on a stack overflow at exit 134 with a core dump -- outside the documented exit codes,
+        // so a caller checking for 0, 5 or 19 gets neither a pass nor a failure it can report. Both
+        // scopes reach it: `rule r { let a = %a ... }` and the file-level `let a = %a` took the same
+        // route through two copies of `resolve_variable`.
+        //
+        // A cycle check rather than a recursion depth limit, because the cycle is decidable from the
+        // text. This rejects exactly the files that cannot resolve and names the ring, where a depth
+        // limit would turn the crash into an arbitrary failure at an arbitrary depth and would still
+        // reject a legal chain that happened to be longer than the limit.
+        if let Some(cycle) = first_let_cycle(&assignments) {
+            return Err(nom::Err::Failure(ParserError {
+                span: input,
+                kind: ErrorKind::Tag,
+                context: let_cycle_message(&cycle),
+            }));
         }
 
         let (input, _end_block) = cut(preceded(zero_or_more_ws_or_comment, char('}')))(input)?;
@@ -1812,6 +2507,46 @@ fn rule_block_clause(input: Span) -> IResult<Span, RuleClause> {
     ))(input)
 }
 
+/// The name in a rule definition, deciding on the way whether the line is a definition at all.
+///
+/// `rule` is a legal property name, so `rule == "bar"` at file level is a clause about that property and has
+/// to reach `default_clauses`. `cut(var_name)` stopped it: `var_name` failed on the `==` and the `cut` made
+/// that a Failure, which escaped `rules_file`'s alternation before the arm that reads clauses ever ran. The
+/// identical clause parses inside a rule body, where a rule definition is not one of the alternatives -- which
+/// is what shows the rejection was the commitment and not the grammar.
+///
+/// What can follow `rule` and a space in a clause is a comparator, or more of the query: `dotted_property`
+/// and `predicate_or_index` both skip leading whitespace, so `rule .foo == 1` and `rule ["foo"] == 1` are
+/// clauses in the same way `wibble .foo == 1` is. Neither can begin a rule name, which is `alpha1` followed by
+/// alphanumerics, so falling through on them cannot cost a definition.
+///
+/// Anything else is a definition whose name is malformed, and saying so here beats letting the alternation
+/// fail: its last error names the start of the line with no context at all, while `rule 1foo {` has one
+/// obvious thing wrong with it.
+fn rule_definition_name(input: Span) -> IResult<Span, String> {
+    match var_name(input) {
+        Ok(parsed) => Ok(parsed),
+
+        Err(nom::Err::Error(recoverable)) => match peek(alt((
+            value((), value_cmp),
+            value((), dotted_access),
+        )))(input)
+        {
+            Ok(_) => Err(nom::Err::Error(recoverable)),
+            Err(_) => Err(nom::Err::Failure(ParserError {
+                context: String::from(
+                    "Expected a name for this rule, as in \"rule my_rule { ... }\". A clause about a \
+                     property named rule needs the name in quotes, as \"rule\".",
+                ),
+                kind: ErrorKind::Alpha,
+                span: input,
+            })),
+        },
+
+        Err(e) => Err(e),
+    }
+}
+
 //
 // rule block
 //
@@ -1822,7 +2557,10 @@ fn rule_block(input: Span) -> IResult<Span, Rule> {
     let (input, _rule_keyword) = preceded(zero_or_more_ws_or_comment, tag("rule"))(input)?;
     let (input, _space) = one_or_more_ws_or_comment(input)?;
 
-    let (input, rule_name) = cut(var_name)(input)?;
+    // The name is what identifies a definition, so that is where the commitment belongs; see
+    // `rule_definition_name`. `cut(block(..))` below still reports a missing or misplaced brace against the
+    // rule, and `rule <name>` with neither `(`, `when` nor `{` after it is still an error.
+    let (input, rule_name) = rule_definition_name(input)?;
     let (input, conditions) = opt(when_conditions(single_clauses))(input)?;
     let (input, (assignments, conjunctions)) = cut(block(rule_block_clause))(input)?;
 
@@ -1842,18 +2580,50 @@ fn rule_block(input: Span) -> IResult<Span, Rule> {
 //
 // parameter names
 //
+/// The parameter list of a parameterized rule, rejecting a name that appears twice.
+///
+/// Collecting straight into the `IndexSet` dropped the duplicate silently, so `rule r(a, a)` became a
+/// one-parameter rule. Nothing complained at the definition; the arity check then failed at every
+/// *call*, blaming the caller for passing two arguments to a rule written to take two -- `Arity
+/// mismatch for called parameter rule r, expected 1, got 2` -- and the run ended at 255, an internal
+/// failure, for a rule-authoring mistake the parser was holding in its hand.
+///
+/// `Failure` rather than `Error` because `(` and a name list have already been
+/// consumed here -- a recoverable error would send `alt` back to try the non-parameterized rule form
+/// and report something unrelated about the line.
 fn parameter_names(input: Span) -> IResult<Span, indexmap::IndexSet<String>> {
-    delimited(
+    let (remaining, names) = delimited(
         char('('),
-        map(
-            separated_list1(
-                char(','),
-                cut(delimited(multispace0, var_name, multispace0)),
-            ),
-            |v| v.into_iter().collect::<indexmap::IndexSet<String>>(),
+        separated_list1(
+            char(','),
+            cut(delimited(multispace0, var_name, multispace0)),
         ),
         cut(char(')')),
-    )(input)
+    )(input)?;
+
+    let unique = names
+        .iter()
+        .cloned()
+        .collect::<indexmap::IndexSet<String>>();
+    if unique.len() != names.len() {
+        let repeated = names
+            .iter()
+            .enumerate()
+            .find(|(at, name)| names[..*at].contains(name))
+            .map(|(_, name)| name.as_str())
+            .unwrap_or("");
+        return Err(nom::Err::Failure(ParserError {
+            context: format!(
+                "Parameter {} is declared more than once. Each parameter needs its own name, or a \
+                 reference to it cannot say which argument it means.",
+                repeated
+            ),
+            kind: ErrorKind::SeparatedList,
+            span: input,
+        }));
+    }
+
+    Ok((remaining, unique))
 }
 
 //
@@ -1869,7 +2639,9 @@ fn parameterized_rule_block(input: Span) -> IResult<Span, ParameterizedRule> {
         one_or_more_ws_or_comment,
     )(input)?;
 
-    let (input, rule_name) = cut(var_name)(input)?;
+    // See `rule_definition_name`. This arm is tried before `rule_block`, so the Failure escaped from here
+    // first and both sites needed the same treatment.
+    let (input, rule_name) = rule_definition_name(input)?;
     let (input, parameter_names) = parameter_names(input)?;
     let (input, (assignments, conjunctions)) = cut(block(rule_block_clause))(input)?;
 
@@ -2024,11 +2796,76 @@ pub(crate) fn rules_file(input: Span) -> Result<Option<RulesFile>, Error> {
         named_rules.insert(0, default_rule);
     }
 
-    Ok(Some(RulesFile {
+    // A rule name is what a reference resolves through, so defining one twice makes every reference
+    // to it ambiguous -- and the file was accepted, with the reference binding to whichever
+    // definition came first. That is a verdict difference, not a stylistic one. Two definitions of
+    // `dup`, one holding and one not, and a `rule user when dup { ... }`:
+    //
+    //     order in the file            user
+    //     holding definition first     PASS
+    //     failing definition first     SKIP
+    //
+    // Both definitions still run and report, so the file exits 19 either way and the exit code
+    // cannot see it. The guarded rule silently changed from enforced to not-applicable on a
+    // reordering that no author would expect to matter.
+    //
+    // Parameterized rules share the namespace, so they are checked together: `rule r` and
+    // `rule r(x)` collide for the same reason.
+    // File-level declarations, for the same reason and with the same consequence as the block-level check
+    // in `block`. Checked here because these are collected here and never pass through that function.
+    if let Some(duplicate) = first_duplicate_assignment(&global_assignments) {
+        return Err(Error::ParseError(format!(
+            "Variable {} is assigned more than once at the file level. Which assignment wins depends on \
+             the kind of each value rather than on their order, so the file is rejected rather than \
+             guessed at.",
+            duplicate
+        )));
+    }
+
+    // File-level cycles, for the reason given at the block-level check in `block`.
+    if let Some(cycle) = first_let_cycle(&global_assignments) {
+        return Err(Error::ParseError(let_cycle_message(&cycle)));
+    }
+
+    let mut seen = std::collections::HashSet::new();
+    for name in named_rules.iter().map(|r| r.rule_name.as_str()).chain(
+        parameterized_rules
+            .iter()
+            .map(|p| p.rule.rule_name.as_str()),
+    ) {
+        if !seen.insert(name) {
+            return Err(Error::ParseError(format!(
+                "Rule {} is defined more than once. A reference to it would resolve to whichever \
+                 definition came first, so the file is rejected rather than guessed at.",
+                name
+            )));
+        }
+    }
+
+    let rules_file = RulesFile {
         assignments: global_assignments,
         guard_rules: named_rules,
         parameterized_rules,
-    }))
+    };
+
+    // The same argument as the duplicate-assignment checks above, over the one namespace those two do
+    // not compare against. They match assignment names to each other; a filter's capture name is a
+    // variable defined in that scope as well -- it is read back as `%name` like any other -- and a name
+    // that is both resolves by kind precedence in exactly the way the check above refuses to guess at.
+    //
+    // Checked here rather than in `block`, because the scopes have to be enumerated one at a time and
+    // that function is generic over its clause type, which leaves it unable to walk them.
+    if let Some((name, scope)) = first_name_assigned_and_captured(&rules_file) {
+        return Err(Error::ParseError(format!(
+            "Variable {name} is both assigned and declared as a filter capture {scope}. Which one \
+             {name} resolves to depends on the kind of the assigned value rather than on their order, \
+             so the file is rejected rather than guessed at. Rename one of them.",
+            name = name,
+            scope = scope
+        )));
+    }
+
+    Ok(Some(rules_file))
 }
 
 //

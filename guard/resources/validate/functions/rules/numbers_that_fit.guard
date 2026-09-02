@@ -1,0 +1,16 @@
+#
+# The control for numbers_that_do_not_fit.guard. Two ordinary floats that really are different, converted
+# and compared, with the truncation toward zero that docs/FUNCTIONS.md:362 promises: 12.9 becomes 12.
+#
+# Refusing values that do not fit leaves this untouched, so the rule passes before that change and after
+# it. If it ever moves, the range check has taken a value with it that it should not have.
+#
+let template = Resources.*[ Type == 'AWS::New::Service' ]
+
+rule BUDGET_DIFFERS_FROM_LIMIT when %template !empty {
+    let budget = parse_int(%template.Properties.Budget)
+    let limit = parse_int(%template.Properties.Limit)
+    %budget != %limit
+    %budget == 5
+    %limit == 12
+}

@@ -1,7 +1,7 @@
 use fancy_regex::Regex;
 use std::{
     cmp::min,
-    collections::{BTreeSet, HashMap, HashSet},
+    collections::{BTreeMap, BTreeSet, HashSet},
     io::Write,
     rc::Rc,
 };
@@ -169,6 +169,20 @@ fn unary_err_msg(
     Ok(width)
 }
 
+/// The signal that this reporter cannot organise a finding by CloudFormation resource.
+///
+/// `report_eval` catches `InternalError` from `single_line` and delegates to the next reporter, so
+/// this is how the fallback is requested rather than an error in the ordinary sense.
+///
+/// The key is formatted in. The message used to be a `String::from` containing a literal `{key}`, so it
+/// promised to name the path it could not resolve and then printed the braces.
+fn unresolved_key(key: &str) -> crate::Error {
+    crate::Error::InternalError(UnresolvedKeyForReporter(format!(
+        "Unable to resolve key {key} for single line-summary when expecting a cloudformation \
+         template, falling back on next reporter"
+    )))
+}
+
 fn single_line(
     writer: &mut dyn Write,
     data_file: &str,
@@ -191,17 +205,71 @@ fn single_line(
     }
 
     let root = data.root().unwrap();
-    let mut by_resources = HashMap::new();
-    for (key, value) in path_tree.range(String::from("/Resources")..) {
+    // `BTreeMap`, not `HashMap`: this map is iterated to write the output, and a
+    // `std::collections::HashMap` seeds its hasher per process, so the `Resource = ...` blocks
+    // came out in a different order on every run. A template with three non-compliant resources
+    // produced five distinct outputs in fifteen runs of one binary, which makes the output
+    // undiffable in CI and made a differential over fixtures report changes that were noise.
+    let mut by_resources = BTreeMap::new();
+
+    // Every finding has to sit under `/Resources/` for this reporter to say anything true about the
+    // file, so if one does not, the whole file goes to the next reporter.
+    //
+    // The range below was `range("/Resources"..)` with no upper bound, which is wrong in both
+    // directions and silently so. Findings under a section sorting *before* `Resources` were dropped
+    // from the aggregation and the file then reported "Number of non-compliant resources 0" while
+    // exiting 19 -- a failing gate with nothing to act on, which is worse than a crash because it
+    // looks like a report. Findings under a section sorting *after* it were admitted and then
+    // panicked: `Rules` and `Transform` are real CloudFormation sections and both sort after
+    // `Resources` ("Rules" > "Resources" at u vs e), so a SAM template with a `Transform` and a
+    // failing clause under it died at exit 101.
+    // Any *located* path outside `/Resources/` is what this reporter cannot place. The loop below only
+    // consumes keys under `/Resources/`, so every other located path is dropped by it, and the file is
+    // then described by a resource count that does not include the finding.
+    //
+    // Emptiness is the discriminator, and depth is not -- that took two attempts. A key more than two
+    // separators deep leaves every shallower one silently lost: `Outputs.a`, `Parameters.p`,
+    // `Transform.t`, `Mappings.m` and a bare `/Resources` all sit at two or fewer and all reported
+    // "Number of non-compliant resources 0" with the path never named. Two of those were worse than
+    // pre-existing -- the old `else` branch used to fall back for `/Transform/t` and `/Resources`, so a
+    // depth test regressed them -- along with 23 fixtures whose retrieval error reads "Could not find
+    // key Vol inside struct at path /Resources".
+    //
+    // What separates the cases is whether the finding has a path at all. A retrieval error carries an
+    // empty one and is reported further down as "Property traversed until []", so it is not lost by
+    // being absent from the aggregation and must not demote the file.
+    if let Some((key, _)) = path_tree
+        .iter()
+        .find(|(key, _)| !key.is_empty() && !key.starts_with("/Resources/"))
+    {
+        return Err(unresolved_key(key));
+    }
+
+    for (key, value) in path_tree
+        .range(String::from("/Resources/")..)
+        .take_while(|(key, _)| key.starts_with("/Resources/"))
+    {
         let matches = key.matches('/').count();
         let mut count = 1;
 
         if matches > 2 {
             loop {
+                // Not `unreachable!()`. This reporter organises findings by CloudFormation resource,
+                // and a path under `/Resources` need not name one: guard validates plain YAML and JSON
+                // too, so `Resources.Nested.inner.key` is a perfectly good query against a document
+                // where `Nested` has no `Type`. Every candidate prefix failing to resolve is that
+                // case, not a broken invariant, and it panicked the process at exit 101 on a template
+                // whose only fault was not being CloudFormation.
+                //
+                // The arm below already had the answer: hand back an `InternalError` and let
+                // `report_eval` fall through to the next reporter, which does not assume the shape.
                 if matches - count == 0 {
-                    unreachable!()
+                    return Err(unresolved_key(key));
                 }
-                let resource_name = get_resource_name(key, count, matches);
+                let resource_name = match get_resource_name(key, count, matches) {
+                    Some(name) => name,
+                    None => return Err(unresolved_key(key)),
+                };
 
                 match handle_resource_aggr(data, root, resource_name, &mut by_resources, value) {
                     Some(_) => break,
@@ -211,15 +279,7 @@ fn single_line(
         } else {
             let resource_name = match CFN_RESOURCES.captures(key) {
                 Ok(Some(cap)) => cap.get(1).unwrap().as_str(),
-                _ => {
-                    return Err(crate::Error::InternalError(
-                        UnresolvedKeyForReporter(
-                            String::from(
-                                "Unable to resolve key {key} for single line-summary when expecting a cloudformation template, falling back on next reporter"
-                            )
-                        )
-                    ));
-                }
+                _ => return Err(unresolved_key(key)),
             };
 
             match handle_resource_aggr(
@@ -230,7 +290,9 @@ fn single_line(
                 value,
             ) {
                 Some(_) => {}
-                None => unreachable!(),
+                // Same reasoning as above: the key matched the shape of a resource path but names
+                // nothing this reporter can aggregate under.
+                None => return Err(unresolved_key(key)),
             }
         };
     }
@@ -248,6 +310,14 @@ fn single_line(
         "Number of non-compliant resources {}",
         num_of_resources
     )?;
+
+    // What the per-resource output below is about to render, gathered before the loop consumes the map.
+    //
+    // `pprint_clauses` renders a clause only when it is in the resource's own set, so the union of those
+    // sets *is* the rendered set. Handing it to the unattributed section lets that section ask the only
+    // question that matters -- "did anything show this finding?" -- instead of predicting the answer from a
+    // path, which is what it did before and got wrong in both directions.
+    let rendered = super::common::Rendered::of(by_resources.values());
 
     for (_resource_name, resource) in by_resources {
         writeln!(writer, "Resource = {} {{", resource.name.yellow().bold())?;
@@ -277,10 +347,18 @@ fn single_line(
                 _ => unreachable!(),
             };
 
+            // A whole path segment, not a prefix of one. `starts_with` matched `/chk` against
+            // `/chk2/...`, so a resource whose only findings came from rule `chk2` rendered an empty
+            // `Rule = chk { ALL { } }` block as well -- and once the unattributed section existed, `chk`
+            // could appear under a resource while its own finding printed as belonging to no resource.
+            // Paths are `/<rule>/...`, so the segment ends at the next separator or at the end.
             let range = resource
                 .paths
                 .range(rule_name.clone()..)
-                .take_while(|p| p.starts_with(&rule_name))
+                .take_while(|p| {
+                    p.strip_prefix(&rule_name)
+                        .is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))
+                })
                 .count();
             if range > 0 {
                 struct ErrWriter<'w, 'b> {
@@ -453,61 +531,13 @@ fn single_line(
     // query, which such a block does not have either. The result was a run that correctly exited 19
     // and printed "Number of non-compliant resources 0" with no reason given anywhere -- the
     // explanation was recorded and then dropped on the floor.
-    let mut unattributed = Vec::new();
-    for each_rule in &failure_report.not_compliant {
-        collect_unattributed_explanations(each_rule, &mut unattributed);
-    }
-    if !unattributed.is_empty() {
-        writeln!(writer, "Could not be evaluated:")?;
-        for (context, message) in unattributed {
-            writeln!(writer, "  {context}")?;
-            writeln!(writer, "    {message}")?;
-        }
-    }
+    super::common::write_unattributed_explanations(
+        writer,
+        &failure_report.not_compliant,
+        &rendered,
+    )?;
 
     Ok(())
-}
-
-/// Collect `(context, explanation)` for failed blocks that carry a message but no resolved value.
-///
-/// `unresolved.is_none()` is the discriminator: a block that failed while traversing a query keeps
-/// the value it got to, and the per-resource output renders that. A block with no such value failed
-/// for a reason that is only in its message.
-fn collect_unattributed_explanations(clause: &ClauseReport<'_>, out: &mut Vec<(String, String)>) {
-    match clause {
-        ClauseReport::Block(blk) if blk.unresolved.is_none() => {
-            if let Some(explanation) = &blk.messages.error_message {
-                out.push((blk.context.to_string(), explanation.clone()));
-            }
-        }
-        ClauseReport::Block(_) | ClauseReport::Clause(_) => {}
-        ClauseReport::Rule(rule) => {
-            // A rule that failed on its own condition has no clause findings underneath it, so the
-            // per-resource output above has nothing to render and this message is the only account
-            // of why the rule failed. `checks.is_empty()` is the discriminator: a rule whose clauses
-            // produced findings has them rendered per resource already, and repeating the rule-level
-            // message there would duplicate rather than explain.
-            //
-            // Reached when a condition cannot be answered across a rule boundary -- a gate whose
-            // referenced or parameterized rule is undecidable. The evaluator records the explanation
-            // on the rule, the JSON reporter has always printed it, and the console reporter printed
-            // "Number of non-compliant resources 0" and nothing else: a run that exits 19 and does
-            // not say why.
-            if rule.checks.is_empty() {
-                if let Some(explanation) = &rule.messages.custom_message {
-                    out.push((format!("rule {}", rule.name), explanation.clone()));
-                }
-            }
-            for child in &rule.checks {
-                collect_unattributed_explanations(child, out);
-            }
-        }
-        ClauseReport::Disjunctions(ors) => {
-            for child in &ors.checks {
-                collect_unattributed_explanations(child, out);
-            }
-        }
-    }
 }
 
 ///
@@ -521,7 +551,7 @@ fn collect_unattributed_explanations(clause: &ClauseReport<'_>, out: &mut Vec<(S
 ///
 /// returns: String
 /// ```
-fn get_resource_name(key: &str, count: usize, matches: usize) -> String {
+fn get_resource_name(key: &str, count: usize, matches: usize) -> Option<String> {
     let c = &char::from_u32(0xC).unwrap().to_string();
     // count = 2; key = "/Resources/foo/bar/baz -> placeholder = "\fResources\ffoo\fbar/baz"
     let mut placeholder = str::replacen(key, "/", c, matches - count);
@@ -533,9 +563,13 @@ fn get_resource_name(key: &str, count: usize, matches: usize) -> String {
     match CFN_RESOURCES.captures(&placeholder) {
         Ok(Some(cap)) => {
             // resource_name = "foo/bar"
-            str::replace(cap.get(1).unwrap().as_str(), c, "/")
+            Some(str::replace(cap.get(1).unwrap().as_str(), c, "/"))
         }
-        _ => unreachable!(),
+        // `None`, not `unreachable!()`. The caller filters to keys under `/Resources/` now, so this
+        // should not be reached -- but "should not" is what the panic already claimed, and it was
+        // reachable through an unbounded range for as long as that range existed. A key this cannot
+        // parse is one this reporter cannot describe, which is a fallback, not a crash.
+        _ => None,
     }
 }
 
@@ -543,7 +577,7 @@ fn handle_resource_aggr<'record, 'value: 'record>(
     data: &'value Traversal<'_>,
     root: &'value Node<'_>,
     name: String,
-    by_resources: &mut HashMap<String, LocalResourceAggr<'record, 'value>>,
+    by_resources: &mut BTreeMap<String, LocalResourceAggr<'record, 'value>>,
     value: &[Rc<crate::commands::reporters::validate::common::Node<'record, 'value>>],
 ) -> Option<()> {
     let path = format!("/Resources/{}", name);
@@ -555,14 +589,19 @@ fn handle_resource_aggr<'record, 'value: 'record>(
     let resource_type = match data.at("0/Type", resource) {
         Ok(TraversalResult::Value(val)) => match val.value() {
             PathAwareValue::String((_, v)) => v.as_str(),
-            _ => unreachable!(),
+            // Matching the arm below rather than panicking. A `Type` that is not a string means this
+            // is not a resource whose type this reporter can name, which is the same situation as a
+            // `Type` that is absent.
+            _ => return None,
         },
         _ => return None,
     };
     let cdk_path = match data.at("0/Metadata/aws:cdk:path", resource) {
         Ok(TraversalResult::Value(val)) => match val.value() {
             PathAwareValue::String((_, v)) => Some(v.as_str()),
-            _ => unreachable!(),
+            // As with `Type` above, and as the arm below already did for an absent key: a
+            // `aws:cdk:path` that is not a string is a resource with no CDK path to show.
+            _ => None,
         },
         _ => None,
     };

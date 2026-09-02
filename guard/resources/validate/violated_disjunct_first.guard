@@ -1,0 +1,17 @@
+#
+# A condition whose undecidable disjunct is written second.
+#
+# `Outcome::or` answers `Unevaluatable` for `Violated or Unevaluatable`, so this whole condition could
+# not be evaluated even though its first branch was: one branch definitely did not hold, the other
+# could not be decided, and a disjunction holding an undecided branch is undecided rather than
+# violated.
+#
+# The rule therefore fails for "the condition could not be evaluated", and the clause that could not
+# be evaluated is `Enabled !EMPTY`. `Port > "abc"` was evaluated and answered violated, recording the
+# comparator's own explanation while doing so. Paired with `undecidable_disjunct_first.guard`, which
+# is the same two branches in the other order: the reason both print must be the EMPTY type error,
+# because that is the clause the sentence is about.
+#
+rule condition_reason_is_not_positional when Port > "abc" or Enabled !EMPTY {
+    Name == "definitely_not_this"
+}

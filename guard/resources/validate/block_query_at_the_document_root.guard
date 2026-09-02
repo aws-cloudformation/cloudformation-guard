@@ -1,0 +1,11 @@
+# A block whose query fails at the document root. The `<< >>` below is written on the clause inside the
+# block, which a block whose query resolved to nothing never runs, and a block report carries no
+# `custom_message` on any of its four constructors -- so the section prints the evaluator's account alone
+# and no spelling of this rule would change that. `Parameters` is absent, so the block's query resolves to
+# nothing and the value it traversed to is the document, whose path is empty. The reporter had no bucket for
+# a finding with no path, and the collector for blocks required `unresolved` absent: exit 19 saying nothing.
+rule parameters_are_constrained {
+    Parameters {
+        Env exists  << Every template must constrain Env >>
+    }
+}

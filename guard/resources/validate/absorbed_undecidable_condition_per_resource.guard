@@ -1,0 +1,13 @@
+#
+# The same absorbed condition as `absorbed_undecidable_condition.guard`, with the undecidable conjunct
+# reaching every resource instead of one root value.
+#
+# `Resources.*.Properties.Enabled !EMPTY` records the type error once per matched resource, so the
+# record tree holds as many explanations as there are resources while the clause still contributes one
+# answer to the fold. The note belongs to the condition, not to the resource, so a template with three
+# resources must produce one line and not three.
+#
+rule buckets_flagged_and_named when Resources.*.Properties.Enabled !EMPTY
+                                    Name == "nope" {
+    Resources.*.Properties.MustBeTrue == true
+}

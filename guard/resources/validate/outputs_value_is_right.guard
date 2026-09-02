@@ -1,0 +1,3 @@
+rule outputs_value_is_right {
+    Outputs.a.b.c == "right"
+}

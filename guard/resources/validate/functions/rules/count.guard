@@ -1,18 +1,25 @@
+# Two counts, two names. This rule used to bind `res` twice and assert `%res == 3` after each, which read as
+# "count the properties, check it, now count the collection, check it" and was not that: the second `let`
+# overwrote the first, so both assertions tested the collection. The first was dead, and it was also wrong --
+# there are five properties, not three, so honouring the order it appears to have would have failed it.
+#
+# Rebinding a name in one scope is now rejected by the parser, for exactly this reason: which assignment wins
+# is decided by the kind of each value rather than by their order.
 let template = Resources.*[ Type == 'AWS::New::Service' ]
 rule SOME_RULE when %template !empty {
     %template.Properties exists
     %template.Properties is_struct
 
     let props = %template.Properties.*
-    let res = count(%props)
-    %res == 3
+    let props_count = count(%props)
+    %props_count == 5
 
     %template.Collection exists
     %template.Collection is_list
 
     let collection = %template.Collection.*
-    let res = count(%collection)
-    %res == 3
+    let collection_count = count(%collection)
+    %collection_count == 3
 }
 
 let buckets = Resources.*[ Type == 'AWS::S3::Bucket' ]

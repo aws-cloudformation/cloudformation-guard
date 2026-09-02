@@ -1,20 +1,25 @@
 Test Case #1
 Name: Empty, SKIP
-  No Test expectation was set for Rule S3_BUCKET_SERVER_SIDE_ENCRYPTION_ENABLED
+  PASS Rules:
+    S3_BUCKET_LOGGING_ENABLED: Expected = SKIP
 
 Test Case #2
 Name: No resources, SKIP
-  No Test expectation was set for Rule S3_BUCKET_SERVER_SIDE_ENCRYPTION_ENABLED
+  PASS Rules:
+    S3_BUCKET_LOGGING_ENABLED: Expected = SKIP
 
 Test Case #3
 Name: S3 Bucket with Logging Configuration present in resource, PASS
-  No Test expectation was set for Rule S3_BUCKET_SERVER_SIDE_ENCRYPTION_ENABLED
+  PASS Rules:
+    S3_BUCKET_LOGGING_ENABLED: Expected = PASS
 
 Test Case #4
 Name: S3 Bucket with Logging Configuration missing, FAIL
-  No Test expectation was set for Rule S3_BUCKET_SERVER_SIDE_ENCRYPTION_ENABLED
+  PASS Rules:
+    S3_BUCKET_LOGGING_ENABLED: Expected = FAIL
 
 Test Case #5
 Name: S3 Bucket with Logging Configuration missing with suppression, SKIP
-  No Test expectation was set for Rule S3_BUCKET_SERVER_SIDE_ENCRYPTION_ENABLED
+  PASS Rules:
+    S3_BUCKET_LOGGING_ENABLED: Expected = SKIP
 

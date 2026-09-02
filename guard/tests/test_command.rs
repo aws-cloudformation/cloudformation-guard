@@ -129,6 +129,19 @@ mod test_command_tests {
         }
     }
 
+    /// A data file whose input carries a YAML shorthand tag (`!Ref`) is read, and its expectations
+    /// are checked.
+    ///
+    /// The second half is new. This paired `s3_bucket_logging_enabled_tests` against
+    /// `s3_bucket_server_side_encryption_enabled.guard`, so all five expectations named a rule that
+    /// file does not have and none of them was consulted: the recorded output was five cases of
+    /// `No Test expectation was set for Rule S3_BUCKET_SERVER_SIDE_ENCRYPTION_ENABLED` and exit 0.
+    /// The test proved the file parsed and nothing else, which is half of what its name claims.
+    ///
+    /// Fixed by pairing the data file with the rules file it was written for rather than by relaxing
+    /// the check that caught it. `S3_BUCKET_LOGGING_ENABLED` is in
+    /// `resources/validate/rules-dir/s3_bucket_logging_enabled.guard`, and against that the five
+    /// expectations -- SKIP, SKIP, PASS, FAIL, SKIP -- are assertions.
     #[rstest]
     #[case("json")]
     #[case("yaml")]
@@ -141,7 +154,7 @@ mod test_command_tests {
                 file_type
             )))
             .rules(Some(
-                "resources/validate/rules-dir/s3_bucket_server_side_encryption_enabled.guard",
+                "resources/validate/rules-dir/s3_bucket_logging_enabled.guard",
             ))
             .run(&mut writer, &mut reader);
 
@@ -179,6 +192,58 @@ mod test_command_tests {
         Ok(())
     }
 
+    /// A rule that cannot be evaluated costs its own expectation, not the file's.
+    ///
+    /// `get_by_result` propagated the evaluation error, so a rules file with one unresolvable variable
+    /// printed the case number, the case name, one error line and nothing else — neither of the two
+    /// decidable expectations checked or reported, and no report at all in `json` or `junit`.
+    ///
+    /// Both halves are asserted. The error must still be stated, because the ruleset really is broken; and
+    /// the two expectations must still be checked, because `eval_rules_file` evaluates every rule before
+    /// returning an error, so their verdicts are in the record and there is nothing to gain by discarding
+    /// them.
+    ///
+    /// `INCORRECT_STATUS_ERROR` is the command's own error code, and it is deliberately not
+    /// `TEST_COMMAND_FAILURE`: an expectation that could not be evaluated is a different answer from an
+    /// expectation that was not met.
+    #[test]
+    fn a_rule_that_cannot_be_evaluated_does_not_discard_the_other_expectations() {
+        let mut reader = Reader::default();
+        let mut writer = Writer::new(WBVec(vec![])).expect("Failed to create writer.");
+        let status_code = TestCommandTestRunner::default()
+            .test_data(Some(
+                "resources/test-command/data-dir/a_broken_rule_beside_working_ones_tests.yaml",
+            ))
+            .rules(Some(
+                "resources/test-command/rule-dir/a_broken_rule_beside_working_ones.guard",
+            ))
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(
+            StatusCode::INCORRECT_STATUS_ERROR,
+            status_code,
+            "a rule that could not be evaluated is an error, not an unmet expectation"
+        );
+
+        let output = writer.stripped().expect("failed to read the writer");
+        assert!(
+            output.contains("Could not resolve variable by name nm"),
+            "the run must still say what it could not evaluate:\n{}",
+            output
+        );
+        for expectation in [
+            "bucket_is_named_expected: Expected = FAIL",
+            "producer: Expected = PASS",
+        ] {
+            assert!(
+                output.contains(expectation),
+                "and must still report {}:\n{}",
+                expectation,
+                output
+            );
+        }
+    }
+
     #[test]
     fn test_parse_error_when_guard_rule_has_syntax_error() {
         let mut reader = Reader::default();
@@ -189,8 +254,13 @@ mod test_command_tests {
             .verbose()
             .run(&mut writer, &mut reader);
 
+        // Line 8 of that fixture is `%redshift_clusters.Properties.KmsKeyId == {"Fn::ImportValue":
+        // /{"Fn::Sub":"${pSecretKmsKey}"}}`, and the `/` in the middle of it opens a regular
+        // expression that never closes before the line ends. So the report names the unterminated
+        // regex alongside the alternation it was tried in. It used to name only the alternation,
+        // because the regex error was recoverable and its message was discarded.
         let expected_err_msg = String::from(
-            r#"Parse Error on ruleset file Parser Error when parsing `Parsing Error Error parsing file resources/test-command/rule-dir/invalid_rule.guard at line 8 at column 46, when handling expecting either a property access "engine.core" or value like "string" or ["this", "that"], fragment  {"Fn::ImportValue":/{"Fn::Sub":"${pSecretKmsKey}"}}
+            r#"Parse Error on ruleset file Parser Error when parsing `Parsing Error Error parsing file resources/test-command/rule-dir/invalid_rule.guard at line 8 at column 46, when handling expecting either a property access "engine.core" or value like "string" or ["this", "that"]/Could not parse regular expression: no closing / before the end of the line, fragment  {"Fn::ImportValue":/{"Fn::Sub":"${pSecretKmsKey}"}}
 }
 `
 "#,
@@ -256,6 +326,286 @@ mod test_command_tests {
         assert_output_from_file_eq!(
             "resources/test-command/output-dir/test_data_dir_verbose.out",
             writer
+        );
+    }
+
+    /// The plaintext directory report writes one section per rules file, terminated by a `---` line.
+    /// Returns the section that names `rule_file`.
+    fn section_for<'out>(stdout: &'out str, rule_file: &str) -> &'out str {
+        stdout
+            .split("\n---")
+            .find(|section| section.contains(rule_file))
+            .unwrap_or_else(|| panic!("no section mentions {} in:\n{}", rule_file, stdout))
+    }
+
+    /// The case names a section reported, which is the set of test files that rules file was paired
+    /// with.
+    fn suite_names_in(section: &str) -> Vec<&str> {
+        section
+            .lines()
+            .filter_map(|line| line.trim().strip_prefix("Name: "))
+            .collect()
+    }
+
+    /// A test failure was reported as a success, because a shorter rules file stem claimed a longer
+    /// one's tests.
+    ///
+    /// Test files are paired with rules files by prefix, and the first match in sort order won. With
+    /// `s3.guard` and `s3_encryption.guard` in one directory, `s3_encryption_tests.yml` starts with
+    /// `s3`, so it was attached to `s3.guard` -- whose rules it does not name -- and
+    /// `s3_encryption.guard` was reported as having no tests at all.
+    ///
+    /// The exit code is what makes this a defect rather than untidy output. This fixture's
+    /// expectation is not met: run as `test -r s3_encryption.guard -t tests/s3_encryption_tests.yml`
+    /// it exits 7, and over the same files `test -d` exited 0. A suite that fails when you point at
+    /// it and passes when the directory walker finds it is worse than no suite.
+    #[test]
+    fn a_shorter_rules_file_stem_does_not_claim_the_longer_ones_tests() {
+        let mut reader = Reader::default();
+        let mut writer = Writer::new(WBVec(vec![])).expect("Failed to create writer.");
+        let status_code = TestCommandTestRunner::default()
+            .directory(Option::from(
+                "resources/test-command/prefix-collision-failing-suite",
+            ))
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(
+            StatusCode::TEST_COMMAND_FAILURE,
+            status_code,
+            "the unmet expectation in s3_encryption_tests.yml must fail the run"
+        );
+
+        let stdout = writer.stripped().expect("failed to read stdout");
+        assert!(
+            !stdout.contains("did not have any tests associated"),
+            "each rules file here has a test file of its own:\n{}",
+            stdout
+        );
+
+        let encryption = section_for(&stdout, "/s3_encryption.guard");
+        assert_eq!(
+            suite_names_in(encryption),
+            vec!["suite for s3 encryption"],
+            "s3_encryption.guard must be paired with its own suite only:\n{}",
+            encryption
+        );
+        assert!(
+            encryption.contains("s3_encryption_rule: Expected = PASS, Evaluated = [FAIL]"),
+            "and must report which expectation was not met:\n{}",
+            encryption
+        );
+        assert_eq!(
+            suite_names_in(section_for(&stdout, "/s3.guard")),
+            vec!["suite for s3"],
+            "s3.guard must keep only its own suite:\n{}",
+            stdout
+        );
+    }
+
+    /// Longest-prefix pairing is not merely turning collisions red.
+    ///
+    /// The same two-file shape as the failing case, with both expectations met. Both rules files must
+    /// run their own suite and neither may be skipped, so the fix cannot be mistaken for one that
+    /// fails any directory it cannot pair confidently.
+    #[test]
+    fn each_rules_file_in_a_prefix_collision_runs_its_own_passing_suite() {
+        let mut reader = Reader::default();
+        let mut writer = Writer::new(WBVec(vec![])).expect("Failed to create writer.");
+        let status_code = TestCommandTestRunner::default()
+            .directory(Option::from(
+                "resources/test-command/prefix-collision-both-passing",
+            ))
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(StatusCode::SUCCESS, status_code);
+
+        let stdout = writer.stripped().expect("failed to read stdout");
+        assert!(
+            !stdout.contains("did not have any tests associated"),
+            "neither rules file may be skipped:\n{}",
+            stdout
+        );
+        assert_eq!(
+            suite_names_in(section_for(&stdout, "/s3.guard")),
+            vec!["suite for s3"],
+            "s3.guard must be paired with its own suite only:\n{}",
+            stdout
+        );
+        assert_eq!(
+            suite_names_in(section_for(&stdout, "/s3_encryption.guard")),
+            vec!["suite for s3 encryption"],
+            "s3_encryption.guard must be paired with its own suite only:\n{}",
+            stdout
+        );
+        assert_eq!(
+            stdout.matches("PASS Rules:").count(),
+            2,
+            "one passing suite per rules file:\n{}",
+            stdout
+        );
+    }
+
+    /// A rules file with no test file of its own is still skipped, and skipping is still not a
+    /// failure.
+    ///
+    /// `orphan.guard` shares no prefix with `paired_tests.yml`, so it has nothing to run. Pairing on
+    /// the longest match narrows which rules file a test file lands on; it must not widen what counts
+    /// as having no tests, and an unpaired rules file must not fail the run.
+    ///
+    /// This one passes before the change as well as after. That is what it is for.
+    #[test]
+    fn a_rules_file_with_no_test_file_is_skipped_without_failing_the_run() {
+        let mut reader = Reader::default();
+        let mut writer = Writer::new(WBVec(vec![])).expect("Failed to create writer.");
+        let status_code = TestCommandTestRunner::default()
+            .directory(Option::from(
+                "resources/test-command/rules-file-without-tests",
+            ))
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(
+            StatusCode::SUCCESS,
+            status_code,
+            "a rules file with no tests is not a test failure"
+        );
+
+        let stdout = writer.stripped().expect("failed to read stdout");
+        assert!(
+            stdout.contains(
+                "Guard File resources/test-command/rules-file-without-tests/orphan.guard did not have any tests associated, skipping."
+            ),
+            "the unpaired rules file must still be reported as skipped:\n{}",
+            stdout
+        );
+        assert_eq!(
+            suite_names_in(section_for(&stdout, "/paired.guard")),
+            vec!["suite for paired"],
+            "and the paired one must still run:\n{}",
+            stdout
+        );
+    }
+
+    /// Three stems where each is a prefix of the next.
+    ///
+    /// `a.guard`, `a_b.guard` and `a_b_c.guard` with a test file apiece. Every one of the three test
+    /// file names starts with `a`, so first-match sent all three to `a.guard` and skipped the other
+    /// two rules files. Longest-prefix is the rule that separates them: `a_b_tests.yml` matches `a`
+    /// and `a_b` but not `a_b_c`, and `a_b_c_tests.yml` matches all three.
+    #[test]
+    fn a_three_way_prefix_collision_pairs_each_rules_file_with_its_own_tests() {
+        let mut reader = Reader::default();
+        let mut writer = Writer::new(WBVec(vec![])).expect("Failed to create writer.");
+        let status_code = TestCommandTestRunner::default()
+            .directory(Option::from(
+                "resources/test-command/prefix-collision-three-way",
+            ))
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(StatusCode::SUCCESS, status_code);
+
+        let stdout = writer.stripped().expect("failed to read stdout");
+        assert!(
+            !stdout.contains("did not have any tests associated"),
+            "all three rules files have a test file of their own:\n{}",
+            stdout
+        );
+        for (rule_file, suite) in [
+            ("/a.guard", "suite for a"),
+            ("/a_b.guard", "suite for a_b"),
+            ("/a_b_c.guard", "suite for a_b_c"),
+        ] {
+            assert_eq!(
+                suite_names_in(section_for(&stdout, rule_file)),
+                vec![suite],
+                "{} must be paired with {} and nothing else:\n{}",
+                rule_file,
+                suite,
+                stdout
+            );
+        }
+    }
+
+    /// A test file no rules file claimed is named, instead of being dropped in silence.
+    ///
+    /// This is what a rules file rename looks like. `s3_bucket.guard` beside `tests/s3_tests.yml`
+    /// ran nothing and said only that the rules file had no tests associated, which reads as benign
+    /// because a rules file legitimately may have none. The suite that was skipped fails: rename the
+    /// file to `s3_bucket_tests.yml` and change nothing else and the run goes from exit 0 to exit 7.
+    ///
+    /// The exit code is deliberately still 0. A `tests/` directory may hold a yaml or json file that
+    /// is not a suite at all and the walker cannot tell by name, so failing would break setups that
+    /// work; and the line about the rules file must stay as it was, because it is not wrong.
+    #[test]
+    fn a_test_file_that_matches_no_rules_file_is_named_rather_than_discarded() {
+        const DIR: &str = "resources/test-command/orphaned-test-file";
+
+        // `stripped` and `err_to_stripped` each consume the writer, so one run cannot be read for
+        // both streams. The command is deterministic over these files.
+        let run = || {
+            let mut reader = Reader::default();
+            let mut writer = Writer::new_with_err(WBVec(vec![]), WBVec(vec![]))
+                .expect("Failed to create writer.");
+            let status_code = TestCommandTestRunner::default()
+                .directory(Option::from(DIR))
+                .run(&mut writer, &mut reader);
+
+            (status_code, writer)
+        };
+
+        let (status_code, err_writer) = run();
+        let (_, out_writer) = run();
+
+        assert_eq!(
+            StatusCode::SUCCESS,
+            status_code,
+            "naming the ignored file must not change the verdict"
+        );
+
+        let stderr = err_writer.err_to_stripped().expect("failed to read stderr");
+        assert!(
+            stderr.contains(
+                "resources/test-command/orphaned-test-file/tests/s3_tests.yml did not match any rules file, so it was not run"
+            ),
+            "the ignored test file must be named, path included:\n{}",
+            stderr
+        );
+
+        let stdout = out_writer.stripped().expect("failed to read stdout");
+        assert!(
+            stdout.contains(
+                "Guard File resources/test-command/orphaned-test-file/s3_bucket.guard did not have any tests associated, skipping."
+            ),
+            "and the existing line about the rules file must be unchanged:\n{}",
+            stdout
+        );
+    }
+
+    /// A directory where every test file pairs says nothing, so this does not become noise.
+    ///
+    /// Two shapes. `dir` is the plain one, every stem matching its own test file. The three-way
+    /// collision is the one that matters: whether a file was taken is answered once, where it is
+    /// taken, so longest-prefix pairing and this diagnostic cannot disagree. Deciding it a second
+    /// time by repeating the prefix test is what would report a paired file as unpaired, and
+    /// `a_b_tests.yml` -- which matches two stems and is claimed by one -- is where that would show.
+    #[rstest]
+    #[case("resources/test-command/dir")]
+    #[case("resources/test-command/prefix-collision-three-way")]
+    fn a_directory_where_every_test_file_pairs_reports_no_unmatched_file(#[case] dir: &str) {
+        let mut reader = Reader::default();
+        let mut writer =
+            Writer::new_with_err(WBVec(vec![]), WBVec(vec![])).expect("Failed to create writer.");
+        let status_code = TestCommandTestRunner::default()
+            .directory(Option::from(dir))
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(StatusCode::SUCCESS, status_code);
+
+        let stderr = writer.err_to_stripped().expect("failed to read stderr");
+        assert!(
+            !stderr.contains("did not match any rules file"),
+            "every test file in {} is paired, so nothing should be reported:\n{}",
+            dir,
+            stderr
         );
     }
 
@@ -364,16 +714,19 @@ mod test_command_tests {
         assert_eq!(StatusCode::TEST_COMMAND_FAILURE, status_code);
     }
 
-    /// An expectation that names no rule in the file says so.
+    /// An expectation that names no rule in the file says so and fails the run.
     ///
     /// It used to be dropped in silence. Expectations are read per evaluated rule, so one whose name
-    /// matches nothing is never consulted, and the run exits 0 having checked less than the file
-    /// asked for. The fixture asserts FAIL twice on names that do not exist and the run still
-    /// succeeds, which is the whole defect: a misspelled rule name turns an assertion into nothing
-    /// without ever saying so.
+    /// matches nothing is never consulted, and the run exited 0 having checked less than the file
+    /// asked for. The fixture asserts FAIL twice on names that do not exist, which is the whole
+    /// defect: a misspelled rule name turns an assertion into nothing without ever saying so.
     ///
-    /// Still exit 0 here. Failing the run would break suites that pass today, so this reports rather
-    /// than enforces; the reporters already print the mirror case for a rule with no expectation.
+    /// `INCORRECT_STATUS_ERROR` and not `TEST_COMMAND_FAILURE`, for the reason this file already
+    /// gives where a rule cannot be evaluated: an expectation that could not be evaluated is a
+    /// different answer from an expectation that was not met, and an expectation whose rule produced
+    /// no verdict was not evaluated -- there was nothing to compare it against. A stale name in a
+    /// test file is the same class of authoring defect as an unreadable expectation string, which
+    /// this command already answers with the error code.
     ///
     /// Two cases in the fixture and two lines expected, not four.
     #[rstest]
@@ -402,9 +755,9 @@ mod test_command_tests {
         };
 
         assert_eq!(
-            StatusCode::SUCCESS,
+            StatusCode::INCORRECT_STATUS_ERROR,
             status_code,
-            "reporting an unchecked expectation must not change the verdict"
+            "an expectation with no rule to check it against must fail the run"
         );
 
         let stderr = writer.err_to_stripped().expect("failed to read stderr");
@@ -434,6 +787,211 @@ mod test_command_tests {
         );
     }
 
+    /// An unchecked expectation reaches json, yaml and junit, and reddens all three.
+    ///
+    /// The plaintext reporter said so on stderr and no structured format said it at all. A consumer
+    /// reading the report saw a clean suite over a file where nothing had been checked: with every
+    /// expectation naming a rule that does not exist, the junit document was `tests="0"
+    /// failures="0"` and the run exited 0.
+    ///
+    /// The junit case is `status="error"` with an `<error>` body, counted into the suite's `errors`.
+    /// It was a `<skipped>`, which counts into `tests` and nowhere else -- so a CI step watching
+    /// `failures` and `errors`, which is what a junit step watches, saw a suite where every
+    /// expectation named a stale rule as entirely green.
+    ///
+    /// json and yaml carry the reason beside the name. There is more than one reason an expectation
+    /// can go unchecked and they call for different fixes, so the name alone would leave a consumer
+    /// to guess which one it had.
+    ///
+    /// Three expectations in the fixture and two unchecked ones per case, listed in sorted order
+    /// rather than the order the expectations were read: they come from a `HashMap`.
+    #[rstest]
+    #[case("json")]
+    #[case("yaml")]
+    #[case("junit")]
+    fn an_unchecked_expectation_is_reported_in_every_structured_format(#[case] output: &str) {
+        let mut reader = Reader::default();
+        let mut writer = Writer::new(WBVec(vec![])).expect("Failed to create writer.");
+        let status_code = TestCommandTestRunner::default()
+            .test_data(Option::from(
+                "resources/test-command/data-dir/expectation_for_a_rule_that_does_not_exist.yaml",
+            ))
+            .rules(Some(
+                "resources/validate/rules-dir/s3_bucket_server_side_encryption_enabled.guard",
+            ))
+            .output_format(output)
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(
+            StatusCode::INCORRECT_STATUS_ERROR,
+            status_code,
+            "an expectation with no rule to check it against must fail the run"
+        );
+
+        let writer = if output == "junit" {
+            sanitize_junit_writer(writer)
+        } else {
+            writer
+        };
+
+        assert_output_from_file_eq!(
+            format!("resources/test-command/output-dir/unchecked_expectation_{output}.out")
+                .as_str(),
+            writer
+        );
+    }
+
+    /// The two directions of an expectation/rule mismatch stay in separate arrays.
+    ///
+    /// `skipped_rules` holds rules the file defines which the test data gave no expectation for.
+    /// `unchecked_expectations` holds expectations the test data gave which no rule answers. Reusing
+    /// the first for the second would leave a consumer unable to tell which of the two had happened,
+    /// so this fixture produces exactly one of each in one case and the report must keep them apart.
+    ///
+    /// They also differ in verdict, which is the second reason not to merge them: a rule the test
+    /// data did not mention is a gap the author can see in the report, while an expectation no rule
+    /// answers reads like coverage the author does not have. Only the second fails the run, so this
+    /// fixture exits with the error code on account of its one unchecked expectation while its one
+    /// unmentioned rule contributes nothing.
+    #[test]
+    fn an_unchecked_expectation_is_not_confused_with_a_rule_that_has_no_expectation() {
+        let mut reader = Reader::default();
+        let mut writer = Writer::new(WBVec(vec![])).expect("Failed to create writer.");
+        let status_code = TestCommandTestRunner::default()
+            .test_data(Option::from(
+                "resources/test-command/data-dir/a_rule_with_no_expectation_beside_an_unchecked_expectation.yaml",
+            ))
+            .rules(Some(
+                "resources/validate/rules-dir/s3_bucket_server_side_encryption_enabled.guard",
+            ))
+            .output_format("json")
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(
+            StatusCode::INCORRECT_STATUS_ERROR,
+            status_code,
+            "the expectation with no rule fails the run; the rule with no expectation does not"
+        );
+
+        assert_output_from_file_eq!(
+            "resources/test-command/output-dir/no_expectation_beside_unchecked_expectation_json.out",
+            writer
+        );
+    }
+
+    /// An expectation for a parameterized rule is not told it names nothing.
+    ///
+    /// It does name something. `eval_rules_file` walks `guard_rules` only, and a parameterized rule
+    /// is evaluated where a clause invokes it, so it is recorded under the invoking rule rather than
+    /// under the file and never appears among the rules an expectation can be matched against. The
+    /// expectation is as inert as one naming a rule that does not exist -- so it fails the run the
+    /// same way -- but `No rule named encryption_is_on is in this file` was false, and the sentence
+    /// is now the stated reason for a failing run rather than a note beside a passing one.
+    ///
+    /// This is why the two cases are separated by what the file declares rather than by what ran.
+    /// The other reason is that the fixes differ: this one wants the expectation moved to whatever
+    /// invokes the rule, a stale name wants the test file corrected.
+    #[test]
+    fn an_expectation_for_a_parameterized_rule_says_it_is_parameterized() {
+        let mut reader = Reader::default();
+        let mut writer =
+            Writer::new_with_err(WBVec(vec![]), WBVec(vec![])).expect("Failed to create writer.");
+        let status_code = TestCommandTestRunner::default()
+            .test_data(Option::from(
+                "resources/test-command/data-dir/expectation_for_a_parameterized_rule.yaml",
+            ))
+            .rules(Some(
+                "resources/test-command/parameterized-rule/encryption.guard",
+            ))
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(
+            StatusCode::INCORRECT_STATUS_ERROR,
+            status_code,
+            "an expectation a parameterized rule can never answer must fail the run"
+        );
+
+        let stderr = writer.err_to_stripped().expect("failed to read stderr");
+        assert!(
+            stderr.contains(
+                "encryption_is_on is a parameterized rule, which only gets a verdict where a clause invokes it, so its expectation was not checked"
+            ),
+            "the reason must name the rule and say it is parameterized:\n{}",
+            stderr
+        );
+        assert!(
+            !stderr.contains("No rule named encryption_is_on"),
+            "and must not claim a rule the file declares is missing from it:\n{}",
+            stderr
+        );
+    }
+
+    /// In directory mode, an expectation for a rule defined in a sibling rules file fails.
+    ///
+    /// The case that decides whether failing on an unmatched expectation is right at all: if one
+    /// test file could be run against several rules files, an expectation naming a sibling file's
+    /// rule would be legitimate and failing on it would break working setups.
+    ///
+    /// It cannot. `OrderedTestDirectory::from` filters the rules files whose stem prefixes the test
+    /// file name and then reduces them with `min_by_key`, which yields exactly one claimant, so a
+    /// test file is evaluated against one rules file and no other. The fixture proves it from the
+    /// outside: `tests/encryption_tests.yml` names `ENCRYPTION_ON` and `LOGGING_ON`, and the run
+    /// checks the first while reporting `logging.guard` as having no tests at all -- its rule was
+    /// never evaluated against this input, so `LOGGING_ON: PASS` asserted nothing.
+    ///
+    /// Both halves are asserted. Without the second, a future change that ran each test file against
+    /// every rules file in the directory would make this expectation real and the failure wrong, and
+    /// nothing here would notice.
+    #[test]
+    fn an_expectation_for_a_sibling_rules_files_rule_fails() {
+        const DIR: &str = "resources/test-command/expectation-for-a-sibling-rule";
+
+        // `stripped` and `err_to_stripped` each consume the writer, so one run cannot be read for
+        // both streams. The command is deterministic over these files.
+        let run = || {
+            let mut reader = Reader::default();
+            let mut writer = Writer::new_with_err(WBVec(vec![]), WBVec(vec![]))
+                .expect("Failed to create writer.");
+            let status_code = TestCommandTestRunner::default()
+                .directory(Option::from(DIR))
+                .run(&mut writer, &mut reader);
+
+            (status_code, writer)
+        };
+
+        let (status_code, err_writer) = run();
+        let (_, out_writer) = run();
+
+        assert_eq!(
+            StatusCode::INCORRECT_STATUS_ERROR,
+            status_code,
+            "the expectation for the sibling file's rule was never checked, so the run must say so"
+        );
+
+        let stderr = err_writer.err_to_stripped().expect("failed to read stderr");
+        assert!(
+            stderr.contains(
+                "No rule named LOGGING_ON is in this file, so its expectation was not checked"
+            ),
+            "the unchecked expectation must be named:\n{}",
+            stderr
+        );
+
+        let stdout = out_writer.stripped().expect("failed to read stdout");
+        assert!(
+            stdout.contains("ENCRYPTION_ON: Expected = PASS"),
+            "the expectation the paired rules file does answer must still be checked:\n{}",
+            stdout
+        );
+        assert!(
+            stdout.contains(&format!(
+                "Guard File {DIR}/logging.guard did not have any tests associated, skipping."
+            )),
+            "and the sibling file must be shown taking no part in the run:\n{}",
+            stdout
+        );
+    }
+
     /// The deprecation notices reach the command rule authors run.
     ///
     /// `validate` printed them and `test` did not, which is backwards. A notice saying a clause's
@@ -445,8 +1003,12 @@ mod test_command_tests {
     /// `--output-format json` is parsed -- which is also why the JSON case asserts the report still
     /// deserializes with the notice present.
     ///
-    /// Two notices from three cases, not six: a rule file is evaluated once per case, so the same
+    /// One notice from three cases, not three: a rule file is evaluated once per case, so the same
     /// notice is produced again for every case, and they are collapsed before being written.
+    ///
+    /// One rather than the parent branch's two because this branch removed the other clause's
+    /// reason to exist: an empty-collection comparison reports a failure here, so the notice that
+    /// warned about it was deleted with the behaviour it described.
     #[rstest]
     #[case("")]
     #[case("json")]
@@ -506,16 +1068,17 @@ mod test_command_tests {
 
         assert_eq!(
             notices.len(),
-            2,
-            "expected one notice per clause across all three cases, got {:?} from stderr {:?}",
+            1,
+            "expected one notice for the one clause across all three cases, got {:?} from stderr \
+             {:?}",
             notices,
             stderr
         );
         assert!(
-            notices
+            !notices
                 .iter()
                 .any(|n| n.contains("without comparing anything")),
-            "the empty-collection clause should say it compared nothing, got {:?}",
+            "the empty-collection notice must be gone on this branch, which fixes that clause: {:?}",
             notices
         );
         assert!(

@@ -1,0 +1,18 @@
+#
+# Budget and Limit differ by ten orders of magnitude, and neither fits in an i64.
+#
+# `parse_int` cast the float with `as`, which saturates, so both came back as 9223372036854775807 and a
+# rule asserting the two are equal was satisfied. Overflow and AlsoOverflow are the string form of the
+# same thing: both parse to infinity.
+#
+# One resource only. A selector matching several would mix resolved and unresolved values into the
+# comparison, which is a different question from whether the conversion saturated.
+#
+Resources:
+  saturating:
+    Type: AWS::New::Service
+    Properties:
+      Budget: 1.0e30
+      Limit: 1.0e40
+      Overflow: "1e400"
+      AlsoOverflow: "9e999"

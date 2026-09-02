@@ -28,6 +28,11 @@ fn yaml_loader() -> Result<()> {
     Ok(())
 }
 
+/// The assertion below has to be unconditional. It used to sit inside an
+/// `if let MarkedValue::Bool(..)`, so every spelling the loader read as a string satisfied the case
+/// by never reaching the assertion, and 14 of the 22 cases passed while asserting nothing. This
+/// file has named the whole YAML 1.1 set as the intended one since the cases were written; a test
+/// that could not fail is what let the capitalised spellings go on being strings anyway.
 #[rstest::rstest]
 #[case::standard_lowercase_true("true", true)]
 #[case::standard_capitalized_true("True", true)]
@@ -52,20 +57,23 @@ fn yaml_loader() -> Result<()> {
 #[case::yaml_n_lowercase("n", false)]
 #[case::yaml_n_uppercase("N", false)]
 fn test_handle_bool_happy_path(#[case] arg: &str, #[case] expected: bool) -> Result<()> {
-    let docs = format!("check: {arg}");
-
     let mut loader = Loader::new();
-    match loader.load(String::from(docs))? {
-        MarkedValue::Map(map, ..) => {
-            assert!(map.len() == 1);
-            let (.., result) = map.first().unwrap();
+    let value = loader.load(format!("check: {arg}"))?;
 
-            if let MarkedValue::Bool(result, ..) = *result {
-                assert_eq!(result, expected);
-            }
-        }
-        _ => unreachable!("this isn't possible"),
-    }
+    let map = match &value {
+        MarkedValue::Map(m, ..) => m,
+        _ => unreachable!("a single mapping loads as a map"),
+    };
+    assert_eq!(1, map.len());
+    let (.., loaded) = map.first().unwrap();
+
+    assert!(
+        matches!(loaded, MarkedValue::Bool(b, ..) if *b == expected),
+        "{} loaded as {:?}, not the boolean {}",
+        arg,
+        loaded,
+        expected
+    );
 
     Ok(())
 }
@@ -378,4 +386,211 @@ fn test_handle_null() {
         .to_owned();
 
     assert!(matches!(val, MarkedValue::String(..)));
+}
+
+/// `f64::from_str` accepts `nan`, `inf` and `infinity`. YAML resolves none of those to a float --
+/// it spells the non-finite floats `.nan` and `.inf`, and both of those were already falling
+/// through to `String` here, so the two halves of the same question disagreed.
+///
+/// What the disagreement cost: `Float(NaN)` is not equal to itself, and `PathAwareValue` asserts
+/// `Eq` while hashing its own contents. Two identical scalars in one document compared unequal,
+/// and the negation of that comparison passed -- a clause asserting two fields *differ* was
+/// satisfied by two fields spelled the same way.
+#[rstest::rstest]
+#[case::bare_nan("nan")]
+#[case::capitalized_nan("NaN")]
+#[case::uppercase_nan("NAN")]
+#[case::yaml_nan(".nan")]
+#[case::bare_inf("inf")]
+#[case::negative_inf("-inf")]
+#[case::spelled_out_infinity("infinity")]
+#[case::yaml_inf(".inf")]
+#[case::overflowing_exponent("1e999")]
+fn a_non_finite_scalar_is_not_a_float(#[case] scalar: &str) -> Result<()> {
+    let mut loader = Loader::new();
+    let value = loader.load(format!("check: {scalar}"))?;
+
+    let map = match &value {
+        MarkedValue::Map(m, _) => m,
+        _ => unreachable!("a single mapping loads as a map"),
+    };
+    let (.., loaded) = map.first().unwrap();
+
+    assert!(
+        matches!(loaded, MarkedValue::String(s, ..) if s == scalar),
+        "{} loaded as {:?}, but YAML resolves it to a string",
+        scalar,
+        loaded
+    );
+
+    Ok(())
+}
+
+/// The control for the case above: rejecting the non-finite spellings must not cost the finite
+/// floats, which is the entire reason the `f64` arm is there.
+#[rstest::rstest]
+#[case::simple_fraction("1.5", 1.5)]
+#[case::negative_fraction("-1.5", -1.5)]
+#[case::exponent("1e3", 1000.0)]
+#[case::negative_exponent("1e-3", 0.001)]
+#[case::largest_finite_f64("1.7976931348623157e308", f64::MAX)]
+fn a_finite_scalar_is_still_a_float(#[case] scalar: &str, #[case] expected: f64) -> Result<()> {
+    let mut loader = Loader::new();
+    let value = loader.load(format!("check: {scalar}"))?;
+
+    let map = match &value {
+        MarkedValue::Map(m, _) => m,
+        _ => unreachable!("a single mapping loads as a map"),
+    };
+    let (.., loaded) = map.first().unwrap();
+
+    assert!(
+        matches!(loaded, MarkedValue::Float(f, ..) if *f == expected),
+        "{} loaded as {:?}, not the float {}",
+        scalar,
+        loaded,
+        expected
+    );
+
+    Ok(())
+}
+
+/// A file holding no document at all -- nothing but comments -- aborted the process:
+///
+/// ```text
+/// thread 'main' panicked at guard/src/rules/libyaml/event.rs:63:14:
+/// not implemented
+/// ```
+///
+/// `load` returns only on `DocumentEnd`, so a stream with no document in it had no exit from the
+/// loop. It ran past `StreamEnd`, libyaml answered the next pull with `YAML_NO_EVENT`, and the
+/// wildcard arm of `convert_event` met that with `unimplemented!()`. An empty file and a
+/// whitespace-only file were both already reported as empty, so the degenerate case was handled
+/// and this one was not.
+///
+/// `catch_unwind` is what makes the absence of the panic explicit. Asserting on the returned
+/// `Err` alone would not: an aborting build never returns a value to assert on, so the assertion
+/// would be unreachable rather than false, which is how the vacuous `if let` in
+/// `test_handle_bool_happy_path` hid a defect for so long.
+#[rstest::rstest]
+#[case::a_single_comment_line("# just a comment\n")]
+#[case::a_comment_with_no_trailing_newline("# just a comment")]
+#[case::comments_separated_by_blank_lines("\n# a\n\n#  b\n")]
+#[case::a_fully_commented_out_template(
+    "# Resources:\n#   B:\n#     Properties:\n#       Encrypted: true\n"
+)]
+fn a_stream_with_no_document_is_an_error_and_not_a_panic(#[case] content: &str) {
+    let owned = content.to_string();
+    let outcome = std::panic::catch_unwind(move || Loader::new().load(owned));
+
+    let loaded = match outcome {
+        Ok(loaded) => loaded,
+        Err(..) => panic!(
+            "loading {:?} panicked instead of returning an error",
+            content
+        ),
+    };
+
+    assert!(
+        matches!(loaded, Err(Error::MissingDocument)),
+        "loading {:?} gave {:?}, not the missing-document error",
+        content,
+        loaded
+    );
+}
+
+/// The control for the case above. Comments are not the problem and must still be skipped when
+/// there is a document underneath them, so the fix cannot be "reject anything with a comment".
+#[test]
+fn comments_around_a_real_document_are_still_skipped() -> Result<()> {
+    let docs = "# leading\nEncrypted: true\n# trailing\n";
+
+    let mut loader = Loader::new();
+    let value = loader.load(String::from(docs))?;
+
+    let map = match &value {
+        MarkedValue::Map(m, ..) => m,
+        _ => unreachable!("a single mapping loads as a map"),
+    };
+    let (.., loaded) = map.first().unwrap();
+
+    assert!(
+        matches!(loaded, MarkedValue::Bool(true, ..)),
+        "the document under the comments loaded as {:?}",
+        loaded
+    );
+
+    Ok(())
+}
+
+/// The other half of `test_handle_bool_happy_path`: widening the boolean set must not sweep in
+/// everything that looks like one. YAML 1.1 admits three casings of each word -- all lowercase,
+/// initial capital, all uppercase -- so a mixed-case spelling is a string, and so is a word that
+/// merely contains one. Without these cases a `to_lowercase` or a `starts_with` would pass the set
+/// above while making `tRuE` a boolean, which no schema does.
+#[rstest::rstest]
+#[case::mixed_case_true("tRuE")]
+#[case::mixed_case_yes("yES")]
+#[case::mixed_case_off("oFf")]
+#[case::a_word_outside_the_set("enabled")]
+#[case::a_single_letter_outside_the_set("t")]
+#[case::a_word_that_starts_with_one("TRUE_VALUE")]
+#[case::a_word_that_ends_with_one("NOT_TRUE")]
+fn a_scalar_outside_the_boolean_set_is_still_a_string(#[case] scalar: &str) -> Result<()> {
+    let mut loader = Loader::new();
+    let value = loader.load(format!("check: {scalar}"))?;
+
+    let map = match &value {
+        MarkedValue::Map(m, ..) => m,
+        _ => unreachable!("a single mapping loads as a map"),
+    };
+    let (.., loaded) = map.first().unwrap();
+
+    assert!(
+        matches!(loaded, MarkedValue::String(s, ..) if s == scalar),
+        "{} loaded as {:?}, but no YAML schema resolves it to a boolean",
+        scalar,
+        loaded
+    );
+
+    Ok(())
+}
+
+/// An explicit `!!bool` tag went through `str::parse::<bool>`, which takes `true` and `false` and
+/// nothing else, so the tagged path was stricter than the untagged one it should agree with:
+/// `!!bool yes` loaded as the string "yes" while a bare `yes` was already a boolean, and
+/// `!!bool True` loaded as the string "True". Both paths now read the same set.
+#[rstest::rstest]
+#[case::lowercase("true", true)]
+#[case::capitalized("True", true)]
+#[case::uppercase("TRUE", true)]
+#[case::yaml_yes("yes", true)]
+#[case::yaml_on("On", true)]
+#[case::yaml_y("y", true)]
+#[case::lowercase_false("false", false)]
+#[case::capitalized_false("False", false)]
+#[case::yaml_no("NO", false)]
+#[case::yaml_off("off", false)]
+fn an_explicitly_tagged_bool_reads_the_same_set_as_a_plain_one(
+    #[case] scalar: &str,
+    #[case] expected: bool,
+) -> Result<()> {
+    let mut loader = Loader::new();
+    let value = loader.load(format!("check: !!bool {scalar}"))?;
+
+    let map = match &value {
+        MarkedValue::Map(m, ..) => m,
+        _ => unreachable!("a single mapping loads as a map"),
+    };
+    let (.., loaded) = map.first().unwrap();
+
+    assert!(
+        matches!(loaded, MarkedValue::Bool(b, ..) if *b == expected),
+        "!!bool {} loaded as {:?}, not the boolean {}",
+        scalar,
+        loaded,
+        expected
+    );
+
+    Ok(())
 }
