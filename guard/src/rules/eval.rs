@@ -1371,76 +1371,32 @@ fn binary_operation<'value, 'loc: 'value>(
                     }
 
                     // One left-hand value was an empty collection, so there was nothing
-                    // to compare it against. Reported here rather than in the
-                    // comparator because the correct status depends on the role, which
-                    // a comparator cannot see.
+                    // to compare it against. Reported here rather than in the comparator
+                    // because the right answer depends on the clause's role and on its
+                    // polarity, neither of which a comparator can see.
                     //
                     // As an assertion this fails: the rule claimed a property of every
                     // element and cannot establish it over none, and treating it as
                     // satisfied is the wrong PASS being fixed -- `Tags == 'Owner'`
                     // against `Tags: []` reported "compliant", not "not applicable".
                     //
-                    // As a gate it must stay SKIP, for the same reason as
-                    // EmptyRhsUnsatisfiable above: eval_rule treats a non-PASS
-                    // condition as "rule does not apply" and drops the guarded body, so
-                    // failing here would disarm every check inside it and still exit 0.
-                    // Note that SKIP does not open the gate either -- it closes it
-                    // quietly. That is a known and unfixed hazard, recorded in
-                    // outcome.rs; it is pre-existing for every non-PASS condition and
-                    // is not made worse here.
+                    // As a gate it must not fail. Failing a condition takes the block it
+                    // guards down with it, which is what sank three earlier attempts at
+                    // this fix; the gate branch below carries the measurements.
                     operators::ValueEvalResult::EmptyLhsCollection(value) => {
-                        // Only an assertion produces an entry here. `statues` is a
-                        // per-value PASS/FAIL vector -- the fold in
-                        // `eval_guard_access_clause` treats SKIP as `unreachable!()`,
-                        // because "nothing to report" is carried by
-                        // EvaluationResult::EmptyQueryResult instead. So a
-                        // gate must contribute no entry at all rather than a SKIP entry,
-                        // which leaves the gate decided by its other conditions exactly
-                        // as before this fix.
+                        // `cmp.1` is the operator's own not-flag already composed with the
+                        // clause-level `not` -- see the `let comparator = (...)` XOR in
+                        // `eval_guard_access_clause`. This arm runs before the per-value
+                        // inversion, so a FAIL emitted here is one the `not` can never reach:
+                        // the negated case has to reach its own answer below rather than rely
+                        // on being inverted, and `not (Tags == 'Owner')` over nothing is
+                        // vacuously true.
                         //
-                        // Failing as an assertion is the fix: the rule claimed a
-                        // property of every element and cannot establish it over none.
-                        // `Tags == 'Owner'` against `Tags: []` reported "compliant" --
-                        // not "not applicable" -- so it actively asserted a check it
-                        // never performed.
+                        // An earlier version threaded `match_all` down to this arm so that a
+                        // FAIL here could not sink a `some` block with a real witness
+                        // elsewhere. Removing it changed no measured behaviour on any fixture,
+                        // so it was dropped rather than kept as a plausible-looking safeguard.
                         //
-                        // A negated clause must NOT fail here. `cmp.1` is the operator's
-                        // own not-flag already composed with the clause-level `not` --
-                        // see the `let comparator = (...)` XOR in
-                        // `eval_guard_access_clause` -- and `not (Tags == 'Owner')` over nothing is
-                        // vacuously true. This arm runs before the per-value inversion,
-                        // so a FAIL emitted here is one the `not` can never reach; it has
-                        // to opt out instead.
-                        //
-                        // Opting out means "push nothing", and that is NOT neutral: an empty
-                        // `statues` reaches the fold with `fails == 0`, which breaks
-                        // `Status::PASS`. PASS short-circuits `eval_conjunction_clauses`, so
-                        //
-                        //     Tags != 'Owner'  or  Name == 'safebucket'
-                        //
-                        // reports a violating template as *compliant* -- the vacuous first
-                        // disjunct satisfies the whole `or` and the real check never runs.
-                        // Pre-existing: v3.2.0 exits 0 for that ruleset too.
-                        //
-                        // Returning SKIP instead is the resolution the
-                        // `EmptyRhsVacuouslyTrue` arm of `binary_operation` uses for the
-                        // identical hazard. It was implemented
-                        // here twice and reverted twice (see fb64016); the reproduction is
-                        // parked as `a_vacuous_negated_clause_does_not_absorb_a_disjunction`.
-                        // A `vacuously_satisfied` flag carried that state in the reverted
-                        // version and no longer exists -- the only thing keeping the
-                        // *positive* case out of this trap is the FAIL pushed below, which
-                        // puts an entry in `statues` so the fold never sees `fails == 0`.
-                        //
-                        // `some` needs no handling here, which is worth saying because it
-                        // is not obvious. Block-level `some` is decided in
-                        // `eval_guard_block_clause`, where `passes > 0` outranks any
-                        // number of fails, so a FAIL contributed here
-                        // cannot sink a block that has a real witness elsewhere. An
-                        // earlier version of this fix threaded `match_all` down to guard
-                        // that case; removing it changed no measured behaviour on any
-                        // fixture, so it was dropped rather than kept as a
-                        // plausible-looking safeguard.
                         // `Unevaluatable.blocks(role)` rather than `role.is_strict()`.
                         // Equivalent by construction -- `to_status` maps Unevaluatable to
                         // FAIL for an assertion and SKIP for a gate -- but it states the
@@ -1451,6 +1407,10 @@ fn binary_operation<'value, 'loc: 'value>(
                         // and a FAIL is what blocks a deployment. `closes_gate` answers a
                         // different question -- whether a condition silences the block it
                         // guards -- and the gate branch below deliberately does not fail.
+                        //
+                        // Reverting this arm was rejected rather than untried: removing the FAIL
+                        // restores the original wrong PASS, `Tags == 'Owner'` certifying `Tags: []`,
+                        // and a wrong PASS on a policy gate is worse than a wrong FAIL.
                         if Outcome::Unevaluatable.blocks(role) && !cmp.1 {
                             eval_context.start_record(&context)?;
                             eval_context.end_record(
@@ -1511,93 +1471,6 @@ fn binary_operation<'value, 'loc: 'value>(
                             // non-PASS condition and is not made worse here.
                             statues.push((QueryResult::Resolved(value), Outcome::Satisfied));
                         }
-                        // A negated comparison contributes nothing, and that is a known
-                        // defect rather than a decision. Read on before "fixing" it.
-                        //
-                        // Contributing nothing leaves `statues` empty, which the fold at
-                        // eval.rs reads as `fails == 0` and reports PASS. PASS
-                        // short-circuits `eval_conjunction_clauses`, so
-                        //
-                        //     Tags != 'Owner'  or  Name == 'safebucket'
-                        //
-                        // reports a violating template as *compliant* -- the vacuous first
-                        // disjunct satisfies the whole `or` and the real check never runs.
-                        // This is the hazard EmptyRhsVacuouslyTrue returns SKIP to avoid,
-                        // and it is pre-existing here: v3.2.0 exits 0 for that ruleset too.
-                        //
-                        // Returning SKIP instead was implemented and reverted, twice. The
-                        // second attempt narrowed it to `role.is_strict()`, which fixed the
-                        // direct gate spelling and still regressed this:
-                        //
-                        //     rule vac_ne { ...Tags != 'Owner' }
-                        //     rule body when vac_ne { ...Name == 'privatebucket' }
-                        //
-                        // measured 19 -> 0 against a template with `Tags: []` and a
-                        // violating Name. The cause was the named-rule boundary: `rule_status`
-                        // evaluated a referenced rule's body with ClauseRole::Assertion
-                        // whatever the reference site was, so `role` here said "assertion"
-                        // even when the rule was being used as a gate, and the SKIP then made
-                        // eval_rule treat the guarded rule as inapplicable and drop its body.
-                        // The status was also cached per rule name, so one gate-poisoned SKIP
-                        // was reused by every later reference.
-                        //
-                        // THAT BLOCKER IS GONE. `rule_status` now carries the reference site's
-                        // role into `eval_rule` and keys `rules_status` on `(rule, role)`, so
-                        // ClauseRole reaches across the named-rule boundary and `role` here is
-                        // the role of the actual reference. `a_named_rule_gate_does_not_drop_a
-                        // _satisfiable_body` and `the_same_named_rule_answers_both_roles
-                        // _independently` pin it.
-                        //
-                        // So the reverted SKIP is worth attempting again, and the two
-                        // reproductions above are the oracle for whether it regresses gates
-                        // this time. It is not attempted here because it is not a local edit:
-                        // `statues` is a per-value PASS/FAIL vector and the fold in
-                        // `eval_guard_access_clause` treats a SKIP entry as `unreachable!()`,
-                        // so a third attempt has to change the fold's vocabulary rather than
-                        // this arm -- which is the `Outcome` conversion in `eval/outcome.rs`,
-                        // still unwired.
-                        //
-                        // Net effect of leaving it for now: a pre-existing wrong PASS survives
-                        // in disjunctions, reproduced by the still-ignored
-                        // `a_vacuous_negated_clause_does_not_absorb_a_disjunction`.
-                        //
-                        // MEASURED CORRECTION, and it is about the FAIL path above rather
-                        // than the reverted SKIP.
-                        //
-                        // At a *syntactic* `when`, failing here does NOT close the gate.
-                        // `role.is_strict()` is false for a gate, so this arm contributes
-                        // nothing and the gate is left to its other conditions. Verified:
-                        // `rule r when ...Tags == 'Owner' { ...Name == 'safe' }` against
-                        // `Tags: []` exits 19 with the failure on `/Properties/Name` and
-                        // `not_applicable: []` -- the gate opened and the body ran. Same for
-                        // an `IN` gate, and the negated pair inverts correctly. So "it would
-                        // close the gate" is not the reason `IN` and the ordering operators
-                        // are unfixed; the reason is only that they never emit
-                        // EmptyLhsCollection and so never reach this arm.
-                        //
-                        // Across a NAMED-RULE boundary the FAIL pushed below used to drop the
-                        // body, a regression this branch introduced and has since fixed:
-                        //
-                        //     rule vac_eq { ...Tags == 'Owner' }
-                        //     rule body when vac_eq { ...Name == 'publicbucket' }
-                        //
-                        // with `Tags: []` and `Name: publicbucket`, so the body is
-                        // *satisfiable*. v3.2.0 exits 0 with both rules compliant. Between
-                        // 2224cb1 and the (rule, role) keying this exited 19 with
-                        // `not_compliant: [vac_eq]` and `not_applicable: [body]` -- the body's
-                        // verdict destroyed. `role.is_strict()` was true even when the rule was
-                        // used as a gate, this arm fired, `vac_eq` became FAIL, and eval_rule
-                        // read the non-PASS condition as "does not apply".
-                        //
-                        // Now that `rule_status` propagates the reference site's role, a gate
-                        // reference evaluates the body with ClauseRole::Gate, `role.is_strict()`
-                        // is false, this arm contributes nothing, and the gate is left to its
-                        // other conditions -- the same behaviour a syntactic `when` already
-                        // had. Pinned by `a_named_rule_gate_does_not_drop_a_satisfiable_body`.
-                        //
-                        // Reverting this arm was rejected rather than untried: it restores the
-                        // original wrong PASS (`Tags == 'Owner'` certifying `Tags: []`), and a
-                        // wrong PASS on a policy gate is worse than a wrong FAIL.
                     }
 
                     operators::ValueEvalResult::ComparisonResult(

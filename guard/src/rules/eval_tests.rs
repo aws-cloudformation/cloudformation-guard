@@ -6542,11 +6542,10 @@ fn in_still_decides_populated_collections_correctly() -> Result<()> {
 /// inverted it. That rejected a compliant template, since no element of `[]` is in
 /// `['Owner']` and there is nothing to collide with.
 ///
-/// It now routes through `EmptyLhsCollection`, where a negated clause contributes no entry
-/// because `role.is_strict() && !cmp.1` is false, so the fold sees no failures and reports
-/// PASS. Same path `!=` already took, so this inherits that path's known
-/// disjunction-absorption hazard rather than introducing one -- see
-/// `a_vacuous_negated_clause_does_not_absorb_a_disjunction`, still ignored.
+/// It now routes through `EmptyLhsCollection`, whose negated-assertion branch contributes
+/// `Outcome::NotApplicable`. Same path `!=` already took. That is a SKIP rather than the PASS
+/// an entry-less fold used to produce, which is what keeps the clause from absorbing an `or`
+/// -- see `a_vacuous_negated_clause_does_not_absorb_a_disjunction`.
 #[test]
 fn not_in_over_an_empty_collection_is_vacuously_satisfied() -> Result<()> {
     let rules = r###"
