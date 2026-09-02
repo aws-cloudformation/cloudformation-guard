@@ -485,7 +485,7 @@ fn extract_variables<'value, 'loc: 'value>(
 ///
 /// One level, which is what that loop does. An element that is itself a list stays a list here and
 /// reaches the same "non-string value for key" error it always reached.
-fn interpolated_keys(keys: &[QueryResult]) -> Vec<QueryResult> {
+pub(super) fn interpolated_keys(keys: &[QueryResult]) -> Vec<QueryResult> {
     let mut denoted = Vec::with_capacity(keys.len());
     for each in keys {
         let (value, literal) = match each {

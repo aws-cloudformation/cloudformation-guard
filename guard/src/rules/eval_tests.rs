@@ -8761,6 +8761,65 @@ fn a_range_inside_a_list_literal_is_a_range(
     Ok(())
 }
 
+/// A nested list on the right of `IN` is found wherever it sits in the list.
+///
+/// The same shape as `a_range_inside_a_list_literal_is_a_range` above, in the branch that fix did not
+/// reach. That one made `contained_in` ask each right-hand element in turn instead of asking
+/// `Vec`-style membership once, because a range nested in a list literal was not being read as a
+/// range. This is the list-valued-left-hand arm, where the element inspected was `rhsl[0]` and it
+/// decided the reading for elements 1..n: a list there meant "is the whole left-hand list one of
+/// these elements", anything else meant "is every left-hand element one of these".
+///
+/// So the answer turned on the order the right-hand list was typed in. For a `Pair` of `[1, 2]`,
+/// `Pair NOT IN ["zzz", [1,2]]` exited 0 while `Pair NOT IN [[1,2], "zzz"]` exited 19 -- one
+/// denylist, one value, and a permutation deciding whether it admitted a value it verbatim contains.
+/// `IN` inverted identically and printed `was not present in [["zzz",[1,2]]]`, a finding refuted by
+/// the set beside it.
+///
+/// The `_first`/`_last` pairing IS the assertion: each pair differs only in element order, so a cell
+/// that disagrees with its partner is the defect regardless of which verdict is the right one. Two of
+/// these nine failed before the fix, both `_last` cells.
+///
+/// The other five are controls, and each stops a different over-fix. The two `Port` cells keep the
+/// scalar-left-hand arm -- the one d7f01ec actually changed -- in view, since both arms read the same
+/// right-hand list. `subset_over_a_flat_list` is the reading that has to survive: deleting the subset
+/// branch outright would fail it. The two `absent_nested_list` cells are a nested list that genuinely
+/// is not there, which must keep failing in both positions.
+#[rstest::rstest]
+#[case::nested_list_first("Pair", r#"IN [[1,2], "zzz"]"#, Status::PASS)]
+#[case::nested_list_last("Pair", r#"IN ["zzz", [1,2]]"#, Status::PASS)]
+#[case::denylist_holds_it_first("Pair", r#"NOT IN [[1,2], "zzz"]"#, Status::FAIL)]
+#[case::denylist_holds_it_last("Pair", r#"NOT IN ["zzz", [1,2]]"#, Status::FAIL)]
+#[case::scalar_branch_first("Port", r#"IN [85, "zzz"]"#, Status::PASS)]
+#[case::scalar_branch_last("Port", r#"IN ["zzz", 85]"#, Status::PASS)]
+#[case::subset_over_a_flat_list("Pair", r#"IN ["zzz", 1, 2]"#, Status::PASS)]
+#[case::absent_nested_list_first("Pair", r#"IN [[3,4], "zzz"]"#, Status::FAIL)]
+#[case::absent_nested_list_last("Pair", r#"IN ["zzz", [3,4]]"#, Status::FAIL)]
+fn a_nested_list_on_the_right_of_in_is_found_in_any_position(
+    #[case] property: &str,
+    #[case] comparison: &str,
+    #[case] expected: Status,
+) -> Result<()> {
+    const INPUT: &str = r#"
+    {
+        Pair: [1, 2],
+        Port: 85
+    }
+    "#;
+
+    let rules = format!("rule membership {{ {property} {comparison} }}");
+
+    assert_eq!(
+        expected,
+        rule_status_in(&rules, INPUT, "membership")?,
+        "clause: {} {}",
+        property,
+        comparison
+    );
+
+    Ok(())
+}
+
 /// `or` is decided by whichever disjunct can decide it, in either order.
 ///
 /// `eval_conjunction_clauses` returned on the first disjunct that raised, so the rest of the
@@ -9583,6 +9642,117 @@ fn a_function_call_on_the_right_of_keys_compares_against_the_keys(
     "#;
 
     let rules = "rule keyed { CLAUSE }".replace("CLAUSE", clause);
+
+    assert_eq!(
+        expected,
+        rule_status_in(&rules, INPUT, "keyed")?,
+        "clause: {}",
+        clause
+    );
+
+    Ok(())
+}
+
+/// One key set, two spellings, one verdict.
+///
+/// `real_binary_operation` widened `keys ==` to membership by counting `QueryResult`s, and a single
+/// `Resolved` holding an n-element list counts as one. `let nested = KeyList` over
+/// `KeyList: [Name, Owner]` is exactly that, so `keys == %nested` stayed strict equality;
+/// `compare_eq` refused every key-against-list pairing, the filter selected nothing, and the clause
+/// SKIPped -- exit 0 with nothing in the report. The same key names spelled `%flat` (`KeyList[*]`)
+/// arrive as two results, widen as intended, and answer. Two spellings of one clause disagreed, and
+/// the silent one was wrong.
+///
+/// Both clause shapes are here because the two failures are not the same failure. The `!empty`
+/// selection form asks whether the filter picked the entries up at all, and it reported FAIL --
+/// visible, if puzzling. The assertion form reported SKIP, which exits 0, and that is the pair that
+/// catches the fail-open: a rule whose only check is that clause passed a document it rejects.
+///
+/// `in_spelling_already_agrees` is the reference the `==` cells have to meet rather than a
+/// regression guard. `IN` was never broken here, because `in_cmp` walks a list-valued right-hand
+/// element itself, so it is what `==` should have been answering all along.
+#[rstest::rstest]
+#[case::one_result_holding_two_keys("Tags[ keys == %nested ] !empty", Status::PASS)]
+#[case::two_results_same_two_keys("Tags[ keys == %flat ] !empty", Status::PASS)]
+#[case::in_spelling_already_agrees("Tags[ keys IN %nested ] !empty", Status::PASS)]
+#[case::assertion_over_one_result(r#"Tags[ keys == %nested ].Value == "RIGHT""#, Status::FAIL)]
+#[case::assertion_over_two_results(r#"Tags[ keys == %flat ].Value == "RIGHT""#, Status::FAIL)]
+fn a_key_set_from_one_result_widens_like_a_key_set_from_several(
+    #[case] clause: &str,
+    #[case] expected: Status,
+) -> Result<()> {
+    const INPUT: &str = r#"
+    {
+        KeyList: ["Name", "Owner"],
+        Tags: {
+            Name: { Value: 'WRONG' },
+            Owner: { Value: 'WRONG' }
+        }
+    }
+    "#;
+
+    let rules = "let nested = KeyList\nlet flat = KeyList[*]\nrule keyed { CLAUSE }"
+        .replace("CLAUSE", clause);
+
+    assert_eq!(
+        expected,
+        rule_status_in(&rules, INPUT, "keyed")?,
+        "clause: {}",
+        clause
+    );
+
+    Ok(())
+}
+
+/// A key is outside a denylist only if it differs from every entry, not from one of them.
+///
+/// `MapKeyComparator::NotIn` folded through the one-match report along with `In`, so a key counted as
+/// "not in" the list as soon as any single element differed from it. `Name` against
+/// `[Name, Zebra]` answers false and then true, and the second answer won: the filter selected the
+/// one key the denylist names. Any denylist of two or more distinct elements selects the keys it
+/// denies, and it does so at exit 0, so the rule reports compliance on the document it was written
+/// to reject.
+///
+/// `NotEq` next door already folds with ALL and is correct, which is what
+/// `single_element_denylist_unchanged` pins: the two negated comparators now agree, and that cell
+/// would have caught a fix applied to the wrong one of them.
+///
+/// `an_undenied_key_is_still_selected` is the control that matters most, because the cheap wrong fix
+/// -- folding `NotIn` so that any single match rejects the whole *map* rather than the one key --
+/// passes the first cell by selecting nothing at all, for every input. `Mixed` has one denied key and
+/// one undenied one, so a filter that selects nothing fails it.
+///
+/// `one_result_holding_the_denylist` answered correctly before any of this and is the cell that binds
+/// the fold to the flattening two functions up. The fault needs several `QueryResult`s to be visible
+/// at all: with one result holding the whole list, `in_cmp` walks the elements itself and returns a
+/// single `ComparisonResult`, so ANY over one result and ALL over one result are the same fold and
+/// neither can be wrong. `%denylist` is that spelling, and `%denytwo` is the `[*]` spelling that
+/// splits into two results and exposes the fold.
+///
+/// Which means the flattening in `real_binary_operation` moves this cell INTO the fault: it turns the
+/// one result into two, so with the flattening in place and the fold left at ANY, a spelling that was
+/// correct starts passing a document it should reject. Measured at 19 on 559bdd2, 0 with the
+/// flattening alone, and 19 with both. The two changes are not independent and must not be landed
+/// apart, which is what this cell is here to catch.
+#[rstest::rstest]
+#[case::every_key_denied_selects_nothing("OnlyDenied[ keys NOT IN %denytwo ] !empty", Status::FAIL)]
+#[case::an_undenied_key_is_still_selected("Mixed[ keys NOT IN %denytwo ] !empty", Status::PASS)]
+#[case::single_element_denylist_unchanged(r#"OnlyDenied[ keys != "Name" ] !empty"#, Status::FAIL)]
+#[case::one_result_holding_the_denylist("OnlyDenied[ keys NOT IN %denylist ] !empty", Status::FAIL)]
+fn negated_key_membership_requires_every_element_to_differ(
+    #[case] clause: &str,
+    #[case] expected: Status,
+) -> Result<()> {
+    const INPUT: &str = r#"
+    {
+        DenyTwo: ["Name", "Zebra"],
+        OnlyDenied: { Name: 'x' },
+        Mixed: { Name: 'x', Other: 'y' }
+    }
+    "#;
+
+    let rules = "let denytwo = DenyTwo[*]\nlet denylist = DenyTwo\nrule keyed { CLAUSE }"
+        .replace("CLAUSE", clause);
 
     assert_eq!(
         expected,

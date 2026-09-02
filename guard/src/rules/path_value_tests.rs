@@ -628,7 +628,7 @@ fn mixed_numeric_range_membership_is_decided() {
 }
 
 /// Values that compare equal hash equally, which is what `Eq` promises and what a `HashMap` keyed on
-/// `PathAwareValue` relies on -- `report_at_least_one` keys one.
+/// `PathAwareValue` relies on -- `report_by_lhs` keys one.
 ///
 /// The break was narrow and easy to miss: `Float` hashed via `*f as u64`. That cast saturates, so
 /// every negative float hashed as 0 while `Int(-1)` hashed as -1, and the two are equal since

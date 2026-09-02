@@ -355,8 +355,32 @@ fn contained_in(lhs_value: Rc<PathAwareValue>, rhs_value: Rc<PathAwareValue>) ->
     match &*lhs_value {
         PathAwareValue::List((_, lhsl)) => match &*rhs_value {
             PathAwareValue::List((_, rhsl)) => {
-                if !rhsl.is_empty() && rhsl[0].is_list() {
-                    if rhsl.contains(&*lhs_value) {
+                // Which of the two readings a list-against-list comparison gets is decided by
+                // whether ANY right-hand element is a list, not by whether element zero is.
+                //
+                // The readings are membership -- "the whole left-hand list is one of these
+                // elements", which is what `Resources IN [["a","b"], ["c","d"]]` means -- and subset
+                // over a flat right-hand side, which is what `Actions IN ["s3:Get", "s3:Put"]` means.
+                // A nested list on the right is the only thing that can satisfy membership, so its
+                // presence anywhere is what names the reading.
+                //
+                // Reading `rhsl[0]` let element zero answer for elements 1..n. For a `Pair` of
+                // `[1, 2]`, `Pair NOT IN ["zzz", [1,2]]` exited 0 and `Pair NOT IN [[1,2], "zzz"]`
+                // exited 19: one denylist, one value, and the order it was typed in decided whether
+                // it admitted a value it verbatim contains. The `IN` spelling inverted the same way,
+                // and printed `was not present in [["zzz",[1,2]]]` -- refuted by the set beside it.
+                //
+                // This is `d7f01ec`'s failure shape in the branch that commit did not reach. It fixed
+                // the scalar-left-hand arm below, where `rhsl.contains(rest)` could not see a range
+                // nested in a list literal, by asking each element in turn. Same fix, same idiom, one
+                // arm over: the membership test asks every element rather than letting one stand for
+                // the rest, and asks `compare_eq` as well as `PartialEq` so that a list holding a
+                // range or a regex is compared by the function that knows about them. A right-hand
+                // element that is not a list cannot satisfy either test, so nothing gates them.
+                if rhsl.iter().any(|elem| elem.is_list()) {
+                    if rhsl.iter().any(|elem| {
+                        elem == &*lhs_value || compare_eq(&lhs_value, elem).unwrap_or(false)
+                    }) {
                         ValueEvalResult::ComparisonResult(ComparisonResult::Success(
                             Compare::ListIn(ListIn::new(vec![], lhs_value, rhs_value)),
                         ))

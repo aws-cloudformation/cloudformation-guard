@@ -423,7 +423,7 @@ impl PartialEq for PathAwareValue {
 /// transitive, and `PathAwareValue` must not key a hashed collection that can hold a `Regex`.
 ///
 /// One hashed collection does key on it: the grouping of comparison results by their left-hand value
-/// in `report_at_least_one`. That is safe for a reason rather than by luck -- its keys come from the
+/// in `report_by_lhs`. That is safe for a reason rather than by luck -- its keys come from the
 /// document under validation, and a `Regex` only ever arrives as a rule literal on the right-hand
 /// side of a comparison.
 ///

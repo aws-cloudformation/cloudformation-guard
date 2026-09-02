@@ -1,7 +1,9 @@
 use super::exprs::*;
 use super::*;
 use crate::rules::eval::operators::Comparator;
-use crate::rules::eval_context::{block_scope, query_retrieval, resolve_function, ValueScope};
+use crate::rules::eval_context::{
+    block_scope, interpolated_keys, query_retrieval, resolve_function, ValueScope,
+};
 use crate::rules::path_value::compare_eq;
 use std::collections::HashMap;
 
@@ -968,8 +970,32 @@ fn report_all_values<'r, 'value: 'r, 'loc: 'value>(
     Ok(status)
 }
 
-fn report_at_least_one<'r, 'value: 'r, 'loc: 'value>(
+/// How several right-hand comparisons about ONE left-hand value fold into that value's verdict.
+///
+/// Membership and negated membership are not the same fold, and treating them as one is what made a
+/// denylist of two or more elements select the keys it denies. `keys IN [a, b]` holds when the key
+/// matches either, so one true answer settles it. `keys NOT IN [a, b]` holds only when the key
+/// differs from both -- `Name` against `[Name, Zebra]` answers false then true, and taking either
+/// one admitted a key that is verbatim in the list.
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+enum SameLhsFold {
+    /// One comparison satisfies the clause. `IN`.
+    AtLeastOne,
+    /// Every comparison must. `NOT IN`, and the reason it is not the negation of `AtLeastOne`
+    /// applied afterwards: `in_cmp` has already inverted each pair, so what is left to do is require
+    /// all of them rather than any.
+    All,
+}
+
+/// One verdict per left-hand value, folding that value's comparisons with `fold`.
+///
+/// Groups by left-hand value in a `HashMap` and iterates it, so the order statuses come out in is
+/// not defined. That is not observable today because `real_binary_operation` calls this once per key
+/// and each call therefore yields one status. Do not widen a caller to hand it several left-hand
+/// values at once without sorting the groups first.
+fn report_by_lhs<'r, 'value: 'r, 'loc: 'value>(
     rhs_comparisons: Vec<ComparisonResult>,
+    fold: SameLhsFold,
     cmp: (CmpOperator, bool),
     context: String,
     custom_message: Option<String>,
@@ -1011,20 +1037,27 @@ fn report_at_least_one<'r, 'value: 'r, 'loc: 'value>(
     }
 
     for (lhs, results) in by_lhs_value.iter() {
-        let found = results.iter().find(|(r, _rhs)| {
+        // A comparison satisfies the clause only when it was answerable AND came out true, so a
+        // `NotComparable` or an unresolved right-hand side never counts as one. That is what keeps
+        // `All` from passing on a pairing nothing could decide, the way `!=` already refuses to.
+        let satisfies = |(r, _rhs): &(&ComparisonResult, QueryResult)| {
             matches!(
                 r,
                 ComparisonResult::Comparable(ComparisonWithRhs { outcome: true, .. })
             )
-        });
-        match found {
-            Some(_) => {
+        };
+        let satisfied = match fold {
+            SameLhsFold::AtLeastOne => results.iter().any(satisfies),
+            SameLhsFold::All => results.iter().all(satisfies),
+        };
+        match satisfied {
+            true => {
                 eval_context.start_record(&context)?;
                 eval_context
                     .end_record(&context, RecordType::ClauseValueCheck(ClauseCheck::Success))?;
                 statues.push((QueryResult::Resolved(Rc::clone(lhs)), Status::PASS))
             }
-            None => {
+            false => {
                 eval_context.start_record(&context)?;
 
                 let to_collected = results
@@ -1418,6 +1451,22 @@ pub(super) fn real_binary_operation<'value, 'loc: 'value>(
 ) -> Result<EvaluationResult> {
     let mut statues: Vec<(QueryResult, Status)> = Vec::with_capacity(lhs.len());
 
+    // One key per right-hand value, before anything counts them or compares against them.
+    //
+    // `resolve_variable` answers with the results a query produced, and one result can hold a list:
+    // `let names = Cfg.KeyList` over `KeyList: [Name, Owner]` is a single `Resolved` naming two keys.
+    // `widened_for` was handed `rhs.len()`, so that counted as one and `keys == %names` stayed strict
+    // equality. `compare_eq` then refused every key-against-list pairing, the filter selected nothing,
+    // and the clause SKIPped -- the run exited 0 with nothing in the report, while the same key names
+    // spelled `%names[*]` widened to membership and failed at 19. Two spellings of one clause, and the
+    // silent one was wrong.
+    //
+    // Flattened rather than counted. A count alone fixes the widening and leaves `each_lhs_compare`
+    // below reading the unflattened `rhs` one line later, so "the right-hand values" would mean two
+    // different things inside one function. `interpolated_keys` is the same one-level expansion the
+    // variable-key path already does for the same reason, reused rather than written twice.
+    let rhs = &interpolated_keys(rhs);
+
     let cmp = cmp.widened_for(rhs.len());
     let recorded_cmp = cmp.as_cmp_operator();
 
@@ -1456,10 +1505,20 @@ pub(super) fn real_binary_operation<'value, 'loc: 'value>(
                 };
 
                 match cmp {
-                    // Membership is satisfied by one match, so the report folds that way.
+                    // Membership is satisfied by one match. Negated membership is not: a key is
+                    // outside a set only if it differs from every element, so `NOT IN` folds with
+                    // ALL. Both shared the one-match fold, which is why any denylist of two or more
+                    // distinct elements selected the keys it denies -- `Name` against
+                    // `[Name, Zebra]` answers false then true, and one true was enough. `NotEq`
+                    // below already folds with ALL and is correct, so this brings the two negated
+                    // comparators into line rather than inventing a rule for one of them.
                     MapKeyComparator::In | MapKeyComparator::NotIn => {
-                        statues.extend(report_at_least_one(
+                        statues.extend(report_by_lhs(
                             r,
+                            match cmp {
+                                MapKeyComparator::NotIn => SameLhsFold::All,
+                                _ => SameLhsFold::AtLeastOne,
+                            },
                             recorded_cmp,
                             context.clone(),
                             custom_message.clone(),
