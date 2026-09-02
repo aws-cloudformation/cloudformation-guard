@@ -40,7 +40,7 @@ jobs:
     steps:
       - uses: actions/checkout@v2
       - name: Shellcheck
-        run: shellcheck install-guard.sh
+        run: shellcheck install-guard.sh .github/scripts/check-registry-corpus.sh
 
   formatting:
     name: Formatting check (cargo fmt)
@@ -189,14 +189,22 @@ jobs:
           # fix it. The fix is aws-cloudformation/aws-guard-rules-registry#288 -- once that merges,
           # move this SHA forward to a commit that contains it, here and in the Windows job below.
           ref: 7f7340c26ae5d5e8874651dbffeb12e0e9f505b6
+      # A green here means the pinned corpus is in the known-bad state the comment above describes,
+      # not that the corpus passes. This step used to assert exit 0, which cannot hold at this SHA --
+      # `cfn-guard test -d` exits 1 over these rules and is right to. Asserting nothing more than
+      # "exit 1" would be worse than asserting the wrong thing, though: `get_exit_code` in
+      # guard/src/commands/test.rs makes the error code sticky, so a run where a rule ran and failed
+      # its expectation for real exits 1 too, and tolerating that number would hide it. So the check
+      # holds the report against checked-in lists in .github/registry-corpus-state/ instead -- which
+      # expectations go unchecked, which test files nothing claims, and that nothing else went wrong.
+      # Fixing the corpus turns this red on purpose: when
+      # aws-cloudformation/aws-guard-rules-registry#288 merges, the pin and those lists move
+      # together, and the lists become empty.
       - name: Run integration tests using test command
         run: |
-          if cloudformation-guard/target/release/cfn-guard test -d aws-guard-rules-registry/rules; then
-              echo "The integration tests for test command have passed."
-          else
-              echo "The integration tests for test command have failed."
-              exit 1
-          fi
+          bash cloudformation-guard/.github/scripts/check-registry-corpus.sh \
+              cloudformation-guard/target/release/cfn-guard \
+              aws-guard-rules-registry/rules
 
       - name: Run integration tests using parse-tree command
         run: |
@@ -262,25 +270,30 @@ jobs:
           # failing state, and for the PR that releases the pin
           # (aws-cloudformation/aws-guard-rules-registry#288).
           ref: 7f7340c26ae5d5e8874651dbffeb12e0e9f505b6
-      # `if (<command>)` does not test a command's exit code in PowerShell. The parenthesized
-      # expression captures the command's stdout, and `if` coerces that to a boolean, where a
-      # collection of more than one element is always true. `cfn-guard test -d` prints thousands of
-      # lines of results against this ruleset, so the condition could never be false: the `else` was
-      # unreachable, and the step logged "have passed" for a run that had exited non-zero. Only the
-      # `exit $LASTEXITCODE` that Actions appends to every pwsh step still reported that failure,
-      # and the reverse case -- exit 0 with no output at all -- took the `else` and failed the step
-      # outright. The linux/macos twin above is `if <command>; then`, which does test exit status,
-      # so the two legs of one check were checking different things.
+      # The same script the linux/macos job runs, under `shell: bash` -- Git for Windows' bash, which
+      # this runner image ships -- rather than a pwsh transcription of it. See that job for what a
+      # green here means, and for why it is not "the corpus passes".
+      #
+      # One implementation and not two because the two had already drifted, on the one thing this
+      # check is about. This step was `cfn-guard test -d ...` followed by `if ($LASTEXITCODE -eq 0)`,
+      # and before that `if (<command>)` -- which does not test a command's exit code in PowerShell.
+      # The parenthesized expression captures the command's stdout and `if` coerces that to a
+      # boolean, where a collection of more than one element is always true. `cfn-guard test -d`
+      # prints thousands of lines of results against this ruleset, so the condition could never be
+      # false: the `else` was unreachable, and the step logged "have passed" for a run that had
+      # exited non-zero, while the linux/macos twin was testing exit status. The parse-tree step
+      # below is still pwsh and carries its own copy of that note, because its loop has nothing to
+      # share with a twin.
+      #
+      # Actions appends `exit $LASTEXITCODE` to a pwsh step, so the last command's code is the step's.
+      # Under bash the step's code is the shell's, and the script is the whole body, so its exit
+      # status is the step's with nothing after it to overwrite the number.
       - name: Run integration tests using test command
+        shell: bash
         run: |
-          cloudformation-guard/target/release/cfn-guard test -d aws-guard-rules-registry/rules
-          if ($LASTEXITCODE -eq 0) {
-              echo "The integration tests for test command have passed."
-          }
-          else {
-              echo "The integration tests for test command have failed."
-              exit 1
-          }
+          bash cloudformation-guard/.github/scripts/check-registry-corpus.sh \
+              cloudformation-guard/target/release/cfn-guard \
+              aws-guard-rules-registry/rules
 
       - name: Run integration tests using parse-tree command
         run: |
