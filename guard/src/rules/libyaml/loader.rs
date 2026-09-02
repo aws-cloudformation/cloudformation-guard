@@ -31,18 +31,35 @@ pub(crate) const MERGE_KEY: &str = "<<";
 /// The bound belongs where the deep value is *built* rather than where it is consumed, so that no deep
 /// `MarkedValue` is ever constructed for anything downstream to recurse over.
 ///
-/// `a_document_nested_past_the_limit_is_refused` in `loader_tests.rs` carries the crash and the placement
-/// rationale, on the cases that fail if either is wrong. Two properties of the bound are not visible from
-/// there. Unlike the parser's half of this bound, whose unoptimized stack ceiling sits *below* its 128,
-/// nothing here is refused by a stack before the count refuses it -- `load` is iterative, and the recursion
-/// is in the conversion the bound keeps deep input away from. And depth was expensive well before it was
-/// fatal, from two costs that a bound caps together: the conversion's path-per-node storage, which grows
-/// with the square of the depth, and a `format!` in `Traversal::at` whose output `CfnAware::report_eval`
-/// discards, which grows faster still. Neither is fixed; the bound is what keeps either from mattering, and
-/// every factor they scale with -- range size, subtree size, path length -- scales with depth. A wide,
-/// shallow document is cheap for the same reason. Any figure quoted for them must carry its profile and its
-/// host -- an unlabeled release figure in the parser's half hid a `cargo test` that aborted on three CI
-/// platforms, and load on the measuring machine moves these timings by more than a factor of two.
+/// `a_document_nested_past_the_limit_is_refused` in `loader_tests.rs` records the crash and the placement
+/// rationale. Read it as a note rather than a pinned claim: its cases assert the boundary and the error kind,
+/// and none of them fails if that prose is wrong, because the deep cases are refused at this bound and so no
+/// test here ever runs the conversion.
+///
+/// Two properties of the bound are not visible from there. Unlike the parser's half of this bound, whose
+/// unoptimized stack ceiling sits *below* its 128, nothing here is refused by a stack before the count
+/// refuses it. `load` is iterative; the recursion is in what happens to a loaded value afterwards -- the
+/// conversion, `MarkedValue`'s own drop glue, `Traversal::from`, and every derived `Debug` and `Clone` on the
+/// tree. And depth was expensive well before it was fatal, from costs a bound caps together: the path stored
+/// at every node, which grows with the square of the depth, and a `format!` in `Traversal::at` rendering a
+/// `BTreeMap` range that `CfnAware::report_eval` then discards, which grows faster still. Neither is fixed;
+/// the bound is what keeps either from mattering, because every factor they scale with scales with depth. A
+/// wide, shallow document is cheap for the same reason -- though a document both wide *and* deep is not
+/// covered by that argument. Any figure quoted for these must carry its profile and its host, and say how
+/// loaded that host was -- an unlabeled release figure in the parser's half hid a `cargo test` that aborted
+/// on three CI platforms.
+///
+/// If you go measure any of it: the cost at the bound is visible on the stock binary, the crash needs this
+/// constant raised, the corpus depths below need it lowered, and the serde boundary does not depend on this
+/// constant at all. Bisect an explicit `stack_size` at a fixed depth rather than the depth at a fixed stack.
+/// And do not chase either cost from here.
+///
+/// Raising this constant above the deep cases in that test does not just fail them. They load successfully,
+/// fail their assertion, and then render the loaded value with `{:?}` to build the failure message; derived
+/// `Debug` on `MarkedValue` recurses once per level, so that render overflows the test thread and aborts the
+/// whole target instead of reporting a failed assertion. The recursive drop of the same value would do it
+/// too, if the render did not get there first. The parser's half documents the same hazard for its own
+/// invited experiment.
 ///
 /// **Why 128.** It is the limit serde already enforces on the other loader in this product. The same number,
 /// but the two count it over different documents, so they do not both accept and refuse the same one. This
@@ -80,11 +97,13 @@ pub(crate) const MERGE_KEY: &str = "<<";
 /// output several times over, which is the form of the claim that does not move when a fixture gains a level.
 ///
 /// A non-recursive conversion was the alternative. It would remove the crash, but not the quadratic bytes,
-/// and not the per-node `PathAwareValue::clone` that failure reporting does either -- both are inherent to
-/// storing a full path at every node, and both reach into `Path`, `PathAwareValue` and every reporter that
-/// prints one. It would not touch the `Traversal::at` waste at all, because a discarded `{:?}` of a
-/// `BTreeMap` range is not a property of the path representation and is removable on its own terms. A bound
-/// caps all three, in the loader, and leaves either refactor free to happen separately.
+/// and not the `PathAwareValue::clone` that `validate` takes of every data file before evaluating it -- once
+/// for the file and again for the scope root -- which copies every node's path on a passing run as much as on
+/// a failing one. Both are inherent to storing a full path at every node, and both reach into `Path`,
+/// `PathAwareValue` and every reporter that prints one. It would not touch the `Traversal::at` waste at all,
+/// because a discarded `{:?}` of a `BTreeMap` range is not a property of the path representation and is
+/// removable on its own terms. A bound caps all of them, in the loader, and leaves either refactor free to
+/// happen separately.
 const MAX_NESTING_DEPTH: usize = 128;
 
 #[derive(Debug, Default)]

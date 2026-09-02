@@ -1181,7 +1181,10 @@ fn a_getatt_with_no_attribute_is_left_alone() -> Result<()> {
 ///
 /// The bound is checked in `Loader::load`, which is iterative, so nothing deep is ever built for a
 /// later pass to recurse over. That placement is what the isolation measurement decided: `load`
-/// itself survived depth 20000, and so did dropping the value it returned; only the conversion died.
+/// itself survived depth 20000 on a 16 KB thread in both profiles. Dropping the value it returned
+/// is recursive drop glue and needs a stack of its own -- at that depth it survives `main`'s 8 MB
+/// and aborts a 2 MB libtest thread -- so name the stack whenever quoting that half. Only the
+/// conversion died at every stack it was given.
 ///
 /// The boundary cases matter more than the extremes. An off-by-one here either refuses a document one
 /// level inside the documented limit or admits one past it, and neither shows up in the deep cases.
