@@ -9967,3 +9967,71 @@ const THIRTY_AS: &str = r#"
     }
 }
 "#;
+
+/// A scalar against a one-element list answers the same whether the list was typed or resolved.
+///
+/// `EqOperation::compare` unwraps a one-element list on the right and compares the scalar with that
+/// element, but only in the `(None, Some)` arm -- the one a *literal* right-hand side reaches.
+/// `is_literal` returns `Some` for a single `QueryResult::Literal` alone, so a variable bound to a
+/// query arrives as `Resolved`, lands in the `(None, None)` arm, and that arm compares the scalar
+/// with the list as a whole. `compare_eq_symmetric` has no scalar-against-list arm, so it refuses,
+/// and the refusal is reported as `PathAwareValues are not comparable String, array`.
+///
+/// So with `Val: Name` and `OneKey: [Name]`, `Val == ["Name"]` passed and `Val == %onekey` exited 19
+/// on the same two values. The negated spelling is the one that costs more: `Val != ["Other"]` passed
+/// and `Val != %otherkey` failed, so a rule asserting that a value differs from a reference rejected
+/// a document where it plainly does -- a false finding rather than a missed one.
+///
+/// The unwrap here is symmetric, and `variable_lhs_matches` is why. This arm reads `==` as equality of
+/// two operand *sets* and folds in both directions, deliberately, so that an extra value on either
+/// side is seen. Unwrapping on one side only would leave `%onekey == Val` failing on the reverse pass
+/// with the forward pass already matched -- the same defect, mirrored, and no better for having half
+/// a fix.
+///
+/// The four two-element cells are the control that keeps the unwrap narrow. A scalar and a list of two
+/// are not comparable in either spelling and in either polarity, and they must stay that way: this
+/// unwraps a one-element list, it does not widen `==` to membership. The two `IN` cells are the
+/// reference rather than a guard -- membership already agreed across both spellings, which is what
+/// `==` had to be brought up to.
+#[rstest::rstest]
+#[case::literal_rhs_matches(r#"Val == ["Name"]"#, Status::PASS)]
+#[case::variable_rhs_matches("Val == %onekey", Status::PASS)]
+#[case::variable_lhs_matches("%onekey == Val", Status::PASS)]
+#[case::literal_rhs_differs(r#"Val == ["Other"]"#, Status::FAIL)]
+#[case::variable_rhs_differs("Val == %otherkey", Status::FAIL)]
+#[case::negated_literal_rhs_matches(r#"Val != ["Name"]"#, Status::FAIL)]
+#[case::negated_variable_rhs_matches("Val != %onekey", Status::FAIL)]
+#[case::negated_literal_rhs_differs(r#"Val != ["Other"]"#, Status::PASS)]
+#[case::negated_variable_rhs_differs("Val != %otherkey", Status::PASS)]
+#[case::two_element_literal_is_not_unwrapped(r#"Val == ["Name", "Other"]"#, Status::FAIL)]
+#[case::two_element_variable_is_not_unwrapped("Val == %twokeys", Status::FAIL)]
+#[case::negated_two_element_literal(r#"Val != ["Name", "Other"]"#, Status::FAIL)]
+#[case::negated_two_element_variable("Val != %twokeys", Status::FAIL)]
+#[case::in_spelling_already_agrees_literal(r#"Val IN ["Name"]"#, Status::PASS)]
+#[case::in_spelling_already_agrees_variable("Val IN %onekey", Status::PASS)]
+fn a_one_element_list_compares_the_same_typed_as_resolved(
+    #[case] clause: &str,
+    #[case] expected: Status,
+) -> Result<()> {
+    const INPUT: &str = r#"
+    {
+        Val: "Name",
+        OneKey: ["Name"],
+        OtherKey: ["Other"],
+        TwoKeys: ["Name", "Other"]
+    }
+    "#;
+
+    let rules = format!(
+        "let onekey = OneKey\nlet otherkey = OtherKey\nlet twokeys = TwoKeys\nrule r {{ {clause} }}"
+    );
+
+    assert_eq!(
+        expected,
+        rule_status_in(&rules, INPUT, "r")?,
+        "clause: {}",
+        clause
+    );
+
+    Ok(())
+}

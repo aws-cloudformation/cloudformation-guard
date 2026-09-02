@@ -313,6 +313,44 @@ fn is_literal(query_results: &[QueryResult]) -> Option<Rc<PathAwareValue>> {
     None
 }
 
+/// `==` between a scalar and a one-element list, whichever side each is on.
+///
+/// The `(None, Some)` arm of `EqOperation::compare` compares a scalar left-hand value with the single
+/// element of a one-element list literal rather than with the list, so `Val == ["Name"]` holds for a
+/// `Val` of `Name`. `is_literal` answers only for a lone `QueryResult::Literal`, so a variable bound to
+/// a query arrives as `Resolved` and the same two values reached the `(None, None)` arm, where
+/// `compare_eq_symmetric` has no scalar-against-list arm and refused: `Val == %onekey` exited 19 on the
+/// pair its typed-out spelling passed.
+///
+/// Symmetric because the arm that calls it is. That arm reads `==` as equality of two operand sets and
+/// folds in both directions so an extra value on either side is seen, so a one-sided unwrap would leave
+/// the reverse pass unmatched and the clause still failing.
+///
+/// One element only, and only against a scalar. Widening further would make `==` mean membership, which
+/// is `IN`'s reading and already available; two lists, or a scalar against a list of two, keep the
+/// answer they had.
+fn compare_eq_unwrapping_a_one_element_list(
+    lhs: &PathAwareValue,
+    rhs: &PathAwareValue,
+) -> crate::rules::Result<bool> {
+    let single_element = |value: &PathAwareValue| match value {
+        PathAwareValue::List((_, inner)) if inner.len() == 1 => Some(inner[0].clone()),
+        _ => None,
+    };
+
+    if lhs.is_scalar() {
+        if let Some(inner) = single_element(rhs) {
+            return compare_eq_symmetric(lhs, &inner);
+        }
+    } else if rhs.is_scalar() {
+        if let Some(inner) = single_element(lhs) {
+            return compare_eq_symmetric(&inner, rhs);
+        }
+    }
+
+    compare_eq_symmetric(lhs, rhs)
+}
+
 fn string_in(lhs_value: Rc<PathAwareValue>, rhs_value: Rc<PathAwareValue>) -> ValueEvalResult {
     match (&*lhs_value, &*rhs_value) {
         (PathAwareValue::String((_, lhs)), PathAwareValue::String((_, rhs))) => {
@@ -789,7 +827,7 @@ impl Comparator for EqOperation {
                     Vec::push,
                 );
 
-                // `compare_eq_symmetric` per pair, not `Vec::contains`.
+                // The comparator per pair, not `Vec::contains`.
                 //
                 // `contains` decides with `PartialEq`, which returns `bool` and so has to turn a
                 // comparison it cannot answer into `false` -- the suppression `docs/KNOWN_ISSUES.md`
@@ -820,7 +858,7 @@ impl Comparator for EqOperation {
                         'each: for each in from {
                             let mut refused: Option<(Rc<PathAwareValue>, String)> = None;
                             for other in against {
-                                match compare_eq_symmetric(each, other) {
+                                match compare_eq_unwrapping_a_one_element_list(each, other) {
                                     Ok(true) => continue 'each,
                                     Ok(false) => {}
                                     Err(err) => {
