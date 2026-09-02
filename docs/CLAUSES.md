@@ -282,6 +282,16 @@ Resources.NewVolume.Properties.VolumeType IN [ 'io1','io2','gp3' ]
 
 > While these examples illustrate using `S3Bucket`, `NewVolume` in the query, often these are user defined and can be arbitrarily named in an IaC template. To write a rule that is generic and applies to all `AWS::S3::Bucket` resources defined in the template the most common form of query used is `Resources.*[ Type == ‘AWS::S3::Bucket’ ]` to select them. See [Guard: Query and Filtering](QUERY_AND_FILTERING.md) for details on usage and explore the examples directory.
 
+#### Escaping inside literals
+
+A backslash consumes the character after it, and what the pair contributes depends on which kind of literal it is in. A literal ends at the first delimiter that no backslash consumed, and it may not cross a line ending: a literal with no closing delimiter on its own line is a parse error naming the delimiter that is missing.
+
+A string literal understands two escapes. `\\` is one backslash, and a backslash before the quote that opened the literal is that quote, so `'it\'s'` and `'x\\'` are both writable. A backslash before anything else is not an escape and stays in the value, backslash included, which is what lets a regular expression written as a string keep its own escapes without doubling them -- `"^arn:(\w+):(\d+)$"` reaches the regex engine with `\w` and `\d` intact.
+
+A regular expression literal understands one escape, `\/`, which stands for a plain `/`. Every other backslash is left exactly as written, because the body is handed to a regex engine that has an escape layer of its own. That includes `\\`, which reaches the engine as the two characters that mean one literal backslash there; the pair closes itself, so a `/` after it ends the literal rather than being read as one more escaped delimiter.
+
+That last point changed, and a rule written for cfn-guard 3.2.x that spells `\\/` inside a regular expression no longer parses. See [Known Issues](KNOWN_ISSUES.md) for what to change it to.
+
 #### Comparing against a query that resolves to no values
 
 When the RHS of a binary operator is a query, it can resolve to no values at all. This usually happens because the query selects a resource type that the input does not contain:

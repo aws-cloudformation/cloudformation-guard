@@ -76,6 +76,8 @@ Use the verbose flag `-v` to see the detailed evaluation tree that shows how Clo
 | `5` | The rules file cannot be used: it has a syntax error, or it names a variable, rule or parameterized rule that nothing declares. Your rules need fixing, not your template. |
 | `19` | The rules were evaluated and the data failed at least one of them. `validate` only. This is the code a policy gate should treat as a violation. |
 
+If a rule that parsed on an earlier version now exits `5`, check whether it spells `\\` inside a regular expression: the escaping rules for literals changed, and [Known Issues](../docs/KNOWN_ISSUES.md) says what to change it to.
+
 `test` reports in its own two codes, because "an expectation was not met" is not the same result as "a template was non-compliant":
 
 | Code | Meaning |

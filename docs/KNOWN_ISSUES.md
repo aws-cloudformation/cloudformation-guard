@@ -119,3 +119,34 @@ let api_gws = Resources.*[ Type == 'AWS::ApiGateway::RestApi' ]
    ```
     Mappings.AccountToEnv."123456789012".Env == "prod"
    ```
+
+6. **Backward-incompatible: `\\` in a rule literal changed meaning, and a rule written for 3.2.x may no longer parse**
+
+   A regular expression or string literal is now read by walking forward from the opening delimiter, so a backslash always consumes the character after it. Guard used to decide where a literal ended by looking at the character *before* a closing delimiter, which made a backslash's meaning depend on where it sat.
+
+   The construct that breaks is `\\` immediately followed by `/` inside a regular expression. It used to read as one backslash plus an escaped `/`, so that `/` stayed inside the expression. The `\\` pair now closes itself and the `/` behind it ends the literal, which leaves the rest of the expression truncated -- usually as an unterminated character class or group.
+
+   The failure is a parse error and not a changed verdict. Nothing is evaluated, no rule is reported, and the run exits `5`. The message names the fragment it could not parse, but it does not say that the escaping rule changed, so it reads like a rule that was always wrong:
+
+   ```
+   Could not parse regular expression: Parsing error at position 16: Invalid character class,
+   fragment  /(?<![A-Za-z0-9\\/+=])[A-Za-z0-9\\/+=]{40}(?![A-Za-z0-9\\/+=])/
+   ```
+
+   > **Workaround**: write `\/` where you meant an escaped slash.
+
+   ```
+   # written for 3.2.x: exits 5
+   NotSecretAccessKey != /(?<![A-Za-z0-9\\/+=])[A-Za-z0-9\\/+=]{40}(?![A-Za-z0-9\\/+=])/
+
+   # the same expression, in the spelling that means what it always meant
+   NotSecretAccessKey != /(?<![A-Za-z0-9\/+=])[A-Za-z0-9\/+=]{40}(?![A-Za-z0-9\/+=])/
+   ```
+
+   `\/` is accepted by both versions, so a rewritten rule keeps working against an older Guard -- with one exception: `\/` immediately before the closing `/`, as in `/a\//`, is newly writable and 3.2.x rejects it. If you meant a literal backslash followed by a literal slash rather than an escaped slash, write `\\\/`; both versions parse that.
+
+   String literals changed in the same way, and there the effect is a different value rather than a refusal to parse. `\\` inside a string is now one backslash where it was two, so `"a\\b"` is the three characters `a\b`. A clause comparing against a doubled backslash stops matching data that carries two of them and starts matching data that carries one. What the change buys is that a string can now end in a backslash: `'x\\'` is `x\`, and 3.2.x rejected that literal outright with no spelling that produced it.
+
+   A backslash before anything else is unchanged in both kinds of literal -- it stays in the value, backslash included -- so `/^\d{4}-\d{2}$/` and `"^arn:(\w+):(\d+)$"` mean what they always did. See [Guard: Clauses](CLAUSES.md) for the full escaping rules.
+
+   To find candidates before upgrading, search your rules for a doubled backslash: `grep -rn '\\\\' --include='*.guard' .` That over-reports, so check each hit against the two cases above: `\\` only breaks where a `/` follows it in a regular expression, and only changes a value inside a string literal.
