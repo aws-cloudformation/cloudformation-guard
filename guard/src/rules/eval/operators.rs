@@ -365,6 +365,43 @@ fn string_in(lhs_value: Rc<PathAwareValue>, rhs_value: Rc<PathAwareValue>) -> Va
     }
 }
 
+/// `IN` reads a string on the right as containment, and only falls back to membership.
+///
+/// The one spelling of that order, so that the arms of `InOperation::compare` cannot disagree about it
+/// again. `string_in` answers "not comparable" for anything but two strings, and `fail` runs the
+/// fallback for every result that is not a success, so a non-string pair reaches `contained_in`
+/// unchanged.
+fn substring_or_contained_in(lhs: Rc<PathAwareValue>, rhs: Rc<PathAwareValue>) -> ValueEvalResult {
+    string_in(Rc::clone(&lhs), Rc::clone(&rhs)).fail(|_| contained_in(lhs, rhs))
+}
+
+/// Whether `IN` finds this left-hand value inside a string on the right.
+///
+/// The `(None, Some)` arm applies `string_in` once per left-hand element, expanding a list-valued one,
+/// so `["s3","arn"] in "aws:arn:s3::${s3}"` holds and `["s3","zzz"]` does not. `(None, None)` compares
+/// a left-hand result whole and folds one answer per result into `diff`, so the expansion has to happen
+/// here instead for the two spellings to agree.
+///
+/// The empty-list guard is `contained_in`'s, for the reason recorded there: an empty collection passing
+/// a comparison is what `vacuous_comparison_notice` in `eval.rs` is deprecating, so this does not add
+/// another one.
+fn found_in_string(lhs: &PathAwareValue, rhs: &PathAwareValue) -> bool {
+    let haystack = match rhs {
+        PathAwareValue::String((_, haystack)) => haystack,
+        _ => return false,
+    };
+
+    let found = |value: &PathAwareValue| match value {
+        PathAwareValue::String((_, needle)) => haystack.contains(needle),
+        _ => false,
+    };
+
+    match lhs {
+        PathAwareValue::List((_, elements)) => !elements.is_empty() && elements.iter().all(found),
+        scalar => found(scalar),
+    }
+}
+
 fn not_comparable(lhs: Rc<PathAwareValue>, rhs: Rc<PathAwareValue>) -> ValueEvalResult {
     ValueEvalResult::ComparisonResult(ComparisonResult::NotComparable(NotComparable {
         pair: LhsRhsPair {
@@ -578,10 +615,7 @@ impl Comparator for InOperation {
         let mut results = Vec::with_capacity(lhs.len());
         match (is_literal(lhs), is_literal(rhs)) {
             (Some(ref l), Some(ref r)) => {
-                results.push(
-                    string_in(Rc::clone(l), Rc::clone(r))
-                        .fail(|_| contained_in(Rc::clone(l), Rc::clone(r))),
-                );
+                results.push(substring_or_contained_in(Rc::clone(l), Rc::clone(r)));
             }
 
             (Some(ref l), None) => {
@@ -597,7 +631,7 @@ impl Comparator for InOperation {
 
                 if rhs.iter().any(|elem| elem.is_list()) {
                     rhs.into_iter()
-                        .for_each(|r| results.push(contained_in(Rc::clone(l), r)));
+                        .for_each(|r| results.push(substring_or_contained_in(Rc::clone(l), r)));
                 } else if let PathAwareValue::List((_, list)) = &**l {
                     let diff = list
                         .iter()
@@ -621,7 +655,7 @@ impl Comparator for InOperation {
                     }
                 } else {
                     rhs.iter().for_each(|rhs_elem| {
-                        results.push(contained_in(Rc::clone(l), rhs_elem.clone()))
+                        results.push(substring_or_contained_in(Rc::clone(l), rhs_elem.clone()))
                     });
                 }
             }
@@ -670,6 +704,16 @@ impl Comparator for InOperation {
                 let mut diff = Vec::with_capacity(lhs_selected.len());
                 'each_lhs: for eachl in &lhs_selected {
                     for eachr in &rhs_selected {
+                        // Containment first, membership second, which is the order the two arms above
+                        // apply when the right-hand side is written out. This arm asked `contained_in`
+                        // alone, and two scalars there fall through to `compare_eq`, so
+                        // `Needle in Haystack` was equality while `Needle in "aws:arn:s3::${s3}"` was
+                        // containment -- and `Needle not in Haystack` therefore PASSED on a needle the
+                        // haystack verbatim contains, a denylist admitting the value it names at exit 0.
+                        if found_in_string(eachl, eachr) {
+                            continue 'each_lhs;
+                        }
+
                         if let ValueEvalResult::ComparisonResult(ComparisonResult::Success(_)) =
                             contained_in(Rc::clone(eachl), Rc::clone(eachr))
                         {

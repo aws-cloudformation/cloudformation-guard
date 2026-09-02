@@ -5165,22 +5165,25 @@ fn using_resource_names_for_assessment() -> Result<()> {
 /// Substring `IN` where the right-hand side is a query rather than a literal: `%bucket_names[*]`
 /// resolves to `"s3"` and `Resource.'Fn::Sub'` to the longer `"aws:arn:s3::${s3}"`.
 ///
-/// Broken rather than unimplemented. It passed when it was written -- measured on c2447bee, where
-/// every `IN` clause went through `in_cmp` in `eval.rs`, whose `(String, String)` arm is
-/// `rhs.contains(lhs)` however the two operands were obtained. `InOperation::compare` in
-/// `eval/operators.rs` replaced that path in 901d40a6 and reaches `string_in`, the substring check,
-/// only from the arms whose right-hand side satisfies `is_literal`; a query lands in the
-/// `(None, None)` arm, which asks `contained_in` alone, and two scalars there fall through to
-/// `compare_eq`. So a scalar query against a string literal holds while the same scalar query
-/// against a query resolving to that identical string fails, which puts neither `some` nor the
-/// filter capture in this. Fixing it is a semantic change with no documentation behind it:
-/// `docs/CLAUSES.md` describes `IN` as membership of a list and never mentions substrings.
+/// Broken rather than unimplemented, which is why it is a test again rather than a feature request. It
+/// passed when it was written -- measured on c2447bee, where every `IN` clause went through `in_cmp` in
+/// `eval.rs`, whose `(String, String)` arm is `rhs.contains(lhs)` however the two operands were
+/// obtained. `InOperation::compare` in `eval/operators.rs` replaced that path in 901d40a6 and reached
+/// `string_in`, the containment check, only from the arms whose right-hand side satisfies `is_literal`;
+/// a query landed in the `(None, None)` arm, which asked `contained_in` alone, and two scalars there
+/// fall through to `compare_eq`. So a scalar query against a string literal held while the same scalar
+/// query against a query resolving to that identical string failed.
 ///
 /// The `#[ignore]` arrived in 1aca9003, in the same hunk that first gave the function `#[test]` --
-/// 901d40a6 had carried it in with no attribute at all, so nothing observed what that commit
-/// dropped, and no reason was recorded when it was finally parked.
+/// 901d40a6 had carried it in with no attribute at all, so nothing observed what that commit dropped,
+/// and no reason was recorded when it was finally parked.
+///
+/// `substring_in_answers_the_same_against_a_query_as_against_a_literal` is where the reading is pinned
+/// cell by cell, in both polarities and for all four operand spellings. This one is kept because it is
+/// the shape a user wrote: `some`, a filter capture and a `when` block wrapped around the mechanism,
+/// none of which was ever implicated, so between the two of them a regression that only shows up under
+/// composition still has somewhere to land.
 #[test]
-#[ignore]
 fn test_string_in_comparison() -> Result<()> {
     let resources = r#"
     Resources:
@@ -10024,6 +10027,103 @@ fn a_one_element_list_compares_the_same_typed_as_resolved(
 
     let rules = format!(
         "let onekey = OneKey\nlet otherkey = OtherKey\nlet twokeys = TwoKeys\nrule r {{ {clause} }}"
+    );
+
+    assert_eq!(
+        expected,
+        rule_status_in(&rules, INPUT, "r")?,
+        "clause: {}",
+        clause
+    );
+
+    Ok(())
+}
+
+/// `IN` against a string is containment, and a query on the right answers it like a literal does.
+///
+/// Substring `IN` is reached through `string_in`, and `InOperation::compare` calls it only from the two
+/// arms whose right-hand side satisfies `is_literal`. A query right-hand side resolves to `Resolved`,
+/// so `%needle in Haystack` and `Needle in Haystack` both fall through to `contained_in`, where two
+/// scalars end at `compare_eq` -- equality. The identical question spelled with the string written out
+/// passed. This is not a new operator: `Needle in "aws:arn:s3::${s3}"` is containment today and has
+/// been since the clause form existed. It is one reading of `IN` that two spellings disagreed about.
+///
+/// The `denied_` cells are the ones that mattered enough to fix. `Needle not in Haystack` PASSED with
+/// `Needle` a verbatim substring of what `Haystack` holds -- a denylist admitting the value it names,
+/// at exit 0. All three spellings of it (scalar query needle, literal needle, list needle) did the
+/// same, and all three now fail. Every one of them already failed when the haystack was typed as a
+/// literal, so this closes a gap rather than tightening a rule: no clause that reports compliance
+/// today under the literal spelling reports differently now.
+///
+/// `list_needle_query_haystack` follows the arm it has to agree with rather than the other list rule
+/// in this operator. With a string literal on the right, a list-valued left-hand side is expanded and
+/// every element checked, so `["s3","arn"] in "aws:arn:s3::${s3}"` holds and `["s3","zzz"]` does not.
+/// The `(None, None)` arm compares a left-hand result whole, so the expansion happens inside the
+/// containment test instead. An empty list does not match, which follows `contained_in`'s `is_empty`
+/// guard rather than inventing a second answer for a vacuous comparison.
+///
+/// A left-hand side that arrived as a literal is NOT expanded, and the two `list_literal_needle` cells
+/// pin that. `%list_lit in "aws:arn:s3::${s3}"` fails today -- the literal-to-literal arm asks
+/// `string_in` on the list as a whole, gets "not comparable", and falls through -- so the query-
+/// right-hand spelling of it has to fail too. Expanding it would make the query spelling the more
+/// permissive of the two, which is the shape of the defect being fixed here, pointing the other way.
+///
+/// The `int_needle` and `list_membership` cells are controls. A non-string operand stays incomparable
+/// in both spellings, and `IN` against an actual list is still membership: nothing above touches the
+/// reading that `docs/CLAUSES.md` documents.
+#[rstest::rstest]
+#[case::query_needle_literal_haystack(r#"Needle in "aws:arn:s3::${s3}""#, Status::PASS)]
+#[case::query_needle_query_haystack("Needle in Haystack", Status::PASS)]
+#[case::literal_needle_literal_haystack(r#"%needle in "aws:arn:s3::${s3}""#, Status::PASS)]
+#[case::literal_needle_query_haystack("%needle in Haystack", Status::PASS)]
+#[case::list_needle_literal_haystack(r#"NeedleList in "aws:arn:s3::${s3}""#, Status::PASS)]
+#[case::list_needle_query_haystack("NeedleList in Haystack", Status::PASS)]
+#[case::absent_query_needle_literal_haystack(r#"Absent in "aws:arn:s3::${s3}""#, Status::FAIL)]
+#[case::absent_query_needle_query_haystack("Absent in Haystack", Status::FAIL)]
+#[case::absent_literal_needle_query_haystack("%absent in Haystack", Status::FAIL)]
+#[case::partly_absent_list_literal_haystack(r#"BadList in "aws:arn:s3::${s3}""#, Status::FAIL)]
+#[case::partly_absent_list_query_haystack("BadList in Haystack", Status::FAIL)]
+#[case::denied_query_needle_literal_haystack(r#"Needle not in "aws:arn:s3::${s3}""#, Status::FAIL)]
+#[case::denied_query_needle_query_haystack("Needle not in Haystack", Status::FAIL)]
+#[case::denied_literal_needle_literal_haystack(
+    r#"%needle not in "aws:arn:s3::${s3}""#,
+    Status::FAIL
+)]
+#[case::denied_literal_needle_query_haystack("%needle not in Haystack", Status::FAIL)]
+#[case::denied_list_needle_literal_haystack(
+    r#"NeedleList not in "aws:arn:s3::${s3}""#,
+    Status::FAIL
+)]
+#[case::denied_list_needle_query_haystack("NeedleList not in Haystack", Status::FAIL)]
+#[case::undenied_query_needle_literal_haystack(
+    r#"Absent not in "aws:arn:s3::${s3}""#,
+    Status::PASS
+)]
+#[case::undenied_query_needle_query_haystack("Absent not in Haystack", Status::PASS)]
+#[case::undenied_literal_needle_query_haystack("%absent not in Haystack", Status::PASS)]
+#[case::list_literal_needle_literal_haystack(r#"%list_lit in "aws:arn:s3::${s3}""#, Status::FAIL)]
+#[case::list_literal_needle_query_haystack("%list_lit in Haystack", Status::FAIL)]
+#[case::int_needle_literal_haystack(r#"%int in "aws:arn:s3::${s3}""#, Status::FAIL)]
+#[case::int_needle_query_haystack("%int in Haystack", Status::FAIL)]
+#[case::list_membership_literal(r#"Needle in ["s3", "other"]"#, Status::PASS)]
+#[case::list_membership_query("Needle in NeedleList", Status::PASS)]
+fn substring_in_answers_the_same_against_a_query_as_against_a_literal(
+    #[case] clause: &str,
+    #[case] expected: Status,
+) -> Result<()> {
+    const INPUT: &str = r#"
+    {
+        Needle: "s3",
+        Absent: "zzz",
+        Haystack: "aws:arn:s3::${s3}",
+        NeedleList: ["s3", "arn"],
+        BadList: ["s3", "zzz"]
+    }
+    "#;
+
+    let rules = format!(
+        "let needle = \"s3\"\nlet absent = \"zzz\"\nlet list_lit = [\"s3\", \"arn\"]\n\
+         let int = 5\nrule r {{ {clause} }}"
     );
 
     assert_eq!(
