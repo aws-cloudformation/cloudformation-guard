@@ -31,84 +31,18 @@ pub(crate) const MERGE_KEY: &str = "<<";
 /// The bound belongs where the deep value is *built* rather than where it is consumed, so that no deep
 /// `MarkedValue` is ever constructed for anything downstream to recurse over.
 ///
-/// Every figure below is rustc 1.77.2 on x86_64 Linux and carries its profile, because an unlabeled release
-/// figure in the parser's half of this bound hid a `cargo test` that aborted on three CI platforms. Which
-/// build each one needs differs: the figures at 128 are observable on the stock binary, the ones above it
-/// need this constant raised, the corpus depths below it need it lowered, and the serde boundary does not
-/// depend on this constant at all.
-///
-/// **The stack.** The conversion costs **1.493 KB per level optimized, 7.881 KB unoptimized**. Bisect an
-/// explicit `stack_size` at a fixed depth rather than the depth at a fixed stack; it is the same measurement
-/// two orders of magnitude more precisely. A Rust thread's default 2 MB therefore reaches roughly twice this
-/// bound unoptimized, and `main`'s 8 MB roughly eight times it. Stated as a ratio because there is a
-/// fixed overhead of a few tens of KB besides the per-level cost, so scaling the per-level figure alone
-/// overestimates by a handful of levels. That comparison is the load-bearing one: unlike the parser's bound,
-/// whose unoptimized ceiling of 67 sits *below* its 128, nothing here is refused by a stack before it is
-/// refused by the count.
-///
-/// `Loader::load` is iterative and survives depth 20000 on a **16 KB** thread in both profiles, which is the
-/// smallest glibc will honour. Dropping the resulting `MarkedValue` is recursive drop glue and is where the
-/// stack actually goes: linear at 0.2349 KB per level unoptimized, so load-plus-drop at depth 20000 needs
-/// 4699 KB and a 2 MB libtest thread aborts on it. At this bound it is about 30 KB, so none of it reaches
-/// the shipped path.
-///
-/// **The cost before it is fatal**, which is the other half of why bounding depth mattered. There are two
-/// costs and only one of them is inherent.
-///
-/// The **bytes** are the conversion, and they are structural: every node's `Path` is built from its parent's
-/// by `extend_usize` for sequence children, `extend_string` for mapping children -- the dominant case in a
-/// template -- and `with_location` on both, so n nodes each hold a path of length up to n and the bytes grow
-/// with the square of the depth. Read `try_from_marked` to check it; no measurement required.
-///
-/// The **time** was cubic, and it is not the conversion. It is one `format!` whose output is discarded.
-/// `Traversal::at` renders `self.nodes.range(pointer..)` with `{:?}` to build the `RetrievalError` for a
-/// path that misses, and `CfnAware::report_eval` probes `at("/Resources", root).is_ok()` on every data file
-/// to decide whether to report it as a CloudFormation template. A document with no `Resources` section
-/// therefore renders every node whose path sorts at or after `/Resources`, each entry printing its whole
-/// subtree and each subtree node its full path, and `is_ok()` throws the string away. One `format!` per
-/// probe: the cube is the size of what gets rendered, not the number of calls.
-///
-/// The control is one character. With 1600 brackets in both documents and the rule verdict held constant,
-/// `a: [[[ ... ]]]` takes 36.818 s and `A: [[[ ... ]]]` takes 0.023 s, optimized. Uppercase sorts before
-/// `/Resources` and lowercase after it, so the only difference is whether the top-level key falls inside the
-/// probe's range -- same depth, same bracket count, same bytes. The conversion is 0.017 s on either.
-///
-/// A second, independent cost appears only when a rule fails, and is unaffected by the probe:
-/// `GenericSummary::report_eval` -> `simplified_json_from_root` -> `report_all_failed_clauses_for_rules` ->
-/// `PathAwareValue::clone`, each cloned node copying its full path `String`. The verdict isolates it on the
-/// uppercase document, which is probe-free -- `/A` sorts before `/Resources`, so the probe's range is empty
-/// and a passing and a failing run differ only in the failure reporting. Fail it with a comparison,
-/// `A == "zzz"`: failing is necessary but not sufficient, and `A !exists`, `A empty` and `A is_string` all
-/// fail while landing within about 2 ms of the passing run instead of seconds above it, so reaching for one
-/// of those measures a null result rather than this cost. (`A.nope exists` does show it.) That difference is
-/// 2.2 s at 1600 brackets, and it climbs with a log-log slope near 2.8 from 200 brackets up, so the cost is
-/// per-node work rather than a fixed one. The frame is still a single stack sample, though: the control
-/// sizes the cost without picking which of those four calls holds it.
-///
-/// **Do not chase either from here.** Every factor -- range size, subtree size, path length -- scales with
-/// depth, and depth is bounded at 128, where the same `validate` run finishes in under a tenth of a second:
-/// 0.028 s median over 60 runs on an unloaded host, holding within 5% across batches. Contention for the
-/// core is what moves it most sharply: one competing process pinned to the same core doubles it, and each
-/// further one adds about the baseline again. Whole-machine load costs far less per competitor than that,
-/// but it does not wait for saturation. On 192 physical cores, ratioed against a quiet median re-measured
-/// between every loaded row (0.0267-0.0275 s over 13 such rows, so 1.06x is already outside the noise):
-///
-/// ```text
-/// runnable     52   101   127   152   175   212   221   235   269
-/// x baseline   0.98 1.06  1.14  1.30  1.42  1.53  2.84  2.35  2.60
-/// ```
-///
-/// Flat to about half the core count, rising steadily through it, then 2.3x-2.8x once runnable is 15% or so
-/// past it. Read that axis as a fraction of this host's 192 rather than as absolute counts, since the core
-/// count is the quantity the shape scales with; whether the same fractions hold on a much smaller box is not
-/// measured here. What the curve rules out is the reassuring reading, that a busy machine is free until its
-/// runnable count nears its core count: at two thirds of the core count the cost is already 15%, so load
-/// starts costing at roughly 55-65% of it. That is why the measuring condition travels with the figure -- a
-/// bare value reproduces only on the machine that took it, which is how the numbers this passage used to
-/// quote came to be wrong.
-/// A wide, shallow document has short paths and small subtrees and stays cheap as well. So this is the
-/// historical justification for the bound rather than a live cost on the shipped binary, and the
-/// discarded-message waste is filed in the known-defects write-up instead of fixed here.
+/// `a_document_nested_past_the_limit_is_refused` in `loader_tests.rs` carries the crash and the placement
+/// rationale, on the cases that fail if either is wrong. Two properties of the bound are not visible from
+/// there. Unlike the parser's half of this bound, whose unoptimized stack ceiling sits *below* its 128,
+/// nothing here is refused by a stack before the count refuses it -- `load` is iterative, and the recursion
+/// is in the conversion the bound keeps deep input away from. And depth was expensive well before it was
+/// fatal, from two costs that a bound caps together: the conversion's path-per-node storage, which grows
+/// with the square of the depth, and a `format!` in `Traversal::at` whose output `CfnAware::report_eval`
+/// discards, which grows faster still. Neither is fixed; the bound is what keeps either from mattering, and
+/// every factor they scale with -- range size, subtree size, path length -- scales with depth. A wide,
+/// shallow document is cheap for the same reason. Any figure quoted for them must carry its profile and its
+/// host -- an unlabeled release figure in the parser's half hid a `cargo test` that aborted on three CI
+/// platforms, and load on the measuring machine moves these timings by more than a factor of two.
 ///
 /// **Why 128.** It is the limit serde already enforces on the other loader in this product. The same number,
 /// but the two count it over different documents, so they do not both accept and refuse the same one. This
@@ -145,10 +79,10 @@ pub(crate) const MERGE_KEY: &str = "<<";
 /// one. So the bound clears real input by an order of magnitude and clears even this repository's serialized
 /// output several times over, which is the form of the claim that does not move when a fixture gains a level.
 ///
-/// A non-recursive conversion was the alternative. It would remove the crash but not the quadratic bytes,
-/// and not the clone on the failure path either, which is the same property showing up as time: both are
-/// inherent to storing a full path at every node, and both reach into `Path`, `PathAwareValue` and every
-/// reporter that prints one. It would not touch the dominant cost at all, because a discarded `{:?}` of a
+/// A non-recursive conversion was the alternative. It would remove the crash, but not the quadratic bytes,
+/// and not the per-node `PathAwareValue::clone` that failure reporting does either -- both are inherent to
+/// storing a full path at every node, and both reach into `Path`, `PathAwareValue` and every reporter that
+/// prints one. It would not touch the `Traversal::at` waste at all, because a discarded `{:?}` of a
 /// `BTreeMap` range is not a property of the path representation and is removable on its own terms. A bound
 /// caps all three, in the loader, and leaves either refactor free to happen separately.
 const MAX_NESTING_DEPTH: usize = 128;
