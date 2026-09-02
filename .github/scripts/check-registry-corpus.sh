@@ -83,9 +83,39 @@ done
 # dying, because that failure mode is the worst kind to debug from a log: a bare `mktemp:` line, before any
 # condition has run, with no `FAIL: condition` to say which check was unhappy -- it reads as the checker
 # being broken rather than as the environment being unusual.
-tmproot=${TMPDIR:-/tmp}
-[ -d "$tmproot" ] || tmproot=/tmp
-work=$(mktemp -d "$tmproot/cfn-guard-registry-check.XXXXXX")
+#
+# Decided by trying `mktemp` and not by testing the path first. `[[ -d $tmproot ]]` predicts whether the
+# call will work, and it predicts wrong in the direction that matters: a `TMPDIR` naming a real directory
+# this process cannot write to passes the test and then fails the call, which is the same bare `mktemp:`
+# line the test was added to prevent. Measured with `TMPDIR=/proc`, where `-d` is true, `-w` is false, and
+# the run died before condition 1. Adding `-w` would close that one case and still be a prediction; the
+# call itself is the only thing that knows, and on MSYS the reason can be the template's backslashes
+# rather than anything a test on the prefix could see.
+#
+# The explicit template stays: BSD mktemp on macos-latest requires one, and `-t` differs between the two.
+work=""
+for tmproot in "${TMPDIR:-/tmp}" /tmp; do
+    if work=$(mktemp -d "$tmproot/cfn-guard-registry-check.XXXXXX" 2>/dev/null); then
+        if [[ $tmproot != "${TMPDIR:-/tmp}" ]]; then
+            printf 'TMPDIR=%s is not usable here; using %s instead\n' "${TMPDIR-}" "$tmproot" >&2
+        fi
+        break
+    fi
+    work=""
+done
+
+# `mktemp`'s own message is suppressed above and replaced here, because a recovered run must not leave an
+# error line in the log for a step that succeeded -- and a run that recovers nowhere needs to say what to
+# do, which `mktemp` does not.
+if [[ -z $work ]]; then
+    tried=/tmp
+    if [[ ${TMPDIR:-/tmp} != /tmp ]]; then
+        tried="$TMPDIR or /tmp"
+    fi
+    printf 'could not create a temporary directory under %s\n' "$tried" >&2
+    printf 'set TMPDIR to a writable directory, or clear it to use /tmp\n' >&2
+    exit 2
+fi
 readonly work
 trap 'rm -rf "$work"' EXIT
 
