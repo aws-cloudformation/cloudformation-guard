@@ -8780,11 +8780,19 @@ fn a_range_inside_a_list_literal_is_a_range(
 /// that disagrees with its partner is the defect regardless of which verdict is the right one. Two of
 /// these nine failed before the fix, both `_last` cells.
 ///
-/// The other five are controls, and each stops a different over-fix. The two `Port` cells keep the
+/// The other seven are controls, and each stops a different over-fix. The two `Port` cells keep the
 /// scalar-left-hand arm -- the one d7f01ec actually changed -- in view, since both arms read the same
 /// right-hand list. `subset_over_a_flat_list` is the reading that has to survive: deleting the subset
-/// branch outright would fail it. The two `absent_nested_list` cells are a nested list that genuinely
-/// is not there, which must keep failing in both positions.
+/// branch outright fails it, checked by replacing that branch with an unconditional failure. The two
+/// `absent_nested_list` cells are a nested list that genuinely is not there, which must keep failing
+/// in both positions; making the membership test unconditionally true fails both.
+///
+/// The two `subset_survives_a_nested_neighbour` cells are the pair that pins WHICH order-independent
+/// rule this is. Gating the subset reading on the right-hand side holding no list is also
+/// order-independent and also closes the defect, but it makes `IN [1, 2, [9]]` fail -- so adding an
+/// unrelated nested entry to an allowlist stops the flat entries beside it from matching. The `_first`
+/// spelling of this pair failed before the fix and the `_last` one passed, so between them they hold
+/// the rule in place from both sides.
 #[rstest::rstest]
 #[case::nested_list_first("Pair", r#"IN [[1,2], "zzz"]"#, Status::PASS)]
 #[case::nested_list_last("Pair", r#"IN ["zzz", [1,2]]"#, Status::PASS)]
@@ -8795,6 +8803,8 @@ fn a_range_inside_a_list_literal_is_a_range(
 #[case::subset_over_a_flat_list("Pair", r#"IN ["zzz", 1, 2]"#, Status::PASS)]
 #[case::absent_nested_list_first("Pair", r#"IN [[3,4], "zzz"]"#, Status::FAIL)]
 #[case::absent_nested_list_last("Pair", r#"IN ["zzz", [3,4]]"#, Status::FAIL)]
+#[case::subset_survives_a_nested_neighbour_last("Pair", r#"IN [1, 2, [9]]"#, Status::PASS)]
+#[case::subset_survives_a_nested_neighbour_first("Pair", r#"IN [[9], 1, 2]"#, Status::PASS)]
 fn a_nested_list_on_the_right_of_in_is_found_in_any_position(
     #[case] property: &str,
     #[case] comparison: &str,
@@ -9713,9 +9723,15 @@ fn a_key_set_from_one_result_widens_like_a_key_set_from_several(
 /// denies, and it does so at exit 0, so the rule reports compliance on the document it was written
 /// to reject.
 ///
-/// `NotEq` next door already folds with ALL and is correct, which is what
-/// `single_element_denylist_unchanged` pins: the two negated comparators now agree, and that cell
-/// would have caught a fix applied to the wrong one of them.
+/// `NotEq` next door already folds with ALL and is correct, which is the basis for ALL being the
+/// right fold here rather than a rule invented for one comparator.
+///
+/// `single_element_denylist_unchanged` does NOT pin that, and the distinction is worth stating because
+/// the obvious reading of this cell is wrong. Routing `NotEq` through the ANY fold instead leaves the
+/// whole grid green, measured. `NotEq` only ever reaches the fold with exactly one value --
+/// `widened_for` promotes it to `NotIn` above that -- and ANY over one comparison is ALL over one, so
+/// which fold the `Eq`/`NotEq` arm uses is not observable from any rules file. What this cell does
+/// pin is the arm itself: dropping the inversion that makes `!=` negate turns it red.
 ///
 /// `an_undenied_key_is_still_selected` is the control that matters most, because the cheap wrong fix
 /// -- folding `NotIn` so that any single match rejects the whole *map* rather than the one key --

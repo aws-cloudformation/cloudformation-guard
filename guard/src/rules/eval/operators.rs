@@ -355,32 +355,56 @@ fn contained_in(lhs_value: Rc<PathAwareValue>, rhs_value: Rc<PathAwareValue>) ->
     match &*lhs_value {
         PathAwareValue::List((_, lhsl)) => match &*rhs_value {
             PathAwareValue::List((_, rhsl)) => {
-                // Which of the two readings a list-against-list comparison gets is decided by
-                // whether ANY right-hand element is a list, not by whether element zero is.
+                // A list-valued left-hand side is IN a right-hand list if the whole list is one of
+                // its elements, or if the left-hand side is non-empty and every left-hand element is
+                // one of its non-list elements.
                 //
-                // The readings are membership -- "the whole left-hand list is one of these
-                // elements", which is what `Resources IN [["a","b"], ["c","d"]]` means -- and subset
-                // over a flat right-hand side, which is what `Actions IN ["s3:Get", "s3:Put"]` means.
-                // A nested list on the right is the only thing that can satisfy membership, so its
-                // presence anywhere is what names the reading.
+                // Two readings, and each right-hand element decides for itself which one it can
+                // answer. Membership -- "the whole left-hand list is one of these elements" -- is what
+                // `Resources IN [["a","b"], ["c","d"]]` means, and only a nested list can satisfy it.
+                // Subset -- "every left-hand element is one of these" -- is what
+                // `Actions IN ["s3:Get", "s3:Put"]` means, and only a non-list element can contribute
+                // to it. Nothing about one element changes what another element answers.
                 //
-                // Reading `rhsl[0]` let element zero answer for elements 1..n. For a `Pair` of
-                // `[1, 2]`, `Pair NOT IN ["zzz", [1,2]]` exited 0 and `Pair NOT IN [[1,2], "zzz"]`
-                // exited 19: one denylist, one value, and the order it was typed in decided whether
-                // it admitted a value it verbatim contains. The `IN` spelling inverted the same way,
-                // and printed `was not present in [["zzz",[1,2]]]` -- refuted by the set beside it.
+                // That independence is the whole fix. Reading `rhsl[0]` let element zero answer for
+                // elements 1..n: for a `Pair` of `[1, 2]`, `Pair NOT IN ["zzz", [1,2]]` exited 0 and
+                // `Pair NOT IN [[1,2], "zzz"]` exited 19 -- one denylist, one value, and the order it
+                // was typed in decided whether it admitted a value it verbatim contains. `IN`
+                // inverted the same way and printed `was not present in [["zzz",[1,2]]]`, refuted by
+                // the set beside it.
                 //
-                // This is `d7f01ec`'s failure shape in the branch that commit did not reach. It fixed
-                // the scalar-left-hand arm below, where `rhsl.contains(rest)` could not see a range
-                // nested in a list literal, by asking each element in turn. Same fix, same idiom, one
-                // arm over: the membership test asks every element rather than letting one stand for
-                // the rest, and asks `compare_eq` as well as `PartialEq` so that a list holding a
-                // range or a regex is compared by the function that knows about them. A right-hand
-                // element that is not a list cannot satisfy either test, so nothing gates them.
+                // This is `d7f01ec`'s failure shape in the arm that commit did not reach. It fixed the
+                // scalar-left-hand arm below, where `rhsl.contains(rest)` could not see a range nested
+                // in a list literal, by asking each element in turn. Same idiom here, and membership
+                // asks `compare_eq` as well as `PartialEq` so a list holding a range or a regex
+                // reaches the function that knows about them. The subset test stays on `PartialEq`,
+                // which is what the all-flat branch below uses, so one reading does not silently
+                // become more permissive than the other spelling of itself.
+                //
+                // Gating subset on the RIGHT-hand side holding no list was tried and rejected. It is
+                // order-independent, so it closes the defect, but it keeps the shape of what caused
+                // it: one nested element would suppress the subset reading for every flat element
+                // beside it, so adding `[9]` to `IN [1, 2]` stopped `1` and `2` matching, with no
+                // diagnostic and nothing wrong with the clause. Measured over every `NOT IN` cell in
+                // the grid, the two rules agree, so nothing about a denylist turns on this choice --
+                // in this arm a failed membership reports the whole left-hand list as the diff, and
+                // the negation wrapper counts every left-hand element as colliding either way.
+                //
+                // The `is_empty` guard keeps an empty left-hand list failing here. It is vacuously a
+                // subset of anything, and `[] IN [1,2,3]` does pass through the branch below, so the
+                // guard preserves an inconsistency rather than fixing one. Deliberate: an empty
+                // collection passing a comparison is what `vacuous_comparison_notice` in `eval.rs` is
+                // deprecating, and this is not the commit to add another one.
                 if rhsl.iter().any(|elem| elem.is_list()) {
-                    if rhsl.iter().any(|elem| {
-                        elem == &*lhs_value || compare_eq(&lhs_value, elem).unwrap_or(false)
-                    }) {
+                    let flat_subset = !lhsl.is_empty()
+                        && lhsl
+                            .iter()
+                            .all(|l| rhsl.iter().any(|r| !r.is_list() && r == l));
+                    if flat_subset
+                        || rhsl.iter().any(|elem| {
+                            elem == &*lhs_value || compare_eq(&lhs_value, elem).unwrap_or(false)
+                        })
+                    {
                         ValueEvalResult::ComparisonResult(ComparisonResult::Success(
                             Compare::ListIn(ListIn::new(vec![], lhs_value, rhs_value)),
                         ))
