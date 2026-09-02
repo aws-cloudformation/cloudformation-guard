@@ -77,31 +77,50 @@ pub(crate) const MERGE_KEY: &str = "<<";
 /// `GenericSummary::report_eval` -> `simplified_json_from_root` -> `report_all_failed_clauses_for_rules` ->
 /// `PathAwareValue::clone`, each cloned node copying its full path `String`. The verdict isolates it on the
 /// uppercase document, which is probe-free -- `/A` sorts before `/Resources`, so the probe's range is empty
-/// and a passing and a failing run differ only in the failure reporting. That difference is 2.2 s at 1600
-/// brackets, and it climbs with a log-log slope near 2.8 from 200 brackets up, so the cost is per-node work
-/// rather than a fixed one. The frame is still a single stack sample, though: the control sizes the cost
-/// without picking which of those four calls holds it.
+/// and a passing and a failing run differ only in the failure reporting. Fail it with a comparison,
+/// `A == "zzz"`: failing is necessary but not sufficient, and `A !exists`, `A empty` and `A is_string` all
+/// fail while landing within about 2 ms of the passing run instead of seconds above it, so reaching for one
+/// of those measures a null result rather than this cost. (`A.nope exists` does show it.) That difference is
+/// 2.2 s at 1600 brackets, and it climbs with a log-log slope near 2.8 from 200 brackets up, so the cost is
+/// per-node work rather than a fixed one. The frame is still a single stack sample, though: the control
+/// sizes the cost without picking which of those four calls holds it.
 ///
 /// **Do not chase either from here.** Every factor -- range size, subtree size, path length -- scales with
 /// depth, and depth is bounded at 128, where the same `validate` run finishes in under a tenth of a second:
 /// 0.028 s median over 60 runs on an unloaded host, holding within 5% across batches. Contention for the
-/// core is what moves that, rather than machine load as such: one competing process pinned to the same core
-/// doubles it, and each further one adds about the baseline again. Whole-machine load hardly registers next
-/// to that -- on 192 cores the figure was flat at 20 runnable processes and 1.36x at 220, so a busy machine
-/// costs nothing until its runnable count nears its core count. That is why the measuring condition travels
-/// with the figure -- a bare value reproduces only on the machine that took it, which is how the number this
-/// line used to quote came to be wrong.
+/// core is what moves it most sharply: one competing process pinned to the same core doubles it, and each
+/// further one adds about the baseline again. Whole-machine load costs far less per competitor than that,
+/// but it does not wait for saturation. On 192 physical cores, ratioed against a quiet median re-measured
+/// between every loaded row (0.0267-0.0275 s over 13 such rows, so 1.06x is already outside the noise):
+///
+/// ```text
+/// runnable     52   101   127   152   175   212   221   235   269
+/// x baseline   0.98 1.06  1.14  1.30  1.42  1.53  2.84  2.35  2.60
+/// ```
+///
+/// Flat to about half the core count, rising steadily through it, then 2.3x-2.8x once runnable is 15% or so
+/// past it. Read that axis as a fraction of this host's 192 rather than as absolute counts, since the core
+/// count is the quantity the shape scales with; whether the same fractions hold on a much smaller box is not
+/// measured here. What the curve rules out is the reassuring reading, that a busy machine is free until its
+/// runnable count nears its core count: at two thirds of the core count the cost is already 15%, so load
+/// starts costing at roughly 55-65% of it. That is why the measuring condition travels with the figure -- a
+/// bare value reproduces only on the machine that took it, which is how the numbers this passage used to
+/// quote came to be wrong.
 /// A wide, shallow document has short paths and small subtrees and stays cheap as well. So this is the
 /// historical justification for the bound rather than a live cost on the shipped binary, and the
 /// discarded-message waste is filed in the known-defects write-up instead of fixed here.
 ///
-/// **Why 128.** It is the limit serde already enforces on the other loader in this product, and at this
-/// value the two agree exactly: both accept a document nested 128 containers deep and both refuse 129,
-/// measured on the live serde path, which is a `test` spec's `input:` block. Witness it with a JSON spec,
-/// which refuses 129 with `recursion limit exceeded`; a YAML one reports `invalid number at line 1 column 2`
-/// instead, because `parse_test_specs` discards serde_yaml's error and serde_json then fails on the YAML
-/// syntax rather than the depth. Not `rulegen`, which is no longer a second witness: `load_template` reads
-/// through this loader now, so its agreement is tautological.
+/// **Why 128.** It is the limit serde already enforces on the other loader in this product. The same number,
+/// but the two count it over different documents, so they do not both accept and refuse the same one. This
+/// bound counts the containers in the data document: `a:` plus 127 `[` is 128 levels and loads, 128 `[` is
+/// refused. Serde's counts every container in the file it parses, and the live serde path is a `test` spec's
+/// `input:` block, which already sits under two of them -- the `Vec<TestSpec>` and the spec mapping -- so the
+/// deepest `input:` payload serde accepts is 126 and it refuses 127. One document shows both halves: `a:`
+/// plus 127 `[` is accepted as a `--data` file and refused as that same text under an `input:` key. Witness
+/// the serde side with a JSON spec, which says `recursion limit exceeded`; a YAML one says `invalid number at
+/// line 1 column 2` instead, because `parse_test_specs` discards serde_yaml's error and serde_json then fails
+/// on the YAML syntax rather than the depth. Not `rulegen`, which is no longer a second witness:
+/// `load_template` reads through this loader now, so its agreement is tautological.
 ///
 /// **And it is far above anything real.** Set this constant to N, rebuild, and run `validate --data` over
 /// every `.yaml`, `.yml`, `.json` and `.template` file in both corpora; a file's level count is the smallest
