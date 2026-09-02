@@ -40,7 +40,7 @@ pub(crate) const MERGE_KEY: &str = "<<";
 /// **The stack.** The conversion costs **1.493 KB per level optimized, 7.881 KB unoptimized**. Bisect an
 /// explicit `stack_size` at a fixed depth rather than the depth at a fixed stack; it is the same measurement
 /// two orders of magnitude more precisely. A Rust thread's default 2 MB therefore reaches roughly twice this
-/// bound unoptimized, and `main`'s 8 MB reaches thousands of levels. Stated as a ratio because there is a
+/// bound unoptimized, and `main`'s 8 MB roughly eight times it. Stated as a ratio because there is a
 /// fixed overhead of a few tens of KB besides the per-level cost, so scaling the per-level figure alone
 /// overestimates by a handful of levels. That comparison is the load-bearing one: unlike the parser's bound,
 /// whose unoptimized ceiling of 67 sits *below* its 128, nothing here is refused by a stack before it is
@@ -85,10 +85,11 @@ pub(crate) const MERGE_KEY: &str = "<<";
 ///
 /// **Why 128.** It is the limit serde already enforces on the other loader in this product, and at this
 /// value the two agree exactly: both accept a document nested 128 containers deep and both refuse 129,
-/// measured on the live serde path, which is a `test` spec's `input:` block. Two things not to re-evidence
-/// it with. `rulegen` is no longer a second witness, because `load_template` reads through this loader now,
-/// so its agreement is tautological. And no reachable path prints "recursion limit exceeded"; `test` reports
-/// the depth failure as `invalid number at line 1 column 2`.
+/// measured on the live serde path, which is a `test` spec's `input:` block. Witness it with a JSON spec,
+/// which refuses 129 with `recursion limit exceeded`; a YAML one reports `invalid number at line 1 column 2`
+/// instead, because `parse_test_specs` discards serde_yaml's error and serde_json then fails on the YAML
+/// syntax rather than the depth. Not `rulegen`, which is no longer a second witness: `load_template` reads
+/// through this loader now, so its agreement is tautological.
 ///
 /// **And it is far above anything real.** Set this constant to N, rebuild, and run `validate --data` over
 /// every `.yaml`, `.yml`, `.json` and `.template` file in both corpora; a file's level count is the smallest
