@@ -10067,6 +10067,30 @@ fn recorded_comparison_messages(record: &EventRecord<'_>, out: &mut Vec<String>)
     }
 }
 
+/// Which clause checks the evaluation recorded, by variant and status, in tree order.
+///
+/// The variant matters and the message does not, which is why this is separate from
+/// `recorded_comparison_messages`. A clause that records two verdicts about one value records them as
+/// two different variants -- the reason as a `Comparison` and the membership claim as an
+/// `InComparison` -- and the second one carries no message at all, so a message-based assertion cannot
+/// see it. Measured: with the second record present and absent, the message list is identical.
+fn recorded_clause_check_kinds(record: &EventRecord<'_>, out: &mut Vec<String>) {
+    if let Some(RecordType::ClauseValueCheck(check)) = &record.container {
+        out.push(match check {
+            ClauseCheck::Success => "Success".to_string(),
+            ClauseCheck::Comparison(c) => format!("Comparison({:?})", c.status),
+            ClauseCheck::InComparison(c) => format!("InComparison({:?})", c.status),
+            ClauseCheck::Unary(c) => format!("Unary({:?})", c.value.status),
+            ClauseCheck::NoValueForEmptyCheck(_) => "NoValueForEmptyCheck".to_string(),
+            ClauseCheck::DependentRule(c) => format!("DependentRule({:?})", c.status),
+            ClauseCheck::MissingBlockValue(c) => format!("MissingBlockValue({:?})", c.status),
+        });
+    }
+    for child in &record.children {
+        recorded_clause_check_kinds(child, out);
+    }
+}
+
 /// Runs one clause and returns the rule's status together with the comparison messages recorded.
 fn status_and_messages(clause: &str, input: &str) -> Result<(Status, Vec<String>)> {
     let rules = format!("rule r {{\n  {clause}\n}}");
@@ -10372,6 +10396,70 @@ fn substring_in_answers_the_same_against_a_query_as_against_a_literal(
         "clause: {}",
         clause
     );
+
+    Ok(())
+}
+
+/// A value containment cannot be asked of records one verdict, not two that disagree.
+///
+/// `unanswerable_and_nothing_unmatched` in the `(None, None)` arm of `InOperation::compare` had no test
+/// at all: removing it left 976 passed and 0 failed. It also had a comment that described something it
+/// does not do. The comment said an empty `diff` "would otherwise report Success", implying the flag
+/// keeps a clause from passing; measured, the clause exits 19 either way, because the `NotComparable`
+/// record fails closed on its own and decides the verdict whatever else is recorded beside it.
+///
+/// What it actually does is decide how many verdicts the report carries, and the `NOT IN` spelling is
+/// where that shows. Without the flag, `Int not in Haystack` for an `Int` of `5` records two FAILs about
+/// one value: a `Comparison` saying `/Int` is not a string so containment cannot be tested, and an
+/// `InComparison` filing `/Int` as a value that was present in the haystack. The second contradicts the
+/// first and is the one a denylist report would show as the violation. On the `IN` spelling the second
+/// record is a bare `Success` with no message and no operands, so the message list is unchanged there --
+/// which is why this test compares record *variants* and `recorded_comparison_messages` could not have
+/// caught it.
+///
+/// `Values[*]` is why the flag is no longer called `every_value_was_unanswerable`. Its condition is that
+/// something was unanswerable and nothing was left unmatched, and with `Values: ["s3", 5]` both hold
+/// while one of the two values was perfectly answerable and matched in full. The old name described a
+/// narrower case than the code, so a reader checking whether the flag applied would have concluded it
+/// did not.
+///
+/// The last three cells are the control. When nothing was unanswerable the flag is false and the single
+/// `QueryIn` record must still be recorded, including the `InComparison` that reports a genuine
+/// collision -- `Needle not in Haystack` is a real violation and has to keep filing one.
+#[rstest::rstest]
+#[case::unanswerable_in("Int in Haystack", Status::FAIL, &["Comparison(FAIL)"])]
+#[case::unanswerable_not_in("Int not in Haystack", Status::FAIL, &["Comparison(FAIL)"])]
+#[case::partly_unanswerable_in("Values[*] in Haystack", Status::FAIL, &["Comparison(FAIL)"])]
+#[case::partly_unanswerable_not_in("Values[*] not in Haystack", Status::FAIL, &["Comparison(FAIL)"])]
+#[case::answerable_in("Needle in Haystack", Status::PASS, &["Success"])]
+#[case::answerable_not_in("Needle not in Haystack", Status::FAIL, &["InComparison(FAIL)"])]
+#[case::answerable_miss_not_in("NoneList not in Haystack", Status::PASS, &["Success"])]
+fn an_unanswerable_containment_records_one_verdict_not_two(
+    #[case] clause: &str,
+    #[case] expected: Status,
+    #[case] expected_kinds: &[&str],
+) -> Result<()> {
+    const INPUT: &str = r#"
+    {
+        Needle: "s3",
+        Haystack: "aws:arn:s3::${s3}",
+        Int: 5,
+        Values: ["s3", 5],
+        NoneList: ["zz", "qq"]
+    }
+    "#;
+
+    let rules = format!("rule r {{ {clause} }}");
+    let rules_file = RulesFile::try_from(rules.as_str())?;
+    let value = PathAwareValue::try_from(INPUT)?;
+    let mut root = root_scope(&rules_file, Rc::new(value));
+    let status = eval_rules_file(&rules_file, &mut root, None)?;
+
+    let mut kinds = Vec::new();
+    recorded_clause_check_kinds(&root.reset_recorder().extract(), &mut kinds);
+
+    assert_eq!(expected, status, "clause: {}", clause);
+    assert_eq!(expected_kinds, kinds.as_slice(), "clause: {}", clause);
 
     Ok(())
 }

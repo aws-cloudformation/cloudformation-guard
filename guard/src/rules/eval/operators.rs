@@ -918,12 +918,34 @@ impl Comparator for InOperation {
                     diff.push(Rc::clone(eachl));
                 }
 
-                // Suppressed only when every left-hand value went to `NotComparable`, because then an
-                // empty `diff` would otherwise report Success -- "all values matched" about values none
-                // of which did.
-                let every_value_was_unanswerable = !unanswerable.is_empty() && diff.is_empty();
+                // One verdict per value, not two that disagree about the same one.
+                //
+                // With something unanswerable and nothing left unmatched there is no unmatched value for
+                // this record to be about, and recording it anyway files a second verdict against a
+                // value the loop has already reported it cannot decide. On `NOT IN` that second verdict
+                // is the one a report shows: for an `Int` of `5` against a string haystack,
+                // `Int not in Haystack` records the reason -- `/Int` is not a string, so containment
+                // cannot be tested -- and then, without this, an `InComparison` FAIL filing `/Int` as a
+                // value that WAS present in the haystack, contradicting the record beside it. On `IN` the
+                // extra record is a bare `Success` carrying no message and no operands.
+                //
+                // Not a verdict change, and the comment here used to say it was: it claimed an empty
+                // `diff` would otherwise report Success. Measured both ways, the clause exits 19 either
+                // way, because a `NotComparable` result fails closed on its own and decides the verdict
+                // whatever is recorded beside it. What this decides is what the report says, which is
+                // why `an_unanswerable_containment_records_one_verdict_not_two` asserts on the recorded
+                // clause checks rather than on the status. Nothing asserted on it before that test:
+                // removing this line left 976 passed and 0 failed.
+                //
+                // Renamed from `every_value_was_unanswerable`, which described a narrower case than the
+                // condition. Both halves hold whenever anything was unanswerable and nothing was left
+                // unmatched, including when other left-hand values matched in full: with
+                // `Values: ["s3", 5]`, `"s3"` is contained and so never reaches `diff`, `5` cannot be
+                // asked, and the flag is true with one of the two values perfectly answerable.
+                let unanswerable_and_nothing_unmatched =
+                    !unanswerable.is_empty() && diff.is_empty();
                 results.extend(unanswerable);
-                if !every_value_was_unanswerable {
+                if !unanswerable_and_nothing_unmatched {
                     results.push(if diff.is_empty() {
                         ValueEvalResult::ComparisonResult(ComparisonResult::Success(
                             Compare::QueryIn(QueryIn::new(diff, lhs_selected, rhs_selected)),
