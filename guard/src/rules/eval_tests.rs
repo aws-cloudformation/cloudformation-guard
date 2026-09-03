@@ -13321,10 +13321,24 @@ fn the_liveness_control_is_still_called_from_every_place_that_owes_it() {
 ///
 /// The lengths themselves are the guard: a table annotated `[_; 8]` turns a deleted cell into
 /// `error[E0308]`, because libtest counts test functions and a cell iterated by a `for` loop is not one --
-/// deleting it reads as nothing changed. Forty-four tables carry a length today. Nothing made the
-/// forty-fifth carry one, and nothing could notice: `cargo fmt`, `clippy`, `typos`, `shellcheck` and the
-/// suite are all blind to a missing annotation by construction. So the guard protected exactly the tables
+/// deleting it reads as nothing changed. Nothing except this test makes the NEXT table carry one, and
+/// nothing else could notice a missing annotation: `cargo fmt`, `clippy`, `typos`, `shellcheck` and the
+/// suite are all blind to it by construction. So before this test the guard protected exactly the tables
 /// somebody remembered to annotate, which is the shape of the blind spot it was built to close.
+///
+/// NO ABSOLUTE COUNT, and this sentence carried one for four commits after it stopped being true. It read
+/// "Forty-four tables carry a length today. Nothing made the forty-fifth carry one." Forty-four is the
+/// figure the single-line section below retires to forty-five, 22 lines from here, so the paragraph
+/// disagreed with its own page. Measured at this commit by the rule this test uses: 47 examined, 0
+/// unannotated -- and the chain below records 0 unannotated at every commit it covers, which is the same
+/// thing the assertion at the foot of this function has required all along. There has been no
+/// unannotated forty-fifth to make carry one.
+///
+/// The framing was an undercount of the change's own scope as well as a stale number. Its commit is
+/// subject-lined "make the loop-table length guard extend itself", and a guard that extends itself
+/// protects every table there will ever be; describing the gap as one missing forty-fifth table sizes it
+/// at one. That is why the durable form is the one the paragraph further down already recommends -- ask
+/// the test, whose failure message states the count it actually walked.
 ///
 /// This makes it self-extending. A table added without a length fails here, naming the binding, instead of
 /// silently joining the unprotected set.
@@ -13343,7 +13357,15 @@ fn the_liveness_control_is_still_called_from_every_place_that_owes_it() {
 /// This used to record, as its first limit, that it could not see twelve array literals written inline in a
 /// `for` header: there is no binding to inspect, and covering them meant introducing one per test. That is
 /// done, and those twelve are the difference between the twenty this examined before and the thirty-two it
-/// examined after that commit. The twelve single-line ones in the section below take it to forty-five.
+/// examined after that commit. A later commit took thirty-two to thirty-three. The twelve single-line ones
+/// in the section below then take it to forty-five.
+///
+/// The thirty-three is stated because without it the chain reads 20, 32, 45 -- two groups of twelve, the
+/// second of which arrives as a step of thirteen. The missing term is supplied six lines down in the
+/// per-commit run and is easy to read past there, so a reader checking the arithmetic finds one group the
+/// wrong size and no cause. It is not attributed to a SHA here: the ledger at the head of this file already
+/// maps the population per commit, and a fourth coordinate pointing at the same fact is the citation class
+/// these corrections keep retiring.
 ///
 /// That third term read forty-four until this correction, and forty-four is the figure `81eed7de`'s own
 /// ledger calls "nobody's measured figure" -- 128 lines from where that commit corrected it, and left
