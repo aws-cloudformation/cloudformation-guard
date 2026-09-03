@@ -3391,11 +3391,15 @@ pub(crate) fn rules_file(input: Span) -> Result<Option<RulesFile>, Error> {
     // file becomes sound by construction -- and it was rejected because those two tests say the support
     // is intended, not incidental.
     //
-    // Two sites outside this function still count `\n` alone, named so that they are not read as covered:
-    // `ReadCursor` in `utils/mod.rs` splits with `str::lines`, so a bare-CR *data* file renders its
-    // `Code:` excerpt as one line; and the single-line reporters flatten a message with
-    // `replace('\n', ";")`, which leaves the `\r` of a CRLF message body in the output. Both are the
-    // document and reporting sides rather than the parser, and neither can change a verdict.
+    // One site outside this function still counts `\n` alone, named so that it is not read as covered:
+    // the single-line reporters flatten a message with `replace('\n', ";")`, which leaves the `\r` of a
+    // CRLF message body in the output. That is the reporting side rather than the parser, and that one
+    // flattening cannot change a verdict. Read it as a claim about that site and not as one about
+    // reporters in general, which it is not.
+    //
+    // `ReadCursor` in `utils/mod.rs` was a second such site and no longer is. It now recognizes all five
+    // breaks libyaml does -- CR, LF, NEL, LS and PS -- so a data file spelled with any of them renders a
+    // `Code:` excerpt whose line numbers match the `L:` reported beside it.
     let _source = SourceScope::enter(&input);
 
     let input = match zero_or_more_ws_or_comment(input) {

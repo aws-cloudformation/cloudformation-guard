@@ -1705,3 +1705,139 @@ fn the_multiple_document_refusal_counts_them(#[case] content: &str, #[case] expe
         expected
     );
 }
+
+/// The five line breaks libyaml recognizes, from `IS_BREAK_AT!` in `unsafe-libyaml/src/macros.rs`.
+///
+/// `Cargo.toml` asks for `0.2.10` and `Cargo.lock` resolves `0.2.11`; `macros.rs` is byte-identical
+/// between the two, so this list holds for the version actually compiled.
+const LINE_BREAKS: [(&str, &str, &[u8]); 6] = [
+    ("LF", "\n", &[0x0A]),
+    ("CRLF", "\r\n", &[0x0D, 0x0A]),
+    ("bare CR", "\r", &[0x0D]),
+    ("NEL U+0085", "\u{0085}", &[0xC2, 0x85]),
+    ("LS U+2028", "\u{2028}", &[0xE2, 0x80, 0xA8]),
+    ("PS U+2029", "\u{2029}", &[0xE2, 0x80, 0xA9]),
+];
+
+/// The deepest line any node in `value` was loaded from.
+fn deepest_line(value: &MarkedValue) -> usize {
+    let mut deepest = value.location().line;
+    match value {
+        MarkedValue::List(items, _) => {
+            for item in items {
+                deepest = deepest.max(deepest_line(item));
+            }
+        }
+        MarkedValue::Map(entries, _) => {
+            for ((_, key_location), item) in entries {
+                deepest = deepest.max(key_location.line).max(deepest_line(item));
+            }
+        }
+        _ => {}
+    }
+    deepest
+}
+
+/// The two halves of a report agree on what a line is, for every line break and every mixture of them.
+///
+/// This is the property behind a defect that had two separate lives. A position comes from this loader,
+/// which counts lines the way libyaml does. The `Code:` excerpt printed beside that position is numbered
+/// by `ReadCursor` in `utils/mod.rs`, which counted them its own way. When the two disagree the report is
+/// internally inconsistent and there is nothing in it that tells a reader which half to believe: the
+/// loader said `Encrypted[L:6,C:18]` and the excerpt labelled the same text `5.`, with two lines' worth
+/// of it merged onto one and the separator invisible in a terminal.
+///
+/// Stated as a property rather than as a list of cases, because the list is what went wrong twice.
+/// `ReadCursor` first counted one break, then three, and both times the code beside it read as complete
+/// -- the second time with a doc comment that named the three it handled, which is the summary that hid
+/// the other two. Anchoring on the loader instead means a break this file has never heard of is still
+/// caught, as long as libyaml counts it.
+///
+/// The document is shaped so the assertion is meaningful: its last line carries a scalar, so the deepest
+/// line the loader reports is the file's last line, and that is the number the excerpt's last line must
+/// match. A document ending in a comment or a blank line would make the two legitimately differ and the
+/// property would not be a property.
+///
+/// `deepest_line` reads the loader's own marks rather than the rendered `[L:n]` string, so the assertion
+/// does not depend on any reporter being reachable from here.
+#[test]
+fn the_loader_and_the_read_cursor_agree_on_the_line_count() -> Result<()> {
+    // Six logical lines with the interesting value on the last one, which is the shape that made the
+    // disagreement visible: `emit_code` seeks two lines above the violation and reads five more, so on a
+    // six-line file the excerpt's last line is the violation's own.
+    let lines = [
+        "Resources:",
+        "  One:",
+        "    Type: AWS::S3::Bucket",
+        "    Properties:",
+        "      Tags: []",
+        "      Encrypted: false",
+    ];
+
+    // Every uniform document, every document holding exactly one non-LF break among LF ones, and every
+    // document ending in a terminator. The single-break case is the one worth naming: a lone `U+2028` in
+    // an otherwise-LF file is a routine artifact of JavaScript tooling, and its output looks plausible
+    // rather than broken.
+    let mut documents: Vec<(String, String)> = Vec::new();
+    for (spelling, separator, bytes) in LINE_BREAKS {
+        assert_eq!(
+            bytes,
+            separator.as_bytes(),
+            "{} is not the bytes it claims to be -- a mistyped separator reads as a different defect",
+            spelling
+        );
+
+        documents.push((
+            format!("uniform {}", spelling),
+            lines.join(separator).to_string(),
+        ));
+        documents.push((
+            format!("uniform {} with a final terminator", spelling),
+            format!("{}{}", lines.join(separator), separator),
+        ));
+
+        for at in 0..lines.len() - 1 {
+            let mut document = String::new();
+            for (index, line) in lines.iter().enumerate() {
+                if index > 0 {
+                    document.push_str(if index - 1 == at { separator } else { "\n" });
+                }
+                document.push_str(line);
+            }
+            documents.push((
+                format!("a lone {} after line {}", spelling, at + 1),
+                document,
+            ));
+        }
+    }
+
+    for (description, document) in documents {
+        let loaded = Loader::new().load(document.clone())?;
+        let reported = deepest_line(&loaded);
+
+        let mut cursor = crate::utils::ReadCursor::new(&document);
+        let mut excerpt_last = 0;
+        while let Some((number, _)) = cursor.next() {
+            excerpt_last = number;
+        }
+
+        assert_eq!(
+            reported,
+            excerpt_last,
+            "{}: the loader reported L:{} and the excerpt's last line is numbered {}. Bytes: {:?}",
+            description,
+            reported,
+            excerpt_last,
+            document.as_bytes()
+        );
+        assert_eq!(
+            lines.len(),
+            excerpt_last,
+            "{}: and both should be {} lines",
+            description,
+            lines.len()
+        );
+    }
+
+    Ok(())
+}
