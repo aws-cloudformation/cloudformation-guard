@@ -1836,11 +1836,12 @@ fn a_sibling_block_does_not_read_a_capture_merged_out_of_an_earlier_block() -> R
     "#,
     )?;
 
-    for (arrangement, document) in [
+    let block_arrangements: [_; 3] = [
         ("the bucket with alpha first", ALPHA_THEN_BETA),
         ("the bucket with alpha second", BETA_THEN_ALPHA),
         ("both buckets carrying alpha", BOTH_ALPHA),
-    ] {
+    ];
+    for (arrangement, document) in block_arrangements {
         let template =
             PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(document)?)?;
         let mut scope = root_scope(&reads_only, Rc::new(template));
@@ -1906,11 +1907,12 @@ fn a_capture_reads_as_the_union_after_its_block_and_per_iteration_inside_a_neste
         )
     };
 
-    for (key, expected) in [
+    let capture_expectations: [_; 3] = [
         ("alpha", Status::PASS),
         ("beta", Status::PASS),
         ("gamma", Status::FAIL),
-    ] {
+    ];
+    for (key, expected) in capture_expectations {
         let rules = after_the_block(key);
         let rules_file = RulesFile::try_from(rules.as_str())?;
         let template =
@@ -5906,10 +5908,11 @@ fn a_number_is_not_a_number_and_a_rule_reference() -> Result<()> {
 
     // The literal forms, so the shape test in `parse_float` cannot narrow again. A float needs a
     // fraction or an exponent, and either may carry a sign; a bare integer stays an integer.
-    for accepted in [
+    let accepted_spellings: [_; 13] = [
         "1.5", "-1.5", "0.0", "-0.0", "40", "-40", "1e5", "1E5", "1e+5", "1e-5", "-1e5", "-1e+5",
         "1.5e+3",
-    ] {
+    ];
+    for accepted in accepted_spellings {
         let rule = format!("rule r {{ Resources.R.Properties.Size == {} }}", accepted);
         assert!(
             RulesFile::try_from(rule.as_str()).is_ok(),
@@ -6418,10 +6421,11 @@ fn an_inapplicable_dependent_rule_does_not_fail_the_reference() -> Result<()> {
         ),
     ];
 
-    for (spelling, rules) in [
+    let reference_spellings: [_; 2] = [
         ("plain reference", plain),
         ("parameterized call", parameterized),
-    ] {
+    ];
+    for (spelling, rules) in reference_spellings {
         for (scenario, input, expected, why) in &scenarios {
             let rules_file = RulesFile::try_from(rules)?;
             let value = PathAwareValue::try_from(*input)?;
@@ -7197,7 +7201,7 @@ fn a_type_block_condition_is_evaluated_against_each_resource() -> Result<()> {
     }
     "###;
 
-    for (label, rules, expected) in [
+    let condition_shapes: [_; 3] = [
         // The spelling that used to skip everything.
         (
             "a resource-relative condition",
@@ -7213,7 +7217,8 @@ fn a_type_block_condition_is_evaluated_against_each_resource() -> Result<()> {
         // The cost of the change. A path anchored at the file root no longer resolves, because
         // the condition is now evaluated where the clauses are: at the resource.
         ("a root-anchored literal path", root_anchored, Status::SKIP),
-    ] {
+    ];
+    for (label, rules, expected) in condition_shapes {
         let rules_file = RulesFile::try_from(rules)?;
         let resources = PathAwareValue::try_from(BOTH_LARGE)?;
         let mut root = root_scope(&rules_file, Rc::new(resources));
@@ -7228,7 +7233,7 @@ fn a_type_block_condition_is_evaluated_against_each_resource() -> Result<()> {
     // Per-resource applicability is the point of the change, so assert it rather than assuming it
     // follows. A resource the condition exempts must not shield one it does not.
     let rules_file = RulesFile::try_from(resource_relative)?;
-    for (label, resources, expected) in [
+    let resource_shapes: [_; 2] = [
         (
             "one exempt resource and one violating",
             r#""A": { "Type": "AWS::EC2::Volume", "Properties": { "Size": 5, "Encrypted": false } },
@@ -7242,7 +7247,8 @@ fn a_type_block_condition_is_evaluated_against_each_resource() -> Result<()> {
             // volume had been checked.
             Status::SKIP,
         ),
-    ] {
+    ];
+    for (label, resources, expected) in resource_shapes {
         let input = format!(r#"{{ "Resources": {{ {} }} }}"#, resources);
         let values = PathAwareValue::try_from(input.as_str())?;
         let mut root = root_scope(&rules_file, Rc::new(values));
@@ -7536,11 +7542,12 @@ fn the_status_decisions_with_no_prior_coverage_are_correct() -> Result<()> {
 /// into a test failure for no reason. What must not come back is the part that varies by compiler.
 #[test]
 fn the_disjunction_context_is_stable_across_compilers() {
-    for name in [
+    let rule_names: [_; 3] = [
         disjunction_type_name::<GuardClause<'_>>(),
         disjunction_type_name::<RuleClause<'_>>(),
         disjunction_type_name::<WhenGuardClause<'_>>(),
-    ] {
+    ];
+    for name in rule_names {
         assert!(
             !name.contains('<') && !name.contains('>'),
             "the disjunction context still carries generic arguments ({}), which rustc renders \
@@ -7861,11 +7868,12 @@ fn an_out_of_range_index_does_not_panic() -> Result<()> {
     // readings cannot be told apart on a two-element list -- index 1 is also the last element -- so
     // the assertion below held either way. `a_negative_index_counts_back_from_the_end` uses three
     // elements, where they disagree.
-    for (query, expected) in [
+    let index_queries: [_; 3] = [
         ("Items[0]", Status::PASS),
         ("Items[1]", Status::FAIL),
         ("Items[-1]", Status::FAIL),
-    ] {
+    ];
+    for (query, expected) in index_queries {
         let rules = format!("rule r {{\n    {} == \"zero\"\n}}\n", query);
         let rules_file = RulesFile::try_from(rules.as_str())?;
         let value = PathAwareValue::try_from(DATA)?;
@@ -8245,10 +8253,11 @@ fn a_named_rule_gate_on_a_skipped_rule_does_not_disarm_the_block() -> Result<()>
     }
     "###;
 
-    for (label, rules) in [
+    let gate_spellings: [_; 2] = [
         ("a plain named-rule gate", named),
         ("a parameterized gate", parameterized),
-    ] {
+    ];
+    for (label, rules) in gate_spellings {
         let rules_file = RulesFile::try_from(rules)?;
         let value = PathAwareValue::try_from(DATA)?;
         let mut root = root_scope(&rules_file, Rc::new(value));
@@ -11189,11 +11198,12 @@ fn the_string_pair_that_cannot_be_separated_is_the_index_and_wildcard_spellings(
     let bare_query = AccessQuery::try_from("Str")?;
 
     let mut resolved = Vec::new();
-    for (spelling, query) in [
+    let pair_spellings: [_; 3] = [
         ("Strs[0]", &indexed_query),
         ("Strs[*]", &expanded_query),
         ("Str", &bare_query),
-    ] {
+    ];
+    for (spelling, query) in pair_spellings {
         let results = eval.query(&query.query)?;
         assert_eq!(1, results.len(), "`{}` must deliver one result", spelling);
         match &results[0] {
@@ -12048,11 +12058,12 @@ fn a_membership_decided_by_partial_eq_owes_no_notice() -> Result<()> {
     }
     "#;
 
-    for rules in [
+    let partial_eq_rules: [_; 3] = [
         "let lit = [85]\nrule r { %lit NOT IN D13[*] }",
         "let lit = [\"x\", \"y\"]\nrule r { %lit NOT IN Strs[*] }",
         "let lit = []\nrule r { %lit NOT IN D13[*] }",
-    ] {
+    ];
+    for rules in partial_eq_rules {
         let (status, notices) = deprecations_for_rules(rules, INPUT)?;
 
         assert_eq!(
@@ -12805,7 +12816,7 @@ fn the_liveness_control_reddens_when_the_channel_is_dead() {
     const VACUOUS: &str = "DEPRECATION: Empty not IN  Ustr passed without comparing anything, \
                            because the query selected an empty collection.";
 
-    for (why, notices) in [
+    let dead_channels: [_; 3] = [
         (
             "total silence, which is what a dead predicate produces",
             vec![],
@@ -12818,7 +12829,8 @@ fn the_liveness_control_reddens_when_the_channel_is_dead() {
             "a deprecation line that is not this notice, which a prefix-only control accepts",
             vec!["DEPRECATION: something else entirely".to_string()],
         ),
-    ] {
+    ];
+    for (why, notices) in dead_channels {
         assert!(
             !membership_notice_present(&notices),
             "{}: the predicate must reject this, or every silent cell in this file is satisfied by it",
@@ -12925,10 +12937,10 @@ fn the_liveness_control_is_still_called_from_every_place_that_owes_it() {
 ///
 /// The lengths themselves are the guard: a table annotated `[_; 8]` turns a deleted cell into
 /// `error[E0308]`, because libtest counts test functions and a cell iterated by a `for` loop is not one --
-/// deleting it reads as nothing changed. Twenty tables carry a length today. Nothing made the twenty-first
-/// carry one, and nothing could notice: `cargo fmt`, `clippy`, `typos`, `shellcheck` and the suite are all
-/// blind to a missing annotation by construction. So the guard protected exactly the tables somebody
-/// remembered to annotate, which is the shape of the blind spot it was built to close.
+/// deleting it reads as nothing changed. Thirty-two tables carry a length today. Nothing made the
+/// thirty-third carry one, and nothing could notice: `cargo fmt`, `clippy`, `typos`, `shellcheck` and the
+/// suite are all blind to a missing annotation by construction. So the guard protected exactly the tables
+/// somebody remembered to annotate, which is the shape of the blind spot it was built to close.
 ///
 /// This makes it self-extending. A table added without a length fails here, naming the binding, instead of
 /// silently joining the unprotected set.
@@ -12936,19 +12948,35 @@ fn the_liveness_control_is_still_called_from_every_place_that_owes_it() {
 /// # What counts as a table
 ///
 /// A `let` binding whose initializer opens an array literal and continues on the next line -- the line ends
-/// in `[`, or in `[(` for a table of tuples. That shape is what separates the twenty real tables from ten
-/// lines that look like them and are not: a `vec!` macro, four Guard-DSL `let` statements written inside
-/// Rust string literals, two raw-string openings, and a CloudFormation fragment. Each of those ends its
-/// line in something else, so requiring the initializer to be exactly an array-literal opening excludes all
-/// ten without naming any of them, which is what keeps this from becoming a denylist that rots.
+/// in `[`, or in `[(` for a table of tuples. That shape is what separates the real tables from ten lines
+/// that look like them and are not: a `vec!` macro, four Guard-DSL `let` statements written inside Rust
+/// string literals, two raw-string openings, and a CloudFormation fragment. Each of those ends its line in
+/// something else, so requiring the initializer to be exactly an array-literal opening excludes all ten
+/// without naming any of them, which is what keeps this from becoming a denylist that rots.
+///
+/// # The twelve inline tables, and why they are here now
+///
+/// This used to record, as its first limit, that it could not see twelve array literals written inline in a
+/// `for` header: there is no binding to inspect, and covering them meant introducing one per test. That is
+/// done, and the twelve are the difference between the twenty this examined before and the thirty-two it
+/// examines now.
+///
+/// The conversion was mechanical and the shape rule above is why it needed no widening. An inline table is
+/// written `for (a, b) in [`, with the literal already opening at the end of the line; lifting it to
+/// `let name: [_; N] = [` above the loop leaves that opening exactly where the rule looks for it, so a
+/// converted table lands in the examined population without the rule changing at all. Had the conversion
+/// been written with the first cell on the `let` line, the rule would not have matched and the twelve would
+/// have been converted but still unprotected -- which is a different state from converted and covered, and
+/// only one of them is finished.
+///
+/// The counts came from the compiler rather than from counting, by the route the failure message below
+/// recommends: annotate `[_; 0]`, and each `error[E0308]` names the true size. That is not ceremony.
+/// `accepted_spellings` holds thirteen cells written several to a line, so reading its length off the line
+/// span would have produced 2, and eleven of the twelve tables would have looked like agreement around it.
 ///
 /// # What this does not do
 ///
-/// Three limits, none of them closed here.
-///
-/// It cannot see the twelve array literals written inline in a `for` header, because there is no binding to
-/// inspect -- covering those means introducing one per test, which is a restructuring rather than an
-/// annotation. They are listed by line in the commit that added the annotations.
+/// Two limits, neither of them closed here.
 ///
 /// It cannot catch a count edited together with a cell. Someone who deletes a cell and decrements the
 /// number compiles green, and reviewing the diff is the only thing that catches that. No annotation and no
@@ -12959,6 +12987,13 @@ fn the_liveness_control_is_still_called_from_every_place_that_owes_it() {
 /// table of cases is written
 /// across lines, and a three-element literal on one line is not the thing whose silent shrinkage this
 /// guards.
+///
+/// That hole is where the remaining inline literals sit, and they were left there deliberately rather than
+/// missed. Twelve `for` headers still carry their array on one line -- `for negated in [false, true]`,
+/// `for value in ["true", "false"]`, and ten more of that size. Each is a two-to-five element enumeration of
+/// a domain rather than a table of cases, so a cell going missing from one is not a silent loss of coverage:
+/// it is a boolean or a spelling set that no longer covers its domain, which the surrounding assertion
+/// notices. Binding them would add twelve names that say nothing their loop variable does not.
 ///
 /// The source length is asserted before either count, for the reason its sibling above gives: a
 /// reconciliation that reads `0 == 0` reports agreement, and an empty `include_str!` would make "no
