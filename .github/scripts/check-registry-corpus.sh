@@ -7,6 +7,27 @@
 # design. See the pin comment in .github/workflows/pr.yml, and
 # aws-cloudformation/aws-guard-rules-registry#288 for the fix that releases the pin.
 #
+# IF THIS IS RED, READ THIS FIRST: it is almost certainly not your host.
+#
+# A failure here means the corpus checkout is AHEAD of the pinned SHA. Compare the checkout's HEAD
+# against the `ref:` in .github/workflows/pr.yml before investigating anything else. Measured from an
+# isolated `git archive` of the pin, the assertion PASSES: rc=0, "30 unchecked expectations across 11
+# rule names, all of them expected", "0 failed rules, 0 unreadable rules files, 0 unrunnable test
+# cases", "3 orphaned test files, all of them expected".
+#
+# The signature of a corpus that has moved is specific enough to recognize on sight: exactly TWO
+# `file sizes:` lines reporting an `actual` of 0 -- e.g. "248 bytes expected, 0 bytes actual" and "182
+# bytes expected, 0 bytes actual" -- alongside "FAIL: condition 1 (exit code): expected 1, got 0",
+# "condition 2 (unchecked-expectation set)" and "condition 5 (orphaned-test-file set)". Exactly two
+# because `byte_evidence` below has exactly two call sites, one per checked-in list, and both lists go
+# empty when the corpus lands aws-guard-rules-registry#288. Measured at b9fc1eb7, four commits past the
+# pin. The pin itself produces no `file sizes:` line at all.
+#
+# The pin comment in pr.yml already says this red is intentional -- "Fixing the corpus turns this red on
+# purpose". The note exists because the vocabulary is genuinely misleading rather than wrong: the script
+# really does print byte counts and mismatches, which reads exactly like a truncated download or a bad
+# checkout, and it has been diagnosed as host environment at least once on that basis.
+#
 # So this is not "the corpus passes". Asserting exit 0 would be asserting something untrue and the
 # job would be red forever; asserting nothing but "exit 1" would let a genuine regression through,
 # because a run that fails an expectation for real also exits 1 -- `get_exit_code` in
