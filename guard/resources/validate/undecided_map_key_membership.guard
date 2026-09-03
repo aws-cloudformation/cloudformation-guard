@@ -1,0 +1,27 @@
+#
+# The membership spellings of the map-key filter, over the same key the `==` spelling uses.
+#
+# `real_binary_operation` sends `IN` and `NOT IN` to `report_by_lhs` and `==`/`!=` to
+# `report_all_values`. 07774380 taught `report_value`, which only the second of those reaches, to carry
+# the refusal reason into the record. Its message scoped itself by saying "both callers of
+# `report_all_values` and `report_by_lhs` are inside `real_binary_operation`" -- true, and it named this
+# path without changing it. So the two membership operators still record `message: None`.
+#
+# Deliberately no `==` or `!=` rule against a regex in this file. Those spellings already carry the
+# reason, so one of them here would satisfy an assertion about the reason appearing anywhere in the
+# output and the membership rules could stay silent underneath it.
+#
+# `unrelated_violation` compares against a plain string rather than a pattern, so it contributes a
+# verdict to lose without contributing a regex reason.
+#
+rule unrelated_violation {
+    Region == 'no-such-region-zzz'
+}
+
+rule k_in_regex {
+    Cfg[ keys in [/(?!x)((a+)+)b/] ] !empty
+}
+
+rule k_not_in_regex {
+    Cfg[ keys not in [/(?!x)((a+)+)b/] ] !empty
+}

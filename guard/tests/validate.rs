@@ -1197,6 +1197,130 @@ mod validate_tests {
         );
     }
 
+    /// The membership spellings of that filter carry the reason too, and did not.
+    ///
+    /// `real_binary_operation` splits by comparator: `==` and `!=` reach `report_all_values` and so
+    /// `report_value`, while `IN` and `NOT IN` reach `report_by_lhs`. 07774380 fixed `report_value`
+    /// and wrote that the reason is now carried "as every other site recording a refusal already
+    /// does". `report_by_lhs` was named in that commit's scoping sentence and not changed, so it kept
+    /// `message: None` and the two membership operators kept reporting a comparison that never
+    /// finished as one that finished and answered.
+    ///
+    /// `NOT IN` is the worse of the two and the reason the wording is asserted rather than only the
+    /// presence of a message. It renders as "provided value [...] did match expected value in [...]",
+    /// an affirmative claim that the comparison succeeded, about a comparison the engine abandoned.
+    /// `IN` renders the mirror. Measured on the same eighteen-character key the `==` spelling uses,
+    /// before this change:
+    ///
+    /// ```text
+    /// keys ==     -> due to retrieval error. Error Message [The regular expression could not be ...]
+    /// keys !=     -> due to retrieval error. Error Message [The regular expression could not be ...]
+    /// keys in     -> did not match expected value in [...]. Error Message []
+    /// keys not in -> did match     expected value in [...]. Error Message []
+    /// ```
+    ///
+    /// The exit code does not move -- it is 19 before and after, because the clause already failed
+    /// closed. So a status-only assertion cannot see this, and neither can one that greps the whole
+    /// output for the reason while a `==` rule sits in the same file supplying it. The fixture holds
+    /// only membership rules against the pattern for that second reason.
+    #[test]
+    fn an_undecided_map_key_membership_filter_says_why() {
+        let mut reader = Reader::default();
+        let mut writer = Writer::new(WBVec(vec![])).expect("Failed to create writer.");
+
+        let status_code = ValidateTestRunner::default()
+            .data(vec!["undecided-map-key-template.json"])
+            .rules(vec!["undecided_map_key_membership.guard"])
+            .show_summary(vec!["all"])
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(
+            StatusCode::VALIDATION_ERROR,
+            status_code,
+            "the membership spellings already failed closed and must keep doing so; this change is \
+             about what the report says, not about the verdict"
+        );
+
+        let output = writer.stripped().expect("failed to read the writer");
+        for rule in ["k_in_regex", "k_not_in_regex"] {
+            assert!(
+                output.contains(rule),
+                "{} must be named in the report:\n{}",
+                rule,
+                output
+            );
+        }
+        // Scoped to the membership renderings, and then split by which key they are about, because the
+        // interesting property is per value rather than per clause. "expected value in" is what only
+        // the `IN`/`NOT IN` rendering says; the string-against-string failure in
+        // `unrelated_violation` reads "did not match expected value [...]" with no `in`, and its empty
+        // reason slot is correct -- that comparison was made and answered no.
+        //
+        // Three renderings, not two. `k_in_regex` fails on both keys, `k_not_in_regex` only on the long
+        // one: `other` is decidedly outside the denylist, so `NOT IN` passes for it. That asymmetry is
+        // what makes this worth splitting -- two of the three comparisons had no answer and one did.
+        const UNDECIDABLE_KEY: &str = "aaaaaaaaaaaaaaaaaa";
+        const REASON: &str = "The regular expression could not be evaluated against the value";
+
+        let membership_lines = output
+            .lines()
+            .filter(|line| line.contains("expected value in"))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            3,
+            membership_lines.len(),
+            "expected two renderings from `IN` and one from `NOT IN`; got {:#?}",
+            membership_lines
+        );
+
+        let (undecidable, decided): (Vec<&str>, Vec<&str>) = membership_lines
+            .iter()
+            .partition(|line| line.contains(UNDECIDABLE_KEY));
+        assert_eq!(
+            2,
+            undecidable.len(),
+            "both spellings must report the key the pattern could not be evaluated against; got {:#?}",
+            undecidable
+        );
+        for line in &undecidable {
+            assert!(
+                line.contains(REASON),
+                "a membership comparison that had no answer must say so rather than claim the value \
+                 did or did not match: {}",
+                line
+            );
+        }
+
+        // The other half of the property, and the reason this is not a blanket "every membership line
+        // carries a reason". A comparison that WAS answered must keep its empty slot, so a repair that
+        // attached one clause's reason to every value it reports would fail here.
+        assert_eq!(
+            1,
+            decided.len(),
+            "expected exactly one decided membership rendering; got {:#?}",
+            decided
+        );
+        assert!(
+            !decided[0].contains(REASON),
+            "a comparison that was answered must not borrow another value's refusal: {}",
+            decided[0]
+        );
+
+        assert_eq!(
+            2,
+            output.matches(REASON).count(),
+            "exactly the two undecided comparisons may report a reason -- one occurrence means only \
+             one of `IN` and `NOT IN` was repaired, more means the reason leaked:\n{}",
+            output
+        );
+        assert!(
+            output.contains("backtracking"),
+            "the reason must carry fancy_regex's own text, not `RegexError`'s wrapper wording, which \
+             claims a parse error for a pattern that parsed:\n{}",
+            output
+        );
+    }
+
     /// Two keys spelled the same way in one template must compare equal, and must not compare
     /// unequal.
     ///
