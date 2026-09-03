@@ -11870,7 +11870,7 @@ fn the_reason_a_containment_cannot_be_asked_names_the_right_operand(
 /// other two already follow rather than a new rule.
 ///
 /// Why nothing caught it. `found_in_string` outranks the collision arm for essentially every string
-/// pairing, so `e331c6ba`'s arm has observable effect only when no right-hand value is a string -- which
+/// pairing, so `e331c6b`'s arm has observable effect only when no right-hand value is a string -- which
 /// is what its own reproducer used, `rhs_kind=int`. Traced: for a list-valued left-hand side against a
 /// string right operand, if any element is contained the answer is `Partial` or `All`, and if any element
 /// is not a string it is `HoldsANonString`; both record or continue before the collision can decide.
