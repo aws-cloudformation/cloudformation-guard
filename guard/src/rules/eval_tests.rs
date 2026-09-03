@@ -12567,6 +12567,75 @@ fn the_liveness_control_reddens_when_the_channel_is_dead() {
     assert_the_membership_channel_is_live_given(status, &notices);
 }
 
+/// The liveness control is still reached from every place that owes it.
+///
+/// # Why this exists
+///
+/// The residual `the_liveness_control_reddens_when_the_channel_is_dead` names and cannot close: that test
+/// proves the control refuses a dead channel, and the mutation that strips its `assert!` reddens it. Neither
+/// notices the control being deleted from a CALLER. A silent cell that stops calling it is a cell with no
+/// liveness half, and it looks exactly like the cells this branch started from -- green, and checking an
+/// absence nothing distinguishes from total silence.
+///
+/// So the calls are counted. Four, and the number is stable for the reason that makes it worth asserting:
+/// the calls live at ROUTING points rather than in cells, so adding or removing a cell in any of the four
+/// notice tables does not move it. It moves when a routing point is added or removed, which is exactly the
+/// change that needs a second look. `every_operator_and_operand_shape_agrees_with_a_stated_oracle` pins its
+/// generated space the same way, so the shape is not new here.
+///
+/// The four, and what each one covers:
+///
+/// - `assert_membership_notice`, which every `false` notice column in the four boolean tables routes through.
+/// - `assert_notice`'s `Silent` arm, which every `ExpectedNotice::Silent` cell routes through.
+/// - `a_membership_decided_by_partial_eq_owes_no_notice`, whose silence is over-determined and says so.
+/// - `the_notice_fires_exactly_where_fail_closed_moves_the_answer`, whose own measurement is about `!=`
+///   rather than about the notice, so silencing the predicate would leave its `false` cells passing.
+///
+/// # What this does not do
+///
+/// It cannot tell that a call is in the RIGHT place, only that four exist. A call moved into a branch that
+/// never executes would satisfy it. What makes that survivable is that the two shared helpers are the only
+/// route the tables have to a notice expectation at all -- a cell cannot quietly opt out of the helper
+/// without also losing the assertion it exists for, which does not compile silently.
+///
+/// The source length is asserted before the count, on the reasoning this round taught twice over: a
+/// reconciliation that reads `0 == 0` reports agreement. If `include_str!` ever yielded nothing, a count of
+/// zero would be indistinguishable from four calls removed, and the message would send the reader after the
+/// wrong thing.
+#[test]
+fn the_liveness_control_is_still_called_from_every_place_that_owes_it() {
+    // Resolved relative to this file, which `eval.rs` mounts with `#[path = "eval_tests.rs"]`.
+    const SOURCE: &str = include_str!("eval_tests.rs");
+    // Split so the pattern does not match itself. Written whole, the literal below is a fifth
+    // occurrence in the file it searches, and the count reads one high for a reason nothing in the
+    // failure message would explain -- the next reader "fixes" the 4 to a 5 and the guard stops
+    // meaning anything.
+    const CALL: &str = concat!("assert_the_membership_channel_is_live", "();");
+    const ROUTING_POINTS: usize = 4;
+
+    assert!(
+        SOURCE.len() > 100_000,
+        "this file embedded as {} bytes, which is not this file; the count below would be measuring an \
+         empty string rather than the call sites",
+        SOURCE.len()
+    );
+
+    // The trailing `;` is what separates a call from the definition, whose own line ends in ` {`.
+    let calls = SOURCE.matches(CALL).count();
+    assert_eq!(
+        ROUTING_POINTS,
+        calls,
+        "`{}` appears {} times, expected {}. The calls are at routing points, not in cells, so adding or \
+         removing a cell does not move this number -- if it moved, a routing point was added or removed. \
+         A LOWER count means some silent cell no longer proves the notice channel was live for its run, \
+         which returns it to asserting an absence that total silence satisfies. A HIGHER count means a new \
+         routing point exists and belongs in this test's list.",
+        CALL,
+        calls,
+        ROUTING_POINTS
+    );
+}
+
 /// Checks a cell's membership-notice expectation, and on the silent side proves the channel was live.
 ///
 /// The four boolean tables above each carried their own copy of this block, and each copy's `false` side
