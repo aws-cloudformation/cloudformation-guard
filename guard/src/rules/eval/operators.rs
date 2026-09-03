@@ -386,23 +386,44 @@ fn substring_or_contained_in(lhs: Rc<PathAwareValue>, rhs: Rc<PathAwareValue>) -
 /// miss, and negating a miss passes: `["s3","zzz"] NOT IN Haystack` reported compliance while the
 /// haystack verbatim contained `s3`, and its typed-out spelling failed.
 ///
-/// A scalar is found or it is not, so `Partial` names a list only. It arrives by two routes, and the
-/// grid pins both: an element that is a string and not contained (`["s3","zzz"]`), and an element that
-/// is not a string at all (`["s3", 5]`), which `string_in` answers "not comparable" for in the literal
-/// arm. Both fail both polarities there, so both are `Partial` here.
+/// A scalar is found or it is not, so `Partial` and `HoldsANonString` name a list only.
+///
+/// `HoldsANonString` is separate from `Partial`, and the reason is a defect this function shipped with.
+/// Containment cannot be asked of an element that is not a string, and the literal arm says so: it hands
+/// each element to `string_in`, which answers "not comparable" for a non-string, and one such result
+/// makes the ALL-fold fail in both polarities. The first version of this function had `found` return
+/// `false` for a non-string, conflating "is a string and is not contained" with "cannot be asked", so a
+/// list of nothing but non-strings counted zero hits and came out `NoneFound` -- a plain miss, which
+/// negates to a pass. `[5, 6] NOT IN Haystack` reported compliance where its typed-out spelling failed.
+///
+/// `["s3", 5]` masked it. That list has a contained string, so it reached `Partial` and failed closed for
+/// the right verdict by the wrong route, and the cell passed. A cell that passes for the wrong reason is
+/// worse than one that fails, because it reads as coverage: it is why the grid now carries `[5, 6]` as
+/// well, and why the non-string test comes *before* the hit count rather than after it.
+///
+/// Measured at three points before the fix, all FAIL under the literal spelling and PASS under the query
+/// spelling, so this was never a regression from any of them: `258772a` (before substring `IN` reached a
+/// query at all), `aae25d0` (which made it reach one), and `fe4ac73` (which added `Partial`).
 ///
 /// The empty-list guard is `contained_in`'s, for the reason recorded there: an empty collection passing
 /// a comparison is what `vacuous_comparison_notice` in `eval.rs` is deprecating, so this does not add
-/// another one. Empty is `NoneFound` rather than `Partial` because it keeps its existing answer --
-/// `NOT IN` over nothing passes -- and folding it into the unanswerable case would change a cell this
-/// commit is not about.
+/// another one. Empty is `NoneFound` rather than unanswerable because it keeps its existing answer --
+/// `NOT IN` over nothing passes -- and folding it in would change a cell this is not about.
+///
+/// A non-string *scalar* is deliberately not routed here. `contained_in` already asks `compare_eq` for
+/// it and gets "not comparable", so `%int in Haystack` and `%int not in Haystack` both fail already, and
+/// the grid pins that. Sending it here as well would change no verdict and would attach a message about
+/// list elements to a value that has none.
 #[derive(Copy, Clone, PartialEq)]
 enum StringContainment {
     /// Every element, or the scalar itself, is contained.
     All,
-    /// Some elements are contained and some are not, so no single answer is right in either polarity.
+    /// Every element is a string; some are contained and some are not, so no single answer is right in
+    /// either polarity.
     Partial,
-    /// Nothing is contained, or the right-hand side is not a string at all.
+    /// At least one element is not a string, so containment cannot be asked of it.
+    HoldsANonString,
+    /// Every element is a string and none is contained, or the right-hand side is not a string at all.
     NoneFound,
 }
 
@@ -412,9 +433,9 @@ fn found_in_string(lhs: &PathAwareValue, rhs: &PathAwareValue) -> StringContainm
         _ => return StringContainment::NoneFound,
     };
 
-    let found = |value: &PathAwareValue| match value {
-        PathAwareValue::String((_, needle)) => haystack.contains(needle),
-        _ => false,
+    let contained = |value: &PathAwareValue| match value {
+        PathAwareValue::String((_, needle)) => Some(haystack.contains(needle)),
+        _ => None,
     };
 
     match lhs {
@@ -423,7 +444,17 @@ fn found_in_string(lhs: &PathAwareValue, rhs: &PathAwareValue) -> StringContainm
                 return StringContainment::NoneFound;
             }
 
-            match elements.iter().filter(|element| found(element)).count() {
+            // Before the hit count, not after it: a non-string element decides the answer however many
+            // of its neighbours are contained.
+            if elements.iter().any(|element| contained(element).is_none()) {
+                return StringContainment::HoldsANonString;
+            }
+
+            match elements
+                .iter()
+                .filter(|element| contained(element).unwrap_or(false))
+                .count()
+            {
                 0 => StringContainment::NoneFound,
                 hits if hits == elements.len() => StringContainment::All,
                 _ => StringContainment::Partial,
@@ -431,7 +462,7 @@ fn found_in_string(lhs: &PathAwareValue, rhs: &PathAwareValue) -> StringContainm
         }
 
         scalar => {
-            if found(scalar) {
+            if contained(scalar).unwrap_or(false) {
                 StringContainment::All
             } else {
                 StringContainment::NoneFound
@@ -753,7 +784,8 @@ impl Comparator for InOperation {
                 let mut diff = Vec::with_capacity(lhs_selected.len());
                 let mut unanswerable: Vec<ValueEvalResult> = Vec::new();
                 'each_lhs: for eachl in &lhs_selected {
-                    let mut partial: Option<Rc<PathAwareValue>> = None;
+                    let mut unanswerable_against: Option<(Rc<PathAwareValue>, StringContainment)> =
+                        None;
                     for eachr in &rhs_selected {
                         // Containment first, membership second, which is the order the two arms above
                         // apply when the right-hand side is written out. This arm asked `contained_in`
@@ -766,10 +798,11 @@ impl Comparator for InOperation {
 
                             // Recorded, not answered. A full match against a later right-hand result
                             // still wins, which is this loop's existing "any right-hand value will do"
-                            // reading, so the partial one only decides if nothing else does.
-                            StringContainment::Partial => {
-                                if partial.is_none() {
-                                    partial = Some(Rc::clone(eachr));
+                            // reading, so an undecidable pairing only decides if nothing else does.
+                            undecidable @ (StringContainment::Partial
+                            | StringContainment::HoldsANonString) => {
+                                if unanswerable_against.is_none() {
+                                    unanswerable_against = Some((Rc::clone(eachr), undecidable));
                                 }
                             }
 
@@ -783,22 +816,29 @@ impl Comparator for InOperation {
                         }
                     }
 
-                    // Nothing matched, and something was partway there: the clause was posed at the
+                    // Nothing matched, and something could not be decided: the clause was posed at the
                     // wrong granularity and has no right answer in either polarity. `NotComparable` is
                     // how this arm already says that -- `%int in Haystack` and `%int not in Haystack`
-                    // both fail, because an incomparable type fails closed both ways -- so a partial
-                    // match joins an existing rule rather than introducing one. Failing closed is also
-                    // the safe direction for a policy engine: a denylist that cannot decide must not
-                    // report compliance.
-                    if let Some(other) = partial {
-                        unanswerable.push(not_comparable_because(
-                            Rc::clone(eachl),
-                            other,
-                            format!(
-                                "Some but not all of {} is contained in the value compared with",
-                                eachl
+                    // both fail, because an incomparable type fails closed both ways -- so these join
+                    // an existing rule rather than introducing one. Failing closed is also the safe
+                    // direction for a policy engine: a denylist that cannot decide must not report
+                    // compliance.
+                    //
+                    // Two reasons, because they are two different complaints and a reader acts on them
+                    // differently: a list whose elements are all strings but only some of them present,
+                    // and a list holding something containment cannot be asked of at all.
+                    if let Some((other, undecidable)) = unanswerable_against {
+                        let reason = match undecidable {
+                            StringContainment::HoldsANonString => format!(
+                                "{} holds a value that is not a string, so it cannot be tested for \
+                                 containment in {}",
+                                eachl, other
                             ),
-                        ));
+
+                            _ => format!("Some but not all of {} is contained in {}", eachl, other),
+                        };
+
+                        unanswerable.push(not_comparable_because(Rc::clone(eachl), other, reason));
                         continue;
                     }
 

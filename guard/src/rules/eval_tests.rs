@@ -10126,6 +10126,13 @@ fn a_one_element_list_compares_the_same_typed_as_resolved(
     Status::FAIL
 )]
 #[case::denied_partly_typed_list_query_haystack("MixedList not in Haystack", Status::FAIL)]
+#[case::wholly_typed_list_literal_haystack(r#"IntList in "aws:arn:s3::${s3}""#, Status::FAIL)]
+#[case::wholly_typed_list_query_haystack("IntList in Haystack", Status::FAIL)]
+#[case::denied_wholly_typed_list_literal_haystack(
+    r#"IntList not in "aws:arn:s3::${s3}""#,
+    Status::FAIL
+)]
+#[case::denied_wholly_typed_list_query_haystack("IntList not in Haystack", Status::FAIL)]
 fn substring_in_answers_the_same_against_a_query_as_against_a_literal(
     #[case] clause: &str,
     #[case] expected: Status,
@@ -10138,7 +10145,8 @@ fn substring_in_answers_the_same_against_a_query_as_against_a_literal(
         NeedleList: ["s3", "arn"],
         BadList: ["s3", "zzz"],
         NoneList: ["zz", "qq"],
-        MixedList: ["s3", 5]
+        MixedList: ["s3", 5],
+        IntList: [5, 6]
     }
     "#;
 
