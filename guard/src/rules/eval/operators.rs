@@ -1174,6 +1174,63 @@ fn contained_in(lhs_value: Rc<PathAwareValue>, rhs_value: Rc<PathAwareValue>) ->
     }
 }
 
+/// Whether `InOperation::compare`'s `(None, None)` arm stops pairing this left-hand value once it has
+/// seen this right-hand one.
+///
+/// [`super::incomparable_membership`] walks the same cross product that arm walks, to count the
+/// refusals a passing `NOT IN` clause passed on. The arm stops pairing a left-hand value the moment
+/// one matches -- `continue 'each_lhs` at the string-containment and membership arms below, and at
+/// the empty-left skip above them -- and the predicate had no such stop, so it kept pairing the value
+/// against every LATER right-hand value and counted refusals from pairings the arm never built.
+///
+/// Measured at `d4286e68` over a 676-clause sweep of the mixed-left shapes: 54 clauses where the
+/// predicate refuses on a pairing the arm short-circuited past. `MatchStr[*] NOT IN HayInt[*]` over
+/// `{"MatchStr": ["ab"], "HayInt": ["xxabxx", 5]}` is the smallest -- `"ab"` is contained in
+/// `"xxabxx"`, so the arm stops, and `("ab", 5)` is the predicate's pairing alone.
+///
+/// LATENT, AND REPAIRED ANYWAY. All 54 are suppressed by the verdict gate in `binary_operation`,
+/// because a short-circuit IS a match and a matched value cannot be the value a passing `NOT IN`
+/// clause passed on; every multi-value shape that could pass also builds its own refusal on the
+/// sibling that reaches the refusing right-hand value. So no input reaches a false notice today. The
+/// suppression lives in a different function from the divergence, though, so changing what either
+/// short-circuit fires on -- or adding a third beside them -- makes it live with nothing in the tree
+/// to flag it. `ee60bc5f` is the same shape one level up, and its own soundness argument was sound
+/// about the population it had examined and silent about the one it had not.
+///
+/// BY CALLING THE ARM'S OWN FUNCTIONS rather than restating their conditions. `found_in_string` and
+/// `contained_in` are the calls the arm makes; reading `All` and `Success` off them is reading their
+/// answers, not re-deriving them, which is how the divergence this repairs arose in the first place.
+/// A copy of the rule is what must not exist here.
+///
+/// NOT THE BUILT PAIR SET ITSELF, and the reason is the call order rather than the size of the
+/// change. `binary_operation` calls the predicate BEFORE `cmp.compare`, deliberately: the note there
+/// records that the incomparability is not recoverable from the result, because the not-flag has
+/// already turned "no element matched" into a success by then. Reading the set the arm built
+/// therefore needs either the comparison to run first -- the order the notice cannot use -- or
+/// `Comparator::compare` to carry the set out for every operator, which reaches 99 non-test
+/// `QueryResult::Resolved` sites. This is the same rule read from one place instead, and
+/// `the_membership_notice_stops_pairing_where_the_operator_stops` pins the prefix it yields.
+pub(super) fn membership_stops_after(lhs: &Rc<PathAwareValue>, rhs: &Rc<PathAwareValue>) -> bool {
+    // The empty-left skip, which sits above both short-circuits in the arm and answers differently for
+    // the two right-hand kinds: against a string the arm skips the pairing and KEEPS the value
+    // (`continue`), and against every other kind it drops the value (`continue 'each_lhs`). So a
+    // string does not stop the walk and anything else does.
+    if let PathAwareValue::List((_, elements)) = &**lhs {
+        if elements.is_empty() {
+            return !matches!(&**rhs, PathAwareValue::String(_));
+        }
+    }
+
+    if matches!(found_in_string(lhs, rhs), StringContainment::All) {
+        return true;
+    }
+
+    matches!(
+        contained_in(Rc::clone(lhs), Rc::clone(rhs)),
+        ValueEvalResult::ComparisonResult(ComparisonResult::Success(_))
+    )
+}
+
 impl Comparator for InOperation {
     fn compare<'value>(
         &self,

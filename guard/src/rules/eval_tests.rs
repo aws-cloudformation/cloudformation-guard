@@ -15613,3 +15613,74 @@ fn an_unanswerable_containment_records_one_verdict_not_two(
 
     Ok(())
 }
+
+/// The membership notice pairs only what the operator pairs.
+///
+/// `incomparable_membership` walks the same left-right cross product `InOperation::compare`'s
+/// `(None, None)` arm walks, and that arm stops pairing a left-hand value at the first right-hand
+/// value that matches it. The predicate had no such stop, so it counted refusals from pairings the arm
+/// never built -- 54 clause shapes at `d4286e68` over a 676-clause sweep, every one of them held back
+/// by the verdict gate in `binary_operation` rather than by anything in the predicate.
+///
+/// Asserted as the PAIR SET rather than as a verdict, because the verdict cannot discriminate: a
+/// short-circuit is a match, a matched value fails `NOT IN`, and the gate suppresses the notice on
+/// every clause that reaches the divergence. A cell that watched an exit code would pass with the
+/// defect in.
+///
+/// `("ab", "xxabxx")` then `("ab", 5)` is the smallest of the 54: `"ab"` is contained in `"xxabxx"`, so
+/// the arm short-circuits on the first and never builds the second. The miss control beside it is what
+/// stops a fix that truncates unconditionally from passing -- there the arm does build both pairings,
+/// so both must survive -- and the literal-arm control pins that the stop belongs to `(None, None)`
+/// alone, since the literal-right-hand arm walks every right-hand value with no short-circuit.
+#[test]
+fn the_membership_notice_stops_pairing_where_the_operator_stops() {
+    use crate::rules::path_value::Path;
+
+    fn string_at(path: &str, value: &str) -> Rc<PathAwareValue> {
+        Rc::new(PathAwareValue::String((
+            Path::new(path.to_string(), 0, 0),
+            value.to_string(),
+        )))
+    }
+
+    fn int_at(path: &str, value: i64) -> Rc<PathAwareValue> {
+        Rc::new(PathAwareValue::Int((
+            Path::new(path.to_string(), 0, 0),
+            value,
+        )))
+    }
+
+    fn paths(values: &[Rc<PathAwareValue>]) -> Vec<String> {
+        values.iter().map(|v| v.self_path().0.clone()).collect()
+    }
+
+    let haystack_then_int = vec![string_at("/HayInt/0", "xxabxx"), int_at("/HayInt/1", 5)];
+
+    let contained = string_at("/MatchStr/0", "ab");
+    assert_eq!(
+        vec!["/HayInt/0".to_string()],
+        paths(rhs_values_paired_with(
+            &contained,
+            &haystack_then_int,
+            true
+        )),
+        "`\"ab\"` is contained in `\"xxabxx\"`, so the operator stops there and never pairs it with `5`"
+    );
+
+    let missing = string_at("/Miss/0", "qq");
+    assert_eq!(
+        vec!["/HayInt/0".to_string(), "/HayInt/1".to_string()],
+        paths(rhs_values_paired_with(&missing, &haystack_then_int, true)),
+        "`\"qq\"` matches neither, so the operator builds both pairings and so must this"
+    );
+
+    assert_eq!(
+        vec!["/HayInt/0".to_string(), "/HayInt/1".to_string()],
+        paths(rhs_values_paired_with(
+            &contained,
+            &haystack_then_int,
+            false
+        )),
+        "the short-circuit belongs to the two-query arm; a literal right-hand side is walked whole"
+    );
+}

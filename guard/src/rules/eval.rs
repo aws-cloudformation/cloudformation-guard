@@ -567,7 +567,7 @@ fn incomparable_membership(lhs: &[QueryResult], rhs: &[QueryResult]) -> bool {
     // reader to try, and it would tell them the predicate was fixed when it was not.
     let mut refused = false;
     for value in &lhs_values {
-        for element in &rhs_values {
+        for element in rhs_values_paired_with(value, &rhs_values, both_queried) {
             match (&**value, &**element) {
                 // `contained_in`'s list-against-list arm, which decides at TWO granularities and used to
                 // be read as deciding at one.
@@ -592,8 +592,10 @@ fn incomparable_membership(lhs: &[QueryResult], rhs: &[QueryResult]) -> bool {
                     // pair of which is string against string.
                     //
                     // Not gated on the elements having failed to match, though the operator's loop is.
-                    // Where they all match `contained_in` returns Success and `NOT IN` fails, so the
-                    // verdict gate in `binary_operation` suppresses whatever this answered.
+                    // Where they all match `contained_in` returns Success, and the walk stops at that
+                    // pairing rather than carrying the value on to later right-hand values --
+                    // `rhs_values_paired_with` is what stops it, and before it did the verdict gate in
+                    // `binary_operation` was the only thing between this loop and a false notice.
                     if rhsl.iter().any(|right| right.is_list()) {
                         for right in rhsl {
                             refused |= pair_refused(value, right);
@@ -701,6 +703,43 @@ fn incomparable_membership(lhs: &[QueryResult], rhs: &[QueryResult]) -> bool {
         }
     }
     refused
+}
+
+/// The right-hand values `InOperation::compare`'s `(None, None)` arm pairs this left-hand value with.
+///
+/// A PREFIX of `rhs_values`, because that arm stops pairing a left-hand value at the first right-hand
+/// value that matches it and [`incomparable_membership`] has to stop where the arm stops. Without
+/// this the predicate counted refusals from pairings the arm never built --
+/// [`operators::membership_stops_after`] carries the measurement and why a copy of the arm's rule
+/// must not live here.
+///
+/// The stopping pairing is INCLUDED, which is the narrow choice on purpose. The arm reaches
+/// `contained_in` for it and only skips the element loop, so what this removes is exactly the later
+/// pairings and nothing else. Dropping the stopping pairing's own accounting as well would change
+/// what the predicate answers for a list-against-list `Success` -- `["x", 1]` inside `["x", 1]` has
+/// element pairs that refuse while the subset holds -- and that is a separate question with its own
+/// measurement owed, not a free rider on this one.
+///
+/// Whole slice when the call is not `(None, None)`, because the stop belongs to that arm alone. The
+/// literal-right-hand arm walks every right-hand value with no short-circuit, so truncating there
+/// would drop pairings it does build. `both_queried` is read from the same `operators::is_literal`
+/// that selects the arm, so the two cannot disagree about which one runs.
+fn rhs_values_paired_with<'v>(
+    value: &Rc<PathAwareValue>,
+    rhs_values: &'v [Rc<PathAwareValue>],
+    both_queried: bool,
+) -> &'v [Rc<PathAwareValue>] {
+    if !both_queried {
+        return rhs_values;
+    }
+
+    match rhs_values
+        .iter()
+        .position(|element| operators::membership_stops_after(value, element))
+    {
+        Some(at) => &rhs_values[..=at],
+        None => rhs_values,
+    }
 }
 
 /// Whether one pair the membership comparison built refused for a reason that is an incomparability.
