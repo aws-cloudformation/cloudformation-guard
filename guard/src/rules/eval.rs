@@ -314,6 +314,22 @@ fn empty_reference_message(negated: bool) -> String {
 /// Not established: that alignment is correct once the bypass closes. It is untested because that fix
 /// did not exist when this was written. Re-measure `Pair NOT IN Deny13[*]` against whatever closes it,
 /// and re-run the 132-cell classification, rather than assuming this note expires on its own.
+///
+/// # The bypass closed, so the constraint above has expired
+///
+/// `e331c6b` closed the right-expanded denylist arm, and the re-measurement the paragraph above asks
+/// for was run rather than assumed. `Pair NOT IN Deny13[*]` over `{"Pair":[1,2],"Deny13":[1,3]}`:
+/// exit 0 *with* the notice at `b05f922`, **exit 19 and silent** at `8ed1b54`. So the clause no longer
+/// admits a value its denylist names, and the notice on it is no longer a true positive -- the verdict
+/// gate suppresses it, correctly, because the file now reports the clause.
+///
+/// That removes the reason the noise was accepted. The section above trades seven false alarms on
+/// compliant rules for one true positive on a live bypass at exit 0, and that true positive is gone.
+/// What is *not* re-measured is the 132-cell classification, and alignment is still not done here: it
+/// changes which clauses are noticed at all, which is a wider blast radius than the gate this function
+/// feeds, and it belongs with whoever owns the predicate rather than riding along with a diagnostics
+/// fix. Re-run the classification before doing it -- the counts above predate both `e331c6b` and the
+/// `RegexError` correction below, so 7 and 10 are no longer known to be the right numbers.
 fn incomparable_membership(lhs: &[QueryResult], rhs: &[QueryResult]) -> bool {
     let values = |results: &[QueryResult]| -> Vec<Rc<PathAwareValue>> {
         results
@@ -1586,6 +1602,14 @@ fn binary_operation<'value, 'loc: 'value>(
     // and passes on the other. Asserted, the report names it at exit 19 and the notice would land
     // beside a failure it contradicts. As a condition, nothing names it at all. Same clause, opposite
     // answers, and visibility is what separates them.
+    //
+    // What widening costs, measured rather than reasoned about. Over the full product of the 15-cell
+    // corpus document -- every property as the left-hand side against every property as the denylist,
+    // 100 shapes in both roles, run under this commit and its base -- no clause gains the passed
+    // wording, no verdict moves, no report changes, and 19 gate-role clauses gain the absorbed one. The
+    // 31 false positives the verdict gate removed were counted by a harness that is not in the tree, so
+    // whether any of them was a gate cannot be recovered from it; what can be said is that none of them
+    // comes back carrying the sentence that made it wrong.
     //
     // Matched on the pair rather than short-circuited, so adding a role forces this decision to be made
     // for it instead of falling into whichever branch was written first.
