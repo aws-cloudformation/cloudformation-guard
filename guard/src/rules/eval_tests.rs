@@ -12794,6 +12794,116 @@ fn the_liveness_control_is_still_called_from_every_place_that_owes_it() {
     );
 }
 
+/// Every `let`-bound table in this file carries its length, so the next one added carries it too.
+///
+/// The lengths themselves are the guard: a table annotated `[_; 8]` turns a deleted cell into
+/// `error[E0308]`, because libtest counts test functions and a cell iterated by a `for` loop is not one --
+/// deleting it reads as nothing changed. Twenty tables carry a length today. Nothing made the twenty-first
+/// carry one, and nothing could notice: `cargo fmt`, `clippy`, `typos`, `shellcheck` and the suite are all
+/// blind to a missing annotation by construction. So the guard protected exactly the tables somebody
+/// remembered to annotate, which is the shape of the blind spot it was built to close.
+///
+/// This makes it self-extending. A table added without a length fails here, naming the binding, instead of
+/// silently joining the unprotected set.
+///
+/// # What counts as a table
+///
+/// A `let` binding whose initializer opens an array literal and continues on the next line -- the line ends
+/// in `[`, or in `[(` for a table of tuples. That shape is what separates the twenty real tables from ten
+/// lines that look like them and are not: a `vec!` macro, four Guard-DSL `let` statements written inside
+/// Rust string literals, two raw-string openings, and a CloudFormation fragment. Each of those ends its
+/// line in something else, so requiring the initializer to be exactly an array-literal opening excludes all
+/// ten without naming any of them, which is what keeps this from becoming a denylist that rots.
+///
+/// # What this does not do
+///
+/// Three limits, none of them closed here.
+///
+/// It cannot see the twelve array literals written inline in a `for` header, because there is no binding to
+/// inspect -- covering those means introducing one per test, which is a restructuring rather than an
+/// annotation. They are listed by line in the commit that added the annotations.
+///
+/// It cannot catch a count edited together with a cell. Someone who deletes a cell and decrements the
+/// number compiles green, and reviewing the diff is the only thing that catches that. No annotation and no
+/// test can take that job over.
+///
+/// And it examines only the multi-line shape above, so a single-line `[1, 2, 3]` binding is not checked.
+/// That is the price of excluding the ten lines that merely resemble tables, and it is a narrow hole: a
+/// table of cases is written
+/// across lines, and a three-element literal on one line is not the thing whose silent shrinkage this
+/// guards.
+///
+/// The source length is asserted before either count, for the reason its sibling above gives: a
+/// reconciliation that reads `0 == 0` reports agreement, and an empty `include_str!` would make "no
+/// unannotated tables" indistinguishable from "no tables found at all". The examined count is asserted
+/// non-zero for the same reason one step further in -- a shape rule that matches nothing satisfies an
+/// is-empty assertion perfectly.
+#[test]
+fn every_loop_table_carries_its_length() {
+    // Resolved relative to this file, which `eval.rs` mounts with `#[path = "eval_tests.rs"]`.
+    const SOURCE: &str = include_str!("eval_tests.rs");
+    // Split so the needle does not match itself, on the same reasoning as its sibling above. Written whole
+    // it would be an occurrence in the file it searches. The current shape rule requires the keyword at the
+    // start of a trimmed line, which a quoted literal is not -- but that is a property of this rule rather
+    // than of the needle, and a later reader who loosens `starts_with` to `contains` would reintroduce the
+    // miscount unless the literal is already broken up.
+    const LET: &str = concat!("le", "t ");
+    // The two array-literal openings. Anything else after the `=` is not a table: `vec![`, `r#"Resources[`
+    // and `%captured[` all end their line in `[` too.
+    const OPENS_ARRAY: [&str; 2] = ["[", "[("];
+
+    assert!(
+        SOURCE.len() > 100_000,
+        "this file embedded as {} bytes, which is not this file; the counts below would be measuring an \
+         empty string rather than the tables",
+        SOURCE.len()
+    );
+
+    let mut examined = 0usize;
+    let mut unannotated: Vec<&str> = Vec::new();
+
+    for line in SOURCE.lines() {
+        let trimmed = line.trim();
+        if !trimmed.starts_with(LET) {
+            continue;
+        }
+        // The last `=`, because an annotated binding carries a type before it and that type holds no `=`.
+        let Some((binding, initializer)) = trimmed.rsplit_once('=') else {
+            continue;
+        };
+        if !OPENS_ARRAY.contains(&initializer.trim()) {
+            continue;
+        }
+        examined += 1;
+        // `: [` .. `;` is the length-carrying form. A binding with no type, or a type that is not a
+        // fixed-size array, does not constrain the cell count.
+        let carries_a_length =
+            binding.contains(':') && binding.contains('[') && binding.contains(';');
+        if !carries_a_length {
+            unannotated.push(trimmed);
+        }
+    }
+
+    assert!(
+        examined > 0,
+        "the shape rule matched no `{}` table at all, so the emptiness below proves nothing. Either the \
+         tables changed shape or the rule stopped describing them; in both cases this test is measuring \
+         nothing and needs its rule updated rather than its assertion trusted.",
+        LET.trim()
+    );
+
+    assert!(
+        unannotated.is_empty(),
+        "{} of {} tables carry no length, so deleting a cell from one of them is invisible -- libtest \
+         counts test functions, and a loop cell is not one. Annotate each with its cell count, as in \
+         `: [_; 8]`, and let the compiler supply the number: annotate `[_; 0]` first and the resulting \
+         `error[E0308]` names the true size. The unannotated bindings are: {:#?}",
+        unannotated.len(),
+        examined,
+        unannotated
+    );
+}
+
 /// Checks a cell's membership-notice expectation, and on the silent side proves the channel was live.
 ///
 /// The four boolean tables above each carried their own copy of this block, and each copy's `false` side
