@@ -12,5 +12,8 @@ ource = "ource"
 [default.extend-identifiers]
 # Ignore ID in evaluate_tests.rs
 fooCounterTaskDef49BA9021 = "fooCounterTaskDef49BA9021"
+# A short SHA that ends in `ba`, which `typos` reads as `by`/`be`. Every prefix length flags,
+# because the token sits between digits, so the commit cannot be cited in prose without this.
+34d965ba = "34d965ba"
 [files]
 extend-exclude = ["guard/ts-lib", "action"]

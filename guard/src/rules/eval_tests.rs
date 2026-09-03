@@ -39,18 +39,32 @@ use super::*;
 //     ee60bc5f   3138       --
 //     1fd235a5   3138       --
 //     dd24954b   3138       3138      correct
-//     a4eaf4e8   3142       --        the tip this correction sits on
+//     a4eaf4e8   3142       --        six commits past `dd24954b`; the fix among them moved it
+//     1a6b41af   3142       --        this correction's first form, comment-only
+//     34d965ba   3142       --        the length pins; same cells, so the total holds
+//     b49818b1   3142       --        the three claim corrections, comment-only
+//     8573f194   3144       --        the guard's self-extension test; +2, one fn per build target
 //
 // The two stale offsets are the same arithmetic. 19 is `e26817a6`'s 16 plus `ec2b9a5c`'s 2 plus
 // `d63c1714`'s 1; 21 is that plus `3957260b`'s 2. Each author measured 3085 at `69628df7` and added
 // their own delta to it, which is correct right up until a commit lands in between.
 //
-// The last row is why every figure above names a SHA. Six commits landed past `dd24954b` while this
-// correction was being written -- four `test:`, one `docs:`, and `a4eaf4e8`, which is a behavior fix --
-// and the suite went 3138 to 3142. A figure tied to a SHA survived that; a figure stated as "the
-// current total" would not have. Two of those six also correct claims of their own: `9a449316` retires
-// `56c95a51`'s "Three renderers" as two live ones, and `a4eaf4e8` repairs a skip reason that read a
-// referenced rule's gate as its own.
+// The last five rows are why every figure here names a SHA rather than reading as a current total.
+// Six commits landed past `dd24954b` while this correction was being written -- four `test:`, one
+// `docs:`, and `a4eaf4e8`, which is a behavior fix -- and the suite went 3138 to 3142; it was then
+// rebased twice more and the total moved again, to 3144. Every SHA-tied row survived all three moves
+// untouched. A row saying "the suite is 3138" would have been wrong three times over. Two of those six
+// commits also correct claims of their own: `9a449316` retires `56c95a51`'s "Three renderers" as two
+// live ones, and `a4eaf4e8` repairs a skip reason that read a referenced rule's gate as its own.
+//
+// Four consecutive rows then read 3142, for four different reasons, and separating them is the point
+// of recording them at all. `a4eaf4e8` moved the total and is why it is 3142. `1a6b41af` and
+// `b49818b1` are comment-only, so neither could move it. `34d965ba` pins each loop table's length in
+// its binding type -- `let cases: [_; 10] = [..]` -- so a deleted cell becomes `error[E0308]` instead
+// of a silent shrink, and the cells themselves are unchanged, so the total is unchanged. Then
+// `8573f194` moves it by two, one test function per build target. Equal figures on consecutive commits
+// are not evidence that nothing happened, and an unchanged total is not evidence that no cell was
+// added -- the same error in the other direction.
 //
 // `f2f87b82` reads as damage and is not. It is the red half of a red-then-green pair, so `cargo`
 // stops after the failing test binary: eight suites report rather than sixteen, and twelve cells
