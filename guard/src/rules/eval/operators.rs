@@ -1276,7 +1276,8 @@ impl Comparator for InOperation {
                 'each_lhs: for eachl in &lhs_selected {
                     let mut unanswerable_against: Option<(Rc<PathAwareValue>, StringContainment)> =
                         None;
-                    let mut unanswerable_membership: Option<(Rc<PathAwareValue>, Unanswered)> = None;
+                    let mut unanswerable_membership: Option<(Rc<PathAwareValue>, Unanswered)> =
+                        None;
                     let mut element_collision = false;
                     for eachr in &rhs_selected {
                         // The vacuous match, for a right operand that denotes a SET of candidate values.

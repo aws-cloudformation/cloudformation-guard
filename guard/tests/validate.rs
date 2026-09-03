@@ -1045,7 +1045,8 @@ mod validate_tests {
             .run(&mut writer, &mut reader);
 
         assert_eq!(
-            StatusCode::VALIDATION_ERROR, status_code,
+            StatusCode::VALIDATION_ERROR,
+            status_code,
             "a gate whose comparison had no answer must not report success; exit 0 here means the \
              guarded body was silently skipped"
         );
@@ -1095,12 +1096,15 @@ mod validate_tests {
 
         let status_code = ValidateTestRunner::default()
             .data(vec!["undecided-membership-gate-template.yaml"])
-            .rules(vec!["undecided_membership_filter_guarding_a_violation.guard"])
+            .rules(vec![
+                "undecided_membership_filter_guarding_a_violation.guard",
+            ])
             .show_summary(vec!["all"])
             .run(&mut writer, &mut reader);
 
         assert_eq!(
-            StatusCode::VALIDATION_ERROR, status_code,
+            StatusCode::VALIDATION_ERROR,
+            status_code,
             "a filter predicate whose comparison had no answer must not select nothing and pass; \
              exit 0 here means the body was never compared"
         );
