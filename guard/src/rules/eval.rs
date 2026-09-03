@@ -248,38 +248,71 @@ fn empty_reference_message(negated: bool) -> String {
 /// right kind is left alone -- that case decides on the comparable element and is not changing.
 ///
 /// Half of the condition, not all of it. `Some` here means the clause *could* have passed on the
-/// strength of the incomparability, and the caller still has to check that it did: this comparison
-/// asks about the whole left-hand value, while `contained_in` decides a list-valued left-hand side
-/// element by element, so a list the denylist plainly names answers `Some` here and then fails. See
+/// strength of the incomparability, and the caller still has to check that it did. See
 /// `binary_operation`, which emits only once the verdict is in.
 ///
-/// # Do not align this with `is_one_of` yet
+/// # This predicate is wrong, in both directions, and known to be
 ///
-/// The divergence just described is real and looks like the root cause, so the obvious repair is to
-/// flatten the left-hand side here and ask the element-wise question `is_one_of` and `contained_in`
-/// ask. **Do not, while the `[*]` membership bypass is open.** Measured, on a tree with that change
-/// and nothing else: the full suite stays green at 2503 passed / 0 failed, all five
-/// aws-guard-rules-registry notices survive, both contradicting cells lose their notice as intended --
-/// and `Pair NOT IN Deny13[*]`, with `{"Pair":[1,2],"Deny13":[1,3]}`, goes from exit 0 *with* the
-/// notice to exit 0 **silent**.
+/// It decides on the comparability of the **whole left-hand value** against each flattened right-hand
+/// element. `is_one_of` and `contained_in` decide a list-valued left-hand side by comparing its
+/// **elements**. The two have diverged, and the consequence is not academic: **this emits a
+/// DEPRECATION on ordinary, well-typed, compliant denylist checks, telling the author a passing rule
+/// will fail closed in a future release when it will not.**
 ///
-/// That clause admits a value its denylist names. The alignment is what silences it, and for a
-/// structural reason rather than an oversight: element-wise, `1` and `1` are perfectly comparable, so
-/// the aligned predicate correctly reports that nothing was undecidable -- while the pass still comes
-/// from the suppressed error one layer down. Every clause in that class works the same way, which is
-/// the class the deprecation exists to announce. Aligning first converts a flagged bypass into a silent
-/// one, and no test in the suite fails when it happens.
+/// The concrete case, and the shape most real rules take:
 ///
-/// So the order is: **close the bypass first, align second.** The bypass is not at the not-comparable
-/// suppression in `contained_in` -- closing that leaves `Pair NOT IN Deny13[*]` at exit 0, measured --
-/// it is in `InOperation::compare`'s two-query `(None, None)` arm, where the `element_collision`
-/// tracking around `operators.rs:1006` already fixed the unwrapped `Pair NOT IN Deny13` spelling and
-/// the `[*]` spelling still reaches exit 0. While that is open, the whole-value question asked here is
-/// the one that finds it.
+/// ```text
+/// Actions: ["s3:GetObject", "s3:PutObject"]
+/// rule r { Actions NOT IN ["s3:DeleteBucket", "s3:PutBucketPolicy"] }   # exit 0 + DEPRECATION
+/// ```
 ///
-/// Not established: that alignment becomes correct once the bypass closes. It is untested, because
-/// that fix does not exist yet. Re-measure `Pair NOT IN Deny13[*]` against whatever closes it rather
-/// than assuming this note expires.
+/// Every pair the operator compared is string against string, all answerable, nothing suppressed. The
+/// element comparisons demonstrably worked: change one action to a denied one and the clause exits 19
+/// naming it, which an incomparable operand pair could not do.
+///
+/// The discriminator is one variable, and it is what makes the diagnosis certain rather than plausible:
+/// `Strs NOT IN ["x","y"]` emits the notice and `Strs NOT IN ["x","y",["p"]]` does not, both passing,
+/// element-wise facts identical. Adding an irrelevant nested list flips
+/// `compare_eq(whole_lhs_list, element)` from `Err` to `Ok`, because of which arm each pair lands on.
+/// `compare_eq` answers `(List, List)` itself and always returns `Ok` -- `false` on a length mismatch,
+/// never a refusal. It has no `(List, String)` arm at all, so that pair falls through its `(_, _)` arm
+/// into `compare_values`, whose own catch-all refuses with `NotComparable`. So the notice's trigger is
+/// decided by the *kind* of an unrelated denylist element rather than by anything about the comparison
+/// the clause performs.
+///
+/// Wrong in the other direction too, from the early return above: `Str NOT IN Haystack` over
+/// `["zzz", 7, false]` stays silent because `"a"` and `"zzz"` are comparable, though `"a"` against `7`
+/// is exactly the pair a fail-closed release will refuse. Measured over 132 clause shapes at this
+/// commit, against the oracle the notice's own text implies -- true iff the clause passed AND at least
+/// one pair the operator actually compared raised `NotComparable` -- 73 cells are true positives,
+/// **7 are false alarms of the kind above, and 10 are notices that should have been emitted and were
+/// not.** Zero remain where the notice contradicts a failing verdict; that class is what the
+/// verdict gate in `binary_operation` closed.
+///
+/// # Aligning it is the right fix, and must wait for the `[*]` bypass
+///
+/// **Do not flatten the left-hand side here while the `[*]` membership bypass is open**, however
+/// obviously correct it looks. Measured on a tree with that change and nothing else: the suite stays
+/// green at 2503 passed / 0 failed, all five aws-guard-rules-registry notices survive, the seven false
+/// alarms go -- and `Pair NOT IN Deny13[*]`, with `{"Pair":[1,2],"Deny13":[1,3]}`, goes from exit 0
+/// *with* the notice to exit 0 **silent**. That clause admits a value its denylist names. Element-wise
+/// `1` and `1` are perfectly comparable, so the aligned predicate correctly reports nothing
+/// undecidable, while the pass still comes from the suppressed error a layer down. No test in the suite
+/// fails when that happens.
+///
+/// So this is a temporary constraint with a real cost, not a design position. Leaving the predicate
+/// unaligned means shipping false alarms on compliant rules, which is a genuine harm -- it tells
+/// authors to rewrite policy that works. It is accepted only because one true positive on a live
+/// bypass at exit 0 is worth more than the noise, and only until the bypass closes.
+///
+/// What unblocks alignment: closing the bypass in `InOperation::compare`'s two-query `(None, None)`
+/// arm, where the `element_collision` tracking around `operators.rs:1006` already fixed the unwrapped
+/// `Pair NOT IN Deny13` spelling and the `[*]` spelling still reaches exit 0. Not the not-comparable
+/// suppression in `contained_in` -- closing that leaves the clause at exit 0, measured.
+///
+/// Not established: that alignment is correct once the bypass closes. It is untested because that fix
+/// did not exist when this was written. Re-measure `Pair NOT IN Deny13[*]` against whatever closes it,
+/// and re-run the 132-cell classification, rather than assuming this note expires on its own.
 fn incomparable_membership(
     lhs: &[QueryResult],
     rhs: &[QueryResult],
