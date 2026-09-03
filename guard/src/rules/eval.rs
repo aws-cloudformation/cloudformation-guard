@@ -1447,7 +1447,10 @@ fn report_by_lhs<'r, 'value: 'r, 'loc: 'value>(
                     .or_insert(vec![])
                     .push((each, QueryResult::Resolved(Rc::clone(rhs))));
             }
-
+            // The reason itself is read below, off `results`, rather than collected here. Grouping is
+            // per left-hand value and the record is per left-hand value, so the reason has to be the
+            // one belonging to THIS key -- collecting into a single variable while walking every
+            // pairing would let one key's refusal be reported against another's failure.
             ComparisonResult::UnResolvedRhs(UnResolvedRhs { rhs, lhs }) => {
                 if let QueryResult::UnResolved(..) = rhs {
                     by_lhs_value
@@ -1488,12 +1491,32 @@ fn report_by_lhs<'r, 'value: 'r, 'loc: 'value>(
                     .map(|(_, rhs)| rhs.clone())
                     .collect::<Vec<QueryResult>>();
 
+                // The reason travels with the record, which is what `report_value` does for the `==`
+                // and `!=` spellings of this same question. `message` was `None` unconditionally, so a
+                // key whose comparison had no answer was rendered by the reporters as one that was
+                // compared and came out wrong: `NOT IN` printed "provided value [...] did match
+                // expected value in [...]", asserting a success about a comparison fancy_regex
+                // abandoned, and `IN` printed the mirror. 07774380 fixed the sibling and its scoping
+                // sentence named this function without changing it.
+                //
+                // The first refusal among this key's pairings, and only when the fold came out false.
+                // A key that satisfied the clause has a verdict that did not rest on the pairing that
+                // failed, so there is nothing to explain -- the same precedence the `Comparable` arm of
+                // `satisfies` already applies. First rather than all, because a clause names one
+                // pattern in practice and the scalar arm reports one reason too.
+                let reason = results.iter().find_map(|(r, _)| match r {
+                    ComparisonResult::NotComparable(NotComparableWithRhs { reason, .. }) => {
+                        Some(reason.clone())
+                    }
+                    _ => None,
+                });
+
                 eval_context.end_record(
                     &context,
                     RecordType::ClauseValueCheck(ClauseCheck::InComparison(InComparisonCheck {
                         from: QueryResult::Resolved(Rc::clone(lhs)),
                         to: to_collected,
-                        message: None,
+                        message: reason,
                         custom_message: custom_message.clone(),
                         status: Status::FAIL,
                         comparison: cmp,

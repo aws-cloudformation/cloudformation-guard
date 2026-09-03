@@ -3552,18 +3552,29 @@ fn report_all_failed_clauses_for_rules<'value>(
                     }
                 }
 
+                // `message` is bound rather than dropped through the `..`, and appended in the same
+                // `Error = [...]` shape the `ClauseCheck::Comparison` arm below uses. This is the
+                // structured half of the same defect: the console reporters read
+                // `InComparisonCheck::message` through `NameInfo`, so populating it in `report_by_lhs`
+                // is enough for them, but this reporter builds its own sentence and had no slot for a
+                // reason at all. Without this, `-o json` and the FFI and Lambda paths -- which have no
+                // stderr channel and so have the report as their only record -- still say only "was
+                // not present in".
                 ClauseCheck::InComparison(InComparisonCheck {
                     status: Status::FAIL,
                     from,
                     to,
                     custom_message,
                     comparison,
-                    ..
+                    message,
                 }) => {
                     let error_message = format!(
-                        "Check was not compliant as property [{}] was not present in [{}]",
+                        "Check was not compliant as property [{}] was not present in [{}]{err}",
                         from.resolved().unwrap().self_path(),
-                        SliceDisplay(to)
+                        SliceDisplay(to),
+                        err = message
+                            .as_ref()
+                            .map_or("".to_string(), |s| format!(". Error = [{}]", s))
                     );
                     clauses.push(ClauseReport::Clause(GuardClauseReport::Binary(
                         BinaryReport {

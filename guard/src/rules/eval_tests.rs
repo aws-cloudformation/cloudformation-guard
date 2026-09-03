@@ -6608,7 +6608,7 @@ fn every_recorded_explanation_has_a_rendering_path() {
 
     // Evaluator-generated explanations, by the record variant each lands on:
     //
-    //   ClauseValueCheck        3   leaf value checks; rendered by the clause arms already
+    //   ClauseValueCheck        4   leaf value checks; rendered by the clause arms already
     //   GuardClauseBlockCheck   5   rendered: falls back to the message when no children report
     //   BlockGuardCheck         1   rendered: uses the record's message, not a hardcoded sentence
     //   WhenCheck               2   rendered: same fallback as GuardClauseBlockCheck
@@ -6652,9 +6652,28 @@ fn every_recorded_explanation_has_a_rendering_path() {
     // `Attempting EMPTY operation on type bool that does not support it at
     // /Resources/Vol/Properties/Enabled` in the console reporter.
     //
+    // The fourth `ClauseValueCheck` is the newest overall: `report_by_lhs` recording why a map-key
+    // membership comparison had no answer. It was `message: None`, so `Cfg[ keys not in [/re/] ]` over
+    // a key whose pattern exhausted its backtracking budget printed "provided value [...] did match
+    // expected value in [...]. Error Message []" -- a claim of success about a comparison that was
+    // abandoned. This test is why the number moved rather than the message being added quietly, and
+    // both rendering paths were checked before raising it, because they are separate:
+    //
+    //   console     `NameInfo` reads `InComparisonCheck::message` (reporters/validate/common.rs) and
+    //               `binary_error_message` prints it in the `Error Message [...]` slot. No reporter
+    //               change was needed.
+    //   structured  `eval_context.rs`'s `ClauseCheck::InComparison` arm dropped `message` through a
+    //               `..` and built its own sentence, so `-o json`, `--structured`, FFI and Lambda saw
+    //               nothing. That arm now appends `. Error = [...]` the way its `Comparison` sibling
+    //               does. Measured: the reason appears in both renderings for `IN` and `NOT IN`, and
+    //               `==`/`!=` output is byte-identical to the base.
+    //
+    // `an_undecided_map_key_membership_filter_says_why` in `guard/tests/validate.rs` asserts it end to
+    // end, and pins that a key whose comparison WAS answered keeps an empty slot.
+    //
     // If this total changes, find the new site, note which variant it records against, and confirm
     // it reaches rendered output before updating the number.
-    const SITES_EXPECTED: usize = 19;
+    const SITES_EXPECTED: usize = 20;
 
     assert_eq!(
         sites, SITES_EXPECTED,
