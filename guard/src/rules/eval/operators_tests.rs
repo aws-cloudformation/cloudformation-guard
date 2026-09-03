@@ -1403,3 +1403,150 @@ fn a_refused_pairing_does_not_swallow_the_rest_of_the_diff() -> crate::rules::Re
 
     Ok(())
 }
+
+/// Every `ListIn` carried by a Success holds an empty diff.
+///
+/// Why this exists. The negation wrapper has two `ListIn` arms that compute "which elements" two
+/// different ways. The Fail arm calls `matched_elements`, which keeps the elements *absent* from the
+/// diff. The Success arm has its own loop and keeps *all* elements, because a Success means the whole
+/// list matched and every element is what `NOT IN` has to report. Those are different questions, and
+/// they return the same answer only while every Success path constructs an empty diff -- with an empty
+/// diff, "absent from the diff" is "all of them". Nothing in the type system says the diff is empty
+/// there; it is a property of the two construction sites, which is what this test pins.
+///
+/// The two sites are both in `contained_in`'s list-valued left-hand arm. The nested-right-hand branch
+/// passes `vec![]` literally, and the all-flat branch passes a `diff` it has just tested
+/// `is_empty()`. A third Success path, or either of these two starting to carry the values that
+/// matched, would silently make the Success arm over-report: it would name only the matched elements
+/// where it means to name all of them, and `NOT IN`'s finding would understate which values collide.
+///
+/// What was tried and rejected. Substituting `matched_elements` into the Success arm removes the
+/// duplication and is byte-identical today across a 76-case CLI oracle, a 441-clause oracle, 1302
+/// monotonicity pairs and the full suite. It was rejected deliberately: a helper answering "matched"
+/// standing where "all" is meant is correct only under this invariant, so the substitution converts a
+/// visible divergence between two loops into an invisible dependency on an unstated property. Pinning
+/// the property and leaving the loops distinct keeps the failure loud.
+///
+/// Constraints. This is an input-driven test, so it pins the invariant for the shapes below rather
+/// than proving it for all inputs. It covers both construction sites and every distinct reason for
+/// reaching them: whole-list membership in either operand order, flat subset with and without a
+/// nested right-hand element, an element matched at depth, an element matched by a range rather than
+/// by equality, and the empty left-hand list in both of its arms. A genuinely new Success path added
+/// without a cell here would not be caught, which is why the failure message names the sites.
+///
+/// The `assert!` on `successes` is load-bearing. Without it a matrix that stopped producing Success
+/// results -- a shape change, a parse failure, an operand pair that starts failing -- would satisfy
+/// every remaining assertion vacuously and report green while checking nothing.
+#[test]
+fn a_successful_list_containment_carries_an_empty_diff() -> crate::rules::Result<()> {
+    fn value(json: &str) -> crate::rules::Result<Rc<PathAwareValue>> {
+        Ok(Rc::new(PathAwareValue::try_from(json)?))
+    }
+
+    // A range cannot be spelled in a document, so it is built directly. `[85] IN [r[80,90]]` succeeds
+    // through `is_one_of`'s `compare_eq` call rather than through `PartialEq`, which is a separate
+    // route to the same construction site.
+    let range = Rc::new(PathAwareValue::List((
+        Path::root(),
+        vec![PathAwareValue::RangeInt((
+            Path::root(),
+            crate::rules::values::RangeType {
+                lower: 80,
+                upper: 90,
+                inclusive: crate::rules::values::LOWER_INCLUSIVE
+                    | crate::rules::values::UPPER_INCLUSIVE,
+            },
+        ))],
+    )));
+
+    let mut cases: Vec<(String, Rc<PathAwareValue>, Rc<PathAwareValue>)> = vec![];
+    for (why, lhs, rhs) in [
+        (
+            "flat subset, no nested right-hand element",
+            "[1,2]",
+            "[1,2,3]",
+        ),
+        (
+            "flat subset beside a nested right-hand element",
+            "[1,2]",
+            "[1,2,[9]]",
+        ),
+        (
+            "whole-list membership, nested element last",
+            "[1,2]",
+            "[\"zzz\",[1,2]]",
+        ),
+        (
+            "whole-list membership, nested element first",
+            "[1,2]",
+            "[[1,2],\"zzz\"]",
+        ),
+        (
+            "every element matched, one of them nested",
+            "[1,[9]]",
+            "[1,[9]]",
+        ),
+        ("element matched at depth", "[[\"a\"]]", "[[\"a\"]]"),
+        ("whole-list membership at depth", "[[\"a\"]]", "[[[\"a\"]]]"),
+        ("empty left-hand list, all-flat branch", "[]", "[1,2,3]"),
+        (
+            "empty left-hand list is a member of the right",
+            "[]",
+            "[1,2,3,[]]",
+        ),
+    ] {
+        cases.push((why.to_string(), value(lhs)?, value(rhs)?));
+    }
+    cases.push((
+        "element matched by a range rather than by equality".to_string(),
+        value("[85]")?,
+        Rc::clone(&range),
+    ));
+
+    let mut successes = 0;
+    for (why, lhs, rhs) in &cases {
+        let lhs_len = match &**lhs {
+            PathAwareValue::List((_, l)) => l.len(),
+            other => panic!("{}: the left operand must be a list, got {:?}", why, other),
+        };
+        match contained_in(Rc::clone(lhs), Rc::clone(rhs)) {
+            ValueEvalResult::ComparisonResult(ComparisonResult::Success(Compare::ListIn(lin))) => {
+                successes += 1;
+                assert!(
+                    lin.diff.is_empty(),
+                    "{}: a Success must carry an empty diff, got {:?}. The construction sites are \
+                     `contained_in`'s two Success arms -- the nested-right-hand branch passing \
+                     `vec![]` and the all-flat branch passing an `is_empty()` diff. The negation \
+                     wrapper's Success arm keeps ALL elements while its Fail arm keeps only the \
+                     matched ones, and those agree only while this holds.",
+                    why,
+                    lin.diff
+                );
+                assert_eq!(
+                    matched_elements(&lin).len(),
+                    lhs_len,
+                    "{}: with an empty diff every element reads as matched, which is what lets the \
+                     Success arm's own loop and `matched_elements` agree",
+                    why
+                );
+            }
+            other => panic!(
+                "{}: expected a successful list containment, got {:?}",
+                why, other
+            ),
+        }
+    }
+
+    assert_eq!(
+        successes,
+        cases.len(),
+        "every cell must reach a Success, or the assertions above are vacuous"
+    );
+    assert!(
+        successes >= 10,
+        "the matrix must exercise both construction sites, got {} cells",
+        successes
+    );
+
+    Ok(())
+}

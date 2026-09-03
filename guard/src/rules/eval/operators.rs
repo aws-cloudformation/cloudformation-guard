@@ -1694,6 +1694,28 @@ impl Comparator for (crate::rules::CmpOperator, bool) {
                                             )
                                         }
                                         Compare::ListIn(lin) => {
+                                            // ALL elements, and `matched_elements` is deliberately
+                                            // not used here. A Success means the whole left-hand
+                                            // list was contained, so every element is a value
+                                            // `NOT IN` has to name; the helper answers the narrower
+                                            // question "which elements did the right-hand side
+                                            // match", which is what the Fail arm above wants.
+                                            //
+                                            // The two coincide only while every `ListIn` Success
+                                            // path carries an empty diff, because with an empty diff
+                                            // "absent from the diff" is "all of them".
+                                            // `a_successful_list_containment_carries_an_empty_diff`
+                                            // pins that, and its message names the two construction
+                                            // sites: `contained_in`'s nested-right-hand Success arm
+                                            // passes `vec![]`, and its all-flat Success arm passes a
+                                            // `diff` it has just tested `is_empty()`.
+                                            //
+                                            // Substituting the helper was measured byte-identical
+                                            // and rejected anyway: it would turn a visible
+                                            // difference between two loops into a silent dependency
+                                            // on that invariant, so a third Success path carrying a
+                                            // non-empty diff would make this arm under-report which
+                                            // values collide instead of failing a test.
                                             let lhs = match &*lin.lhs {
                                                 PathAwareValue::List((_, v)) => v,
                                                 _ => unreachable!(),
