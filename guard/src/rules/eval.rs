@@ -584,55 +584,101 @@ fn incomparable_membership(lhs: &[QueryResult], rhs: &[QueryResult]) -> bool {
                     }
 
                     // And the WHOLE left-hand list against each entry, which that arm walks when no
-                    // element matched and the denylist holds a list. Keyed on the same condition the
-                    // operator branches on, because that is what decides whether the loop exists to
+                    // element matched and the denylist holds a list. Keyed on the same two conditions the
+                    // operator branches on, because those are what decide whether the loop exists to
                     // refuse in: a flat denylist never reaches it, and reinstating the whole-value pair
                     // there is exactly the false-alarm class the alignment removed --
                     // `Strs NOT IN ["x", "y"]` is `(List, String)`, which has no arm, on a clause every
                     // pair of which is string against string.
                     //
-                    // Not gated on the elements having failed to match, though the operator's loop is.
-                    // Where they all match `contained_in` returns Success, and the walk stops at that
-                    // pairing rather than carrying the value on to later right-hand values --
-                    // `rhs_values_paired_with` is what stops it, and before it did the verdict gate in
-                    // `binary_operation` was the only thing between this loop and a false notice.
-                    // The operator gates this loop TWICE and the predicate mirrored only the first.
-                    // `operators.rs:1031` is `rhsl.iter().any(|elem| elem.is_list())`, which is the
-                    // condition below. `operators.rs:1054` is `if !flat_subset`, where `flat_subset` is
-                    // `elements_not_matched(lhsl, rhsl)`'s diff being empty. An empty `lhsl` has nothing
-                    // to leave unmatched, so its diff is empty, `flat_subset` holds, and the operator
-                    // skips its whole-list loop -- it builds no whole-value pairing for such a value at
-                    // all. `operators.rs:1029-1030` says so outright, and it is measurable from outside:
-                    // `Empty IN [[9], 5]` exits 0, which is `contained_in` answering `Success`.
+                    // Gated on the elements having failed to match, because the operator's loop is. The
+                    // operator gates this loop TWICE and the predicate mirrored only the first: the
+                    // `any(is_list)` condition is the outer `if` of `contained_in`'s list-against-list
+                    // arm, and `if !flat_subset` inside it is the second, where `flat_subset` is
+                    // `elements_not_matched(lhsl, rhsl)`'s diff being empty. Both are cited by construct
+                    // rather than by line, because this comment sits in a file later commits insert into
+                    // and the numbers that used to be here had already moved.
                     //
-                    // So `lhsl.is_empty()` restores the missing half of a two-part gate rather than
-                    // carving out a special case, and that is a claim about the operator's structure a
-                    // reader can check. Without it the element loops above iterate zero times for such a
-                    // value, leaving `compare_eq([], entry)` as the arm's entire contribution --
-                    // `NotComparable` against an int entry -- so `refused` went true on a pairing nothing
-                    // built.
+                    // `operators::whole_value_pairing_built` is the second gate, and it OBSERVES the
+                    // diff rather than re-deriving it -- it calls the same `elements_not_matched` the arm
+                    // calls. That is the distinction this arm insists on everywhere else, and it is the
+                    // reason a re-derivation would have been the wrong fix while this is the right one:
+                    // a condition spelled out here can drift from the one the operator branches on, and
+                    // a call cannot. `both_queried` above is read from `operators::is_literal` for the
+                    // same reason.
                     //
-                    // UNGATED, and an earlier revision of this fix wrote `both_queried && lhsl.is_empty()`,
-                    // which is the inverse of the coverage needed. The QUERIED path needs no guard here:
-                    // `membership_stops_after(empty, X)` is true for every non-String X, so any list
-                    // element is a stop and the exclusive prefix drops it, leaving only Strings inside
-                    // `[0..at)` -- and a String is not a list, so this arm is unreachable. The LITERAL
-                    // path is the one that reaches it, because `rhs_values_paired_with` returns at
-                    // `eval.rs:732-734` before the endpoint is consulted, so the prefix cannot help there.
-                    // Gating on `both_queried` skipped the loop exactly where the prefix already covers it
-                    // and left it running on the only path that needed it.
+                    // It subsumes the `lhsl.is_empty()` guard that used to stand here, which was the
+                    // empty-list special case of exactly this gate: an empty `lhsl` has nothing to leave
+                    // unmatched, so its diff is empty, so the operator builds no whole-value pairing for
+                    // it either. Keeping both would be two guards where one answers, and neither would
+                    // then be tested on its own. Measurable from outside: `Empty IN [[9], 5]` exits 0,
+                    // which is `contained_in` answering `Success`.
                     //
-                    // A RESIDUAL of the same class is left open on purpose. `flat_subset` is also true
-                    // when `lhsl` is non-empty and every element matched; the operator skips the loop
-                    // there too, and this still walks it. `lhsl.is_empty()` does not cover that, and
-                    // closing it needs the operator's `diff` at the predicate, which
-                    // `Comparator::compare` does not carry out -- the same shape as the `own_skip_reason`
-                    // gap. It is latent by the argument this arm rests on: every element matching means
-                    // `contained_in` returns `Success`, which is a match, which fails `NOT IN`, so the
-                    // verdict gate shuts. Re-deriving `elements_not_matched` here is NOT the fix.
-                    // Re-deriving what the operator already computed is the defect class this round has
-                    // been retiring, and it is how the divergence being repaired arose.
-                    if !lhsl.is_empty() && rhsl.iter().any(|right| right.is_list()) {
+                    // UNGATED by `both_queried`, and an earlier revision wrote `both_queried &&
+                    // lhsl.is_empty()`, which is the inverse of the coverage needed. The QUERIED path
+                    // needs no guard here: `membership_stops_after(empty, X)` is true for every
+                    // non-String X, so any list element is a stop and the exclusive prefix drops it,
+                    // leaving only Strings inside `[0..at)` -- and a String is not a list, so this arm is
+                    // unreachable. The LITERAL path is the one that reaches it, because
+                    // `rhs_values_paired_with` returns its whole slice from the `!both_queried` early
+                    // return before the endpoint is ever consulted, so the prefix cannot help there.
+                    //
+                    // THE RESIDUAL THIS CLOSES was left open here as latent, and the argument for that
+                    // was false. It ran: every element matching means `contained_in` returns `Success`,
+                    // which is a match, which fails `NOT IN`, so the verdict gate shuts. That is
+                    // per-value, and the gate is not. `clause_passed` reads the query's own `match_all`,
+                    // and for `some` it is `any(status == PASS)` -- so one failing value does not shut
+                    // it. A passing sibling holds it open while the residual value's refusal sets
+                    // `refused`, and the notice goes out naming a reason that is false about the value
+                    // that actually passed.
+                    //
+                    // Measured with `Iso` of `[[[1]], [[7], [8]]]`: `some Iso[*] NOT IN [[1], [9]]`
+                    // exits 0 and printed the notice, whose subject is `[[7], [8]]` -- every element of
+                    // it compared int against int and decided false. Dropping the residual value leaves
+                    // exit 0 and no notice, which attributes it; keeping only the residual value exits
+                    // 19, which is the sole-value population the false argument was checked against. The
+                    // filter spelling `Resources.*[ some Props.V[*] NOT IN [[1], [9]] ]` does it too,
+                    // and that is the shape the registry rules are written in.
+                    //
+                    // Its own precedent is one arm down, and reading it would have caught this. The
+                    // `(List, right)` arm below records the same failure mode about its own repair: an
+                    // argument true of a left operand whose ONLY value is the empty list, and false as
+                    // soon as the empty list has a sibling, because `refused` ORs over the whole cross
+                    // product. Substitute "every element matched" for "the empty list" and that
+                    // paragraph is this finding verbatim. It survived review because the argument was
+                    // checked against the population that satisfies it.
+                    //
+                    // A SECOND DIVERGENCE IS STILL OPEN, and this gate does not close it. The element
+                    // loops above walk the full `lhsl` x `rhsl` cross product; the operator does not.
+                    // `elements_not_matched` asks `is_one_of` per left-hand element, and `is_one_of`
+                    // returns `Matched` on the first right-hand element that matches, so later pairings
+                    // for a matched element are never built. This arm counts them.
+                    //
+                    // Measured, so it is not confused with the residual: with `ShortIso` of
+                    // `[[[1]], [[7, 7], [8, 8]]]`, `some ShortIso[*] NOT IN [[1], ["a"]]` exits 0 and
+                    // still prints the notice with this gate in place. `some ShortIso[*] NOT IN
+                    // [[1], [9]]` -- the SAME left operand -- goes silent with it. The discriminator is
+                    // whether the pairing the operator skipped would have compared incomparable kinds:
+                    // for `[9]` the skipped pair is `compare_eq(1, 9)`, `Ok(false)`, no refusal, so the
+                    // residual was the only live source; for `["a"]` it is `compare_eq(1, "a")`,
+                    // `NotComparable`, a refusal, so closing the residual leaves the other source
+                    // carrying the notice. Two clauses of one fixture answering oppositely is why the
+                    // clause shape cannot be used to tell the two sources apart.
+                    //
+                    // Not closed here, and the sequencing is deliberate rather than deferral. Closing it
+                    // alone moves nothing observable -- every clause where it matters also has the
+                    // residual firing, and the residual holds the notice up -- so it has no before-and-
+                    // after of its own until this gate lands. It also needs a different shape: this gate
+                    // OBSERVES a diff the operator already computed, while the element loop needs the
+                    // pairing set `is_one_of` actually built, which no accessor reports yet. Restating
+                    // that walk inline here is what must not happen; it is the pattern that produced both
+                    // divergences.
+                    //
+                    // So this arm still over-counts. What it no longer does is count the whole-value
+                    // pairing for a value whose elements all matched.
+                    if rhsl.iter().any(|right| right.is_list())
+                        && operators::whole_value_pairing_built(lhsl, rhsl)
+                    {
                         for right in rhsl {
                             refused |= pair_refused(value, right);
                         }

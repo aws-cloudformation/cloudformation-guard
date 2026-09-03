@@ -16078,6 +16078,120 @@ fn an_empty_left_hand_list_earns_no_whole_value_refusal_the_operator_never_built
     );
 }
 
+/// A value whose elements all matched earns no whole-value refusal either, and the clause can still pass.
+///
+/// The residual the `(List, List)` arm left open, closed. `contained_in` skips its whole-list loop
+/// whenever the element-wise diff is empty, and an empty `lhsl` is only one way to get there: a
+/// non-empty `lhsl` every element of which matched has an empty diff too. The predicate walked the
+/// whole-value pairing in both cases and the operator built it in neither.
+///
+/// # Why it was left open, and why that argument was wrong
+///
+/// It was called latent on this reasoning: every element matching means `contained_in` returns
+/// `Success`, which is a match, which fails `NOT IN`, so the verdict gate shuts. That is a claim about
+/// ONE value, and the gate is not about one value. `clause_passed` reads the query's own `match_all`,
+/// and under `some` it is `any(status == PASS)` -- so the matched value's own FAIL does not shut it. A
+/// passing sibling holds it open while the matched value's refusal sets `refused`, and the notice goes
+/// out naming a reason that is false about the value that actually passed.
+///
+/// The literal right-hand side is what makes it reachable. On the queried path
+/// `rhs_values_paired_with` drops a matching right-hand value from the walk, so this arm is never
+/// entered for one; the literal path returns the whole slice before the endpoint is consulted, so the
+/// gate in the arm is the only thing that answers. That is the same split
+/// `an_empty_left_hand_list_earns_no_whole_value_refusal_the_operator_never_built` records above, and
+/// it is why the cells here are written with a literal denylist.
+///
+/// # The cells, and what each one is for
+///
+/// `Iso` is `[[[1]], [[7], [8]]]`, so `Iso[*]` yields two values. `[[1]]` is the residual: its one
+/// element `[1]` matches the `[1]` in the denylist, so its diff is empty and it MATCHES, failing
+/// `NOT IN`. `[[7], [8]]` matches nothing, so it passes, and under `some` it carries the clause. Every
+/// element pair it contributes is int against int, decided false -- which is what makes the notice's
+/// stated reason false about it specifically.
+///
+/// The second cell drops the residual value and keeps the sibling, which is what attributes the notice
+/// to the residual rather than to the clause shape. The third keeps only the residual value: the clause
+/// FAILS, the gate shuts, and nothing is emitted whatever the predicate answered. That third cell is
+/// the population the latency argument was checked against, and its presence here is the point -- an
+/// argument that holds for the sole-value case and fails as soon as there is a sibling is the same
+/// failure mode the `(List, right)` arm one screen up already records about its own repair.
+///
+/// The fourth cell is the channel, and it is why a blanket suppression of the whole-value loop cannot
+/// pass this table. `Deep` is `[[9]]` against `[[1], [2]]`: no element matches, the diff is non-empty,
+/// so the operator DOES build the whole-value pairing and its `NotComparable` is genuinely owed.
+///
+/// # Its expected status is tabulated rather than asserted uniformly
+///
+/// Its sibling above asserts PASS for every cell, because a FAIL suppresses the notice whatever the
+/// predicate answered and an absence cell would then hold for the wrong reason. That cannot be done
+/// here: the third cell's FAIL is the thing under test. So the status is a column, and asserting it
+/// keeps the same protection -- a cell that starts failing for an unrelated reason reddens on the
+/// status rather than passing quietly on the absence.
+#[rstest::rstest]
+// THE DEFECT. A matched value's refusal riding out on a passing sibling, in both spellings the
+// registry rules use.
+#[case::a_matched_value_beside_a_passing_sibling(
+    "some Iso[*] NOT IN [[1], [9]]",
+    Status::PASS,
+    false
+)]
+// THE ATTRIBUTION CONTROL. The same clause with the matched value dropped: silent before and after.
+#[case::the_same_clause_without_the_matched_value(
+    "some IsoNoRes[*] NOT IN [[1], [9]]",
+    Status::PASS,
+    false
+)]
+// THE POPULATION THE LATENCY ARGUMENT WAS CHECKED AGAINST. Only the matched value, so the clause fails
+// and the gate shuts on its own.
+#[case::only_the_matched_value_fails_the_clause(
+    "some IsoOnlyRes[*] NOT IN [[1], [9]]",
+    Status::FAIL,
+    false
+)]
+// THE CHANNEL STILL WORKS. Nothing matched, so the diff is non-empty and the operator builds the
+// whole-value pairing this notice is about.
+#[case::a_whole_value_pairing_the_operator_does_build("Deep NOT IN [[1], [2]]", Status::PASS, true)]
+fn a_matched_subset_earns_no_whole_value_refusal_the_operator_never_built(
+    #[case] clause: &str,
+    #[case] expected_status: Status,
+    #[case] expected_notice: bool,
+) -> Result<()> {
+    // `IsoNoRes` is `Iso` minus the matched value and `IsoOnlyRes` is `Iso` minus the sibling, so the
+    // three differ in exactly the thing under test. `Deep` shares no element with its denylist.
+    const INPUT: &str = r#"
+    {
+        Iso: [[[1]], [[7], [8]]],
+        IsoNoRes: [[[7], [8]]],
+        IsoOnlyRes: [[[1]]],
+        Deep: [[9]]
+    }
+    "#;
+
+    let (status, notices) = status_and_deprecations(clause, INPUT)?;
+
+    assert_eq!(
+        expected_status, status,
+        "`{}` must be {:?} for this cell to mean what it says: the notice gate requires the clause to \
+         have passed, so a cell whose status moved is no longer measuring the predicate",
+        clause, expected_status
+    );
+
+    let membership = notices
+        .iter()
+        .any(|notice| notice.contains("could not be compared with any element"));
+
+    assert_eq!(
+        expected_notice,
+        membership,
+        "`{}` must {} the membership notice. Recorded {:?}",
+        clause,
+        if expected_notice { "emit" } else { "not emit" },
+        notices
+    );
+
+    Ok(())
+}
+
 /// Only the two-query arm truncates, and this binds the CALL SITE rather than the helper.
 ///
 /// `the_membership_notice_stops_pairing_where_the_operator_stops` hands

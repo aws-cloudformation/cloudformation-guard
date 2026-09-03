@@ -1428,6 +1428,29 @@ pub(super) fn membership_stops_after(lhs: &Rc<PathAwareValue>, rhs: &Rc<PathAwar
     )
 }
 
+/// Whether [`contained_in`]'s list-against-list arm builds the whole-left-hand-list pairing for these
+/// two lists.
+///
+/// The second half of a two-part gate. That arm reaches its whole-list loop only when the denylist
+/// holds a list AND the element-wise diff is non-empty, and the diff is what this answers;
+/// [`super::incomparable_membership`] asks the first part for itself, because `is_list` is cheap and
+/// this is not.
+///
+/// BY CALLING `elements_not_matched` rather than restating what an empty diff means, which is the same
+/// rule [`membership_stops_after`] follows one function up. The distinction matters here because the
+/// arm's own note forbids re-deriving the diff at the predicate, and this does not: it asks the
+/// function the arm asks and reads the answer. A copy of "every element matched" written out in the
+/// predicate is what must not exist -- that is how the divergence both helpers repair arose.
+///
+/// The cost is that `elements_not_matched` runs twice per pairing, once here and once in the arm, and
+/// it allocates the diff both times. Accepted for the same reason [`is_literal`] is asked twice: the
+/// alternative is a cheaper condition that can drift from the one the arm branches on. Nothing reads
+/// the diff's contents here, only whether it is empty, so the second call is discarded work rather
+/// than a second answer that could disagree.
+pub(super) fn whole_value_pairing_built(lhsl: &[PathAwareValue], rhsl: &[PathAwareValue]) -> bool {
+    !elements_not_matched(lhsl, rhsl).0.is_empty()
+}
+
 impl Comparator for InOperation {
     fn compare<'value>(
         &self,
