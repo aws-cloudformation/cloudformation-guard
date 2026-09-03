@@ -1369,6 +1369,28 @@ impl Comparator for InOperation {
                         // deletion above closes `right_expanded_nested_entry_undenied_no_local_fix` and
                         // reddens `a_single_indexed_nested_entry_denies_by_its_members` in the same run.
                         //
+                        // THE SAME PAIR SETTLES THE OVER-DENIAL, which is the `element_collision` read of
+                        // `contained_in`'s `ListIn` diff further up rather than this guard, and which was
+                        // taken to need the query-layer redesign before anyone had run this test on it.
+                        // `Denies[*]` in the pair just given IS an over-denial -- `Pair` is `[1, 2]`, the
+                        // entry `[1, 3]` names neither it nor an element of it read as an entry, and the
+                        // clause denies anyway -- so the `[*]` half that is wrong today is the defect
+                        // itself, and the conclusion for it was already recorded and unread. In the
+                        // defect's own entry shape, a `DenyWrapOne` of `[[1]]`, the two spellings deliver
+                        // the same inner list `[1]` at the same path AND the same `rhs_selected` count of
+                        // one, so not even the number of right-hand results tells them apart, while
+                        // `DenyWrapOne[0]` owes FAIL by its members and `DenyWrapOne[*]` owes PASS by its
+                        // entry. Measured, taking the entry reading at both sites together, which is the
+                        // only way to take it since they answer for the same operand shapes: five open
+                        // cells reach their owed verdict and twelve correct ones leave theirs in the same
+                        // run, among them `Pair NOT IN Deny13` returning to the exit 0 `e331c6b` closed,
+                        // `Nest NOT IN DenyNestedNine` unexpanded losing its denial, and
+                        // `Wrap13 NOT IN Deny13` starting to over-deny. So this is one impossibility with
+                        // two faces rather than two defects, and the over-denial needs the same change to
+                        // how a queried right-hand operand reaches the comparators. The
+                        // `DenyWrapOne` and `DenyWrappedOneTwo[0]` cells in
+                        // `which_spelling_of_a_queried_denylist_reaches_which_arm` carry it.
+                        //
                         // Which also rules out answering "undecidable" and joining `unanswerable`, the
                         // third answer this arm already has for a pairing with no right verdict in either
                         // polarity. These pairings do have right verdicts, fixed by the operand values
