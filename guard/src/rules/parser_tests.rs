@@ -6326,27 +6326,6 @@ fn parse_tree_with(rules: &str, from: &str, to: &str) -> Result<String, Error> {
     Ok(parse_tree_of(rules)?.replace(from, to))
 }
 
-/// The same tree, with the line and column of every location blanked out.
-///
-/// `nom_locate` counts lines by `\n`, so every clause in a file whose lines end with a bare CR reports line 1.
-/// That is a property of the position tracking and not of the parse, so comparing a CR-only file against the
-/// LF spelling means comparing everything except the positions: the query parts, the comparators, the
-/// operands, the block structure, the rule names.
-fn parse_tree_without_positions(rules: &str) -> Result<String, Error> {
-    let tree = parse_tree_of(rules)?;
-    Ok(tree
-        .lines()
-        .map(|line| match line.trim_start().split(':').next() {
-            Some("line") | Some("column") => {
-                let indent = line.len() - line.trim_start().len();
-                format!("{}position: blanked", &line[..indent])
-            }
-            _ => line.to_string(),
-        })
-        .collect::<Vec<_>>()
-        .join("\n"))
-}
-
 /// A bare CR ends a line in every construct, as it already did in every whitespace position.
 ///
 /// `multispace1` accepts `" \t\r\n"`, so a lone CR was whitespace everywhere -- except in two places that
@@ -6357,6 +6336,13 @@ fn parse_tree_without_positions(rules: &str) -> Result<String, Error> {
 /// parsed to nothing is the worst of them: a leading comment consumed every rule in the file, and `validate`
 /// then reported a violating template compliant at exit 0 with nothing on any channel. The grammar block
 /// already said a comment ends at LF or CR.
+///
+/// This used to compare the three spellings with every line and column blanked out, because `nom_locate`
+/// counts lines by `\n` and so reported every clause in a CR-only file at line 1 -- called a property of the
+/// position tracking rather than of the parse, and left. It was both: a file that parses correctly and then
+/// says every clause is on line 1 is answering a question wrongly. `position_of` counts the endings this
+/// parser accepts, so the trees are now compared whole, positions included, and that is the assertion that
+/// would fail if the counting were reverted.
 #[test]
 fn a_bare_carriage_return_ends_a_line_like_the_other_two_spellings() -> Result<(), Error> {
     for body in [
@@ -6375,15 +6361,15 @@ fn a_bare_carriage_return_ends_a_line_like_the_other_two_spellings() -> Result<(
         let lf = body.replace('@', "\n");
         let crlf = body.replace('@', "\r\n");
         let cr = body.replace('@', "\r");
-        let expected = parse_tree_without_positions(&lf)?;
+        let expected = parse_tree_of(&lf)?;
         assert_eq!(
-            parse_tree_without_positions(&cr)?,
+            parse_tree_of(&cr)?,
             expected,
-            "a CR-only file must parse to what the LF spelling parses to: {}",
+            "a CR-only file must parse to what the LF spelling parses to, positions included: {}",
             body
         );
         assert_eq!(
-            parse_tree_without_positions(&crlf)?,
+            parse_tree_of(&crlf)?,
             expected,
             "and CRLF, which already worked: {}",
             body
@@ -7461,3 +7447,235 @@ fn nested_query_filters_cost_time_linear_in_the_depth() {
         1usize << (DEEP - SHALLOW),
     );
 }
+
+/// A rendering with every spelling of a line ending removed, raw and `Debug`-escaped.
+///
+/// Line endings are what the tests below vary, so the characters themselves have to come out of the
+/// comparison: a message body and an error fragment are borrowed slices of the file and keep whatever ending
+/// it used, and the reporter prints a message as written. `Debug` escapes them as the two characters `\` and
+/// `n`, `Display` leaves them raw, and both spellings show up in these renderings -- so all four forms are
+/// removed, and symmetrically. Removing only the CRs would have compared a CR-stripped rendering against an
+/// LF-bearing one and failed on every file with a multi-line message.
+///
+/// Nothing else is removed. Positions, rule names, clause structure, comparators and error text all survive,
+/// which is what the comparison is for.
+fn without_line_endings(rendered: String) -> String {
+    rendered
+        .replace("\\r", "")
+        .replace("\\n", "")
+        .replace(['\r', '\n'], "")
+}
+
+/// Rewriting a rules file's line endings must not change what the file means, or where it says anything is.
+///
+/// This is the invariant, and it is stronger than any of the individual shapes below it. Three things in the
+/// parser were counting lines by two different rules. `multispace1`, `comment2` and `newline` treat a lone
+/// `\r` as a line ending, so most of the grammar read a bare-CR file as a file with lines. `extract_message`
+/// split on `\n` alone, so it read the same file as one line, and one forgotten `>>` therefore swallowed the
+/// clause after it -- exit 0 on a template that violated the deleted clause. And `nom_locate`, which every
+/// reported line and column used to come from, counts `\n` as well, so every position in a bare-CR file came
+/// out as line 1 with the whole-file byte offset for a column.
+///
+/// Written as a property over a corpus rather than as one assertion per shape, because the per-shape form
+/// only catches the sites someone thought to enumerate. There were ten reporting sites plus the message
+/// scan, and a test naming the message scan would have passed with all ten broken. The comparison is of the
+/// whole `Debug` rendering, so the line and column of every clause is compared too, not just the verdict.
+///
+/// The comparison is over renderings with the line endings themselves removed, by
+/// [`without_line_endings`]: they are what is being varied, and a message body or an error fragment is a
+/// borrowed slice of the file and keeps whichever ending the file used.
+#[rstest::rstest]
+#[case::well_formed_inline_message(
+    "rule one {\n  Resources.One.Type == \"AWS::S3::Bucket\"\n  Resources.One.Properties.Encrypted == true << must be encrypted >>\n}\n"
+)]
+#[case::well_formed_block_message(
+    "rule one {\n  Resources.One.Properties.Encrypted == true\n  <<\n    Violation: not encrypted\n    Fix: set Encrypted to true\n  >>\n}\n"
+)]
+#[case::a_comment_carrying_a_closing_tag(
+    "rule one {\n  # see the runbook >> for escalation\n  Resources.One.Properties.Encrypted == true\n}\n"
+)]
+#[case::forgotten_tag_closed_by_the_next_clause(
+    "rule one {\n  Resources.One.Type == \"AWS::S3::Bucket\" << forgot\n  Resources.One.Properties.Encrypted == true << must be encrypted >>\n}\n"
+)]
+#[case::forgotten_tag_closed_by_a_comment(
+    "rule one {\n  Resources.One.Type == \"AWS::S3::Bucket\" << forgot\n  Resources.One.Properties.Encrypted == true\n  # see the runbook for escalation >>\n}\n"
+)]
+#[case::forgotten_tag_closed_by_a_later_rule(
+    "rule one {\n  Resources.One.Type == \"AWS::S3::Bucket\" << forgot\n}\nrule two {\n  Resources.One.Properties.Encrypted == true << must be encrypted >>\n}\n"
+)]
+#[case::a_parse_error_on_line_six(
+    "rule one {\n  # a comment\n  Resources.One.Type == \"AWS::S3::Bucket\"\n}\n\nrule two { Resources.One.Properties.Encrypted ==\n}\n"
+)]
+#[case::a_let_a_when_block_and_a_parameterized_rule(
+    "let expected = true\nrule check(want) {\n  when Resources.One.Type == \"AWS::S3::Bucket\" {\n    Resources.One.Properties.Encrypted == %want\n  }\n}\nrule one { check(%expected) }\n"
+)]
+fn rewriting_line_endings_does_not_change_how_a_rules_file_parses(#[case] lf: &str) {
+    assert!(
+        lf.contains('\n'),
+        "a single-line case has no line endings to rewrite, which would make both halves of this \
+         test vacuous: {}",
+        lf
+    );
+
+    let render = |text: &str| without_line_endings(format!("{:?}", rules_file(from_str2(text))));
+
+    let expected = render(lf);
+    assert_eq!(
+        render(&lf.replace('\n', "\r\n")),
+        expected,
+        "CRLF is an ordinary line ending and must parse to exactly what LF parses to, for {}",
+        lf
+    );
+    assert_eq!(
+        render(&lf.replace('\n', "\r")),
+        expected,
+        "a bare CR is a line ending in this parser, so it must parse to what LF parses to -- verdict, \
+         clause structure and every reported position -- for {}",
+        lf
+    );
+}
+
+/// One error, one position, whichever line ending the file uses.
+///
+/// The error below sits physically on line 6, at column 49. LF reported that, and so did CRLF, because
+/// `nom_locate` counts the `\n` of a CRLF pair. Bare CR reported *line 1, column 119*, where 119 is the
+/// whole-file byte offset: with no `\n` anywhere the file is one line and the column degenerates into the
+/// offset. Every position in such a file was wrong the same way, with nothing in the output to say so --
+/// "line 1 column 119" is a position, just not this error's.
+///
+/// Stated separately from the property test rather than left to it, because the property compares two
+/// renderings against each other and would also pass if both moved. This one names the position.
+#[test]
+fn a_parse_error_reports_the_same_line_and_column_under_every_line_ending() {
+    let lf = "rule one {\n  # a comment\n  Resources.One.Type == \"AWS::S3::Bucket\"\n}\n\nrule two { Resources.One.Properties.Encrypted ==\n}\n";
+
+    let error_in = |text: &str| {
+        without_line_endings(
+            rules_file(from_str2(text))
+                .expect_err("an incomplete comparison is a parse error")
+                .to_string(),
+        )
+    };
+
+    let lf_error = error_in(lf);
+    assert!(
+        lf_error.contains("at line 6 at column 49"),
+        "the error is on line 6, column 49 of the file: {}",
+        lf_error
+    );
+    assert_eq!(
+        error_in(&lf.replace('\n', "\r\n")),
+        lf_error,
+        "one error must report one position, and CRLF must not move it"
+    );
+    assert_eq!(
+        error_in(&lf.replace('\n', "\r")),
+        lf_error,
+        "a bare CR ends a line, so the error is still on line 6 -- it used to report line 1 with the \
+         whole-file byte offset for a column"
+    );
+}
+
+/// A forgotten `>>` is refused whatever the file's line endings are.
+///
+/// The three shapes are the three ways a forgotten `>>` finds a later one: carried by the next clause, by a
+/// comment, and by a later rule. All three were refused under LF and CRLF, and all three exited **0 with the
+/// following clause deleted** under bare CR -- measured against a template whose `Encrypted` is `false`, so
+/// the deleted clause was the one that would have failed. `parse-tree --rules` on the bare-CR file showed one
+/// clause where the LF file has two, with the second clause's text sitting inside the first one's
+/// `custom_message`.
+///
+/// The control matters more than usual here, and it is the last case: fixing the scan must not cost the
+/// ordinary file, and a message body is the one place where CRs are kept verbatim rather than treated as
+/// structure.
+#[rstest::rstest]
+#[case::forgotten_tag_closed_by_the_next_clause(
+    "rule one {\n  Resources.One.Type == \"AWS::S3::Bucket\" << forgot\n  Resources.One.Properties.Encrypted == true << must be encrypted >>\n}\n"
+)]
+#[case::forgotten_tag_closed_by_a_comment(
+    "rule one {\n  Resources.One.Type == \"AWS::S3::Bucket\" << forgot\n  Resources.One.Properties.Encrypted == true\n  # see the runbook for escalation >>\n}\n"
+)]
+#[case::forgotten_tag_closed_by_a_later_rule(
+    "rule one {\n  Resources.One.Type == \"AWS::S3::Bucket\" << forgot\n}\nrule two {\n  Resources.One.Properties.Encrypted == true << must be encrypted >>\n}\n"
+)]
+fn a_forgotten_closing_tag_is_refused_under_every_line_ending(#[case] lf: &str) {
+    for (spelling, text) in [
+        ("LF", lf.to_string()),
+        ("CRLF", lf.replace('\n', "\r\n")),
+        ("bare CR", lf.replace('\n', "\r")),
+    ] {
+        let err = rules_file(from_str2(&text))
+            .err()
+            .map(|err| err.to_string())
+            .unwrap_or_else(|| {
+                panic!(
+                    "an unterminated << must be refused, and under {} it parsed with the clause \
+                     after it deleted: {}",
+                    spelling, lf
+                )
+            });
+        assert!(
+            err.contains("closing >> tag"),
+            "the error must name the missing tag under {}: {}",
+            spelling,
+            err
+        );
+    }
+}
+
+/// The control for the case above: a closed message parses under every spelling, body CRs and all.
+#[rstest::rstest]
+#[case::inline_message(
+    "rule one {\n  Resources.One.Properties.Encrypted == true << must be encrypted >>\n}\n"
+)]
+#[case::block_message(
+    "rule one {\n  Resources.One.Properties.Encrypted == true\n  <<\n    Violation: not encrypted\n  >>\n}\n"
+)]
+#[case::a_comment_on_its_own_line(
+    "rule one {\n  # a comment\n  Resources.One.Properties.Encrypted == true\n}\n"
+)]
+#[case::a_closing_tag_indented_under_a_comment(
+    "rule one {\n  # why this rule exists\n  Resources.One.Properties.Encrypted == true\n    << must be encrypted\n    >>\n}\n"
+)]
+fn a_closed_message_parses_under_every_line_ending(#[case] lf: &str) -> Result<(), Error> {
+    for (spelling, text) in [
+        ("LF", lf.to_string()),
+        ("CRLF", lf.replace('\n', "\r\n")),
+        ("bare CR", lf.replace('\n', "\r")),
+    ] {
+        assert!(
+            rules_file(from_str2(&text))?.is_some(),
+            "this file is ordinary and must parse under {}: {}",
+            spelling,
+            lf
+        );
+    }
+    Ok(())
+}
+
+/// The message scan reads a bare CR as a line ending, asserted at the function that failed open.
+///
+/// The property test covers this through whole files. This one goes at `custom_message` directly, because
+/// that is where the defect was and because the parse it exercises is reachable without `rules_file`: a
+/// combinator called on a fragment gets no line index, so if this scan ever goes back to `find('\n')` the
+/// whole-file test is not the only thing that has to catch it.
+///
+/// The mechanism, stated so a reader of a failure knows what broke: splitting on `\n` alone turned "the
+/// opening line" into the entire remaining file, and `find(">>")` then latched onto the first `>>` anywhere
+/// in it -- including one belonging to the next clause.
+#[test]
+fn the_message_scan_treats_a_bare_carriage_return_as_a_line_ending() {
+    let forgotten_tag =
+        "<< forgot\rResources.One.Properties.Encrypted == true << must be encrypted >>\r";
+    assert!(
+        custom_message(from_str2(forgotten_tag)).is_err(),
+        "the >> on the next CR-terminated line belongs to that clause and must not close this message"
+    );
+
+    let closed_on_its_own_line = "<< Violation: not encrypted\r>>\r";
+    assert!(
+        custom_message(from_str2(closed_on_its_own_line)).is_ok(),
+        "a CR-terminated line whose text is exactly >> is a closing tag, as it would be under LF"
+    );
+}
+
