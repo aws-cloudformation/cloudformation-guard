@@ -1406,6 +1406,76 @@ mod validate_tests {
         );
     }
 
+    /// The same distinction on the structured reporter, which had no cell asserting its sentence.
+    ///
+    /// Two sites build this sentence. `membership_verdict` in `generic_summary.rs` serves the console
+    /// and is covered by the test above. The `ClauseCheck::InComparison` arm in `eval_context.rs`
+    /// serves `-o json`, `--structured`, the FFI and the Lambda, and this cell is its first assertion.
+    ///
+    /// That arm was not wholly uncovered, and saying so precisely matters because two mutations of it
+    /// give different answers. Neutralizing it entirely -- both branches emitting the pre-fix sentence
+    /// -- reddens `non_verbose_run_checks_reports_an_undecided_map_key_comparison`, because dropping the
+    /// `. Error = [...]` suffix takes the reason with it. But a NARROW mutant that reverts only the lead
+    /// words while still appending the reason left the suite at 3142 / 0 / 0, fully green. So the reason
+    /// was asserted and the sentence was not, and a change reintroducing "was not present in" for a
+    /// comparison that never ran would have shipped undetected. The narrow mutant is what this cell
+    /// exists to catch.
+    ///
+    /// `Resources` in the template is load-bearing. Without it `CfnAware` hands the file to
+    /// `generic_summary` and the report never enters the arm under test, which is why the console
+    /// fixture -- which has no `Resources` -- cannot cover this site whatever it asserts. A separate
+    /// fixture rather than a widened one, because the console cell pins `membership_lines.len() == 3`
+    /// on its own file.
+    ///
+    /// The counts are measured rather than chosen. `k_refused` fails on the one key the pattern could
+    /// not be evaluated against, so its sentence appears once; `k_decided` fails on both keys, so the
+    /// decided sentence appears twice. Pinning both numbers is what makes the narrow mutant fail here:
+    /// it moves them to 0 and 3 rather than merely rewording something inside a large report.
+    #[test]
+    fn a_refused_membership_in_structured_output_does_not_claim_a_match_happened() {
+        const REFUSED: &str = "could not be compared with";
+        const DECIDED: &str = "was not present in";
+
+        let mut reader = Reader::default();
+        let mut writer = Writer::new(WBVec(vec![])).expect("Failed to create writer.");
+
+        let status_code = ValidateTestRunner::default()
+            .data(vec!["cfn-map-key-membership-template.json"])
+            .rules(vec!["membership_lead_sentence_structured.guard"])
+            .output_format(Some("json"))
+            .show_summary(vec!["none"])
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(
+            StatusCode::VALIDATION_ERROR,
+            status_code,
+            "both rules fail before and after; this cell is about the sentence, not the verdict"
+        );
+
+        let output = writer.stripped().expect("failed to read the writer");
+
+        assert_eq!(
+            1,
+            output.matches(REFUSED).count(),
+            "the refused comparison must say it could not be compared, exactly once -- 0 means the \
+             lead sentence reverted to claiming an answer:\n{}",
+            output
+        );
+        assert_eq!(
+            2,
+            output.matches(DECIDED).count(),
+            "the decided rule's two keys must keep the original sentence -- 3 means the refused case \
+             borrowed it:\n{}",
+            output
+        );
+        assert!(
+            output.contains("could not be evaluated"),
+            "the reason must still travel with the sentence on this surface, which is the only record \
+             the FFI and Lambda callers get:\n{}",
+            output
+        );
+    }
+
     /// Two keys spelled the same way in one template must compare equal, and must not compare
     /// unequal.
     ///
