@@ -4601,6 +4601,14 @@ rule check_rest_api_private {
     let status = eval_rule(&rule, &mut eval, ClauseRole::Assertion)?;
     assert_eq!(status, Status::PASS);
 
+    // The same template with no `aws:Source*` condition on the second statement, which must FAIL.
+    //
+    // This fixture used to spell that with `"Bool"` twice in one `Condition` -- once for
+    // `aws:ViaAWSService` and once for `aws:SecureTransport`. `PathAwareValue::try_from(&str)` reads a
+    // document through the rules-value grammar, whose map parser kept the last entry silently, so the
+    // condition this test actually evaluated was decided by entry order and the first `Bool` was dead
+    // text. `parse_map` refuses a repeated key now. The verdict below is unchanged and always came from
+    // the missing `aws:SourceVpc` condition rather than from either `Bool`.
     let resources = r#"
     {
         "Resources": {
@@ -4616,7 +4624,6 @@ rule check_rest_api_private {
                                 "Action": "s3:PutObject",
                                 "Resource": "arn:aws:s3:::my-service-bucket/*",
                                 "Condition": {
-                                    "Bool": {"aws:ViaAWSService": "false"},
                                     "Bool": {"aws:SecureTransport": "true"}
                                 }
                             },

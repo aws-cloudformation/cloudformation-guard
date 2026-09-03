@@ -1160,15 +1160,55 @@ fn key_value(input: Span) -> IResult<Span, (String, Value)> {
     )(input)
 }
 
+/// A map literal, which refuses a key it holds twice.
+///
+/// The pairs were collected straight into an `IndexMap`, so a repeated key kept the *last* value silently
+/// and the entry order decided the verdict. Against a template holding `Encrypted: false`:
+///
+/// ```text
+/// Resources.One.Properties == { "Encrypted": true, "Encrypted": false }   ->  exit 0   PASS
+/// Resources.One.Properties == { "Encrypted": false, "Encrypted": true }   ->  exit 19  FAIL
+/// ```
+///
+/// Two spellings of one key collide the same way, since `key_part` reads `"Encrypted"` and `Encrypted` to the
+/// same `String`, and the author of such a file has no way to see which entry won.
+///
+/// This was the last duplicate-name class on the rules side that was resolved by guessing. `block` refuses a
+/// variable declared twice in a scope, `rules_file` refuses a duplicated rule name and a duplicated file-level
+/// variable, and `parameter_names` refuses a repeated parameter, each with the same reasoning: a rules file is
+/// authored, so an ambiguous one is a mistake to report rather than an input to accommodate. Refusing a file
+/// that used to parse is a breaking change, and it is the same breaking change those three already made.
+///
+/// The document side is deliberately not this: a repeated key in a *template* warns and evaluates the last
+/// value, in `validate`, because a template is often not the reader's to edit. Nothing here reaches that path
+/// -- documents are loaded through `libyaml` and `serde`, never through this grammar.
+///
+/// Lists are left alone. A repeated value in a list literal is legitimate -- `in [1, 1, 2]` is a set of
+/// candidates and a repeat there means nothing -- so a check written over values rather than over keys would
+/// reject working files.
 fn parse_map(input: Span) -> IResult<Span, Value> {
     let (input, _open) = char('{')(input)?;
     let _nesting = NestingGuard::enter(input, "map")?;
     let (input, pairs) = separated_list0(separated_by(','), key_value)(input)?;
     let (input, _close) = followed_by('}')(input)?;
-    Ok((
-        input,
-        Value::Map(pairs.into_iter().collect::<IndexMap<String, Value>>()),
-    ))
+
+    let mut map = IndexMap::with_capacity(pairs.len());
+    for (key, value) in pairs {
+        if map.insert(key.clone(), value).is_some() {
+            return Err(nom::Err::Failure(ParserError {
+                span: input,
+                kind: ErrorKind::Tag,
+                context: format!(
+                    "Key {} appears more than once in the same map literal. The later value replaced \
+                     the earlier one, so reordering two entries with the same name changed the \
+                     verdict, and the file is rejected rather than guessed at.",
+                    key
+                ),
+            }));
+        }
+    }
+
+    Ok((input, Value::Map(map)))
 }
 
 /// `null`, `NULL` and `Null`. See `parse_bool` for why the missing spelling mattered.
