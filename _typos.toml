@@ -12,11 +12,22 @@ ource = "ource"
 [default.extend-identifiers]
 # Ignore ID in evaluate_tests.rs
 fooCounterTaskDef49BA9021 = "fooCounterTaskDef49BA9021"
-# A short SHA that ends in `ba`, which `typos` reads as `by`/`be`. Every prefix length flags,
-# because the token sits between digits, so the commit cannot be cited in prose without this.
+# `typos` reads `ba` as `by`/`be`, so a short SHA is uncitable in prose when the PREFIX being
+# written contains `ba`. Truncation is not a general remedy and not a general failure either: it
+# removes a TRAILING `ba` and cannot remove an interior one. Measured, typos-cli 1.49.0, one SHA
+# per file:
+#
+#     34d965ba  rc=2        1ba4648d  rc=2
+#     34d965b   rc=0        1ba4648   rc=2
+#     34d96     rc=0        1ba       rc=2
+#
+# So check the prefix you are about to write, and allowlist only when it flags. An earlier version
+# of this comment said "every prefix length flags, because the token sits between digits" -- that
+# is false of `34d965ba`, whose seven-character prefix passes, and true only of `1ba4648d`, which
+# did not exist when it was written. Both entries below are needed because both SHAs are cited at
+# full length: the suite ledger at the head of `eval_tests.rs` names the commit each figure was
+# measured at, so the alternative to these lines is a row that cannot say what it measured.
 34d965ba = "34d965ba"
-# `1ba4648d` carries `ba` at characters 2-3, so truncating does not help either -- and the commit
-# that cites it is the one recording that a count needs the commit it was measured at attached.
 1ba4648d = "1ba4648d"
 [files]
 extend-exclude = ["guard/ts-lib", "action"]

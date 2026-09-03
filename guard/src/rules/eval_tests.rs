@@ -44,6 +44,18 @@ use super::*;
 //     34d965ba   3142       --        the length pins; same cells, so the total holds
 //     b49818b1   3142       --        the three claim corrections, comment-only
 //     8573f194   3144       --        the guard's self-extension test; +2, one fn per build target
+//     ...        ...        ...       four commits, not re-derived here; see the note below
+//     d4286e68   3149       --        measured directly for the rows beneath it
+//     d8c2582d   3149       --        the inline table pins; no cell added, so the total holds
+//     e2cacdc4   3151       3159      stale by 8, and stale FORWARD; 3159 is `a9ad44e8`'s
+//     a9ad44e8   3159       3159      correct
+//     b1ff3845   3159       --        the single-line pins; comment and type only, so it holds
+//     1ba4648d   3161       3151      stale by 10, and stale BACKWARD; 3151 is `e2cacdc4`'s
+//
+// Four commits sit between `8573f194` and `d4286e68` -- `1e3503f5`, `e083cd99`, `234c842e` and
+// `d4286e68` itself -- and the +5 across them is not apportioned here, because none of the four was
+// measured for this correction. The gap is written as a row rather than closed up so that `3144` and
+// `3149` are not read as consecutive.
 //
 // The two stale offsets are the same arithmetic. 19 is `e26817a6`'s 16 plus `ec2b9a5c`'s 2 plus
 // `d63c1714`'s 1; 21 is that plus `3957260b`'s 2. Each author measured 3085 at `69628df7` and added
@@ -72,6 +84,62 @@ use super::*;
 // `Doc-tests cfn_guard`. They are not removed, and they are back at `d63c1714`. The single failure is
 // `validate_tests::an_undecided_map_key_membership_filter_says_why`, on the `k_in_regex` rendering
 // carrying `Error Message []`, which is the assertion that commit names as its red.
+//
+// # The last two stale figures travel between messages, and one breaks this block's own rule
+//
+// `e2cacdc4` and `1ba4648d` are the fourth occurrence of the shape above and the first the paragraph
+// beneath the table does not describe. The four earlier ones each measured a real base and added a real
+// delta to it, which is why the block says their deltas are trustworthy and their totals are not. That
+// does not hold here.
+//
+// Neither figure is its author's base plus its author's delta. `e2cacdc4` states 3159, which is
+// `a9ad44e8`'s total -- the commit immediately AFTER it. `1ba4648d` states 3151, which is `e2cacdc4`'s
+// total, three commits BEFORE it. A figure that turns up in a neighbour's message in both directions was
+// not computed from a stale base; it was copied from a tree that happened to be open, rather than
+// measured at the commit being described. `e2cacdc4` and `a9ad44e8` also both attribute the tree they
+// measured to `d4286e68`, which is two commits before `e2cacdc4` and measures 3149, so neither of them
+// measured 3159 there -- though `a9ad44e8`'s 3159 is correct for `a9ad44e8` itself, and is the one figure
+// in this group that was checked rather than merely survived.
+//
+// **`1ba4648d`'s DELTA is wrong too, which no earlier row in this table does.** It states "3151 ... up
+// from `d8c2582d`'s 3149 by the one test function added here". 3149 is genuinely `d8c2582d`'s and one
+// test function is genuinely what it adds, so both halves survive inspection separately. What fails is
+// the adjacency the sentence assumes: `d8c2582d` is four commits back rather than the parent, and
+// `e2cacdc4` and `a9ad44e8` land +10 in between. A reader who trusts that delta and re-derives the total
+// gets 3151 and is wrong by exactly that +10. So do not carry "the deltas are trustworthy" past
+// `b1ff3845`; from here a delta needs its baseline's SHA checked against the parent before it means
+// anything.
+//
+// How both were caught, because the method transfers and neither needed a bisect. The absolutes were
+// re-measured at the two ENDS only, `d4286e68` and `1ba4648d`. The three totals between them are derived
+// from an inventory of test-function and `#[case]` attributes per commit -- +0, +2, +8, +0, +2, doubling
+// the crate-internal ones because `src/lib.rs` and `src/main.rs` each build `eval_tests.rs` and
+// `parser_tests.rs` -- which sums to +12 and reconciles 3149 to 3161 exactly. The release gate
+// separately measured 3151, 3159, 3159 and 3161 at the four commits after the base, so every row above
+// rests on a direct measurement or on two derivations that agree. Reconciling test FUNCTIONS against the
+// diff is what makes a wrong total visible; comparing one total against another does not, because a
+// wrong total can be internally consistent.
+//
+// # `b1ff3845`'s loop-table population, and why 44 could not be reproduced
+//
+// That message states "Population 32 -> 44". Measured by applying
+// `every_loop_table_carries_its_length`'s own shape rule to this file at each commit: 32 at `d8c2582d`,
+// 33 at `e2cacdc4` and `a9ad44e8`, 45 at `b1ff3845` and `1ba4648d`. The transition is **33 -> 45**. The
+// +12 is right and both endpoints are `d8c2582d`'s population -- the same stale baseline as the totals
+// above -- because `e2cacdc4` added a 33rd table, already annotated, before the twelve were bound.
+//
+// **44 is 32 + 12, and it is nobody's measured figure.** Worth recording rather than merely corrected,
+// because a number reached by arithmetic is a different object from one reached by measurement and the
+// two fail differently. A reader looking for 44 measured the population twice -- through the guard and
+// through an independent script -- got 45 both times, could not reproduce 44 under any shape rule, and
+// declined to invent a cause. That was right, and the search was hopeless for a reason worth naming:
+// there is no rule under which the population is 44, because 44 is not a reading of this file at any
+// commit on this branch. A figure no rule reproduces may not be a measurement at all, and the cheapest
+// way to tell is to ask whether it equals some other figure plus a remembered delta.
+//
+// Corroborate a population by making the test state it rather than by adding to a remembered number:
+// strip one `: [_; N]` annotation and the failure message reads "1 of 45 tables carry no length" and
+// names the offending line. That is the count the rule actually walks, and it moves when the file does.
 //
 // # `1fd235a5`'s reference sweep, with the population it never stated
 //
@@ -13151,8 +13219,13 @@ fn the_liveness_control_is_still_called_from_every_place_that_owes_it() {
 ///
 /// That was an argument, not a measurement, and it is false for ten of the twelve. Measured on 2026-09-03 by
 /// deleting one cell from each and running the whole suite single-threaded: **ten stay green**. Deleting
-/// `"false"` from `for value in ["true", "false"]` halves that test's coverage at 3149 passed, 0 failed, and
-/// the same holds for the bucket and let-value expectation pairs, the five rejected number spellings, the
+/// `"false"` from `for value in ["true", "false"]` halves that test's coverage while the suite stays green
+/// at 3159 passed, 0 failed -- the total at `b1ff3845`, where the deletions were run. This sentence read
+/// 3149 until it was corrected: that is `d8c2582d`'s total, four commits back, and the same stale baseline
+/// the ledger at the head of this file records for `b1ff3845`'s own population figure. The measurement it
+/// reports is unaffected, because what makes a narrowing invisible is that the total does not move, not
+/// what the total is. The same holds for the bucket and let-value expectation pairs, the five rejected
+/// number spellings, the
 /// EMPTY comparators, the size labels, the KeyList preambles, the when spellings, the quantifiers and the
 /// line-ending spellings. Only `for negated in [false, true]` and `for gate in [false, true]` redden, and
 /// not because their assertions differ by polarity: they redden because
