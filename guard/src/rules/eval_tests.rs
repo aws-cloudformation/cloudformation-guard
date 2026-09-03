@@ -10822,6 +10822,75 @@ fn the_notice_asks_about_every_granularity_the_operator_decides_at(
     Ok(())
 }
 
+/// The branch that decides membership with `PartialEq` reaches no state this notice is about.
+///
+/// `InOperation::compare`'s `(Some, None)` arm decides a list-valued LITERAL against a right-hand side
+/// holding no list with `!rhs.contains(elem)`. That is `Vec::contains`, so `PartialEq`, so nothing in the
+/// branch can refuse: there is no `compare_eq` result for `incomparable_membership` to read and no
+/// `contained_in` refusal for its shape arm to record either, because `contained_in` is never called.
+///
+/// **Read what this cell can and cannot fail on, because the two assertions are not equally strong.** The
+/// verdict is the strong half: all three clauses FAIL, at the merge-base and here alike, measured. The
+/// silence is the weak half, and it is over-determined -- a failing clause has its notice suppressed by
+/// `clause_passed` in `binary_operation` whatever the predicate answered, so the absence of a notice here is
+/// not evidence that the predicate stayed quiet. An earlier revision of this test asserted `Status::PASS`
+/// on the guess that these clauses passed, which is how the over-determination surfaced: they do not, and
+/// the whole branch has no passing cell to write a discriminating cell against. Across 80 `NOT IN` cells of
+/// this shape, every one FAILs.
+///
+/// So what it guards is the conjunction: a change that makes one of these PASS *and* emits a notice on it
+/// trips both assertions, and that is the only route by which this branch could start claiming the coming
+/// fail-closed change moves a clause the change does not reach. A change that moves only the verdict trips
+/// the first. Nothing here can catch the shape arm firing on a clause that keeps failing, and no cell can,
+/// which is why `incomparable_membership`'s own comment records the limit rather than implying coverage.
+///
+/// Through `deprecations_for_rules` rather than `status_and_deprecations`, because the `let` has to be
+/// written out and the wrapping helper cannot express one.
+///
+/// `%lit NOT IN D13[*]` against a LITERAL and not a query: `Ports NOT IN D13[*]`, the same denylist against
+/// the same shape of value from a query, is a cell of
+/// `the_notice_asks_about_every_granularity_the_operator_decides_at` and does expect the notice, because
+/// there the operand reaches `contained_in` and is refused on the shapes. The pair is the point.
+#[test]
+fn a_membership_decided_by_partial_eq_owes_no_notice() -> Result<()> {
+    const INPUT: &str = r#"
+    {
+        D13: [1, 3],
+        Strs: ["a", "b"]
+    }
+    "#;
+
+    for rules in [
+        "let lit = [85]\nrule r { %lit NOT IN D13[*] }",
+        "let lit = [\"x\", \"y\"]\nrule r { %lit NOT IN Strs[*] }",
+        "let lit = []\nrule r { %lit NOT IN D13[*] }",
+    ] {
+        let (status, notices) = deprecations_for_rules(rules, INPUT)?;
+
+        assert_eq!(
+            Status::FAIL,
+            status,
+            "`{}` changed verdict; this is a diagnostics fix and must move no status",
+            rules
+        );
+
+        let membership: Vec<&String> = notices
+            .iter()
+            .filter(|n| n.contains("could not be compared with any element"))
+            .collect();
+
+        assert!(
+            membership.is_empty(),
+            "`{}` is decided by `Vec::contains`, which cannot refuse, so there is no refusal for the \
+             notice to be about; recorded {:?}",
+            rules,
+            notices
+        );
+    }
+
+    Ok(())
+}
+
 /// The notice goes out exactly where the coming fail-closed release changes the clause's answer.
 ///
 /// A previous revision gated this on whether the file *reports* the clause, and reached that gate

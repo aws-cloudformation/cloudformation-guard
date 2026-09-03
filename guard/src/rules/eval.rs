@@ -359,6 +359,14 @@ fn empty_reference_message(negated: bool) -> String {
 /// opposite answers from operands no predicate can tell apart, which `27383c98` proves and which nothing
 /// here moves. A notice is not a verdict, and the impossibility is about the verdict.
 ///
+/// And the empty-left-hand family owes TWO notices, not one, which is the same paragraph's other error.
+/// `Empty NOT IN Ustr` is the documented one. `Empty NOT IN Strs[*]` is the second and is easy to read past
+/// because it looks like a different shape: the right operand is a query that EXPANDS to strings rather than
+/// a string, so it reaches the same `(None, None)` arm with the same `([], "a")` shape pair, and it is not a
+/// `Str`. Both emitted at `e8a03dda` and both went silent at `b8d3901e`. Swept over 30 right-operand kinds
+/// in both polarities for a `[]` and a `[[]]`, 120 cells, so the pair is the whole family rather than the
+/// two that happened to be looked at.
+///
 /// The wider grid a repair has to survive is not this one, because a before-and-after only covers the
 /// shapes it enumerates. 928 further shapes -- the `[0]`/`[*]` spellings the impossibility proofs turn on, a
 /// two-value left query and `some`, an empty string, an empty map and a null on the left -- carry 25 more
@@ -371,6 +379,33 @@ fn empty_reference_message(negated: bool) -> String {
 ///
 /// Across all 2410 cells: no false alarm, no owed notice missed, and status, exit code and stdout byte
 /// count identical to the merge-base. This is diagnostics.
+///
+/// # The branch this predicate cannot model, and why that is not a gap yet
+///
+/// `InOperation::compare`'s `(Some, None)` arm decides a list-valued LITERAL against a right-hand side
+/// holding no list with `!rhs.contains(elem)` -- `Vec::contains`, so `PartialEq` and no `compare_eq`
+/// anywhere. Nothing in that branch can refuse, so nothing this predicate reads is produced there, and no
+/// shape test helps either: the shape arm above is about a refusal `contained_in` returns, and this branch
+/// never calls `contained_in`.
+///
+/// Measured rather than left open. 160 cells satisfy the branch's own condition -- eight list literals bound
+/// with `let`, against ten queries resolving only to non-list values, both polarities -- and the fail-closed
+/// build moves NONE of them, so nothing is owed there. No notice is emitted either.
+///
+/// But the silence is OVER-DETERMINED, and saying so is the point of this section. All 80 `NOT IN` cells of
+/// that shape FAIL, at the merge-base and here alike, so `clause_passed` in `binary_operation` gates the
+/// notice off whatever this predicate answered. So the measurement does not show the shape arm staying
+/// quiet on the branch, and an earlier draft of this paragraph claimed it did -- reading absence of a notice
+/// as evidence about a predicate whose answer nothing consulted. What it does show is narrower and still
+/// worth having: no clause of that shape reaches the state this notice describes, so there is no notice to
+/// owe and none to get wrong. `a_membership_decided_by_partial_eq_owes_no_notice` carries three of the
+/// cells, and its own comment says which half of it can fail.
+///
+/// The oracle's reach is the second limit and it is independent of the first. The fail-closed build promotes
+/// four `compare_eq` suppressions and this branch calls none of them, so "the change moves this clause"
+/// cannot be true of any cell decided there whatever its verdict. If a later release fails that branch
+/// closed, or gives it a comparison that can refuse, both limits lift at once and this predicate is not
+/// where the answer would come from -- there is nothing for it to read.
 ///
 /// # The `[*]` bypass this fix waited on, and why the wait is over
 ///
@@ -440,9 +475,19 @@ fn incomparable_membership(lhs: &[QueryResult], rhs: &[QueryResult]) -> bool {
     // An answered pair cancels nothing. It used to `return false`, on the reading that a clause with
     // anything comparable in it decided on the comparable pair. That is false of `NOT IN`: a value
     // passes it by matching NOTHING, so every pair was built and an answered one says only that this
-    // element was not the collision. Walking order made the silence arbitrary as well -- `Str NOT IN
-    // Haystack` over `["zzz", 7, false]` was silent because `"zzz"` is written first, and noticed if it
-    // is written last.
+    // element was not the collision.
+    //
+    // ONE answered pair anywhere silenced the whole predicate, and position had nothing to do with it.
+    // That `return false` returned from the FUNCTION rather than from the element loop, so the first pair
+    // `compare_eq` could answer ended the walk wherever it sat. An earlier revision of this note said the
+    // silence was a matter of walking order -- `Str NOT IN Haystack` over `["zzz", 7, false]` "silent
+    // because `\"zzz\"` is written first, and noticed if it is written last" -- and that is wrong, in a way
+    // that reads as an explanation. Measured on 2026-09-03 with release binaries: `["zzz", 7, false]`,
+    // `[false, 7, "zzz"]` and `[7, false, "zzz"]` are ALL silent at `e8a03dda` and all noticed at
+    // `b8d3901e`, so rewriting the denylist so the answerable element comes last changes nothing. The
+    // substance stands -- an answered pair discarded a refusal that had already been seen -- and only the
+    // order framing was false. Worth spelling out because "reorder the denylist" is a plausible thing for a
+    // reader to try, and it would tell them the predicate was fixed when it was not.
     let mut refused = false;
     for value in &lhs_values {
         for element in &rhs_values {
@@ -486,6 +531,13 @@ fn incomparable_membership(lhs: &[QueryResult], rhs: &[QueryResult]) -> bool {
                 // `compare_eq` answers alone cannot see this class by construction, which is why it went
                 // quiet on `Ports NOT IN D13[*]` and `Maps NOT IN Umap` when the operands were flattened
                 // into pairs that are perfectly comparable.
+                //
+                // A shape test and NOT a `compare_eq` call standing in for one, which is the distinction
+                // this arm exists to keep. Asking `compare_eq(whole_list, right)` here would produce a
+                // refusal for most of these operands and would look like it worked, and it would be the
+                // same defect the flatten was fixing: the predicate answering about a comparison the
+                // operator never performed. `contained_in` compares nothing in this case, so what is
+                // recorded is the fact that it declined, which is what the clause actually passed on.
                 (PathAwareValue::List((_, lhsl)), right) => {
                     // The element question `contained_in` never asks, which the `(None, None)` arm asks
                     // for it with `is_one_of(element, [eachr])`.
