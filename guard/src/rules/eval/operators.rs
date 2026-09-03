@@ -622,12 +622,38 @@ fn fail(lhs: Rc<PathAwareValue>, rhs: Rc<PathAwareValue>) -> ValueEvalResult {
 /// only add a match, never remove one, and `PartialEq` stays first because it short circuits on the
 /// common case and costs one comparison on a path that runs one anyway.
 ///
-/// `unwrap_or(false)` rather than the `RegexError` promotion the scalar arm does, deliberately.
-/// `compare_eq` raises on two inputs: a regex that will not compile, and a NaN against a numeric range.
-/// Neither can arrive -- the rules parser refuses an uncompilable pattern at parse time, and every
-/// construction site for a `Float` gates a non-finite one -- so promoting them would change the shape of
-/// the `ListIn` diff for no input that exists, and `PartialEq` reads the same pair as `false` through its
-/// own `Err(_) => false` arm. One reading rather than two.
+/// `unwrap_or(false)` rather than the `RegexError` promotion the scalar arm does. `Err` here is
+/// `NotComparable` in every case the suite reaches, it arrives constantly, and swallowing it is the
+/// point: a pair that cannot be compared is not a match, so the element belongs in the diff below rather
+/// than aborting the clause. `compare_eq`'s `(_, _)` fall-through asks `compare_values`, whose own
+/// `(_, _)` refuses any pairing of kinds it has no arm for, and a denylist written beside values of
+/// another kind is ordinary rather than exotic.
+///
+/// Measured, by replacing this `unwrap_or(false)` with a panic on `Err`: 58 tests redden, one recorded
+/// error each, all 58 `NotComparable` from that fall-through -- `int, array` 26, `String, array` 12,
+/// `map, array` 8, `int, String` 8, `array, int` 4. (`cargo test --all` counts them 116 times, because
+/// the lib target and the bin target each compile this module.) So this is not an unreachable arm kept
+/// for safety. The sibling scalar arm below swallows the same error through its own `Err(_) => {}`, for
+/// the reason written out there: `NOT IN` against an operand of a kind it cannot be compared with
+/// currently passes, `docs/KNOWN_ISSUES.md` records that suppression as a tracked defect, and
+/// `incomparable_membership` in `eval.rs` warns rule authors before it changes. Two sites, one reading.
+///
+/// The other two errors `compare_eq` can raise are not alike. A NaN against a numeric range cannot
+/// arrive, for the reason `compare_eq`'s own note gives -- it enumerates the four `Float` construction
+/// sites that gate a non-finite one. `RegexError` splits in two. A pattern that will not compile cannot
+/// arrive, because `parse_regex_inner` answers `nom::Err::Failure` unless `Regex::try_from` accepted the
+/// pattern first, and no data format has a regex spelling. A pattern that compiled and then exhausted
+/// `fancy_regex`'s backtracking budget does arrive here: the same panic probe fires with
+/// `Vals IN [/(?!x)((a+)+)b/]` against a `Vals` holding one thirty-character string of `a`s.
+///
+/// That is a divergence from the scalar arm rather than a shape with no inputs, and it is open. On that
+/// value `Val NOT IN [/(?!x)((a+)+)b/]` fails and reports that the regex could not be evaluated, while
+/// `Vals NOT IN [/(?!x)((a+)+)b/]` passes carrying no message at all -- a denylist admitting a value it
+/// could not evaluate, which is what
+/// `a_regex_in_a_list_literal_fails_the_clause_instead_of_aborting` closed for the scalar spelling. No
+/// cell covers it through this arm, and promoting it moves a verdict, so it is not a change to make from
+/// a comment. Recorded here because `NotComparable` is what `unwrap_or(false)` is for, and this is the
+/// shape to read first if the promotion is ever added.
 fn is_one_of(each: &PathAwareValue, rhsl: &[PathAwareValue]) -> bool {
     rhsl.iter()
         .any(|elem| elem == each || compare_eq(each, elem).unwrap_or(false))
