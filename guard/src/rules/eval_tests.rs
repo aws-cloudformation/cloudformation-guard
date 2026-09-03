@@ -10014,7 +10014,13 @@ fn an_empty_left_hand_list_is_vacuously_in_every_spelling_of_a_denylist(
 /// candidate oracles for a query that resolves to a string disagree only in the `NOT IN` polarity -- `"abc"`
 /// is 0 and `["abc"]` is 19 -- and agree at 0 on `IN`, so there is one answer to give and giving it costs
 /// the entry-set reading nothing. Reading the `27383c98` impossibility as covering both polarities is what
-/// left eight cells over-denied; the note on `an_empty_list_is_in_a_string` below has the mechanism.
+/// left the `IN` polarity over-denied; the note on `an_empty_list_is_in_a_string` below has the mechanism.
+///
+/// That sentence said "eight cells over-denied" and the figure is retired rather than corrected, for the
+/// reason `operators.rs` gives beside the skip: it counted a hand-authored population nobody named, its own
+/// enumeration there lists seven spellings, and ten clauses were measured moving. What survives is the
+/// predicate -- the skip moves no `NOT IN` cell at all -- because enlarging the population cannot falsify
+/// it.
 ///
 /// AND NO REPAIR CONFINED TO THIS ARM CAN SERVE BOTH STRING SPELLINGS, which is the construction
 /// `27383c98` established and the reason `Strs[*]` sits in this table at PASS rather than being fixed
@@ -11443,11 +11449,17 @@ fn the_notice_asks_about_the_pairs_the_operator_compared(
 ///
 /// `Empty NOT IN Ustr` is the cell `incomparable_membership`'s own comment called the one notice the
 /// alignment took away rather than corrected, on the reading that flattening an empty list leaves no
-/// element to compare. True of the element pairs and not of the clause: the refusal is the shape pair
-/// `([], "abc")`, which is there whether or not anything flattens, so the cell is repairable after all
-/// and this is where it is repaired. The verdict question that cell also sits in -- `Empty NOT IN Str`
-/// against `Empty NOT IN Strs[*]`, where at most one spelling can be right -- is untouched, because
-/// nothing here moves a verdict.
+/// element to compare. True of the element pairs and not of the clause: the refusal WAS the shape pair
+/// `([], "abc")`, which is what made the cell repairable here.
+///
+/// Past tense as of `69628df7`, and the sentence here used to be present tense -- "the refusal is the
+/// shape pair `([], "abc")`, which is there whether or not anything flattens". That pairing is now skipped
+/// before `contained_in` is called, so the refusal does not exist and the cell has moved out of this
+/// block; the note above `an_empty_left_hand_list_against_a_queried_string` records the move and the notice
+/// that replaced it.
+///
+/// The verdict question that cell also sits in -- `Empty NOT IN Str` against `Empty NOT IN Strs[*]`, where
+/// at most one spelling can be right -- is untouched, because nothing here moves a verdict.
 ///
 /// # Why the fail-closed measurement is not in this test
 ///
@@ -11457,8 +11469,25 @@ fn the_notice_asks_about_the_pairs_the_operator_compared(
 /// list-valued left-hand side or a multi-entry denylist. So these were classified against a build with
 /// the four `NotComparable` suppressions promoted -- `is_one_of`, `contained_in`'s whole-list and scalar
 /// loops, and the `(None, None)` arm's dropped result -- over 1080 clause shapes, on 2026-09-03: each
-/// cell marked `true` below PASSes today and FAILs under that build, and each `false` cell answers the
-/// same either way. What this test can hold on its own is the verdict, which no cell may move.
+/// cell marked `true` below PASSes today and FAILs under that build.
+///
+/// THAT ORACLE HAS TO BE REBUILT ON THE COMMIT BEING CLASSIFIED, and the clause that used to close this
+/// paragraph is why it is worth saying. It read "and each `false` cell answers the same either way",
+/// stated as a property of the method. It is a property of the tree the method was run against. A promoted
+/// build made from `b8d3901e` still routes an empty left-hand list against a string through
+/// `contained_in`, so it answers 19 for `an_empty_left_hand_list_against_a_queried_string` where this tree
+/// answers 0 -- read off that artifact the cell would be marked `true`. The `false` marking is right, for
+/// the reason recorded above the cell itself; what was wrong is the claim that the named oracle reaches
+/// it.
+///
+/// At this commit the oracle cannot reach that family at all, and that is checkable without building one.
+/// Instrumented at `contained_in`'s entry with the release binary: `Empty NOT IN Ustr`,
+/// `Empty NOT IN Str` and `Empty NOT IN Strs[*]` make ZERO calls to it, against one call each for
+/// `D13 NOT IN Strs` and `Strs2 NOT IN Strs` as positive controls. Promoting what a function returns
+/// cannot move a clause that never calls it. So classify a new cell in this family by that call count
+/// rather than by the artifact, and rebuild the artifact before trusting it on any other.
+///
+/// What this test can hold on its own is the verdict, which no cell may move.
 #[rstest::rstest]
 // The second granularity. Every element pair is answered and the whole-value pair refuses.
 #[case::a_whole_value_pair_only_a_nested_denylist_builds(

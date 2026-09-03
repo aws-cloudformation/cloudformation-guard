@@ -338,12 +338,30 @@ fn empty_reference_message(negated: bool) -> String {
 /// both granularities and the shape        370              0                   0                 0        710
 /// ```
 ///
-/// That grid was measured at `c67f8774` and is not re-measured here, which is the one thing to carry out of
-/// it. `69628df7` removed the mechanism behind part of the third row: an empty left-hand list paired with a
-/// string right operand no longer reaches `contained_in`, so the cells of that class no longer refuse on the
-/// shape and are no longer owed anything. The paragraph on `EmptyList NOT IN Str` below says which cells and
-/// what replaced their notice. Every figure from here to the end of this table's discussion therefore reads
-/// as of `c67f8774`; treat a bare one as stale until the grid is re-run.
+/// Measured at `c67f8774` against a `b8d3901e`-based oracle; four `[]`-against-a-string cells no longer owe
+/// a notice at this commit. That is the whole caveat on the third row, and it is bounded rather than vague:
+/// `69628df7` is the only change in `b8d3901e..HEAD` that removes a path into the four promoted sites, its
+/// skip is gated on the left-hand VALUE being a zero-element `List` and the right-hand RESULT being a
+/// `String`, so the affected set is exactly {left resolving to `[]`} x {right resolving to a String} x {both
+/// polarities}. Of those, only the `NOT IN` half was ever owed: the `IN` half FAILed at `abbf73a7`, so
+/// `clause_passed` suppressed the notice and nothing was owed there.
+///
+/// `EmptyOuter`, spelled `[[]]`, is NOT in that set and its two rows stand. It is a ONE-element list, so
+/// `elements.is_empty()` is false and the skip never fires; the `f54089b4` sweep names `[]` and `[[]]` as two
+/// left-hand shapes and only the first is affected. Do not read the caveat as covering both.
+///
+/// **Like the 132-shape grid above, this one is not reproducible from the tree.** Its clause list -- the
+/// eighteen left-hand values and thirty right-hand spellings -- was never committed, so the other rows cannot
+/// be re-derived or falsified from a checkout, and no figure in them should be restated as a property of
+/// this tree. The 94-clause sweep in `eval_tests.rs` and the 140-clause grid in `operators.rs` both carry
+/// this admission; this table did not, which is how the third row's zeros came to read as current. If the
+/// question comes up again, commit the clause list.
+///
+/// One further reason a row here may have moved, recorded rather than resolved: `07774380` took the
+/// `[ keys <op> ... ]` path from 255 to 19. Any such clause in the uncommitted list moved for that reason and
+/// not for anything about the notice. The grid is described as membership spellings, so none is expected --
+/// but that is an expectation about a list nobody can read, so the staleness should not be attributed to a
+/// single cause.
 ///
 /// So the alignment removed 29 notices: the 16 false alarms, which is the win, and 13 that were owed. The
 /// 13 are what "wrong by twelve" counts. The 15 false negatives are the 13 plus two that were never emitted

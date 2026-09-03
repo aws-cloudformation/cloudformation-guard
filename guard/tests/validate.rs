@@ -1870,19 +1870,24 @@ mod validate_tests {
     /// the arm was taken is pinned rather than assumed from the status alone.
     ///
     /// Junit only, and the other three structured formats would be actively misleading here. They go
-    /// through `CommonStructuredReporter`, which does not return early on an eval error -- its
-    /// `eval_rules_file` match has an `Err(e)` arm that stashes into `first_error`, and the
-    /// `deprecations.extend(root_scope.deprecations()...)` line below it runs regardless, with the
-    /// `for notice in &deprecations` loop writing them after the document. All three are in
-    /// `CommonStructuredReporter::report` in `validate/structured.rs`. So a json, yaml or sarif case over
-    /// this same fixture reaches the `Ok`-arm equivalent, passes with the junit drain removed, and would
-    /// eventually go red for something else entirely.
+    /// through `CommonStructuredReporter`, which does not return early on an eval error -- it stashes it in
+    /// `first_error` and carries on to its own drain (`structured.rs:179` stashes, `191` accumulates into
+    /// the `BTreeSet`, `205` writes it out; all three in `CommonStructuredReporter::report`). So a json,
+    /// yaml or sarif case over this same fixture reaches the `Ok`-arm equivalent, passes with the junit
+    /// drain removed, and would eventually go red for something else entirely.
     ///
-    /// Named by symbol rather than by line because the line was wrong twice. This cited
-    /// `structured.rs:154`, which is a comment; the stash, the drain read and the write sat at 179, 191 and
-    /// 205 when that was noticed. It was never right in this range -- at `b8d3901e` line 154 held the
-    /// `Err(e) => {` itself with the extend at 168, and `c6ccc574` inserted a comment block that pushed the
-    /// extend to 191. A citation that a comment insertion can invalidate will be invalidated.
+    /// Two mechanisms, so one pointer was always going to be short. The `first_error` half is declared at
+    /// 124 and stashed at 178-180; the drain half accumulates at 191 and writes at 205-207. The three above
+    /// are the set worth citing because the word the citation hangs on is "drain", and they cover a stash
+    /// plus both ends of it.
+    ///
+    /// This cited `structured.rs:154`, which is a comment about the notice-count symptom and neither
+    /// mechanism. It was never right in this range: at `b8d3901e` line 154 held the `Err(e) => {` itself
+    /// with the extend at 168, and `c6ccc574` inserted a comment block that pushed the extend to 191, so the
+    /// citation was computed against a grandparent. Recorded here for the reason the block above gives for
+    /// `a12ff5fd` -- a commit message cannot be amended, so the correction lives in the tree. The lesson is
+    /// narrower than "avoid line numbers": re-derive a `file:line` against the commit being written, after
+    /// the parent lands, because a comment insertion upstream invalidates it silently and no test catches it.
     ///
     /// One notice, not two. `notice_then_error.guard` has one clause that warns, so a count is exact
     /// here rather than a floor -- the run either carried the notice past the early return or it did

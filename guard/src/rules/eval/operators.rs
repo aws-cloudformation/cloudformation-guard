@@ -1380,14 +1380,26 @@ impl Comparator for InOperation {
                         // visible without reading this.
                         //
                         // That impossibility is confined to `NOT IN`, and reading it as covering the pair
-                        // is what left eight cells over-denied for a release. The two candidate oracles
-                        // disagree only in that polarity -- `"abc"` is 0 and `["abc"]` is 19 -- and on `IN`
-                        // they AGREE at 0, so serving the string there costs the entry set nothing and
-                        // `Empty IN Strs[*]` owes PASS on either reading. It was 19, along with
+                        // is what left the `IN` polarity over-denied for a release. The two candidate
+                        // oracles disagree only in that polarity -- `"abc"` is 0 and `["abc"]` is 19 -- and
+                        // on `IN` they AGREE at 0, so serving the string there costs the entry set nothing
+                        // and `Empty IN Strs[*]` owes PASS on either reading. It was 19, along with
                         // `Empty IN Str`, `Strs[0]`, `Strs2[*]`, both `Resources.*.Properties.Name`
                         // spellings and the mixed `Lists[*]`, because a skipped pairing still pushed the
-                        // value into `diff`. The skip below is what closes them, and it moves no `NOT IN`
-                        // cell at all, so the residual above is exactly as it was.
+                        // value into `diff`. The skip below is what closes them, and THE CLAIM TO CARRY IS
+                        // THE PREDICATE: it moves no `NOT IN` cell at all, so the residual above is exactly
+                        // as it was.
+                        //
+                        // This said "eight cells over-denied" and the figure is retired rather than
+                        // corrected. It counted a hand-authored population that was never named, so a
+                        // reader cannot tell which set it counts: the enumeration in the sentence above
+                        // lists SEVEN spellings, and ten clauses were measured moving 19 to 0 across the
+                        // three relevant fixtures. Reaching eight needs `ListsRev[*]` or `Ustr`, and
+                        // neither appears. The predicate cannot drift that way -- enlarging the population
+                        // cannot falsify "no `NOT IN` cell moves" -- and it is the claim the skip is
+                        // defended by. If a figure is wanted here, count over a CLOSED population computed
+                        // inside the test, the way `3fe2c62d` counts two of seven subsets times two
+                        // quantifiers times two roles.
                         //
                         // Rejected: also gating on `rhs_selected.len() > 1`, which fixes a two-entry
                         // string denylist while leaving the one-entry spelling above. It buys one cell by
@@ -1479,9 +1491,10 @@ impl Comparator for InOperation {
                         // `an_empty_left_hand_list_is_vacuously_in_every_spelling_of_a_denylist` and
                         // `a_list_denylist_holding_a_nested_list_denies_only_what_it_names`, and the
                         // thirteenth had no cell anywhere -- `Empty IN MixedRev[*]` goes 0 to 19 while its
-                        // literal `[5, "abc"]` stays 0, and at `b8d3901e` `eval_tests.rs` held exactly one
-                        // `MixedRev` cell and it was `NOT IN`. So the repair loses on count AND on direction
-                        // rather than winning narrowly on one. The conclusion is unchanged and now stronger.
+                        // literal `[5, "abc"]` stays 0, and at `b8d3901e` its only occurrence as a CELL was
+                        // a `NOT IN` cell. So the repair loses on count AND on direction rather than winning
+                        // narrowly on one. The conclusion is unchanged and now stronger -- adding that cell
+                        // is what took the candidate repair's red count from 19 to 22.
                         //
                         // This said "every one of `MixedRev`'s four occurrences was a `NOT IN` cell", which
                         // counted grep hits as cells. Four hits is right; one is a cell, and the other three
