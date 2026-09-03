@@ -713,12 +713,31 @@ fn incomparable_membership(lhs: &[QueryResult], rhs: &[QueryResult]) -> bool {
 /// [`operators::membership_stops_after`] carries the measurement and why a copy of the arm's rule
 /// must not live here.
 ///
-/// The stopping pairing is INCLUDED, which is the narrow choice on purpose. The arm reaches
-/// `contained_in` for it and only skips the element loop, so what this removes is exactly the later
-/// pairings and nothing else. Dropping the stopping pairing's own accounting as well would change
-/// what the predicate answers for a list-against-list `Success` -- `["x", 1]` inside `["x", 1]` has
-/// element pairs that refuse while the subset holds -- and that is a separate question with its own
-/// measurement owed, not a free rider on this one.
+/// The stopping pairing is EXCLUDED along with the later ones, because a value that stops has MATCHED.
+/// All three stops are matches: the empty-left skip reads an empty list as vacuously present, which is
+/// the convention `InOperation::compare` states where it takes that skip; `found_in_string` answering
+/// `All` is a full string containment; `contained_in` answering `Success` is a membership. A matched
+/// value FAILS `NOT IN`, so it cannot be the value a passing `NOT IN` clause passed on, and counting its
+/// refusals credits a passing clause with a refusal belonging to a value that failed.
+///
+/// An earlier revision included it, reasoning that the arm "reaches `contained_in` for it and only skips
+/// the element loop". That is true of one stop of the three and was being used to justify all three: the
+/// empty-left skip reaches NEITHER `found_in_string` nor `contained_in`, and an `All` reaches only
+/// `found_in_string`. Excluding the pairing is both simpler to state and correct for all three, and it
+/// settles rather than defers the question that revision left open -- a list-against-list `Success`
+/// whose element pairs refuse while the subset holds, `["x", 1]` inside `["x", 1]`, is precisely the
+/// accounting now dropped.
+///
+/// Exclusive is a strict reduction in what the predicate counts, so the direction of risk is silence
+/// where a notice was owed, and the argument that it cannot happen is the one above rather than a sweep:
+/// the stopping value matched, so its clause fails, and the gate in `binary_operation` emits nothing for
+/// a clause that did not pass. What this drops was unreachable through the notice.
+///
+/// NOT the empty-left skip against a STRING, which is not a stop at all.
+/// [`operators::membership_stops_after`] answers false there, because the arm skips that one pairing
+/// with a plain `continue` and KEEPS the value. So an empty left-hand list still reaches the
+/// `(List, right)` arm above, and the `vacuous_match` exclusion there is still the only thing keeping
+/// its shape refusal out. This change does not subsume it.
 ///
 /// Whole slice when the call is not `(None, None)`, because the stop belongs to that arm alone. The
 /// literal-right-hand arm walks every right-hand value with no short-circuit, so truncating there
@@ -737,7 +756,7 @@ fn rhs_values_paired_with<'v>(
         .iter()
         .position(|element| operators::membership_stops_after(value, element))
     {
-        Some(at) => &rhs_values[..=at],
+        Some(at) => &rhs_values[..at],
         None => rhs_values,
     }
 }

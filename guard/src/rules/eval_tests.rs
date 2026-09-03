@@ -15840,6 +15840,23 @@ fn an_unanswerable_containment_records_one_verdict_not_two(
 /// stops a fix that truncates unconditionally from passing -- there the arm does build both pairings,
 /// so both must survive -- and the literal-arm control pins that the stop belongs to `(None, None)`
 /// alone, since the literal-right-hand arm walks every right-hand value with no short-circuit.
+///
+/// The endpoint is EXCLUSIVE, and this test was the one cell in the tree that pinned it as inclusive.
+/// It changed because a value that stops has MATCHED -- the empty-left skip by the convention
+/// `InOperation::compare` states, an `All` by full string containment, a `Success` by membership -- and a
+/// matched value fails `NOT IN`, so it cannot be the value a passing `NOT IN` clause passed on. Keeping
+/// its accounting credited a passing clause with a refusal belonging to a value that failed. Recorded
+/// here rather than adjusted quietly: this assertion going red is the intended consequence of that
+/// change, not an obstacle to it.
+///
+/// The last two cells are the empty-left skip, which is a stop for one right-hand kind and not for the
+/// other, and they are why `incomparable_membership`'s `vacuous_match` exclusion is NOT subsumed by the
+/// exclusive endpoint. Against a string the arm does a plain `continue` -- the pairing is skipped, the
+/// value is kept -- so `membership_stops_after` reports no stop and the string pairing SURVIVES the
+/// prefix, which is how an empty left-hand list still reaches the `(List, right)` arm and still needs
+/// that arm's own exclusion. Against anything else it takes `continue 'each_lhs`, which does stop, so a
+/// denylist holding no string yields an empty prefix and the `(List, List)` arm is never entered for
+/// such a value at all.
 #[test]
 fn the_membership_notice_stops_pairing_where_the_operator_stops() {
     use crate::rules::path_value::Path;
@@ -15866,13 +15883,15 @@ fn the_membership_notice_stops_pairing_where_the_operator_stops() {
 
     let contained = string_at("/MatchStr/0", "ab");
     assert_eq!(
-        vec!["/HayInt/0".to_string()],
+        Vec::<String>::new(),
         paths(rhs_values_paired_with(
             &contained,
             &haystack_then_int,
             true
         )),
-        "`\"ab\"` is contained in `\"xxabxx\"`, so the operator stops there and never pairs it with `5`"
+        "`\"ab\"` is contained in `\"xxabxx\"`, so the operator stops there and never pairs it with \
+         `5` -- and the stopping pairing goes too, because a value that stopped MATCHED and a matched \
+         value cannot be the one a passing `NOT IN` clause passed on"
     );
 
     let missing = string_at("/Miss/0", "qq");
@@ -15890,5 +15909,30 @@ fn the_membership_notice_stops_pairing_where_the_operator_stops() {
             false
         )),
         "the short-circuit belongs to the two-query arm; a literal right-hand side is walked whole"
+    );
+
+    let empty = Rc::new(PathAwareValue::List((
+        Path::new("/Empty/0".to_string(), 0, 0),
+        vec![],
+    )));
+
+    assert_eq!(
+        vec!["/HayInt/0".to_string()],
+        paths(rhs_values_paired_with(&empty, &haystack_then_int, true)),
+        "the empty-left skip against the STRING is a plain `continue` that keeps the value, so it is no \
+         stop and that pairing survives the prefix -- which is why the `(List, right)` arm still needs \
+         its own `vacuous_match` exclusion -- while the `5` after it does stop the walk"
+    );
+
+    assert_eq!(
+        Vec::<String>::new(),
+        paths(rhs_values_paired_with(
+            &empty,
+            &[int_at("/Ints/0", 5)],
+            true
+        )),
+        "a denylist holding no string leaves an empty prefix for an empty left-hand list, so \
+         `incomparable_membership` enters no arm for it and cannot count a pairing the operator \
+         never built"
     );
 }
