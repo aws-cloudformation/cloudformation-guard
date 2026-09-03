@@ -190,6 +190,69 @@ one_line() {
     tr '\n' ' ' | sed -e 's/ *$//'
 }
 
+# What two files differ by, in bytes, for a set comparison that has already failed.
+#
+# `diff` compares lines and prints them; it never says what they are made of. So a difference in a byte
+# that renders as nothing, or as the same thing -- a trailing space, a doubled separator, a tab, a
+# non-breaking space, a CR -- produces a hunk whose two sides read identically. That is not
+# hypothetical: condition 2 failed on windows-latest with all eleven lines in the hunk and the two
+# sides indistinguishable in the log, and the log itself may normalize whatever survived that far. A
+# check that cannot describe its own failure sends the reader to the corpus instead of to the bytes.
+#
+# `od -c` and `cmp -l` are POSIX and present in BSD userland. `cat -A` is GNU-only, `od -t` predates
+# nothing but is wordier, and `diff` has no byte mode at all. Only the differing lines are dumped, and
+# only the first few, because the point is to localize the difference rather than reprint the corpus.
+#
+# Called on the failing path only. Nothing here runs when a condition passes.
+byte_evidence() {
+    printf 'byte-level evidence, because the two sides above can render identically:\n'
+    printf '  file sizes: %s bytes expected, %s bytes actual\n' \
+        "$(wc -c <"$1" | tr -d ' ')" "$(wc -c <"$2" | tr -d ' ')"
+
+    # The first differing offset and the two byte values there, which is the one thing `diff` will
+    # never tell you. `|| true` because `cmp` exits non-zero exactly when it has something to say, and
+    # redirected rather than piped so `set -o pipefail` has no opinion about `head` closing early.
+    cmp -l "$1" "$2" >"$work/cmp-l.txt" 2>&1 || true
+    if [[ -s $work/cmp-l.txt ]]; then
+        printf '  cmp -l (byte offset, expected octal, actual octal), first 8:\n'
+        head -8 "$work/cmp-l.txt" | sed -e 's/^/    /'
+    else
+        printf '  cmp -l reported nothing, so the two files are byte-identical and the mismatch is\n'
+        printf '  upstream of this comparison -- look at how each side was built, not at its content.\n'
+    fi
+
+    # Line numbers that differ, including lines present in one file and not the other. Concatenation
+    # forces a string comparison: awk would otherwise compare two numeric-looking lines as numbers.
+    awk 'NR==FNR { expected[FNR] = $0; next }
+         { if (!(FNR in expected) || ("" $0) != ("" expected[FNR])) print FNR }
+         END { for (i = FNR + 1; i in expected; i++) print i }' \
+        "$1" "$2" >"$work/differing-lines.txt"
+
+    printf '  %s of %s line(s) differ; the first %s dumped below\n' \
+        "$(wc -l <"$work/differing-lines.txt" | tr -d ' ')" \
+        "$(wc -l <"$1" | tr -d ' ')" \
+        "$(head -5 "$work/differing-lines.txt" | wc -l | tr -d ' ')"
+
+    for n in $(head -5 "$work/differing-lines.txt"); do
+        printf '    line %s expected: ' "$n"
+        dump_line "$1" "$n"
+        printf '    line %s actual:   ' "$n"
+        dump_line "$2" "$n"
+    done
+}
+
+# One line of a file as `od -c`, prefixed by its own length in bytes.
+#
+# `sed -n "${2}p"` re-adds a trailing newline that is not part of the line, so it is stripped before
+# both the count and the dump -- and stripped with `tr -d '\n'`, which leaves a CR alone. A CR is
+# precisely the kind of byte this function exists to show, so removing it here would defeat the
+# purpose.
+dump_line() {
+    sed -n "${2}p" <"$1" | tr -d '\n' >"$work/line.txt"
+    printf '%s bytes\n' "$(wc -c <"$work/line.txt" | tr -d ' ')"
+    od -c <"$work/line.txt" | sed -e 's/^/      /'
+}
+
 # `|| actual_exit=$?` rather than letting `set -e` take it: exiting non-zero is the expected outcome
 # here, and the code is the thing being measured.
 actual_exit=0
@@ -209,9 +272,13 @@ fi
 
 # `<name> <count>` with the name first so a plain sort orders by name, and with the count present so
 # that a name losing some -- but not all -- of its expectations is a mismatch rather than a match.
+# `tr -d '\r'` on this side too. The expected side gets one inside `strip_comments`, and the asymmetry
+# was real: a CR reaching only one of the two files is a mismatch that renders identically, which is
+# the exact failure shape this condition produced on windows-latest. No CR was found in that failure,
+# so this is not the fix for it -- it closes a gap that would have been indistinguishable from it.
 jq -r '[.[] | .test_cases[]? | .unchecked_expectations[]? .name]
        | group_by(.) | map("\(.[0]) \(length)") | .[]' "$report" \
-    | LC_ALL=C sort >"$work/actual/unchecked-expectations.txt"
+    | tr -d '\r' | LC_ALL=C sort >"$work/actual/unchecked-expectations.txt"
 
 strip_comments "$expected_unchecked" \
     | LC_ALL=C sort >"$work/expected/unchecked-expectations.txt"
@@ -235,15 +302,26 @@ if ! cmp -s "$work/expected/unchecked-expectations.txt" \
   disappeared (expected to go unchecked, and no longer does): $disappeared"
     fi
     if [[ -z $appeared && -z $disappeared ]]; then
+        # This used to read "the same rule names, but at least one changed how many expectations it
+        # carries", which claimed more than it knew and cost a real investigation. All `comm` compared
+        # was `cut -d' ' -f1` output, and that discards everything from the first space onward -- so a
+        # count, the separator, or any trailing byte lands in this branch identically. On
+        # windows-latest it fired with every count unchanged, and the sentence sent the reader to the
+        # corpus. What is actually established is stated instead, and the bytes below decide the rest.
         detail="$detail
-  the same rule names, but at least one changed how many expectations it carries"
+  every rule name matches, so the difference is at or after the first space on at least one line: a
+  count, the separator, or a byte that does not render. That is the whole of what
+  \`cut -d' ' -f1\` and \`comm\` can see -- the byte-level evidence below is what distinguishes them."
     fi
 
     fail "condition 2 (unchecked-expectation set): does not match
   .github/registry-corpus-state/unchecked-expectations.txt$detail
 
 $(diff -u "$work/expected/unchecked-expectations.txt" \
-        "$work/actual/unchecked-expectations.txt" || true)"
+        "$work/actual/unchecked-expectations.txt" || true)
+
+$(byte_evidence "$work/expected/unchecked-expectations.txt" \
+        "$work/actual/unchecked-expectations.txt")"
 fi
 
 # ---- condition 3: nothing actually failed -------------------------------------------------------
@@ -344,8 +422,15 @@ $(cat "$work/disappeared.txt")"
   orphans are still there and this check simply stopped seeing them."
     fi
 
+    # The same byte evidence as condition 2, and this condition needs it more, not less: these are
+    # file paths, one of the three expected ones begins with a literal space, and a path whose only
+    # difference is leading or trailing whitespace appears in `appeared` and `disappeared` at once
+    # looking like the same string twice.
     fail "condition 5 (orphaned-test-file set): does not match
-  .github/registry-corpus-state/orphaned-test-files.txt$detail"
+  .github/registry-corpus-state/orphaned-test-files.txt$detail
+
+$(byte_evidence "$work/expected/orphaned-test-files.txt" \
+        "$work/actual/orphaned-test-files.txt")"
 fi
 
 # ---- verdict ------------------------------------------------------------------------------------
