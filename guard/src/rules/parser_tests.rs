@@ -7725,6 +7725,69 @@ fn a_map_literal_with_a_repeated_key_is_refused(#[case] rules: &str) {
     );
 }
 
+/// A nested `SourceScope` puts the outer file's index back rather than clearing it.
+///
+/// `enter` opens nothing when handed an advanced span -- an index built from one would answer absolute
+/// offsets against text that has already been consumed -- but `Drop` used to clear `SOURCE` either way. So
+/// the two halves disagreed about whether a scope owned the slot, and a nested or re-entrant `rules_file`
+/// left the *outer* parse with no index for the rest of its own parse. Every position after that point
+/// silently reverted to `nom_locate`'s `\n`-only answer, which is the defect `LineIndex` exists to fix,
+/// reappearing partway through one file.
+///
+/// A bare-CR fixture, because that is the case where the two mechanisms disagree at all: the index sees
+/// three lines and `nom_locate`, counting `\n` alone, sees one. The first assertion is the non-vacuity
+/// control -- it computes `nom_locate`'s own answer for the same span and requires it to differ, so a
+/// version of this test where both mechanisms agreed could not pass by accident.
+///
+/// Unreachable through today's callers, and deliberately tested anyway: the offset-0 gate in `enter`
+/// exists to protect a future caller that passes an advanced span, and a gate that guards one direction
+/// while `Drop` gives the other away is not a gate.
+#[test]
+fn a_nested_source_scope_restores_the_outer_file() {
+    let text = "rule one {\rrule two {\rrule three {\r";
+    let span = from_str2(text);
+
+    // Start of the third line: line 3 column 1 to the index, line 1 to `nom_locate`.
+    let third = text
+        .find("rule three")
+        .expect("the fixture has a third line");
+    let at_third: Span = unsafe { Span::new_from_raw_offset(third, 1, &text[third..], "") };
+
+    let fallback = (at_third.location_line(), at_third.get_utf8_column() as u32);
+    assert_ne!(
+        (3, 1),
+        fallback,
+        "the control: nom_locate must answer differently for this span, or this test cannot fail"
+    );
+
+    let outer = SourceScope::enter(&span);
+    assert_eq!(
+        (3, 1),
+        position_of(&at_third),
+        "with the file open the index answers line 3"
+    );
+
+    {
+        // An advanced span, so `enter` opens nothing and `Drop` must leave `SOURCE` alone.
+        let _inner = SourceScope::enter(&at_third);
+    }
+
+    assert_eq!(
+        (3, 1),
+        position_of(&at_third),
+        "the inner scope opened nothing, so its Drop must not close the outer file -- when it did, every \
+         position for the rest of the outer parse reverted to {:?}",
+        fallback
+    );
+
+    drop(outer);
+    assert_eq!(
+        fallback,
+        position_of(&at_third),
+        "and when the outer scope really does end, the fallback is nom_locate's answer again"
+    );
+}
+
 /// The refusal points at the map literal, not past the end of it.
 ///
 /// `parse_map` shadowed `input` at each step, the ordinary shape in this file, so the span it reported with

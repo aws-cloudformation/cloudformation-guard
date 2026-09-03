@@ -41,7 +41,11 @@ thread_local! {
     ///
     /// Parse-scoped state, for the same reason `NESTING_DEPTH` is: `nom`'s combinator signatures carry a
     /// `Span` and nothing else, so a parser deep in the grammar cannot be handed the whole file, and this is
-    /// the only thing that can tell it where a byte offset sits. Set and cleared by [`SourceScope`].
+    /// the only thing that can tell it where a byte offset sits. Set and restored by [`SourceScope`].
+    ///
+    /// The analogy is to being parse-scoped and stops there. `NESTING_DEPTH` is a counter, so it composes
+    /// under nesting on its own; this is a single slot, so a nested writer has to put back what it
+    /// displaced rather than clear it. [`SourceScope`] carries that difference.
     static SOURCE: std::cell::RefCell<Option<LineIndex>> =
         const { std::cell::RefCell::new(None) };
 }
@@ -106,11 +110,36 @@ impl LineIndex {
     }
 }
 
-/// One rules file held open for position reporting, cleared when it goes out of scope.
+/// One rules file held open for position reporting, restored to what it displaced when it goes out of scope.
 ///
 /// `Drop` rather than an explicit clear, so that the early return on a parse error cannot leave a previous
 /// file's index behind for the next parse on this thread to read positions out of.
-struct SourceScope;
+///
+/// Restores rather than clears, and the difference is the whole reason this holds a field. `enter` opens
+/// nothing when handed an advanced span, but `Drop` used to clear `SOURCE` either way, so the two halves
+/// disagreed about whether this scope owned the slot. A nested or re-entrant [`rules_file`] would, on the
+/// inner call's return, leave the *outer* parse with `SOURCE = None` for the rest of its own parse --
+/// silently reverting every position after that point to `nom_locate`'s `\n`-only answer, which is the
+/// defect [`LineIndex`] exists to fix, reappearing partway through one file's positions.
+///
+/// Unreachable today, and checked rather than assumed: the only in-file caller of [`rules_file`] is
+/// `TryFrom<&str> for RulesFile`, which is outside the grammar, and the four in-grammar
+/// `PathAwareValue::try_from` calls take an already-parsed `Value` rather than a `&str`. Neither
+/// `Cargo.toml` sets `panic = "abort"`, so an unwind runs this `Drop` and is not a leak path either. It is
+/// a future-caller exposure, which is exactly what `enter`'s offset-0 gate is there to protect against --
+/// a gate that guards one direction while `Drop` gives the other away is not a gate.
+///
+/// The `NESTING_DEPTH` analogy in `SOURCE`'s own comment covers parse-scoping and does not extend to this:
+/// `NESTING_DEPTH` increments and decrements, so it composes under nesting by construction, while a slot
+/// holds one value and a nested writer has to put back what it displaced.
+struct SourceScope {
+    /// What `SOURCE` held before this scope replaced it, or `None` if this scope replaced nothing and
+    /// `Drop` must therefore leave `SOURCE` exactly as it found it.
+    ///
+    /// `Option<Option<LineIndex>>`, because "this scope opened nothing" and "this scope displaced nothing"
+    /// are different states and only the first one means `Drop` must keep its hands off.
+    previous: Option<Option<LineIndex>>,
+}
 
 impl SourceScope {
     /// Opens `span`'s file for position reporting, if `span` is the whole of it.
@@ -121,17 +150,21 @@ impl SourceScope {
     /// fallback. Every caller of [`rules_file`] passes a fresh span; this is what keeps a future one that
     /// does not from silently reporting positions into the middle of its own file.
     fn enter(span: &Span) -> SourceScope {
-        if span.location_offset() == 0 {
+        let previous = if span.location_offset() == 0 {
             let index = LineIndex::of(span.fragment());
-            SOURCE.with(|source| *source.borrow_mut() = Some(index));
-        }
-        SourceScope
+            Some(SOURCE.with(|source| source.borrow_mut().replace(index)))
+        } else {
+            None
+        };
+        SourceScope { previous }
     }
 }
 
 impl Drop for SourceScope {
     fn drop(&mut self) {
-        SOURCE.with(|source| *source.borrow_mut() = None);
+        if let Some(previous) = self.previous.take() {
+            SOURCE.with(|source| *source.borrow_mut() = previous);
+        }
     }
 }
 
