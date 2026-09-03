@@ -9169,14 +9169,42 @@ fn a_denylist_named_by_a_variable_denies_what_the_same_list_written_out_denies(
 ///
 /// `Pair[*]` splits the left operand into one scalar result per element, so each element asks scalar
 /// membership on its own and the whole-list granularity that lost the collision never arises. Expanding
-/// both sides does the same. Expanding only the RIGHT side is the one that still admits a named value,
-/// and it is deliberately left alone: a list against a scalar is what `contained_in` calls not
-/// comparable, `NOT IN` over an incomparable pairing currently passes, and that is the tracked defect
-/// `docs/KNOWN_ISSUES.md` records and `incomparable_membership` in `eval.rs` prints a deprecation notice
-/// for. `right_expanded_denies_nothing_yet` fires that notice today. Failing it here would land the
-/// deprecation without its notice and move cells of
-/// `every_operator_and_operand_shape_agrees_with_a_stated_oracle`, so the cell pins the current answer
-/// and this comment is where to look when that notice becomes an error.
+/// both sides does the same.
+///
+/// Expanding only the RIGHT side is a second instance of the same defect rather than a nearby spelling,
+/// and the diagnosis this comment used to carry was wrong. It said that a list against a scalar is what
+/// `contained_in` calls not comparable, that `NOT IN` over an incomparable pairing passes, and that
+/// `right_expanded_denies_nothing_yet` was therefore the tracked `docs/KNOWN_ISSUES.md` defect the
+/// `incomparable_membership` notice is about -- so the cell pinned exit 0 and the fix was deferred to
+/// whenever that notice became an error. The first clause is true; the conclusion does not follow.
+/// Measured: promoting the `Err(_) => {}` suppression in `contained_in`'s scalar-left-hand loop, which
+/// is the only place in the code that reading could live, leaves `Pair NOT IN Deny13[*]` at exit 0,
+/// unchanged. The bypass is not in that loop.
+///
+/// Where it is, is the two-query arm's element-collision tracking. That arm reads a collision out of a
+/// `Fail(Compare::ListIn(..))`, `contained_in` returns that shape only when BOTH operands are lists, and
+/// a right operand expanded to scalars pairs a list with a scalar at every step -- which is the arm that
+/// answers not comparable. So no collision was ever recorded, `collides` stayed empty, and the negation
+/// wrapper read a left-hand list the denylist verbatim names as having matched nothing. Same defect as
+/// the unwrapped spelling had, one operand shape over, and the arm now asks the element question
+/// directly for that shape instead of hoping for a `ListIn` that cannot arrive.
+///
+/// One sibling is left open on purpose, and it is in this table rather than only in a comment.
+/// `Nest NOT IN DenyNestedNine[*]` -- a `Nest` of `[1, [9]]` against a denylist of `[[9]]` -- is still
+/// exit 0 while the written-out, unexpanded, and both-expanded spellings of the same question are all
+/// exit 19. `Deny[*]` resolves the right operand to the inner list `[9]`, and `contained_in` reads a
+/// list-shaped right-hand value as a set of candidate entries, so that spelling compares against `{9}`
+/// where the others compare against `{[9]}`. That is a different mechanism from the one repaired here --
+/// how a list-shaped right-hand result is read, rather than whether the collision is looked for -- and
+/// the two are separated so that a moved cell has one candidate cause.
+///
+/// The deprecation notice stops firing for this clause, which is that deprecation completing rather than
+/// a warning going missing. `incomparable_membership` asks about the whole left-hand value, and `[1, 2]`
+/// is incomparable with `1` and with `3` alike, so it still answers `Some`; `binary_operation` gates the
+/// notice on the verdict and the clause now fails. The notice's own words are "passed because the value
+/// could not be compared", and it promised a future release would fail closed here. For this shape that
+/// release is this one. `the_incomparable_membership_notice_is_only_emitted_for_a_clause_that_passed` is
+/// what keeps the two in step.
 ///
 /// The nested cells exist because reading them wrong nearly buried the defect. Moving the same two
 /// values under `Resources.R.Properties` and keeping the clause as `Pair NOT IN Deny13` makes every
@@ -9195,10 +9223,56 @@ fn a_denylist_named_by_a_variable_denies_what_the_same_list_written_out_denies(
 #[case::left_expanded_undenied("flat", "Pair[*] NOT IN Deny34", Status::PASS)]
 #[case::both_expanded_denied("flat", "Pair[*] NOT IN Deny13[*]", Status::FAIL)]
 #[case::both_expanded_undenied("flat", "Pair[*] NOT IN Deny34[*]", Status::PASS)]
-#[case::right_expanded_denies_nothing_yet("flat", "Pair NOT IN Deny13[*]", Status::PASS)]
+#[case::right_expanded_denied("flat", "Pair NOT IN Deny13[*]", Status::FAIL)]
 #[case::right_expanded_undenied("flat", "Pair NOT IN Deny34[*]", Status::PASS)]
+// The mirror of the cell above it, and the one that says the repair denies only what the denylist
+// names. `Deny349` is `Deny34` with a `9` added, so a fix that read any right-hand scalar as a
+// collision -- or that failed closed on the incomparable pairing wholesale -- turns this PASS into a
+// FAIL for a `Pair` holding neither 3 nor 4 nor 9. Adding an element to a denylist must never turn a
+// FAIL into a PASS, and removing one must never turn a PASS into a FAIL; this is that property in the
+// direction the repair could plausibly break.
+#[case::right_expanded_undenied_by_a_longer_disjoint_list(
+    "flat",
+    "Pair NOT IN Deny349[*]",
+    Status::PASS
+)]
+// Whole-list membership through the same expansion. `DenyNestedPair[*]` expands the outer list, so the
+// right operand resolves to the single list `[1, 2]` and the pairing is list-against-list -- the shape
+// that always worked. Here so that a repair aimed at the list-against-scalar shape cannot be credited
+// with this one, and so that it stays FAIL if the new arm ever starts firing where a `ListIn` exists.
+#[case::right_expanded_denied_by_whole_list_membership(
+    "flat",
+    "Pair NOT IN DenyNestedPair[*]",
+    Status::FAIL
+)]
 #[case::flat_in_one_element("flat", "Pair IN Deny13", Status::FAIL)]
 #[case::flat_in_disjoint("flat", "Pair IN Deny34", Status::FAIL)]
+// `IN` for the spelling this commit repairs, both polarities of denylist. The repair moves `collides`,
+// which only the negation wrapper reads, so neither of these may move: `[1, 2]` is not a subset of
+// `{1, 3}` and not a subset of `{3, 4}`, and `IN` fails for both either way. If one of them moves, the
+// fix reached `diff` and changed what `IN` means.
+#[case::right_expanded_in_one_element("flat", "Pair IN Deny13[*]", Status::FAIL)]
+#[case::right_expanded_in_disjoint("flat", "Pair IN Deny34[*]", Status::FAIL)]
+// The sibling this commit does NOT close, pinned with the three spellings that answer it correctly so
+// the disagreement is in one table rather than in a comment. `DenyNestedNine` is `[[9]]` and `Nest` is
+// `[1, [9]]`, so the denylist names `[9]` and the property holds `[9]`: every spelling owes exit 19.
+// Three deliver it. `Nest NOT IN DenyNestedNine[*]` still passes, because `Deny[*]` resolves the right
+// operand to the inner list `[9]` and `contained_in` then reads THAT as a set of candidate entries,
+// `{9}`, rather than as the single entry `[9]` the other spellings compare against. Same class of
+// bypass, a different mechanism -- how a list-shaped right-hand result is read, not whether the
+// collision is looked for -- so it is a separate commit rather than bundled here.
+//
+// Named for what is true rather than for what was assumed: the cell this commit replaced was called
+// `right_expanded_denies_nothing_yet` and its "yet" rested on a diagnosis that measurement disproved.
+// When this one is fixed it becomes FAIL and the name goes with it.
+#[case::right_expanded_nested_entry_still_undenied(
+    "flat",
+    "Nest NOT IN DenyNestedNine[*]",
+    Status::PASS
+)]
+#[case::nested_entry_denied_written_out("flat", "Nest NOT IN [[9]]", Status::FAIL)]
+#[case::nested_entry_denied_unexpanded("flat", "Nest NOT IN DenyNestedNine", Status::FAIL)]
+#[case::nested_entry_denied_both_expanded("flat", "Nest[*] NOT IN DenyNestedNine[*]", Status::FAIL)]
 #[case::nested_qualified_denied(
     "nested",
     "Resources.R.Properties.Pair NOT IN Resources.R.Properties.Deny13",
@@ -9209,6 +9283,16 @@ fn a_denylist_named_by_a_variable_denies_what_the_same_list_written_out_denies(
     "Resources.R.Properties.Pair NOT IN Resources.R.Properties.Deny34",
     Status::PASS
 )]
+#[case::nested_qualified_right_expanded_denied(
+    "nested",
+    "Resources.R.Properties.Pair NOT IN Resources.R.Properties.Deny13[*]",
+    Status::FAIL
+)]
+#[case::nested_qualified_right_expanded_undenied(
+    "nested",
+    "Resources.R.Properties.Pair NOT IN Resources.R.Properties.Deny34[*]",
+    Status::PASS
+)]
 #[case::nested_unqualified_denied("nested", "Pair NOT IN Deny13", Status::FAIL)]
 #[case::nested_unqualified_undenied("nested", "Pair NOT IN Deny34", Status::FAIL)]
 fn which_spelling_of_a_queried_denylist_reaches_which_arm(
@@ -9217,12 +9301,20 @@ fn which_spelling_of_a_queried_denylist_reaches_which_arm(
     #[case] expected: Status,
 ) -> Result<()> {
     // Verbatim the fixture the defect was reproduced against, plus one disjoint denylist for the
-    // undenied polarity. `Pair` holds `1`, which `Deny13` names and `Deny34` does not.
+    // undenied polarity. `Pair` holds `1`, which `Deny13` names and `Deny34` does not. `Deny349` is
+    // `Deny34` with an unrelated element added and `DenyNestedPair` wraps the pair one level deep; both
+    // are for the right-expanded cells and neither changes what the original cells ask. `Nest` and
+    // `DenyNestedNine` are the sibling the repair does not reach: a denylist entry that is itself a
+    // list, which the property holds as an element.
     const FLAT: &str = r#"
     {
         Pair: [1, 2],
+        Nest: [1, [9]],
         Deny13: [1, 3],
-        Deny34: [3, 4]
+        Deny34: [3, 4],
+        Deny349: [3, 4, 9],
+        DenyNestedPair: [[1, 2]],
+        DenyNestedNine: [[9]]
     }
     "#;
 

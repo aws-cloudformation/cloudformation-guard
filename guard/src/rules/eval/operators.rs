@@ -1043,6 +1043,54 @@ impl Comparator for InOperation {
 
                             _ => {}
                         }
+
+                        // The same question for the pairing that produces no `ListIn` to read it out of.
+                        //
+                        // `contained_in` builds a `ListIn` only when both operands are lists; a
+                        // list-valued left-hand side against anything else reaches its incomparable
+                        // catch-all. So the arm above cannot see a collision when the right operand
+                        // resolves to scalars, which is what `[*]` on the right does: with `Pair` of
+                        // `[1, 2]` and `Deny13` of `[1, 3]`, `Pair NOT IN Deny13[*]` paired a list with
+                        // `1` and then with `3`, recorded nothing either time, and exited 0 while
+                        // `Pair NOT IN Deny13` exited 19. One denylist, one value, and whether the
+                        // right-hand query was spelled with `[*]` decided whether the value it names was
+                        // admitted.
+                        //
+                        // Keyed on the operand shapes rather than on the verdict the pairing produced,
+                        // because the verdict is what was unreadable: reading `NotComparable` here would
+                        // stop firing the moment that catch-all reports something else, and silently.
+                        // `eachr.is_list()` is exactly the case the arm above already answers, so the two
+                        // cannot both count one collision.
+                        //
+                        // `is_one_of`, not a fresh loop, and that is the whole point of the function --
+                        // it is what `contained_in` asks for the written-out spelling, so the two
+                        // spellings cannot disagree about what counts as an element collision again.
+                        // Asking `PartialEq` alone here would leave a range or a regex on the right
+                        // matching no element, which is the hole `d7f01ec` closed one arm at a time.
+                        //
+                        // Whole-list membership needs nothing added here: `compare_eq` of a list
+                        // against a scalar is an error, so no scalar right-hand value can be the
+                        // left-hand list itself.
+                        //
+                        // A right-hand result that IS a list goes to the arm above and is NOT fully
+                        // answered there, which this comment used to claim it was. `contained_in` reads
+                        // such a result as a set of candidate entries rather than as one entry, so
+                        // `Deny[*]` over a `Deny` of `[[9]]` compares against `{9}` where the written-out
+                        // and unexpanded spellings compare against `{[9]}`. For a `Nest` of `[1, [9]]`
+                        // that is still exit 0 against three spellings at exit 19, and it is the same
+                        // class of bypass as the one repaired here, one operand shape further in.
+                        // `right_expanded_nested_entry_still_undenied` in `eval_tests.rs` pins it with
+                        // its three disagreeing siblings beside it. Not repaired in this commit because
+                        // it is a different mechanism -- how a list-shaped right-hand *result* is read,
+                        // not whether the collision is looked for -- and landing both at once makes it
+                        // impossible to say which one moved a cell.
+                        if let PathAwareValue::List((_, elements)) = &**eachl {
+                            if !eachr.is_list() {
+                                element_collision |= elements
+                                    .iter()
+                                    .any(|each| is_one_of(each, std::slice::from_ref(&**eachr)));
+                            }
+                        }
                     }
 
                     // Nothing matched, and something could not be decided: the clause was posed at the
