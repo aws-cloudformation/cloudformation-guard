@@ -127,17 +127,27 @@ impl std::fmt::Display for Errors {
     }
 }
 
+/// For `nom`'s own error type, which nothing in this crate produces.
+///
+/// The parser's `IResult` carries `ParserError`, so the impl below is the one every `?` in the grammar
+/// reaches; this one has no producer anywhere in the tree. It is not flagged as dead, because an impl of
+/// a foreign trait never is, and it cannot be reached from outside either, since `Span` is `pub(crate)`.
+///
+/// It counts positions through `position_of` regardless. It is the eleventh site of the bare-CR position
+/// defect and the only one that was unreachable, and an unreachable copy of a defect is how the defect
+/// comes back: whoever makes this reachable will not be thinking about line endings.
 impl<'a> From<nom::Err<(Span<'a>, nom::error::ErrorKind)>> for Error {
     fn from(err: nom::Err<(Span<'a>, nom::error::ErrorKind)>) -> Self {
         let msg = match err {
             nom::Err::Incomplete(_) => "More bytes required for parsing".to_string(),
             nom::Err::Failure((s, _k)) | nom::Err::Error((s, _k)) => {
                 let span = s as Span;
+                let (line, column) = crate::rules::parser::position_of(&span);
                 format!(
                     "Error parsing file {} at line {} at column {}, remaining {}",
                     span.extra,
-                    span.location_line(),
-                    span.get_utf8_column(),
+                    line,
+                    column,
                     *span.fragment()
                 )
             }

@@ -142,7 +142,7 @@ impl Drop for SourceScope {
 /// rather than through [`rules_file`] get: `Value::try_from(&str)` parsing one value, and the unit tests that
 /// call a single combinator. Those inputs are a value or a clause rather than a file, so the fallback is the
 /// same answer this would give -- and it is the answer they got before this existed.
-fn position_of(span: &Span) -> (u32, u32) {
+pub(in crate::rules) fn position_of(span: &Span) -> (u32, u32) {
     SOURCE.with(|source| match source.borrow().as_ref() {
         Some(index) => index.position(span.location_offset()),
         None => (span.location_line(), span.get_utf8_column() as u32),
