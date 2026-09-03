@@ -375,20 +375,41 @@ fn substring_or_contained_in(lhs: Rc<PathAwareValue>, rhs: Rc<PathAwareValue>) -
     string_in(Rc::clone(&lhs), Rc::clone(&rhs)).fail(|_| contained_in(lhs, rhs))
 }
 
-/// Whether `IN` finds this left-hand value inside a string on the right.
+/// How much of this left-hand value `IN` finds inside a string on the right.
 ///
-/// The `(None, Some)` arm applies `string_in` once per left-hand element, expanding a list-valued one,
-/// so `["s3","arn"] in "aws:arn:s3::${s3}"` holds and `["s3","zzz"]` does not. `(None, None)` compares
-/// a left-hand result whole and folds one answer per result into `diff`, so the expansion has to happen
-/// here instead for the two spellings to agree.
+/// Three answers, not two, and `Partial` is the one that has to exist. The `(None, Some)` arm applies
+/// `string_in` once per left-hand element, expanding a list-valued one, so a list is really N separate
+/// comparisons folded by ALL: `["s3","arn"] in "aws:arn:s3::${s3}"` holds, `["zz","qq"]` does not, and
+/// `["s3","zzz"]` -- one element found, one not -- cannot satisfy ALL in *either* polarity and so fails
+/// both. `(None, None)` compares a left-hand result whole and has one boolean per result, which can say
+/// "in" or "not in" and had no way to say the third thing. So it answered the partial case as a plain
+/// miss, and negating a miss passes: `["s3","zzz"] NOT IN Haystack` reported compliance while the
+/// haystack verbatim contained `s3`, and its typed-out spelling failed.
+///
+/// A scalar is found or it is not, so `Partial` names a list only. It arrives by two routes, and the
+/// grid pins both: an element that is a string and not contained (`["s3","zzz"]`), and an element that
+/// is not a string at all (`["s3", 5]`), which `string_in` answers "not comparable" for in the literal
+/// arm. Both fail both polarities there, so both are `Partial` here.
 ///
 /// The empty-list guard is `contained_in`'s, for the reason recorded there: an empty collection passing
 /// a comparison is what `vacuous_comparison_notice` in `eval.rs` is deprecating, so this does not add
-/// another one.
-fn found_in_string(lhs: &PathAwareValue, rhs: &PathAwareValue) -> bool {
+/// another one. Empty is `NoneFound` rather than `Partial` because it keeps its existing answer --
+/// `NOT IN` over nothing passes -- and folding it into the unanswerable case would change a cell this
+/// commit is not about.
+#[derive(Copy, Clone, PartialEq)]
+enum StringContainment {
+    /// Every element, or the scalar itself, is contained.
+    All,
+    /// Some elements are contained and some are not, so no single answer is right in either polarity.
+    Partial,
+    /// Nothing is contained, or the right-hand side is not a string at all.
+    NoneFound,
+}
+
+fn found_in_string(lhs: &PathAwareValue, rhs: &PathAwareValue) -> StringContainment {
     let haystack = match rhs {
         PathAwareValue::String((_, haystack)) => haystack,
-        _ => return false,
+        _ => return StringContainment::NoneFound,
     };
 
     let found = |value: &PathAwareValue| match value {
@@ -397,8 +418,25 @@ fn found_in_string(lhs: &PathAwareValue, rhs: &PathAwareValue) -> bool {
     };
 
     match lhs {
-        PathAwareValue::List((_, elements)) => !elements.is_empty() && elements.iter().all(found),
-        scalar => found(scalar),
+        PathAwareValue::List((_, elements)) => {
+            if elements.is_empty() {
+                return StringContainment::NoneFound;
+            }
+
+            match elements.iter().filter(|element| found(element)).count() {
+                0 => StringContainment::NoneFound,
+                hits if hits == elements.len() => StringContainment::All,
+                _ => StringContainment::Partial,
+            }
+        }
+
+        scalar => {
+            if found(scalar) {
+                StringContainment::All
+            } else {
+                StringContainment::NoneFound
+            }
+        }
     }
 }
 
@@ -701,8 +739,21 @@ impl Comparator for InOperation {
                     Vec::push,
                 );
 
+                // One `QueryIn` result holding the values that matched nothing, which is what makes `IN`
+                // against a multi-value query mean "any of these". That shape is load-bearing and must
+                // not change: expanding a left-hand value into one result per element here -- which is
+                // what the literal-right-hand arm does, and the obvious way to make the two spellings
+                // structurally identical -- turns "any" into "all". Measured, with `Type: gp3` and
+                // `Names: ["gp2","gp3","io1"]`: `Type in Names[*]` is PASS today and FAIL under that
+                // change, so every allowlist in every rules file would start rejecting the values it
+                // allows. `a_long_in_comparison_is_truncated_with_a_total` and
+                // `a_failing_in_comparison_against_a_plan_is_rendered_not_a_panic` are what caught it;
+                // the first also pins the "and N more" summary this single result carries. Do not
+                // expand here.
                 let mut diff = Vec::with_capacity(lhs_selected.len());
+                let mut unanswerable: Vec<ValueEvalResult> = Vec::new();
                 'each_lhs: for eachl in &lhs_selected {
+                    let mut partial: Option<Rc<PathAwareValue>> = None;
                     for eachr in &rhs_selected {
                         // Containment first, membership second, which is the order the two arms above
                         // apply when the right-hand side is written out. This arm asked `contained_in`
@@ -710,8 +761,19 @@ impl Comparator for InOperation {
                         // `Needle in Haystack` was equality while `Needle in "aws:arn:s3::${s3}"` was
                         // containment -- and `Needle not in Haystack` therefore PASSED on a needle the
                         // haystack verbatim contains, a denylist admitting the value it names at exit 0.
-                        if found_in_string(eachl, eachr) {
-                            continue 'each_lhs;
+                        match found_in_string(eachl, eachr) {
+                            StringContainment::All => continue 'each_lhs,
+
+                            // Recorded, not answered. A full match against a later right-hand result
+                            // still wins, which is this loop's existing "any right-hand value will do"
+                            // reading, so the partial one only decides if nothing else does.
+                            StringContainment::Partial => {
+                                if partial.is_none() {
+                                    partial = Some(Rc::clone(eachr));
+                                }
+                            }
+
+                            StringContainment::NoneFound => {}
                         }
 
                         if let ValueEvalResult::ComparisonResult(ComparisonResult::Success(_)) =
@@ -721,18 +783,44 @@ impl Comparator for InOperation {
                         }
                     }
 
+                    // Nothing matched, and something was partway there: the clause was posed at the
+                    // wrong granularity and has no right answer in either polarity. `NotComparable` is
+                    // how this arm already says that -- `%int in Haystack` and `%int not in Haystack`
+                    // both fail, because an incomparable type fails closed both ways -- so a partial
+                    // match joins an existing rule rather than introducing one. Failing closed is also
+                    // the safe direction for a policy engine: a denylist that cannot decide must not
+                    // report compliance.
+                    if let Some(other) = partial {
+                        unanswerable.push(not_comparable_because(
+                            Rc::clone(eachl),
+                            other,
+                            format!(
+                                "Some but not all of {} is contained in the value compared with",
+                                eachl
+                            ),
+                        ));
+                        continue;
+                    }
+
                     diff.push(Rc::clone(eachl));
                 }
 
-                results.push(if diff.is_empty() {
-                    ValueEvalResult::ComparisonResult(ComparisonResult::Success(Compare::QueryIn(
-                        QueryIn::new(diff, lhs_selected, rhs_selected),
-                    )))
-                } else {
-                    ValueEvalResult::ComparisonResult(ComparisonResult::Fail(Compare::QueryIn(
-                        QueryIn::new(diff, lhs_selected, rhs_selected),
-                    )))
-                });
+                // Suppressed only when every left-hand value went to `NotComparable`, because then an
+                // empty `diff` would otherwise report Success -- "all values matched" about values none
+                // of which did.
+                let every_value_was_unanswerable = !unanswerable.is_empty() && diff.is_empty();
+                results.extend(unanswerable);
+                if !every_value_was_unanswerable {
+                    results.push(if diff.is_empty() {
+                        ValueEvalResult::ComparisonResult(ComparisonResult::Success(
+                            Compare::QueryIn(QueryIn::new(diff, lhs_selected, rhs_selected)),
+                        ))
+                    } else {
+                        ValueEvalResult::ComparisonResult(ComparisonResult::Fail(Compare::QueryIn(
+                            QueryIn::new(diff, lhs_selected, rhs_selected),
+                        )))
+                    });
+                }
             }
         }
         Ok(EvalResult::Result(results))

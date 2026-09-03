@@ -10107,6 +10107,25 @@ fn a_one_element_list_compares_the_same_typed_as_resolved(
 #[case::int_needle_query_haystack("%int in Haystack", Status::FAIL)]
 #[case::list_membership_literal(r#"Needle in ["s3", "other"]"#, Status::PASS)]
 #[case::list_membership_query("Needle in NeedleList", Status::PASS)]
+#[case::denied_partly_absent_list_literal_haystack(
+    r#"BadList not in "aws:arn:s3::${s3}""#,
+    Status::FAIL
+)]
+#[case::denied_partly_absent_list_query_haystack("BadList not in Haystack", Status::FAIL)]
+#[case::wholly_absent_list_literal_haystack(r#"NoneList in "aws:arn:s3::${s3}""#, Status::FAIL)]
+#[case::wholly_absent_list_query_haystack("NoneList in Haystack", Status::FAIL)]
+#[case::undenied_wholly_absent_list_literal_haystack(
+    r#"NoneList not in "aws:arn:s3::${s3}""#,
+    Status::PASS
+)]
+#[case::undenied_wholly_absent_list_query_haystack("NoneList not in Haystack", Status::PASS)]
+#[case::partly_typed_list_literal_haystack(r#"MixedList in "aws:arn:s3::${s3}""#, Status::FAIL)]
+#[case::partly_typed_list_query_haystack("MixedList in Haystack", Status::FAIL)]
+#[case::denied_partly_typed_list_literal_haystack(
+    r#"MixedList not in "aws:arn:s3::${s3}""#,
+    Status::FAIL
+)]
+#[case::denied_partly_typed_list_query_haystack("MixedList not in Haystack", Status::FAIL)]
 fn substring_in_answers_the_same_against_a_query_as_against_a_literal(
     #[case] clause: &str,
     #[case] expected: Status,
@@ -10117,7 +10136,9 @@ fn substring_in_answers_the_same_against_a_query_as_against_a_literal(
         Absent: "zzz",
         Haystack: "aws:arn:s3::${s3}",
         NeedleList: ["s3", "arn"],
-        BadList: ["s3", "zzz"]
+        BadList: ["s3", "zzz"],
+        NoneList: ["zz", "qq"],
+        MixedList: ["s3", 5]
     }
     "#;
 
