@@ -105,6 +105,13 @@ fn get_code(e: &FfiError) -> ErrorCode {
             // `errors_tests.rs`, so moving them to keep this block contiguous would mean
             // four edits to spare one gap. The gap is here instead.
             Error::UnsupportedDocument(_) => 25,
+            // Its own code rather than folded into 11. Both mean the clause could not be evaluated, and
+            // the evaluator classifies them together for that reason, but a caller switching on the code
+            // is asking what to do about it: operands of kinds that cannot be compared are a rules-file
+            // or template problem to correct, while a comparison the engine abandoned is a pattern to
+            // simplify or an input to shorten. Reusing 11 would tell such a caller the first when it is
+            // the second, and the codes are cheap.
+            Error::UndecidableComparison(_) => 26,
         },
         // Deliberately their own codes rather than folded into `IllegalArguments`, which is a guard
         // error about the contents of a rules file: a caller looking at a bad pointer and a caller

@@ -587,11 +587,21 @@ pub(crate) enum ClauseRole {
 /// An error meaning the clause could not be evaluated at all, as opposed to the evaluation
 /// machinery having gone wrong.
 ///
-/// Only `EMPTY` against a type that cannot be empty produces this today. It is matched rather than
-/// propagated because the two are answered differently: an unevaluatable clause is a verdict about
-/// that clause, while a genuine failure of the machinery should still stop the run.
+/// Two kinds produce it, and they differ only in what they say. `IncompatibleError` covers operands the
+/// comparator has no arm for -- `EMPTY` against a type that cannot be empty, a function argument the
+/// input cannot supply -- and `UndecidableComparison` covers a comparison that ran and was abandoned,
+/// today a spent `fancy_regex` backtracking budget. Both are verdicts about the clause and both are
+/// classified together here, because every caller asks the same question of them: does this clause fail
+/// closed as an assertion and keep its error as a gate. The two exist separately so the message can be
+/// true; see [`Error::UndecidableComparison`].
+///
+/// It is matched rather than propagated because an unevaluatable clause is a verdict about that clause,
+/// while a genuine failure of the machinery should still stop the run.
 fn is_unevaluatable(e: &Error) -> bool {
-    matches!(e, Error::IncompatibleError(_))
+    matches!(
+        e,
+        Error::IncompatibleError(_) | Error::UndecidableComparison(_)
+    )
 }
 
 impl ClauseRole {
@@ -1370,7 +1380,7 @@ fn binary_operation<'value, 'loc: 'value>(
     //
     // First rather than all of them, matching `is_one_of` and `elements_not_matched`: a clause naming
     // one reason is what the console renders for a clause anyway.
-    let mut undecided_reason: Option<String> = None;
+    let mut evidence = ResultEvidence::default();
     // Annotated, and bound before it is unwrapped. Every arm below is an `Ok(..)`, and the function's
     // return type used to pin their error type because the match was the tail expression. It is not
     // any more, and `?` erases the error type through `From`, so without the annotation the arms infer
@@ -1489,7 +1499,12 @@ fn binary_operation<'value, 'loc: 'value>(
             let mut statues: Vec<(QueryResult, Status)> = Vec::with_capacity(lhs.len());
             for each in results {
                 match each {
+                    // A value the query could not produce. Decided rather than undecided: the property
+                    // is absent, which is a fact about the document, and the comparison then fails on
+                    // it definitively. Recording it as decided is also what keeps a gate over an absent
+                    // property reporting the rule as not applicable, which is where it already was.
                     operators::ValueEvalResult::LhsUnresolved(ur) => {
+                        evidence.decided_failure = true;
                         eval_context.start_record(&context)?;
                         eval_context.end_record(
                             &context,
@@ -1510,6 +1525,9 @@ fn binary_operation<'value, 'loc: 'value>(
                     operators::ValueEvalResult::ComparisonResult(
                         operators::ComparisonResult::RhsUnresolved(urhs, lhs),
                     ) => {
+                        // Decided, for the same reason as the arm above: the reference resolved to
+                        // nothing, and there is nothing undecided about comparing against nothing.
+                        evidence.decided_failure = true;
                         eval_context.start_record(&context)?;
                         eval_context.end_record(
                             &context,
@@ -1530,14 +1548,20 @@ fn binary_operation<'value, 'loc: 'value>(
                     operators::ValueEvalResult::ComparisonResult(
                         operators::ComparisonResult::NotComparable(nc),
                     ) => {
-                        // Only an abandoned evaluation. A refusal to compare kinds stays a plain FAIL
-                        // here, because rule authors write a value against both spellings it might
-                        // carry and rely on the pairing that does not apply answering "no" rather than
-                        // "unknown". See `Unanswerable` for what reading it the other way costs.
-                        if undecided_reason.is_none()
-                            && nc.cause == operators::Unanswerable::EngineGaveUp
-                        {
-                            undecided_reason = Some(nc.reason.clone());
+                        // The one arm that can be either. An abandoned evaluation is undecided; a
+                        // refusal to compare kinds is a decided no, because rule authors write a value
+                        // against both spellings it might carry and rely on the pairing that does not
+                        // apply answering "no" rather than "unknown". See `Unanswerable` for what
+                        // reading that one the other way costs.
+                        match nc.cause {
+                            operators::Unanswerable::EngineGaveUp => {
+                                if evidence.undecided.is_none() {
+                                    evidence.undecided = Some(nc.reason.clone());
+                                }
+                            }
+                            operators::Unanswerable::IncomparableKinds => {
+                                evidence.decided_failure = true
+                            }
                         }
                         eval_context.start_record(&context)?;
                         eval_context.end_record(
@@ -1600,83 +1624,34 @@ fn binary_operation<'value, 'loc: 'value>(
 
                     operators::ValueEvalResult::ComparisonResult(
                         operators::ComparisonResult::Fail(cmpr),
-                    ) => match cmpr {
-                        operators::Compare::Value(pair) => {
-                            eval_context.start_record(&context)?;
-                            eval_context.end_record(
-                                &context,
-                                RecordType::ClauseValueCheck(ClauseCheck::Comparison(
-                                    ComparisonClauseCheck {
-                                        status: Status::FAIL,
-                                        message: None,
-                                        custom_message: custom_message.clone(),
-                                        comparison: cmp,
-                                        from: QueryResult::Resolved(Rc::clone(&pair.lhs)),
-                                        to: Some(QueryResult::Resolved(pair.rhs)),
-                                    },
-                                )),
-                            )?;
-                            statues
-                                .push((QueryResult::Resolved(Rc::clone(&pair.lhs)), Status::FAIL));
-                        }
+                    ) => {
+                        // Every shape under here is a comparison the operator performed and answered
+                        // no. Recorded once for the whole arm rather than in each of its four branches:
+                        // they differ in what they report, not in whether the answer exists.
+                        evidence.decided_failure = true;
+                        match cmpr {
+                            operators::Compare::Value(pair) => {
+                                eval_context.start_record(&context)?;
+                                eval_context.end_record(
+                                    &context,
+                                    RecordType::ClauseValueCheck(ClauseCheck::Comparison(
+                                        ComparisonClauseCheck {
+                                            status: Status::FAIL,
+                                            message: None,
+                                            custom_message: custom_message.clone(),
+                                            comparison: cmp,
+                                            from: QueryResult::Resolved(Rc::clone(&pair.lhs)),
+                                            to: Some(QueryResult::Resolved(pair.rhs)),
+                                        },
+                                    )),
+                                )?;
+                                statues.push((
+                                    QueryResult::Resolved(Rc::clone(&pair.lhs)),
+                                    Status::FAIL,
+                                ));
+                            }
 
-                        operators::Compare::ValueIn(pair) => {
-                            eval_context.start_record(&context)?;
-                            eval_context.end_record(
-                                &context,
-                                RecordType::ClauseValueCheck(ClauseCheck::InComparison(
-                                    InComparisonCheck {
-                                        status: Status::FAIL,
-                                        message: None,
-                                        custom_message: custom_message.clone(),
-                                        comparison: cmp,
-                                        from: QueryResult::Resolved(Rc::clone(&pair.lhs)),
-                                        to: vec![QueryResult::Resolved(pair.rhs)],
-                                    },
-                                )),
-                            )?;
-                            statues
-                                .push((QueryResult::Resolved(Rc::clone(&pair.lhs)), Status::FAIL));
-                        }
-
-                        operators::Compare::ListIn(lin) => {
-                            eval_context.start_record(&context)?;
-                            eval_context.end_record(
-                                &context,
-                                RecordType::ClauseValueCheck(ClauseCheck::InComparison(
-                                    InComparisonCheck {
-                                        status: Status::FAIL,
-                                        message: None,
-                                        custom_message: custom_message.clone(),
-                                        comparison: cmp,
-                                        from: QueryResult::Resolved(Rc::clone(&lin.lhs)),
-                                        to: vec![QueryResult::Resolved(lin.rhs)],
-                                    },
-                                )),
-                            )?;
-                            statues
-                                .push((QueryResult::Resolved(Rc::clone(&lin.lhs)), Status::FAIL));
-                        }
-
-                        operators::Compare::QueryIn(qin) => {
-                            // The diff is compared against the operand it did *not* come from. Every
-                            // element of it is filed below as `from`, and the message reads
-                            // "property [from] was not present in [to]" -- so with the diff taken from
-                            // the right-hand operand and `to` also the right-hand operand, the finding
-                            // asserted that a value was absent from a set that visibly contained it.
-                            // `==` between two queries can produce either side, so which one this is
-                            // has to be read from the result rather than assumed.
-                            let compared_with = match qin.diff_from {
-                                operators::DiffFrom::Lhs => &qin.rhs,
-                                operators::DiffFrom::Rhs => &qin.lhs,
-                            };
-                            let rhs = compared_with
-                                .iter()
-                                .cloned()
-                                .map(QueryResult::Resolved)
-                                .collect::<Vec<_>>();
-
-                            for lhs in qin.diff {
+                            operators::Compare::ValueIn(pair) => {
                                 eval_context.start_record(&context)?;
                                 eval_context.end_record(
                                     &context,
@@ -1686,16 +1661,79 @@ fn binary_operation<'value, 'loc: 'value>(
                                             message: None,
                                             custom_message: custom_message.clone(),
                                             comparison: cmp,
-                                            from: QueryResult::Resolved(Rc::clone(&lhs)),
-                                            to: rhs.clone(),
+                                            from: QueryResult::Resolved(Rc::clone(&pair.lhs)),
+                                            to: vec![QueryResult::Resolved(pair.rhs)],
                                         },
                                     )),
                                 )?;
-                                statues
-                                    .push((QueryResult::Resolved(Rc::clone(&lhs)), Status::FAIL));
+                                statues.push((
+                                    QueryResult::Resolved(Rc::clone(&pair.lhs)),
+                                    Status::FAIL,
+                                ));
+                            }
+
+                            operators::Compare::ListIn(lin) => {
+                                eval_context.start_record(&context)?;
+                                eval_context.end_record(
+                                    &context,
+                                    RecordType::ClauseValueCheck(ClauseCheck::InComparison(
+                                        InComparisonCheck {
+                                            status: Status::FAIL,
+                                            message: None,
+                                            custom_message: custom_message.clone(),
+                                            comparison: cmp,
+                                            from: QueryResult::Resolved(Rc::clone(&lin.lhs)),
+                                            to: vec![QueryResult::Resolved(lin.rhs)],
+                                        },
+                                    )),
+                                )?;
+                                statues.push((
+                                    QueryResult::Resolved(Rc::clone(&lin.lhs)),
+                                    Status::FAIL,
+                                ));
+                            }
+
+                            operators::Compare::QueryIn(qin) => {
+                                // The diff is compared against the operand it did *not* come from. Every
+                                // element of it is filed below as `from`, and the message reads
+                                // "property [from] was not present in [to]" -- so with the diff taken from
+                                // the right-hand operand and `to` also the right-hand operand, the finding
+                                // asserted that a value was absent from a set that visibly contained it.
+                                // `==` between two queries can produce either side, so which one this is
+                                // has to be read from the result rather than assumed.
+                                let compared_with = match qin.diff_from {
+                                    operators::DiffFrom::Lhs => &qin.rhs,
+                                    operators::DiffFrom::Rhs => &qin.lhs,
+                                };
+                                let rhs = compared_with
+                                    .iter()
+                                    .cloned()
+                                    .map(QueryResult::Resolved)
+                                    .collect::<Vec<_>>();
+
+                                for lhs in qin.diff {
+                                    eval_context.start_record(&context)?;
+                                    eval_context.end_record(
+                                        &context,
+                                        RecordType::ClauseValueCheck(ClauseCheck::InComparison(
+                                            InComparisonCheck {
+                                                status: Status::FAIL,
+                                                message: None,
+                                                custom_message: custom_message.clone(),
+                                                comparison: cmp,
+                                                from: QueryResult::Resolved(Rc::clone(&lhs)),
+                                                to: rhs.clone(),
+                                            },
+                                        )),
+                                    )?;
+                                    statues.push((
+                                        QueryResult::Resolved(Rc::clone(&lhs)),
+                                        Status::FAIL,
+                                    ));
+                                }
                             }
                         }
-                    },
+                    }
                 }
             }
             Ok(EvaluationResult::QueryValueResult(statues))
@@ -1729,9 +1767,19 @@ fn binary_operation<'value, 'loc: 'value>(
     // which is why `EmptyRhsUnsatisfiable` and its neighbours had to settle for SKIP-as-a-gate and this
     // does not.
     //
-    // `IncompatibleError` rather than a new variant, so every existing `(is_unevaluatable, is_strict)`
-    // site handles it with no new plumbing: a gate propagates it and fails its own rule closed, and an
-    // outer assertion turns it into the FAIL that keeps the rest of the file reporting.
+    // `UndecidableComparison`, and `is_unevaluatable` recognises it alongside `IncompatibleError`, so
+    // every existing `(is_unevaluatable, is_strict)` site handles it with no new plumbing: a gate
+    // propagates it and fails its own rule closed, and an outer assertion turns it into the FAIL that
+    // keeps the rest of the file reporting.
+    //
+    // Its own variant rather than `IncompatibleError`, which is what this used to raise, and the reason
+    // is the message. `IncompatibleError` renders as "Types or variable assignments are incompatible
+    // `<reason>`", and that claim is false here: the operands were of kinds the comparator has an arm
+    // for and the engine quit part way. Both frames that print it inherited the falsehood -- the rule
+    // frame read "not applicable: Types or variable assignments are incompatible `The regular
+    // expression could not be evaluated ...`", and the filter frame wrapped the same sentence in "due
+    // to retrieval error ... when handling clause, bailing". The new variant renders as its reason
+    // alone, so each frame supplies its own framing and neither asserts a type mismatch.
     //
     // Gate only. An assertion already fails closed here and its report names the clause and the operand
     // values; converting would replace that with a rule-level failure and lose the comparison record.
@@ -1747,15 +1795,11 @@ fn binary_operation<'value, 'loc: 'value>(
     // precondition `incomparable_membership_notice` already records -- those rules have to change first
     // -- and the notice is what covers it meanwhile. `Unanswerable` carries the split.
     //
-    // The fold is respected rather than preempted, which is the second thing `match_all` is read for here.
-    // Under `match_all` one undecided value is enough, because a clause that needs every value to pass
-    // cannot be satisfied while one is unknown. Under `some` a value that genuinely passed decides the
-    // clause on its own -- "undecidable or true is true", the same reading `eval_conjunction_clauses`
-    // applies to a disjunction -- so preempting there would turn a legitimate PASS into a failure. The
-    // `some` half of that test is `clause_passed`'s own arm rather than a second copy of it;
-    // `undecided_gate` says why the `match_all` half is not shared.
-    if let Some(reason) = undecided_gate(&outcome, undecided_reason, match_all, role) {
-        return Err(Error::IncompatibleError(reason));
+    // The caller's fold is respected rather than preempted, which is the second thing `match_all` is read
+    // for here, and both quantifiers have a value that decides the clause without the undecided ones.
+    // `undecided_gate` holds the table and says which arm answers what.
+    if let Some(reason) = undecided_gate(&outcome, evidence, match_all, role) {
+        return Err(Error::UndecidableComparison(reason));
     }
 
     // Which notice, or none: the verdict picks the wording, and the role decides whether a failure is
@@ -1806,53 +1850,101 @@ fn binary_operation<'value, 'loc: 'value>(
     Ok(outcome)
 }
 
-/// The reason a gate could not be decided, when that is what happened.
+/// What the per-value results carried, beyond the statuses [`EvaluationResult`] holds.
 ///
-/// `None` means the clause may answer with a status: it is an assertion, or nothing was undecided, or
-/// a `some` clause found a value that passed. `Some(reason)` means the gate has no answer and
+/// Both fields answer questions the status vector cannot. A value whose comparison had no answer and a
+/// value whose comparison answered no both arrive as `Status::FAIL`, so "was anything undecided" and
+/// "was anything decided against" are indistinguishable after the fact. Collected in the loop that
+/// builds the statuses, where each arm knows which of the two it is.
+///
+/// Grouped rather than passed as two parameters because they are only ever read together, by
+/// [`undecided_gate`], and because a bare `Option<String>` beside a bare `bool` at a call site says
+/// nothing about which is which.
+#[derive(Default)]
+struct ResultEvidence {
+    /// The first reason a comparison could not be answered, if one could not.
+    undecided: Option<String>,
+    /// Whether some value's comparison was performed and answered no. A refusal to compare kinds counts
+    /// here, not in `undecided`; see [`operators::Unanswerable`].
+    decided_failure: bool,
+}
+
+/// The reason a gate has no answer, when that is what happened.
+///
+/// `None` means the clause may answer with a status. `Some(reason)` means the gate has no answer and
 /// [`binary_operation`] must keep the error rather than report the FAIL its values carry.
 ///
-/// Split out rather than written inline because the condition is four terms and three of them are easy
-/// to get backwards.
+/// # The table
 ///
-/// Disjoint from the notice below it, by construction rather than by ordering, and it stays disjoint under
-/// both readings of the verdict. This fires only when `reason` is `Some`, and the arm that sets `reason`
-/// pushes a `Status::FAIL` for that value. Under `match_all` the notice needs every value PASS, which that
-/// FAIL denies. Under `some` the notice needs one PASS, and this declines outright when there is one. So no
-/// result satisfies both, and the early return can never suppress a notice that would otherwise have gone
-/// out. Worth stating because the two sites sit a few lines apart and the ordering looks load-bearing.
+/// This is three-valued logic over a quantifier, and writing it out is the only way to see that the two
+/// arms are mirror images rather than one rule with a special case:
 ///
-/// The `some` arm is [`clause_passed`]'s own, called rather than reimplemented. It used to be a local
-/// `any_passed`, written while the notice still read `all(PASS)` for both quantifiers; once `clause_passed`
-/// became `match_all`-aware the two were the same predicate over the same vector, and two copies that agree
-/// are the setup for the next divergence.
+/// ```text
+/// match_all  ->  no      if ANY value decided no
+///                unknown if none did and some value is unknown
+///                yes     if every value decided yes
+/// some       ->  yes     if ANY value decided yes
+///                unknown if none did and some value is unknown
+///                no      if every value decided no
+/// ```
 ///
-/// The `match_all` arm is deliberately NOT shared, and that is a difference of question rather than of
+/// Only the middle row of each is this function's business; the outer two are the status the caller's
+/// fold already produces. So each arm asks for the value that *decides* the clause without consulting
+/// the unknown ones, and declines when it finds one.
+///
+/// The first version of this had the `some` arm and no `match_all` arm, returning unknown whenever
+/// anything was undecided. That is `AND(no, unknown) = unknown`, and the right answer is `no`: a clause
+/// needing every value is decided the moment one value definitively fails. Measured on
+/// `Cat = [<thirty a characters>, "zzz"]` against `Cat[*] NOT IN [/(?!x)((a+)+)b/, "zzz"]`, a rule gated
+/// on that clause went from not-applicable to a reported violation -- an undecided sibling manufacturing
+/// a verdict out of an already-decided conjunction.
+/// `a_clauses_answer_follows_three_valued_logic_over_every_value_combination` pins all seven value
+/// subsets against both quantifiers, because the change that introduced the defect was checked against
+/// three shapes and both wrong cells were outside them.
+///
+/// # Why the `some` arm borrows and the `match_all` arm does not
+///
+/// The `some` arm is [`clause_passed`]'s own, called rather than reimplemented: "did any value pass" is
+/// the same predicate over the same vector for both of us, and two copies that agree are the setup for
+/// the next divergence.
+///
+/// The `match_all` arm cannot borrow from it, and that is a difference of question rather than of
 /// answer. [`clause_passed`] asks "did this clause pass", which decides eligibility for a notice about a
-/// future release. This asks "can this gate still be satisfied". Under `match_all` those come apart: a
-/// clause needing every value cannot be satisfied while one value is unknown, so one undecided value is
-/// enough here, where `clause_passed` would report not-passed and say nothing about why. Unifying them into
-/// one predicate would have to pick one of the two meanings for `match_all` and would silently hand the
-/// other caller the wrong one.
+/// future release; under `match_all` that is every-value-passed. This asks "is this clause still
+/// undecided", whose `match_all` answer turns on a decided *failure* -- a question about the FAILs, not
+/// the PASSes, and one the status vector cannot answer at all without [`ResultEvidence`]. Unifying them
+/// would have to pick one meaning for `match_all` and would hand the other caller the wrong one.
 ///
-/// Takes the reason by value: the caller has no use for it once this declines, and threading a
+/// # Disjoint from the notice
+///
+/// By construction rather than by ordering, under both readings. This fires only when `undecided` is
+/// `Some`, and the arm that sets it pushes a `Status::FAIL` for that value. Under `match_all` the notice
+/// needs every value PASS, which that FAIL denies. Under `some` the notice needs one PASS, and this
+/// declines outright when there is one. So no result satisfies both, and the early return can never
+/// suppress a notice that would otherwise have gone out.
+///
+/// Takes the evidence by value: the caller has no use for it once this declines, and threading a
 /// reference would make the `Err` construction clone a string on the path that is about to fail.
 fn undecided_gate(
     result: &EvaluationResult,
-    reason: Option<String>,
+    evidence: ResultEvidence,
     match_all: bool,
     role: ClauseRole,
 ) -> Option<String> {
-    let reason = reason?;
+    let reason = evidence.undecided?;
 
     if role.is_strict() {
         return None;
     }
 
-    // A `some` clause is decided by any value that passed, so an undecided sibling changes nothing.
-    // Under `match_all` no value can rescue the clause, so the question is only whether one was
-    // undecided -- which `reason` being `Some` already answered.
+    // `some` is decided by any value that passed, so an undecided sibling changes nothing.
     if !match_all && clause_passed(result, false) {
+        return None;
+    }
+
+    // `match_all` is decided by any value that failed for a reason, which is the mirror of the line
+    // above and the arm that was missing.
+    if match_all && evidence.decided_failure {
         return None;
     }
 

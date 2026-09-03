@@ -37,6 +37,22 @@ pub enum Error {
     IncompatibleRetrievalError(String),
     #[error("Types or variable assignments are incompatible `{0}`")]
     IncompatibleError(String),
+    /// A comparison that had no answer, as opposed to operands that could not be compared.
+    ///
+    /// Distinct from `IncompatibleError` for its message alone -- both are classified the same way by
+    /// `is_unevaluatable`, so every role-split site in `eval.rs` treats them identically. What
+    /// `IncompatibleError` adds is the claim "Types or variable assignments are incompatible", and that
+    /// is false of a comparison the engine abandoned part way: `fancy_regex` exhausting its backtracking
+    /// budget refuses a `String` against a `Regex`, a pair `compare_eq` has an arm for and did run.
+    /// Raising it there put the false claim inside both frames that print the reason -- a rule frame
+    /// reading "not applicable: Types or variable assignments are incompatible `The regular expression
+    /// could not be evaluated ...`", and a filter frame wrapping the same sentence in "due to retrieval
+    /// error ... when handling clause, bailing".
+    ///
+    /// Renders as the reason alone, with no framing of its own, because each of those two sites already
+    /// supplies its own and a second one reads as two errors stacked.
+    #[error("{0}")]
+    UndecidableComparison(String),
     #[error("Comparing incoming context with literals or dynamic results wasn't possible `{0}`")]
     NotComparable(String),
     #[error("Could not convert in JSON value object {0}")]

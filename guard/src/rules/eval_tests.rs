@@ -10791,6 +10791,150 @@ fn a_spent_budget_on_one_value_does_not_silence_another_values_notice(
     Ok(())
 }
 
+/// What a clause answers when its values carry a mix of decided and undecided comparisons.
+///
+/// Three answers rather than a `Status`, because that is the shape of the question and `Status` cannot
+/// hold it. A gate needs to tell "decided, and the answer is no" from "no answer", and both arrive as
+/// `Status::FAIL` on the values. The evaluator carries the difference in the `Result`, not the `Status`:
+/// a decided no is `Ok(FAIL)` and no answer is an `Err` the caller splits by role.
+#[derive(Debug, PartialEq, Eq)]
+enum ClauseAnswer {
+    /// Decided, and the clause does not hold.
+    DecidedNo,
+    /// Decided, and the clause holds.
+    DecidedYes,
+    /// No answer either way.
+    NoAnswer,
+}
+
+/// The three-valued table a clause's answer has to follow, over every combination of value kinds.
+///
+/// # Why this is a table and not two cells
+///
+/// `undecided_gate` reads a vector of per-value statuses and decides whether the clause has an answer.
+/// That is three-valued logic over a quantifier, and it has two arms that are mirror images:
+///
+///     match_all  ->  no if ANY value is decided-no;  unknown if none is and some value is unknown
+///     some       ->  yes if ANY value is decided-yes; unknown if none is and some value is unknown
+///
+/// The first version of this fix implemented the `some` arm and left the `match_all` arm returning
+/// unknown on `reason.is_some()` alone. That is wrong for the reason the table makes obvious:
+/// `AND(no, unknown)` is `no`, not unknown, because a clause needing every value is already decided the
+/// moment one value definitively fails. Measured on `Cat = [<thirty a characters>, "zzz"]` against
+/// `Cat[*] NOT IN [/(?!x)((a+)+)b/, "zzz"]`, before this commit: a rule whose gate was that clause went
+/// from not-applicable to a reported violation, because an undecided sibling was read as making an
+/// already-decided conjunction unknown.
+///
+/// A two-cell test would have pinned exactly that pair and nothing around it, which is how the defect
+/// got in: the change that introduced it was checked against three shapes, and both wrong cells were
+/// outside those three. So this enumerates all seven non-empty subsets of {undecided, decided-no,
+/// decided-yes} against both quantifiers, and asserts the whole table rather than the diff.
+///
+/// # Reading a cell
+///
+/// The clause is evaluated directly rather than through a rule, so the answer is observed where it is
+/// made. One level up a gate turns `DecidedNo` into a rule-level SKIP and an `Err` into a rule-level
+/// failure -- indistinguishable as exit codes, which is why asserting on the rule would need the
+/// rendered message to tell the two apart. `.github/scripts` has no oracle for this; the end-to-end
+/// spelling is `an_undecided_membership_gate_fails_the_rule_closed` in `guard/tests/validate.rs`.
+///
+/// The `Assertion` half is the control, and it is the same table flattened: an assertion has no use for
+/// the third value, so `NoAnswer` becomes `Ok(FAIL)` and every row that is not decided-yes fails. It
+/// must not move, because an assertion's report names the clause and its operands.
+#[test]
+fn a_clauses_answer_follows_three_valued_logic_over_every_value_combination() -> Result<()> {
+    // Thirty `a` characters is the length at which this pattern exhausts `fancy_regex`'s backtracking
+    // budget, so the pair is comparable in kind and has no answer. `"zzz"` is named by the denylist, so
+    // `NOT IN` decides no. `"q"` is named by neither, so `NOT IN` decides yes.
+    const UNDECIDED: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    const DECIDED_NO: &str = "zzz";
+    const DECIDED_YES: &str = "q";
+    const DENYLIST: &str = r#"[/(?!x)((a+)+)b/, "zzz"]"#;
+
+    use ClauseAnswer::{DecidedNo, DecidedYes, NoAnswer};
+
+    // (label, values, match_all answer, some answer)
+    let table = [
+        ("U", vec![UNDECIDED], NoAnswer, NoAnswer),
+        ("F", vec![DECIDED_NO], DecidedNo, DecidedNo),
+        ("P", vec![DECIDED_YES], DecidedYes, DecidedYes),
+        ("UF", vec![UNDECIDED, DECIDED_NO], DecidedNo, NoAnswer),
+        ("UP", vec![UNDECIDED, DECIDED_YES], NoAnswer, DecidedYes),
+        ("FP", vec![DECIDED_NO, DECIDED_YES], DecidedNo, DecidedYes),
+        (
+            "UFP",
+            vec![UNDECIDED, DECIDED_NO, DECIDED_YES],
+            DecidedNo,
+            DecidedYes,
+        ),
+    ];
+
+    for (label, values, expected_all, expected_some) in table {
+        let mut input = String::from("Cat:\n");
+        for v in &values {
+            input.push_str("  - ");
+            input.push_str(v);
+            input.push('\n');
+        }
+        let value = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(&input)?)?;
+
+        for (quantifier, expected) in [("", &expected_all), ("some ", &expected_some)] {
+            let clause_str = format!("{}Cat[*] NOT IN {}", quantifier, DENYLIST);
+            let clause = GuardClause::try_from(clause_str.as_str())?;
+
+            let mut eval = BasicQueryTesting {
+                root: Rc::new(value.clone()),
+                recorder: None,
+            };
+            let answer = match eval_guard_clause(&clause, &mut eval, ClauseRole::Gate) {
+                Ok(Status::PASS) => DecidedYes,
+                Ok(Status::FAIL) => DecidedNo,
+                Ok(other) => panic!("`{}` on {} answered {:?}", clause_str, label, other),
+                Err(e) => {
+                    assert!(
+                        is_unevaluatable(&e),
+                        "`{}` on {} raised an error the evaluator does not classify as \
+                         unevaluatable, so every role-split site would propagate it and abort the \
+                         run instead of failing the clause: {}",
+                        clause_str,
+                        label,
+                        e
+                    );
+                    NoAnswer
+                }
+            };
+            assert_eq!(
+                *expected, answer,
+                "`{}` over {} answered {:?} as a gate, expected {:?}. A gate that answers \
+                 `NoAnswer` fails its rule closed; one that answers `DecidedNo` reports the rule as \
+                 not applicable. Getting those two the wrong way round either invents a violation \
+                 or drops a check at exit 0.",
+                clause_str, label, answer, expected
+            );
+
+            // The assertion control: no third value, so anything not decided-yes fails, and nothing
+            // reaches the caller as an error.
+            let mut eval = BasicQueryTesting {
+                root: Rc::new(value.clone()),
+                recorder: None,
+            };
+            let asserted = eval_guard_clause(&clause, &mut eval, ClauseRole::Assertion)?;
+            let expected_asserted = match expected {
+                DecidedYes => Status::PASS,
+                _ => Status::FAIL,
+            };
+            assert_eq!(
+                expected_asserted, asserted,
+                "`{}` over {} answered {:?} as an assertion, expected {:?}; the assertion half of \
+                 this table must not move",
+                clause_str, label, asserted, expected_asserted
+            );
+        }
+    }
+
+    Ok(())
+}
+
 /// Which stderr line a cell of the two tests above expects, so each one names the wording rather than
 /// only whether something arrived.
 ///
