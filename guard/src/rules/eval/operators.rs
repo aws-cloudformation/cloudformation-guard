@@ -386,7 +386,8 @@ fn substring_or_contained_in(lhs: Rc<PathAwareValue>, rhs: Rc<PathAwareValue>) -
 /// miss, and negating a miss passes: `["s3","zzz"] NOT IN Haystack` reported compliance while the
 /// haystack verbatim contained `s3`, and its typed-out spelling failed.
 ///
-/// A scalar is found or it is not, so `Partial` and `HoldsANonString` name a list only.
+/// A scalar is found or it is not, so `Partial` names a list only. `HoldsANonString` names a list too;
+/// `NotAString` is its scalar sibling and exists for the same reason, which is recorded below.
 ///
 /// `HoldsANonString` is separate from `Partial`, and the reason is a defect this function shipped with.
 /// Containment cannot be asked of an element that is not a string, and the literal arm says so: it hands
@@ -410,10 +411,30 @@ fn substring_or_contained_in(lhs: Rc<PathAwareValue>, rhs: Rc<PathAwareValue>) -
 /// another one. Empty is `NoneFound` rather than unanswerable because it keeps its existing answer --
 /// `NOT IN` over nothing passes -- and folding it in would change a cell this is not about.
 ///
-/// A non-string *scalar* is deliberately not routed here. `contained_in` already asks `compare_eq` for
-/// it and gets "not comparable", so `%int in Haystack` and `%int not in Haystack` both fail already, and
-/// the grid pins that. Sending it here as well would change no verdict and would attach a message about
-/// list elements to a value that has none.
+/// A non-string *scalar* used to be left out, and the reason given for leaving it out was checked
+/// against the wrong spelling. It read: `contained_in` already asks `compare_eq` for such a value and
+/// gets "not comparable", so `%int in Haystack` and `%int not in Haystack` both fail already. That is
+/// true, and it is true of the `(Some, None)` arm, which is where a literal needle goes:
+/// `substring_or_contained_in` there falls through to `contained_in` per result and the incomparable
+/// answer is the clause's answer. The `(None, None)` arm keeps one verdict for the whole left-hand
+/// operand set and only treats `contained_in`'s *Success* as a match, so an incomparable pairing was
+/// indistinguishable from a miss, joined the unmatched diff, and negated to a pass. With
+/// `Haystack: "aws:arn:s3::${s3}"`, every non-string scalar the document could hold denied nothing:
+///
+/// ```text
+/// Int    5        not in Haystack   PASS      not in "aws:arn:..."   FAIL
+/// Float  5.5      not in Haystack   PASS      not in "aws:arn:..."   FAIL
+/// Bool   true     not in Haystack   PASS      not in "aws:arn:..."   FAIL
+/// Map    {a: 1}   not in Haystack   PASS      not in "aws:arn:..."   FAIL
+/// Null   null     not in Haystack   PASS      not in "aws:arn:..."   FAIL
+/// ```
+///
+/// Reporting that incomparable answer from the loop instead was tried and rejected. `contained_in`
+/// answers "not comparable" for a *list* against a string too -- lists and strings are not comparable
+/// types -- and containment has already decided that pairing, correctly, as a genuine miss. So the
+/// blanket reading turns `NoneList not in Haystack`, every element a string and none present, from PASS
+/// into FAIL. That is `undenied_wholly_absent_list_query_haystack`, kept as a control by the commit
+/// that added `HoldsANonString`, and it fails under the blanket fix and passes under this one.
 #[derive(Copy, Clone, PartialEq)]
 enum StringContainment {
     /// Every element, or the scalar itself, is contained.
@@ -423,6 +444,10 @@ enum StringContainment {
     Partial,
     /// At least one element is not a string, so containment cannot be asked of it.
     HoldsANonString,
+    /// The left-hand value is a scalar that is not a string, so containment cannot be asked of it
+    /// either. Separate from `HoldsANonString` so the reason names what the value is: a scalar holds
+    /// nothing, and a message about its elements would describe a list it is not.
+    NotAString,
     /// Every element is a string and none is contained, or the right-hand side is not a string at all.
     NoneFound,
 }
@@ -461,13 +486,11 @@ fn found_in_string(lhs: &PathAwareValue, rhs: &PathAwareValue) -> StringContainm
             }
         }
 
-        scalar => {
-            if contained(scalar).unwrap_or(false) {
-                StringContainment::All
-            } else {
-                StringContainment::NoneFound
-            }
-        }
+        scalar => match contained(scalar) {
+            Some(true) => StringContainment::All,
+            Some(false) => StringContainment::NoneFound,
+            None => StringContainment::NotAString,
+        },
     }
 }
 
@@ -828,7 +851,8 @@ impl Comparator for InOperation {
                             // still wins, which is this loop's existing "any right-hand value will do"
                             // reading, so an undecidable pairing only decides if nothing else does.
                             undecidable @ (StringContainment::Partial
-                            | StringContainment::HoldsANonString) => {
+                            | StringContainment::HoldsANonString
+                            | StringContainment::NotAString) => {
                                 if unanswerable_against.is_none() {
                                     unanswerable_against = Some((Rc::clone(eachr), undecidable));
                                 }
@@ -852,14 +876,22 @@ impl Comparator for InOperation {
                     // direction for a policy engine: a denylist that cannot decide must not report
                     // compliance.
                     //
-                    // Two reasons, because they are two different complaints and a reader acts on them
-                    // differently: a list whose elements are all strings but only some of them present,
-                    // and a list holding something containment cannot be asked of at all.
+                    // Three reasons, because they are three different complaints and a reader acts on
+                    // them differently: a list whose elements are all strings but only some of them
+                    // present, a list holding something containment cannot be asked of at all, and a
+                    // scalar that is not a string. The third says "is not a string" rather than "holds",
+                    // since a scalar holds nothing and the other message would describe a list it is
+                    // not.
                     if let Some((other, undecidable)) = unanswerable_against {
                         let reason = match undecidable {
                             StringContainment::HoldsANonString => format!(
                                 "{} holds a value that is not a string, so it cannot be tested for \
                                  containment in {}",
+                                eachl, other
+                            ),
+
+                            StringContainment::NotAString => format!(
+                                "{} is not a string, so it cannot be tested for containment in {}",
                                 eachl, other
                             ),
 

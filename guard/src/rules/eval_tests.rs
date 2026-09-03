@@ -10189,6 +10189,21 @@ fn a_one_element_list_compares_the_same_typed_as_resolved(
 /// The `int_needle` and `list_membership` cells are controls. A non-string operand stays incomparable
 /// in both spellings, and `IN` against an actual list is still membership: nothing above touches the
 /// reading that `docs/CLAUSES.md` documents.
+///
+/// The five scalar type cells -- `Int`, `Float`, `Bool`, `Map`, `Null` -- are the same defect one type
+/// at a time, and they are separate from `int_needle` because the two spellings reach different arms.
+/// `%int` is a literal and goes to `(Some, None)`, which asks `contained_in` per result and reports the
+/// incomparable answer, so both polarities failed there and the earlier `int_needle` cells pinned it.
+/// A property reference goes to `(None, None)`, which keeps one verdict for the whole operand set and
+/// treated an incomparable pairing as a plain miss -- so `Int not in Haystack` reported compliance at
+/// exit 0 for every non-string value a document can hold, while `Int not in "aws:arn:s3::${s3}"` failed.
+/// Naming the type in each case matters because a fix aimed at one of them would leave the rest: the
+/// only thing the five have in common is that containment cannot be asked of them.
+///
+/// `undenied_wholly_absent_list_query_haystack` is the control that decides where the fix goes. Making
+/// the loop report `contained_in`'s "not comparable" answer also closes the five cells above, and it
+/// breaks this one: a list against a string is an incomparable pair too, and containment has already
+/// decided that pairing correctly as a genuine miss. `NoneList not in Haystack` must stay PASS.
 #[rstest::rstest]
 #[case::query_needle_literal_haystack(r#"Needle in "aws:arn:s3::${s3}""#, Status::PASS)]
 #[case::query_needle_query_haystack("Needle in Haystack", Status::PASS)]
@@ -10251,6 +10266,35 @@ fn a_one_element_list_compares_the_same_typed_as_resolved(
     Status::FAIL
 )]
 #[case::denied_wholly_typed_list_query_haystack("IntList not in Haystack", Status::FAIL)]
+#[case::int_query_needle_literal_haystack(r#"Int in "aws:arn:s3::${s3}""#, Status::FAIL)]
+#[case::int_query_needle_query_haystack("Int in Haystack", Status::FAIL)]
+#[case::denied_int_query_needle_literal_haystack(r#"Int not in "aws:arn:s3::${s3}""#, Status::FAIL)]
+#[case::denied_int_query_needle_query_haystack("Int not in Haystack", Status::FAIL)]
+#[case::float_query_needle_literal_haystack(r#"Float in "aws:arn:s3::${s3}""#, Status::FAIL)]
+#[case::float_query_needle_query_haystack("Float in Haystack", Status::FAIL)]
+#[case::denied_float_query_needle_literal_haystack(
+    r#"Float not in "aws:arn:s3::${s3}""#,
+    Status::FAIL
+)]
+#[case::denied_float_query_needle_query_haystack("Float not in Haystack", Status::FAIL)]
+#[case::bool_query_needle_literal_haystack(r#"Bool in "aws:arn:s3::${s3}""#, Status::FAIL)]
+#[case::bool_query_needle_query_haystack("Bool in Haystack", Status::FAIL)]
+#[case::denied_bool_query_needle_literal_haystack(
+    r#"Bool not in "aws:arn:s3::${s3}""#,
+    Status::FAIL
+)]
+#[case::denied_bool_query_needle_query_haystack("Bool not in Haystack", Status::FAIL)]
+#[case::map_query_needle_literal_haystack(r#"Map in "aws:arn:s3::${s3}""#, Status::FAIL)]
+#[case::map_query_needle_query_haystack("Map in Haystack", Status::FAIL)]
+#[case::denied_map_query_needle_literal_haystack(r#"Map not in "aws:arn:s3::${s3}""#, Status::FAIL)]
+#[case::denied_map_query_needle_query_haystack("Map not in Haystack", Status::FAIL)]
+#[case::null_query_needle_literal_haystack(r#"Null in "aws:arn:s3::${s3}""#, Status::FAIL)]
+#[case::null_query_needle_query_haystack("Null in Haystack", Status::FAIL)]
+#[case::denied_null_query_needle_literal_haystack(
+    r#"Null not in "aws:arn:s3::${s3}""#,
+    Status::FAIL
+)]
+#[case::denied_null_query_needle_query_haystack("Null not in Haystack", Status::FAIL)]
 fn substring_in_answers_the_same_against_a_query_as_against_a_literal(
     #[case] clause: &str,
     #[case] expected: Status,
@@ -10264,7 +10308,12 @@ fn substring_in_answers_the_same_against_a_query_as_against_a_literal(
         BadList: ["s3", "zzz"],
         NoneList: ["zz", "qq"],
         MixedList: ["s3", 5],
-        IntList: [5, 6]
+        IntList: [5, 6],
+        Int: 5,
+        Float: 5.5,
+        Bool: true,
+        Map: { "a": 1 },
+        Null: null
     }
     "#;
 
