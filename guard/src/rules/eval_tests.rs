@@ -1626,7 +1626,7 @@ fn a_bare_name_capture_does_not_leak_across_iterations_of_a_block() -> Result<()
 
     // The names order the iteration, so the third document spells the same two resources as
     // `ABucketB` and `ZBucketA` to put the non-compliant one first.
-    let arrangements = [
+    let arrangements: [_; 3] = [
         (
             "the non-compliant bucket alone",
             r#"
@@ -5083,7 +5083,7 @@ fn test_s3_bucket_pro_serv() -> Result<()> {
     "#;
 
     let s3_rule = RulesFile::try_from(rule)?;
-    let expectations = [
+    let expectations: [_; 10] = [
         Status::FAIL,
         Status::PASS,
         Status::PASS,
@@ -5589,7 +5589,7 @@ fn empty_on_a_lone_variable_asks_about_the_value() -> Result<()> {
     "#;
 
     // (clause, expected, why)
-    let cases = [
+    let cases: [_; 10] = [
         (
             "let x = Resources.Vol.Properties.Tags\nrule r { %x !EMPTY }",
             Status::FAIL,
@@ -5718,7 +5718,7 @@ fn an_unanswerable_clause_never_silences_the_rule_it_guards() -> Result<()> {
     const HOLDS: &str = "Resources.Vol.Properties.Encrypted == false";
 
     // Clauses with no answer in either polarity: the operand does not support the operator.
-    let unanswerable = [
+    let unanswerable: [_; 3] = [
         ("direct bool", "Resources.Vol.Properties.Enabled !EMPTY"),
         ("direct int", "Resources.Vol.Properties.Size EMPTY"),
         ("let-bound bool", "%flag !EMPTY"),
@@ -5726,7 +5726,7 @@ fn an_unanswerable_clause_never_silences_the_rule_it_guards() -> Result<()> {
 
     // Plain templates rather than `format!`, because every one of these is mostly braces and the
     // escaping is harder to read than the rules they describe. GUARD is the clause under test.
-    let shapes = [
+    let shapes: [_; 7] = [
         ("gate_direct", "rule guarded when GUARD { BODY }"),
         (
             "when_inside_gate",
@@ -5764,7 +5764,7 @@ fn an_unanswerable_clause_never_silences_the_rule_it_guards() -> Result<()> {
     // over unchanged, because `ValueScope::resolve_variable` delegates to the parent.
     let type_block_shape =
         "rule inner(u) { AWS::EC2::Volume when GUARD { THOLDS } }\nrule guarded when inner(\"x\") { BODY }";
-    let type_block_unanswerable = [
+    let type_block_unanswerable: [_; 3] = [
         ("direct bool", "Properties.Enabled !EMPTY"),
         ("direct int", "Properties.Size EMPTY"),
         ("let-bound bool", "%flag !EMPTY"),
@@ -6367,7 +6367,7 @@ fn an_inapplicable_dependent_rule_does_not_fail_the_reference() -> Result<()> {
         "r": { "Type": "AWS::IAM::Role", "Properties": { "Path": "/" } },
         "t": { "Type": "AWS::DynamoDB::Table", "Properties": { "BillingMode": "PAY_PER_REQUEST" } } } }"#;
 
-    let scenarios = [
+    let scenarios: [_; 4] = [
         (
             "H_A holds and H_B does not apply",
             CLEAN_ROLE,
@@ -7418,7 +7418,7 @@ fn the_status_decisions_with_no_prior_coverage_are_correct() -> Result<()> {
     // clause-level flip lives inside that block. A first version of this test used
     // `not Resources.B.Properties.Missing EMPTY`, a plain key path: it produced the right answer
     // by an entirely different route and left the arm at zero. Worth knowing before editing these.
-    let clause_level_negation = [
+    let clause_level_negation: [_; 5] = [
         // %buckets is not empty, so `EMPTY` is false and the clause's `not` makes it true.
         (
             "not %buckets EMPTY",
@@ -7458,7 +7458,7 @@ fn the_status_decisions_with_no_prior_coverage_are_correct() -> Result<()> {
 
     // A negated parameterized call. The SKIP case is already covered; these are the two where the
     // invoked rule reached a verdict and the negation has to invert it.
-    let negated_parameterized = [
+    let negated_parameterized: [_; 2] = [
         (
             "not r(x) where r fails",
             "rule inner(n) { Resources.B.Properties.Name == %n }\nrule r { not inner(\"wrong\") }",
@@ -7473,7 +7473,7 @@ fn the_status_decisions_with_no_prior_coverage_are_correct() -> Result<()> {
 
     // A disjunction in which every disjunct skipped. SKIP rather than PASS matters: PASS would
     // report that one of the alternatives held when none of them was evaluated.
-    let all_disjuncts_skip = [(
+    let all_disjuncts_skip: [_; 1] = [(
         "gate disjunction where both sides skip",
         "rule gate(ty) { Resources.*[ Type == %ty ].Properties.Name == \"zzz\" }\n\
          rule r when gate(\"AWS::None::One\") or gate(\"AWS::None::Two\") { \
@@ -7806,7 +7806,7 @@ fn an_out_of_range_index_does_not_panic() -> Result<()> {
     const DATA: &str = r#"{ "Items": [ "zero", "one" ], "Resources": { "A": { "Type": "t" } } }"#;
 
     // `i32::MIN` after the parser's `as i32` narrowing, spelled both ways, plus the plain negative.
-    let queries = [
+    let queries: [_; 4] = [
         "Items[2147483648]",
         "Items[-2147483648]",
         "Items[-1]",
@@ -7893,7 +7893,7 @@ fn a_type_block_skip_names_the_cause_it_can_support() -> Result<()> {
     }"#;
 
     // (label, rules, the fragment the reason must contain, a fragment it must not)
-    let cases = [
+    let cases: [_; 4] = [
         (
             "a `when` condition that exempted the only volume",
             r###"
@@ -8035,7 +8035,7 @@ fn a_comparison_skip_reason_names_the_gate_it_was_reached_through() -> Result<()
     // comes first, and the defect is in what the *referring* rule says about itself. The reporters read
     // it per rule -- `common.rs` calls it on each skipped rule's own record -- so naming one is the
     // faithful call rather than a convenience.
-    let cases = [
+    let cases: [_; 8] = [
         (
             "a query filter, with no `when` anywhere in the rule",
             r#"rule g { Resources.*[ Properties.Size > 10 ] { Properties.X == 1 } }"#,
@@ -12410,7 +12410,7 @@ fn a_clauses_answer_follows_three_valued_logic_over_every_value_combination() ->
     use ClauseAnswer::{DecidedNo, DecidedYes, NoAnswer};
 
     // (label, values, match_all answer, some answer)
-    let table = [
+    let table: [_; 7] = [
         ("U", vec![UNDECIDED], NoAnswer, NoAnswer),
         ("F", vec![DECIDED_NO], DecidedNo, DecidedNo),
         ("P", vec![DECIDED_YES], DecidedYes, DecidedYes),
