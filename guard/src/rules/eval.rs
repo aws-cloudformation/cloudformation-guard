@@ -236,12 +236,19 @@ fn empty_reference_message(negated: bool) -> String {
 
 /// True when some pair the membership comparison builds cannot be compared at all.
 ///
-/// The pairs are the flattened operands: each left-hand value contributes its ELEMENTS if it is a list and
-/// itself otherwise, and the right-hand side is flattened one level the same way. That is the granularity
-/// `contained_in` decides a clause at, which is what makes this predicate answerable about the clause
-/// rather than about a comparison nothing performed. One refusal is enough and an answered pair cancels
-/// nothing: a clause that matched nothing passed on every pair it built, so a pair it could not decide is
-/// part of what its answer rests on.
+/// The pairs are the ones `contained_in` builds, at every granularity it decides at, asked per pair of
+/// operand VALUES rather than over one flattened cross product. Three cases and each arm below names its
+/// own: two lists are decided element by element, and also whole-list against each entry when the denylist
+/// holds a list; a list against anything else is refused on the SHAPES with no comparison performed at
+/// all; and a value that does not decompose is compared as itself. One refusal is enough and an answered
+/// pair cancels nothing: a clause that matched nothing passed on every pair it built, so a pair it could
+/// not decide is part of what its answer rests on.
+///
+/// Flattening both operands one level and taking the cross product was the previous shape, and it reaches
+/// the element pairs correctly. What it cannot reach is the other two: a flattened pair set has no whole
+/// value left in it to carry the second granularity, and a refusal that never calls `compare_eq` leaves no
+/// result for a predicate built on `compare_eq` answers to read. Both were measured as missing rather than
+/// argued -- see the grid below.
 ///
 /// `RegexError` is not a refusal here -- see the arm below, which says why an exhausted backtracking budget
 /// is a comparable pair the engine gave up on.
@@ -308,14 +315,62 @@ fn empty_reference_message(negated: bool) -> String {
 /// its counts and these are not comparable cell for cell. What is comparable is the before-and-after on one
 /// grid, which is the row pair above.
 ///
-/// The one remaining false negative is `EmptyList NOT IN Str`, and it is the only cell of the grid whose
-/// notice this fix takes away rather than corrects: it fired before, on the whole-value pair
-/// `compare_eq([], "a")`. `contained_in`'s list-against-non-list arm refuses structurally, without asking
-/// `compare_eq` at all, so there is a refusal the clause passed on -- and flattening an empty list yields
-/// no element, so the predicate has nothing to compare and answers false. The notice's own wording is
-/// false of the cell twice over: there is no value and there are no elements. What an empty left-hand list
-/// should mean for `IN` is an open question `contained_in` deliberately declines to answer, so this is left
-/// where that question is rather than covered by a sentence that does not describe it.
+/// # The alignment took thirteen owed notices with it, and this is the count
+///
+/// **Corrected on 2026-09-03, and it is a correction of a number rather than a disagreement about a
+/// reading.** The paragraph here said the one remaining false negative was `EmptyList NOT IN Str`, and that
+/// it was the only cell whose notice the alignment took away rather than corrected. Wrong by twelve. The
+/// oracle above is `compare_eq`'s own answers over the pairs the operator built, which is the very thing
+/// the alignment changed, so it could not see a pair the operator builds and the predicate does not.
+///
+/// Re-measured against an oracle that does not depend on this predicate at all: a release binary built with
+/// the four `NotComparable` suppressions promoted the way `RegexError` already is -- `is_one_of`,
+/// `contained_in`'s whole-list loop, `contained_in`'s scalar loop, and the `(None, None)` arm's dropped
+/// result -- and the notice taken as owed exactly where the clause PASSES today and answers differently
+/// under that binary. That is the notice's own sentence, "a future release fails closed here", read off the
+/// language. Over 1080 clause shapes, eighteen left-hand values against thirty right-hand spellings in both
+/// polarities over one document:
+///
+/// ```text
+///                              true positives   false alarms   beside a non-PASS   false negatives   agreeing
+/// before the alignment                    289             16                   0                81        694
+/// the alignment                           355              0                   0                15        710
+/// both granularities and the shape        370              0                   0                 0        710
+/// ```
+///
+/// So the alignment removed 29 notices: the 16 false alarms, which is the win, and 13 that were owed. The
+/// 13 are what "wrong by twelve" counts. The 15 false negatives are the 13 plus two that were never emitted
+/// in either release -- `EmptyOuter NOT IN [[2], [7, 8]]` and `Nest NOT IN [[2], [7, 8]]`, whose whole-value
+/// pair the old predicate did build and did get an answer for, because two lists of equal length zip.
+///
+/// Of the 15, seven are the second granularity and eight are the shape refusal. Attributed by measurement
+/// rather than by reading: a build carrying each half alone notices its own seven or eight, neither notices
+/// the other's, and no cell needed both. The smallest of each is worth carrying, because neither is exotic.
+/// The granularity one is an `EmptyOuter` of `[[]]` against `[[1]]`, where every element pair is answered --
+/// `compare_eq([], [1])` mismatches on length -- and the whole-value pair has equal lengths, so it zips and
+/// `compare_eq([], 1)` refuses. The shape one is a `Ports` of `[85]` against a `D13[*]` of `1` and `3`,
+/// where the element pairs are int against int and the operator never compared them: it paired the whole
+/// list with a scalar and refused on the kinds.
+///
+/// `EmptyList NOT IN Str` is one of the 13 and not a residual. It is a shape refusal, `([], "abc")`, which
+/// is there whether or not anything flattens; the old paragraph reached "not repairable" from the element
+/// pairs, of which there are indeed none, and stated it of the clause. The VERDICT question that cell also
+/// sits in is a different one and is untouched: `Empty NOT IN Str` against `Empty NOT IN Strs[*]` owe
+/// opposite answers from operands no predicate can tell apart, which `27383c98` proves and which nothing
+/// here moves. A notice is not a verdict, and the impossibility is about the verdict.
+///
+/// The wider grid a repair has to survive is not this one, because a before-and-after only covers the
+/// shapes it enumerates. 928 further shapes -- the `[0]`/`[*]` spellings the impossibility proofs turn on, a
+/// two-value left query and `some`, an empty string, an empty map and a null on the left -- carry 25 more
+/// owed notices at the alignment and none after. Then 402 more with a LITERAL on the left, which is the one
+/// arm reached by reading rather than by measurement: `InOperation::compare`'s `(Some, None)` arm decides a
+/// list-valued literal with `Vec::contains`, which is `PartialEq` and cannot refuse, so it should own no
+/// owed notice. It does not. A list written out on the left of a clause does not parse at all, so that arm
+/// is reachable only through a `let`, and 306 `let`-bound cells reach 61 true positives with nothing owed
+/// and nothing spurious.
+///
+/// Across all 2410 cells: no false alarm, no owed notice missed, and status, exit code and stdout byte
+/// count identical to the merge-base. This is diagnostics.
 ///
 /// # The `[*]` bypass this fix waited on, and why the wait is over
 ///
@@ -347,8 +402,12 @@ fn empty_reference_message(negated: bool) -> String {
 /// [`incomparable_membership_notice`] sets out, and this predicate is the warning that goes out meanwhile.
 /// Those five notices are what the granularity fix had to leave alone, and it does: four are a `!Ref`-shaped
 /// MAP against a regex denylist and the fifth a MAP against a plain `String`, and a map is not a list, so
-/// nothing about them flattens. `a_left_hand_value_that_is_not_a_list_is_not_flattened` pins that shape as a
-/// unit cell and the registry corpus pins the five themselves.
+/// nothing about them flattens. The same fact keeps them clear of both arms added since: the second
+/// granularity needs a list on the left, and so does the shape refusal, so all five stay on the
+/// does-not-decompose arm they were always answered by. Measured rather than inferred -- the five notice
+/// bodies before their `Location[...]` tails are byte-identical to the ones the merge-base prints.
+/// `a_left_hand_value_that_is_not_a_list_is_not_flattened` pins that shape as a unit cell and the registry
+/// corpus pins the five themselves.
 fn incomparable_membership(lhs: &[QueryResult], rhs: &[QueryResult]) -> bool {
     let values = |results: &[QueryResult]| -> Vec<Rc<PathAwareValue>> {
         results
@@ -359,106 +418,174 @@ fn incomparable_membership(lhs: &[QueryResult], rhs: &[QueryResult]) -> bool {
             })
             .collect()
     };
-    // Flattened one level, which is the granularity `contained_in` dispatches at: a list-valued left-hand
-    // side is decided by `is_one_of` over its elements, and anything else by the value itself. Not
-    // recursively -- for a `Deep` of `[["a"]]` the element is `["a"]`, and that is the operand `is_one_of`
-    // is handed, so a second level would compare something no clause compares.
-    //
-    // An empty list therefore contributes nothing and the guard below answers false. That is the same
-    // reading as the right-hand guard: nothing compared is nothing to warn about.
-    let mut lhs_elements = Vec::new();
-    for each in values(lhs) {
-        match &*each {
-            PathAwareValue::List((_, list)) => {
-                lhs_elements.extend(list.iter().cloned().map(Rc::new));
-            }
-            _ => lhs_elements.push(Rc::clone(&each)),
-        }
-    }
-    if lhs_elements.is_empty() {
+    let lhs_values = values(lhs);
+    let rhs_values = values(rhs);
+    // Nothing on one side is nothing compared, and nothing compared is nothing to warn about. About the
+    // VALUES and not their elements: an empty list is a value `contained_in` receives and answers for,
+    // and the arms below say what it answers.
+    if lhs_values.is_empty() || rhs_values.is_empty() {
         return false;
     }
-    let mut elements = Vec::new();
-    for each in values(rhs) {
-        match &*each {
-            PathAwareValue::List((_, list)) => {
-                elements.extend(list.iter().cloned().map(Rc::new));
-            }
-            _ => elements.push(Rc::clone(&each)),
-        }
-    }
-    if elements.is_empty() {
-        return false;
-    }
+
+    // Whether `InOperation::compare` will take its `(None, None)` arm, which is the one thing here that
+    // is about the call rather than about the values. That arm drops the refusal the shape arm below is
+    // about; every other arm reports it and the clause fails closed on it already. Asked of
+    // `operators::is_literal` rather than re-derived, so the two cannot drift.
+    let both_queried = operators::is_literal(lhs).is_none() && operators::is_literal(rhs).is_none();
+
     // Some pair refused for a reason that is an incomparability. Tracked rather than returned, because
-    // the answer is a property of the whole cross product: one refusal is enough, and no refusal at all
-    // means there is nothing here to warn about.
+    // the answer is a property of every pair the clause was decided on: one refusal is enough, and no
+    // refusal at all means there is nothing here to warn about.
+    //
+    // An answered pair cancels nothing. It used to `return false`, on the reading that a clause with
+    // anything comparable in it decided on the comparable pair. That is false of `NOT IN`: a value
+    // passes it by matching NOTHING, so every pair was built and an answered one says only that this
+    // element was not the collision. Walking order made the silence arbitrary as well -- `Str NOT IN
+    // Haystack` over `["zzz", 7, false]` was silent because `"zzz"` is written first, and noticed if it
+    // is written last.
     let mut refused = false;
-    for value in &lhs_elements {
-        for element in &elements {
-            match compare_eq(value, element) {
-                // A pair the comparison answered. It cancels nothing, and the loop keeps going.
+    for value in &lhs_values {
+        for element in &rhs_values {
+            match (&**value, &**element) {
+                // `contained_in`'s list-against-list arm, which decides at TWO granularities and used to
+                // be read as deciding at one.
                 //
-                // It used to `return false` here, on the reading that a clause with anything comparable in
-                // it decided on the comparable pair. That is false of `NOT IN`: a value passes it by
-                // matching NOTHING, so every pair was built and an answered one says only that this
-                // element was not the collision. The pairs a fail-closed release refuses are still there
-                // behind it. Walking order made the silence arbitrary as well -- `Str NOT IN Haystack`
-                // over `["zzz", 7, false]` was silent because `"zzz"` is written first, and noticed if it
-                // is written last.
-                Ok(_) => {}
-                // Not every `Err` is an incomparability, and this one is not. `fancy_regex` returns a
-                // `Result` from `is_match` because its backtracking engine can run out of budget, so a
-                // `String` against a `Regex` -- a pair `compare_eq` has an arm for, and builds the
-                // pattern for -- refuses with `RegexError` after comparing operands of perfectly
-                // comparable kinds. Counted as incomparability, it produced a notice whose stated
-                // reason was wrong: the engine quit, the values were fine, and rewriting the operands
-                // to "values of the same kind" would not change anything.
-                //
-                // Passed over rather than answering for the clause. It used to return false here, which
-                // decided the whole cross product on the evidence of one pair, and the pair it is right
-                // about is its own. `some Multi.*.V NOT IN [/re/]` over a thirty-character `a` string and
-                // a list of ints: the string exhausts the budget, the ints refuse against the pattern --
-                // `(Int, Regex)` is not an arm -- and the clause passes on the list. Measured, the list
-                // alone earned the notice and the two together earned nothing, so an unrelated sibling
-                // value's spent budget destroyed a warning that was owed.
-                // `a_spent_budget_on_one_value_does_not_silence_another_values_notice` pins all three.
-                //
-                // Narrow on purpose: only the budget, never a kind mismatch. Passing over every `Err`
-                // would silence the class this notice exists for, which is the tracked defect in
-                // `docs/KNOWN_ISSUES.md` and not this arm's business.
-                //
-                // Which pairs reach it moved when the operands were flattened, and the two spellings this
-                // arm was written around swapped places. A FLAT denylist holding a regex now hands it the
-                // left-hand list's ELEMENTS against that regex, so `Cat NOT IN [/re/]` over a one-element
-                // `Cat` builds `(String, Regex)` and arrives here with a spent budget -- where it used to
-                // build `(List, Regex)`, which is not an arm, and be counted as a refusal by the arm
-                // below. A denylist holding a NESTED list is the mirror: the element pair is
-                // `(String, List)`, a real `NotComparable`, where the whole-value pair was `(List, List)`
-                // and zipped into `(String, Regex)`.
-                //
-                // Neither swap is observable through the notice, because both clauses fail: `match_value`
-                // promotes `RegexError` for the flat spelling and `contained_in` promotes it for the
-                // nested one, so the verdict gate in `binary_operation` suppresses whatever this predicate
-                // answered. Measured with the release binary on a `Cat` of one thirty-character string of
-                // `a`s: `rule r { Cat NOT IN [/(?!x)((a+)+)b/] }` and `rule r { Cat NOT IN
-                // [[/(?!x)((a+)+)b/]] }` each exit 19 with nothing on stderr, before this change and
-                // after it. `a_spent_backtracking_budget_is_not_an_incomparable_pair` and
-                // `a_denylist_refuses_a_value_it_could_not_evaluate_in_either_spelling` hold both.
-                //
-                // Nothing is lost by narrowing it. Where the budget is the only thing that refused,
-                // `refused` stays false and the notice still does not go out, which is the case this arm
-                // was added for; and such a clause is answered elsewhere anyway, since `match_value`
-                // promotes `RegexError` and the clause fails saying the expression could not be
-                // evaluated. That last part is true of an assertion and not of a gate -- a failing gate
-                // is reported by nothing -- but the notice is not the thing to fix it with, because a
-                // clause that does not pass is not one the coming fail-closed change moves.
-                Err(Error::RegexError(_)) => {}
-                Err(_) => refused = true,
+                // The element pairs are always built, by `elements_not_matched` asking `is_one_of` per
+                // left-hand element. Not recursively -- for a `Deep` of `[["a"]]` the element is
+                // `["a"]`, and that is the operand `is_one_of` is handed, so a second level would
+                // compare something no clause compares.
+                (PathAwareValue::List((_, lhsl)), PathAwareValue::List((_, rhsl))) => {
+                    for left in lhsl {
+                        for right in rhsl {
+                            refused |= pair_refused(left, right);
+                        }
+                    }
+
+                    // And the WHOLE left-hand list against each entry, which that arm walks when no
+                    // element matched and the denylist holds a list. Keyed on the same condition the
+                    // operator branches on, because that is what decides whether the loop exists to
+                    // refuse in: a flat denylist never reaches it, and reinstating the whole-value pair
+                    // there is exactly the false-alarm class the alignment removed --
+                    // `Strs NOT IN ["x", "y"]` is `(List, String)`, which has no arm, on a clause every
+                    // pair of which is string against string.
+                    //
+                    // Not gated on the elements having failed to match, though the operator's loop is.
+                    // Where they all match `contained_in` returns Success and `NOT IN` fails, so the
+                    // verdict gate in `binary_operation` suppresses whatever this answered.
+                    if rhsl.iter().any(|right| right.is_list()) {
+                        for right in rhsl {
+                            refused |= pair_refused(value, right);
+                        }
+                    }
+                }
+
+                // A list against a value that is not one, which `contained_in` refuses on the SHAPES: it
+                // dispatches on the left value first, so this pair reaches its `List` arm's catch-all and
+                // answers `NotComparable` without asking `compare_eq` anything. There is no comparison
+                // result to read, so the shape is what carries the refusal -- a predicate built from
+                // `compare_eq` answers alone cannot see this class by construction, which is why it went
+                // quiet on `Ports NOT IN D13[*]` and `Maps NOT IN Umap` when the operands were flattened
+                // into pairs that are perfectly comparable.
+                (PathAwareValue::List((_, lhsl)), right) => {
+                    // The element question `contained_in` never asks, which the `(None, None)` arm asks
+                    // for it with `is_one_of(element, [eachr])`.
+                    for left in lhsl {
+                        refused |= pair_refused(left, right);
+                    }
+
+                    // The shape refusal itself, on the clauses that pass on it. Two conditions, and
+                    // each excludes a shape that does not pass on it rather than one that is merely
+                    // inconvenient.
+                    //
+                    // `both_queried`, because only the `(None, None)` arm drops the refusal. A literal
+                    // right-hand side reaches `(None, Some)`, which pushes the `NotComparable` straight
+                    // into the results, so `Ports NOT IN 5` is already exit 19 where the queried
+                    // `Ports NOT IN Uint` is exit 0 on the same two values. A literal STRING does not
+                    // reach `contained_in` at all -- that arm takes the `string_in` path per element --
+                    // so `Empty NOT IN "abc"` has no refusal to pass on either, and counting it would be
+                    // a false alarm rather than a suppressed one.
+                    //
+                    // The vacuous match, because it happens first. The `(None, None)` arm reads an empty
+                    // left-hand list as vacuously present in anything that denotes a set and continues
+                    // the outer loop, so `contained_in` is never called and `Empty NOT IN D13[*]` fails
+                    // on the match rather than passing on a refusal. A string is the exclusion there and
+                    // so it is the exclusion here: `Empty NOT IN Ustr` does reach the refusal, and it is
+                    // the notice the alignment took away rather than corrected --
+                    // `the_notice_asks_about_every_granularity_the_operator_decides_at` carries it with
+                    // both controls beside it.
+                    let vacuous_match =
+                        lhsl.is_empty() && !matches!(right, PathAwareValue::String(_));
+                    if both_queried && !vacuous_match {
+                        refused = true;
+                    }
+                }
+
+                // `contained_in`'s `rest` arm against a list: the left value is the operand `compare_eq`
+                // receives, so the value and the element it contributes are the same thing and nothing
+                // is missing at a second granularity.
+                (left, PathAwareValue::List((_, rhsl))) => {
+                    for right in rhsl {
+                        refused |= pair_refused(left, right);
+                    }
+                }
+
+                // Two values neither of which decomposes, which `contained_in` hands to `match_value`.
+                (left, right) => refused |= pair_refused(left, right),
             }
         }
     }
     refused
+}
+
+/// Whether one pair the membership comparison built refused for a reason that is an incomparability.
+///
+/// Not every `Err` is one. `fancy_regex` returns a `Result` from `is_match` because its backtracking
+/// engine can run out of budget, so a `String` against a `Regex` -- a pair `compare_eq` has an arm for,
+/// and builds the pattern for -- refuses with `RegexError` after comparing operands of perfectly
+/// comparable kinds. Counted as incomparability, it produced a notice whose stated reason was wrong: the
+/// engine quit, the values were fine, and rewriting the operands to "values of the same kind" would not
+/// change anything.
+///
+/// Answered per pair rather than for the clause, and that is the second half of the same correction. It
+/// used to `return false` for the whole cross product on the evidence of one pair, and the pair it is
+/// right about is its own. `some Multi.*.V NOT IN [/re/]` over a thirty-character `a` string and a list of
+/// ints: the string exhausts the budget, the ints refuse against the pattern -- `(Int, Regex)` is not an
+/// arm -- and the clause passes on the list. Measured, the list alone earned the notice and the two
+/// together earned nothing, so an unrelated sibling value's spent budget destroyed a warning that was
+/// owed. `a_spent_budget_on_one_value_does_not_silence_another_values_notice` pins all three.
+///
+/// Narrow on purpose: only the budget, never a kind mismatch. Passing over every `Err` would silence the
+/// class this notice exists for, which is the tracked defect in `docs/KNOWN_ISSUES.md`.
+///
+/// Which pairs reach the budget arm moved when the caller stopped comparing whole values against
+/// elements, and the two spellings this arm was written around swapped places. A FLAT denylist holding a
+/// regex now hands it the left-hand list's ELEMENTS against that regex, so `Cat NOT IN [/re/]` over a
+/// one-element `Cat` builds `(String, Regex)` and arrives with a spent budget -- where it used to build
+/// `(List, Regex)`, which is not an arm, and be counted as a kind refusal. A denylist holding a NESTED
+/// list is the mirror: the element pair is `(String, List)`, a real `NotComparable`, where the
+/// whole-value pair was `(List, List)` and zipped into `(String, Regex)`. That whole-value pair is built
+/// again for the nested spelling, by the second granularity in the caller, so the nested clause now
+/// reaches both.
+///
+/// Neither swap is observable through the notice, because both clauses fail: `match_value` promotes
+/// `RegexError` for the flat spelling and `contained_in` promotes it for the nested one, so the verdict
+/// gate in `binary_operation` suppresses whatever this answered. Measured with the release binary on a
+/// `Cat` of one thirty-character string of `a`s: `rule r { Cat NOT IN [/(?!x)((a+)+)b/] }` and
+/// `rule r { Cat NOT IN [[/(?!x)((a+)+)b/]] }` each exit 19 with nothing on stderr, before this change
+/// and after it. `a_spent_backtracking_budget_is_not_an_incomparable_pair` and
+/// `a_denylist_refuses_a_value_it_could_not_evaluate_in_either_spelling` hold both.
+///
+/// Nothing is lost by narrowing it. Where the budget is the only thing that refused the notice still
+/// does not go out, which is the case this exclusion was added for; and such a clause is answered
+/// elsewhere anyway, since `match_value` promotes `RegexError` and the clause fails saying the expression
+/// could not be evaluated. That last part is true of an assertion and not of a gate -- a failing gate is
+/// reported by nothing -- but the notice is not the thing to fix it with, because a clause that does not
+/// pass is not one the coming fail-closed change moves.
+fn pair_refused(lhs: &PathAwareValue, rhs: &PathAwareValue) -> bool {
+    match compare_eq(lhs, rhs) {
+        Ok(_) | Err(Error::RegexError(_)) => false,
+        Err(_) => true,
+    }
 }
 
 /// Notice for a comparison that passed without comparing anything, because the value it selected was

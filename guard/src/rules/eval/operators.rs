@@ -431,7 +431,14 @@ fn not_comparable_because(
     }))
 }
 
-fn is_literal(query_results: &[QueryResult]) -> Option<Rc<PathAwareValue>> {
+/// Which arm of a `compare` implementation a pair of operands reaches, as the operators ask it.
+///
+/// `pub(super)` for `incomparable_membership` in `eval.rs`, which has to know whether the `(None, None)`
+/// arm of `InOperation::compare` is the one that will run: that arm drops a shape refusal where every
+/// other arm reports it, and the difference decides whether a clause passes on the refusal or fails
+/// closed on it. Shared rather than re-derived there, so the predicate and the dispatch cannot drift
+/// apart -- the `len() == 1` half is easy to omit and would answer for a two-value query.
+pub(super) fn is_literal(query_results: &[QueryResult]) -> Option<Rc<PathAwareValue>> {
     if query_results.len() == 1 {
         if let QueryResult::Literal(p) = &query_results[0] {
             return Some(Rc::clone(p));

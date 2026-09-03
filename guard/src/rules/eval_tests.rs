@@ -10680,6 +10680,148 @@ fn the_notice_asks_about_the_pairs_the_operator_compared(
     Ok(())
 }
 
+/// The notice asks about every granularity the operator decides at, and about the refusals it never
+/// asks `compare_eq` for.
+///
+/// Aligning the predicate to `contained_in`'s ELEMENT pairs removed a class of false alarm and took
+/// thirteen owed notices with it, because element pairs are not all the operator decides on. Two
+/// mechanisms, and each cell below names which one it is about.
+///
+/// # The second granularity
+///
+/// `contained_in`'s list-against-list arm decides at TWO granularities when the denylist holds a list.
+/// It asks `is_one_of` per left-hand ELEMENT, and then, if no element matched, walks the denylist again
+/// comparing the WHOLE left-hand list against each entry -- the loop that decides `whole_list_member`.
+/// A refusal in that second loop is a refusal the clause's answer rests on, and a predicate built from
+/// element pairs alone cannot see it.
+///
+/// Both `EmptyOuter` cells are that shape and neither is exotic. `EmptyOuter` is `[[]]`, one entry, and
+/// against `[[1]]` every element pair is answered -- `compare_eq([], [1])` is `(List, List)` at unequal
+/// lengths, which reports false without looking at an element -- while the whole-value pair
+/// `compare_eq([[]], [1])` has EQUAL lengths, so it zips and `compare_eq([], 1)` refuses. `Nest` against
+/// `[[2], [7, 8]]` is the same mechanism at length two.
+///
+/// The flat-denylist controls are the win this must not give back. A denylist holding no list never
+/// reaches the second loop, so `Strs NOT IN ["x", "y"]` and `Ints NOT IN [7, 8]` stay silent -- those
+/// two are cells of `the_notice_asks_about_the_pairs_the_operator_compared` as well, kept here because
+/// the repair for the granularity above is one condition away from reinstating them.
+///
+/// # The shape refusal
+///
+/// `contained_in` dispatches on the left value first, so a list-valued left-hand side against a right
+/// value that is not a list reaches its `List` arm's catch-all and answers `NotComparable` on the SHAPES,
+/// without calling `compare_eq` at all. There is no comparison result to read there, so a predicate that
+/// only reads `compare_eq` cannot see that refusal by construction; the shape is what carries it.
+///
+/// Whether the clause passes on it is decided one level up, by which arm of `InOperation::compare` the
+/// operands reached. The `(None, None)` arm -- both sides queries -- drops the `NotComparable` and the
+/// value joins the unmatched set, so `NOT IN` passes; every other arm reports it and the clause already
+/// fails closed. That is the whole reason `both_queried` gates the refusal in `incomparable_membership`
+/// rather than the values doing, and the three controls are what pin the boundary:
+/// `Ports NOT IN 5` fails today because a literal right-hand side reaches the `(None, Some)` arm, which
+/// pushes the refusal; `Empty NOT IN "abc"` never reaches `contained_in` at all, because a literal string
+/// takes the `string_in` path; and `Empty NOT IN D13[*]` matches vacuously before `contained_in` is
+/// called, so there is no refusal to see and no pass to notice.
+///
+/// `Empty NOT IN Ustr` is the cell `incomparable_membership`'s own comment called the one notice the
+/// alignment took away rather than corrected, on the reading that flattening an empty list leaves no
+/// element to compare. True of the element pairs and not of the clause: the refusal is the shape pair
+/// `([], "abc")`, which is there whether or not anything flattens, so the cell is repairable after all
+/// and this is where it is repaired. The verdict question that cell also sits in -- `Empty NOT IN Str`
+/// against `Empty NOT IN Strs[*]`, where at most one spelling can be right -- is untouched, because
+/// nothing here moves a verdict.
+///
+/// # Why the fail-closed measurement is not in this test
+///
+/// `the_notice_fires_exactly_where_fail_closed_moves_the_answer` measures "does the coming change move
+/// this clause" from the language itself, using `!=` as the fail-closed spelling of `NOT IN`. That works
+/// only for a scalar left-hand side against a one-element denylist, and every cell here has a
+/// list-valued left-hand side or a multi-entry denylist. So these were classified against a build with
+/// the four `NotComparable` suppressions promoted -- `is_one_of`, `contained_in`'s whole-list and scalar
+/// loops, and the `(None, None)` arm's dropped result -- over 1080 clause shapes, on 2026-09-03: each
+/// cell marked `true` below PASSes today and FAILs under that build, and each `false` cell answers the
+/// same either way. What this test can hold on its own is the verdict, which no cell may move.
+#[rstest::rstest]
+// The second granularity. Every element pair is answered and the whole-value pair refuses.
+#[case::a_whole_value_pair_only_a_nested_denylist_builds(
+    "EmptyOuter NOT IN [[1]]",
+    Status::PASS,
+    true
+)]
+#[case::the_same_whole_value_pair_at_length_two("Nest NOT IN [[2], [7, 8]]", Status::PASS, true)]
+#[case::a_whole_value_pair_that_zips_onto_a_regex("Deep NOT IN [[/zzz/]]", Status::PASS, true)]
+// Controls for it: a flat denylist never reaches the second loop, so these two stay silent.
+#[case::a_flat_denylist_builds_no_whole_value_pair(
+    "Strs NOT IN [\"x\", \"y\"]",
+    Status::PASS,
+    false
+)]
+#[case::a_flat_int_denylist_builds_no_whole_value_pair("Ints NOT IN [7, 8]", Status::PASS, false)]
+#[case::a_flat_queried_denylist_builds_no_whole_value_pair(
+    "Ports NOT IN DenyInts",
+    Status::PASS,
+    false
+)]
+// The shape refusal, which `compare_eq` is never asked about.
+#[case::a_list_against_queried_scalars("Ports NOT IN D13[*]", Status::PASS, true)]
+#[case::a_list_against_a_queried_map("Maps NOT IN Umap", Status::PASS, true)]
+#[case::a_list_against_a_queried_scalar("Ports NOT IN Uint", Status::PASS, true)]
+#[case::an_empty_list_against_a_queried_string("Empty NOT IN Ustr", Status::PASS, true)]
+// Controls for it: three ways the refusal is not what the clause passed on.
+#[case::a_literal_scalar_already_fails_closed("Ports NOT IN 5", Status::FAIL, false)]
+#[case::a_literal_string_never_reaches_the_refusal("Empty NOT IN \"abc\"", Status::PASS, false)]
+#[case::a_vacuous_match_happens_before_the_refusal("Empty NOT IN D13[*]", Status::FAIL, false)]
+fn the_notice_asks_about_every_granularity_the_operator_decides_at(
+    #[case] clause: &str,
+    #[case] expected: Status,
+    #[case] expect_notice: bool,
+) -> Result<()> {
+    // Every denylist is disjoint from every left-hand value, so no cell's verdict rests on a collision.
+    const INPUT: &str = r#"
+    {
+        Strs: ["a", "b"],
+        Ints: [1, 2],
+        Deep: [["a"]],
+        Empty: [],
+        EmptyOuter: [[]],
+        Maps: [{ a: 1 }],
+        Nest: [[1], [9]],
+        Ports: [85],
+        D13: [1, 3],
+        DenyInts: [7, 8],
+        Umap: { k: 1 },
+        Uint: 5,
+        Ustr: "abc"
+    }
+    "#;
+
+    let (status, notices) = status_and_deprecations(clause, INPUT)?;
+
+    assert_eq!(
+        expected, status,
+        "`{}` changed verdict; this is a diagnostics fix and must move no status",
+        clause
+    );
+
+    let emitted = notices
+        .iter()
+        .any(|n| n.contains("could not be compared with any element"));
+    assert_eq!(
+        expect_notice,
+        emitted,
+        "`{}` reached {:?}, so the notice should {}; recorded {:?}",
+        clause,
+        status,
+        match expect_notice {
+            true => "have been emitted",
+            false => "have stayed silent",
+        },
+        notices
+    );
+
+    Ok(())
+}
+
 /// The notice goes out exactly where the coming fail-closed release changes the clause's answer.
 ///
 /// A previous revision gated this on whether the file *reports* the clause, and reached that gate
