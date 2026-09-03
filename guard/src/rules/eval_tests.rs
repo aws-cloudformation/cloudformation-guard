@@ -10739,9 +10739,7 @@ fn every_string_spelling_warns_through_the_channel_that_is_true_of_it(
     );
 
     assert!(
-        !notices
-            .iter()
-            .any(|notice| notice.contains("could not be compared with any element")),
+        !membership_notice_present(&notices),
         "`{}` must not claim an element comparison it never made: there is no list on the right and no \
          element was read. Recorded {:?}",
         clause,
@@ -11779,13 +11777,8 @@ fn a_membership_decided_by_partial_eq_owes_no_notice() -> Result<()> {
             rules
         );
 
-        let membership: Vec<&String> = notices
-            .iter()
-            .filter(|n| n.contains("could not be compared with any element"))
-            .collect();
-
         assert!(
-            membership.is_empty(),
+            !membership_notice_present(&notices),
             "`{}` is decided by `Vec::contains`, which cannot refuse, so there is no refusal for the \
              notice to be about; recorded {:?}",
             rules,
@@ -12425,34 +12418,153 @@ enum ExpectedNotice {
 /// aws-guard-rules-registry notices the corpus check pins. A map is not a list, so nothing about it
 /// flattens and neither the granularity fix nor the shape refusal reaches it.
 fn assert_the_membership_channel_is_live() {
-    const CONTROL: &str = "Map NOT IN Haystack";
-    const INPUT: &str = r#"
-    {
-        Map: { a: 1 },
-        Haystack: [7, "zzz", false]
-    }
-    "#;
-
     let (status, notices) =
-        status_and_deprecations(CONTROL, INPUT).expect("the membership control must evaluate");
+        status_and_deprecations(MEMBERSHIP_CONTROL_CLAUSE, MEMBERSHIP_CONTROL_INPUT)
+            .expect("the membership control must evaluate");
+    assert_the_membership_channel_is_live_given(status, &notices);
+}
 
+/// The clause whose notice stands in for the channel, and the document it is asked of.
+///
+/// Named rather than inlined so that the negative control below can state what it is a control FOR.
+const MEMBERSHIP_CONTROL_CLAUSE: &str = "Map NOT IN Haystack";
+const MEMBERSHIP_CONTROL_INPUT: &str = r#"
+{
+    Map: { a: 1 },
+    Haystack: [7, "zzz", false]
+}
+"#;
+
+/// Whether a run's notices carry the incomparable-membership one.
+///
+/// The one place this substring is written. It was written in four, and a predicate duplicated per caller
+/// is a predicate that can be loosened in one of them: widening any single copy to `"DEPRECATION"` or
+/// `"could not be"` makes the vacuous notice satisfy it, which is the precise failure the stay-quiet
+/// control in `validate.rs` shipped with for one commit. One definition, one negative control over it.
+fn membership_notice_present(notices: &[String]) -> bool {
+    !membership_notices(notices).is_empty()
+}
+
+/// The matching notices themselves, for the one caller that checks their wording as well as their arrival.
+///
+/// `membership_notice_present` is defined over this rather than beside it, so the substring has exactly one
+/// home and the negative control covers both readings of it.
+fn membership_notices(notices: &[String]) -> Vec<&String> {
+    notices
+        .iter()
+        .filter(|n| n.contains("could not be compared with any element"))
+        .collect()
+}
+
+/// The assertions of the liveness control, split from the run that feeds them.
+///
+/// Split so that `the_liveness_control_reddens_when_the_channel_is_dead` can hand these the notices a dead
+/// channel produces and require them to fire. Without that, the control itself is unguarded: it is a
+/// shared dependency of every silent cell in this file, and deleting its `assert!` would return all of
+/// them to passing vacuously with nothing anywhere going red. A control that cannot be shown to fail is
+/// the defect this whole class is about, one level up.
+fn assert_the_membership_channel_is_live_given(status: Status, notices: &[String]) {
     assert_eq!(
         Status::PASS,
         status,
         "`{}` must pass on the incomparability for the notice below to be owed; a FAIL here means the \
          control is broken rather than the cell that called it",
-        CONTROL
+        MEMBERSHIP_CONTROL_CLAUSE
     );
     assert!(
-        notices
-            .iter()
-            .any(|n| n.contains("could not be compared with any element")),
+        membership_notice_present(notices),
         "`{}` must emit the incomparable-membership notice, so that a cell asserting the absence of \
          that notice is asserting something. Nothing emitted it here, which means the channel is dead \
          and the caller's silence is not evidence about the caller's clause. Recorded {:?}",
-        CONTROL,
+        MEMBERSHIP_CONTROL_CLAUSE,
         notices
     );
+}
+
+/// The liveness control's own negative control: it must reject a dead channel.
+///
+/// # Why this exists
+///
+/// `assert_the_membership_channel_is_live` is what makes thirty-eight silent cells in this file
+/// non-vacuous, which makes it a single point of failure for the class. Silencing
+/// `incomparable_membership` at its source reddens all thirty-eight, so the control demonstrably detects
+/// a dead channel today. That is not the same as the control being guarded: weaken it -- delete the
+/// `assert!`, loosen the substring, swap the clause for one that always warns -- and every one of those
+/// cells goes back to passing on an absence, with nothing red anywhere. The suite would report 3103 green
+/// while checking the same nothing it checked before this branch.
+///
+/// So the control is required to fail. Each row is a way the channel dies, and the third is not
+/// hypothetical: a control asserting only that *some* deprecation line arrived is what the stay-quiet test
+/// in `validate.rs` shipped with, and it stayed green with the membership predicate silenced because the
+/// fixture's other clause kept warning.
+///
+/// # What was tried and rejected
+///
+/// Asserting the predicate alone, without `catch_unwind`. That guards the substring but not the
+/// `assert!` that consumes it, and the deletion case is the likelier edit -- a helper whose body is
+/// trimmed during a refactor. The panic is the thing the callers depend on, so the panic is what is
+/// measured.
+///
+/// Swapping the panic hook to suppress the expected backtraces was rejected. `panic::set_hook` is
+/// process-global, so under a parallel run it would swallow a genuinely failing test's message for the
+/// duration and make that failure harder to read. The printed panics below are expected output.
+///
+/// # Known limitation
+///
+/// This cannot catch the control being deleted from its CALLERS. Nothing over an absence can: a cell that
+/// no longer calls the control is a cell with no liveness half, and it looks exactly like the cells this
+/// branch started from. `git grep -c assert_the_membership_channel_is_live` is the check for that, and
+/// the count belongs in the review rather than in a test.
+#[test]
+fn the_liveness_control_reddens_when_the_channel_is_dead() {
+    const VACUOUS: &str = "DEPRECATION: Empty not IN  Ustr passed without comparing anything, \
+                           because the query selected an empty collection.";
+
+    for (why, notices) in [
+        (
+            "total silence, which is what a dead predicate produces",
+            vec![],
+        ),
+        (
+            "the other channel alone, which is what silencing only this predicate produces",
+            vec![VACUOUS.to_string()],
+        ),
+        (
+            "a deprecation line that is not this notice, which a prefix-only control accepts",
+            vec!["DEPRECATION: something else entirely".to_string()],
+        ),
+    ] {
+        assert!(
+            !membership_notice_present(&notices),
+            "{}: the predicate must reject this, or every silent cell in this file is satisfied by it",
+            why
+        );
+
+        // The panic, not just the predicate: the callers depend on this function refusing, and a body
+        // trimmed to nothing would still satisfy the assertion above.
+        let outcome = std::panic::catch_unwind(|| {
+            assert_the_membership_channel_is_live_given(Status::PASS, &notices)
+        });
+        assert!(
+            outcome.is_err(),
+            "{}: the liveness control must panic on a dead channel. It did not, so it is no longer a \
+             control, and the cells that call it are asserting absences nothing checks.",
+            why
+        );
+    }
+
+    // And it accepts the live channel, measured from a real run rather than from a literal, so the three
+    // refusals above are not the refusals of a predicate that rejects everything.
+    let (status, notices) =
+        status_and_deprecations(MEMBERSHIP_CONTROL_CLAUSE, MEMBERSHIP_CONTROL_INPUT)
+            .expect("the membership control must evaluate");
+    assert!(
+        membership_notice_present(&notices),
+        "the control clause must still emit the notice, or the rejections above are vacuous too; \
+         recorded {:?}",
+        notices
+    );
+    assert_the_membership_channel_is_live_given(status, &notices);
 }
 
 /// Checks a cell's membership-notice expectation, and on the silent side proves the channel was live.
@@ -12466,13 +12578,9 @@ fn assert_membership_notice(
     expect_notice: bool,
     notices: &[String],
 ) {
-    let emitted = notices
-        .iter()
-        .any(|n| n.contains("could not be compared with any element"));
-
     assert_eq!(
         expect_notice,
-        emitted,
+        membership_notice_present(notices),
         "`{}` reached {:?}, so the incomparable-membership notice should {}; recorded {:?}",
         subject,
         status,
@@ -12497,10 +12605,7 @@ fn assert_membership_notice(
 /// The `Silent` arm calls `assert_the_membership_channel_is_live`, for the reason given there: on its own
 /// it is satisfied by a build that emits this notice for nothing at all.
 fn assert_notice(rules: &str, status: Status, expected: ExpectedNotice, notices: &[String]) {
-    let membership: Vec<&String> = notices
-        .iter()
-        .filter(|n| n.contains("could not be compared with any element"))
-        .collect();
+    let membership = membership_notices(notices);
 
     match expected {
         ExpectedNotice::Silent => {
@@ -12611,12 +12716,9 @@ fn the_notice_fires_exactly_where_fail_closed_moves_the_answer(
         }
     );
 
-    let emitted = notices
-        .iter()
-        .any(|n| n.contains("could not be compared with any element"));
     assert_eq!(
         moves,
-        emitted,
+        membership_notice_present(&notices),
         "`{}` is a clause the change {}, so the notice should {}; recorded {:?}",
         clause,
         match moves {
