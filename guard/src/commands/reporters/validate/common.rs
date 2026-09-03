@@ -1331,10 +1331,25 @@ pub(super) fn populate_hierarchy_path_trees<'report, 'value: 'report>(
 /// A whitespace-only message renders as absent, which is the answer the two neighbouring sites already
 /// give: `non_empty_message` filters on `!text.trim().is_empty()`, and `one_line` collapses such a
 /// message to nothing so that "`non_empty_message` and this function agree about what counts as a
-/// message". `-o json` and `-o yaml` already exited 19 and emitted no message for this input, so
-/// treating it as absent is what makes the default output agree with them rather than a new judgement.
-/// Preserving it verbatim was the alternative and is rejected for the reason `non_empty_message`'s own
-/// comment gives: a blank reason reads as a rendering fault rather than as a message nobody wrote.
+/// message". Preserving it verbatim was the alternative and is rejected for the reason
+/// `non_empty_message`'s own comment gives: a blank reason reads as a rendering fault rather than as a
+/// message nobody wrote.
+///
+/// This does *not* bring the default output into line with the structured ones, and an earlier version of
+/// this comment claimed it did. `-o json` and `-o yaml` exit 19 and emit the message **verbatim**. There
+/// are two `custom_message` fields per document and only the deeper one carries it:
+///
+/// ```text
+/// .not_compliant[0].Rule.messages.custom_message                         = null
+/// .not_compliant[0].Rule.checks[0].Clause.Binary.messages.custom_message = '  '
+/// ```
+///
+/// Identical before and after this fix, so the structured formats never decided this question and the
+/// consequence runs the other way: the default now writes nothing where json and yaml carry `'  '`, so
+/// the formats disagree about whether a message exists. That is a real cost of the choice, accepted
+/// because it replaces an abort with a report and because the two sites above had already settled what
+/// counts as a message. Reading only the first `custom_message` in the document shows `null` and makes
+/// the formats look like they agree; they do not.
 ///
 /// The error half is no longer unreachable behind a panicking message. A clause carrying a
 /// whitespace-only custom message and a real evaluator error used to lose the error too.
