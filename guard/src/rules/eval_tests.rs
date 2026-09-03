@@ -13676,6 +13676,32 @@ fn recorded_comparison_messages(record: &EventRecord<'_>, out: &mut Vec<String>)
     }
 }
 
+/// The same, over both clause-check variants that carry an explanation.
+///
+/// Separate from `recorded_comparison_messages` rather than replacing it, because the two answer
+/// different questions and the existing callers want the narrower one. `Comparison` is what `==` and
+/// `!=` record; `InComparison` is what `IN` and `NOT IN` record, through `report_by_lhs`. A test that
+/// reads only the first cannot see a membership explanation at all, which is how the missing one went
+/// unnoticed: every message assertion in this module was blind to that variant.
+fn recorded_clause_messages(record: &EventRecord<'_>, out: &mut Vec<String>) {
+    match &record.container {
+        Some(RecordType::ClauseValueCheck(ClauseCheck::Comparison(check))) => {
+            if let Some(message) = &check.message {
+                out.push(message.clone());
+            }
+        }
+        Some(RecordType::ClauseValueCheck(ClauseCheck::InComparison(check))) => {
+            if let Some(message) = &check.message {
+                out.push(message.clone());
+            }
+        }
+        _ => {}
+    }
+    for child in &record.children {
+        recorded_clause_messages(child, out);
+    }
+}
+
 /// Which clause checks the evaluation recorded, by variant and status, in tree order.
 ///
 /// The variant matters and the message does not, which is why this is separate from
@@ -13987,6 +14013,118 @@ fn status_and_messages(clause: &str, input: &str) -> Result<(Status, Vec<String>
     let mut messages = Vec::new();
     recorded_comparison_messages(&root.reset_recorder().extract(), &mut messages);
     Ok((status, messages))
+}
+
+/// One byte below the backtracking threshold for `(?!x)((a+)+)b` on the map-key filter path, and one
+/// byte above it. The pattern compiles either way -- `fancy-regex` is a backtracking engine and
+/// supports the lookahead -- so what differs is whether `is_match` finishes.
+const SEVENTEEN_AS: &str = "aaaaaaaaaaaaaaaaa";
+const EIGHTEEN_AS: &str = "aaaaaaaaaaaaaaaaaa";
+
+/// A map-key filter says when a comparison had no answer, and stays quiet when it had one.
+///
+/// All four comparators reach the same regex through `[ keys <op> ... ]`, and two of them dropped the
+/// reason. `real_binary_operation` routes `==`/`!=` to `report_all_values` and so to `report_value`,
+/// which 07774380 taught to carry the reason; `IN`/`NOT IN` route to `report_by_lhs`, which that
+/// commit's scoping sentence named and did not change.
+///
+/// **Status cannot be the assertion here.** Every cell's status is identical with the defect present
+/// and with it fixed, so a status or exit-code assertion is satisfied either way -- the shape of a test
+/// that cannot fail. What moves is the recorded message, so that is what is read. The status is still
+/// asserted, per case, to pin that it does not move.
+///
+/// The seventeen-character control is the other half, and without it this test would only show that a
+/// diagnostic is present rather than that it is present *for the right reason*. The threshold is a
+/// property of the template, not of the rule: seventeen `a` characters decide cleanly -- the pattern
+/// finds no `b` -- and eighteen exhaust the budget. A build that attached the reason unconditionally
+/// would pass the eighteen-character cells and fail the seventeen-character ones.
+///
+/// The status grid is worth reading, because it is not uniform and an earlier draft of this test
+/// assumed it was:
+///
+/// ```text
+///            ==     !=     in     not in
+///   17 `a`   FAIL   PASS   FAIL   PASS
+///   18 `a`   FAIL   FAIL   FAIL   FAIL
+/// ```
+///
+/// The negated comparators move from PASS to FAIL on one extra byte of map key. A key that decidedly
+/// does not match satisfies `!=` and `NOT IN`, so it is selected and `!empty` holds; a key nobody could
+/// decide about fails closed, so nothing is selected and `!empty` does not. That is the
+/// template-dependence made concrete, and it is the direction that does not lose a violation -- the
+/// verdict gets stricter, not laxer. Before this change it happened with no diagnostic at all, which is
+/// the whole cost: a rule silently stopped deciding above a length nobody chose, and the only signal
+/// was a verdict that also has an innocent explanation.
+///
+/// The two decided FAIL cells carry the discriminating weight for the negative half, since a PASS
+/// records no comparison message at all and would satisfy the negative assertion trivially.
+///
+/// The pattern is not uncompilable and the failure is not a parse error. `guard/Cargo.toml` pins
+/// `fancy-regex`, whose engine backtracks and accepts `(?!x)`; `((a+)+)` is what makes the number of
+/// paths grow with the length of the subject, and the error text is "Max limit for backtracking count
+/// exceeded" from `is_match`, not from compilation.
+#[rstest::rstest]
+#[case::equals_undecidable("==", CATASTROPHIC, EIGHTEEN_AS, Status::FAIL, true)]
+#[case::equals_decided("==", CATASTROPHIC, SEVENTEEN_AS, Status::FAIL, false)]
+#[case::not_equals_undecidable("!=", CATASTROPHIC, EIGHTEEN_AS, Status::FAIL, true)]
+#[case::not_equals_decided("!=", CATASTROPHIC, SEVENTEEN_AS, Status::PASS, false)]
+#[case::in_undecidable("in", "[/(?!x)((a+)+)b/]", EIGHTEEN_AS, Status::FAIL, true)]
+#[case::in_decided("in", "[/(?!x)((a+)+)b/]", SEVENTEEN_AS, Status::FAIL, false)]
+#[case::not_in_undecidable("not in", "[/(?!x)((a+)+)b/]", EIGHTEEN_AS, Status::FAIL, true)]
+#[case::not_in_decided("not in", "[/(?!x)((a+)+)b/]", SEVENTEEN_AS, Status::PASS, false)]
+fn a_map_key_filter_says_when_a_comparison_had_no_answer(
+    #[case] operator: &str,
+    #[case] rhs: &str,
+    #[case] key: &str,
+    #[case] expected: Status,
+    #[case] expect_reason: bool,
+) -> Result<()> {
+    const REASON: &str = "could not be evaluated";
+
+    let input = format!(r#"{{ "Cfg": {{ "{key}": 1, "other": 2 }} }}"#);
+    let clause = format!("Cfg[ keys {operator} {rhs} ] !empty");
+    let rules = format!("rule r {{\n  {clause}\n}}");
+
+    let rules_file = RulesFile::try_from(rules.as_str())?;
+    let value = PathAwareValue::try_from(input.as_str())?;
+    let mut root = root_scope(&rules_file, Rc::new(value));
+    let status = eval_rules_file(&rules_file, &mut root, None)?;
+    let mut messages = Vec::new();
+    recorded_clause_messages(&root.reset_recorder().extract(), &mut messages);
+
+    // Asserted to document that it does NOT discriminate: unchanged by this fix in every cell, which
+    // is why the message is what the rest of the test reads.
+    assert_eq!(
+        expected,
+        status,
+        "`{}` over a {}-character key changed verdict; this fix is about what the report says, not \
+         what it decides",
+        clause,
+        key.len()
+    );
+
+    let said = messages.iter().any(|m| m.contains(REASON));
+    match expect_reason {
+        true => assert!(
+            said,
+            "`{}` over {} characters exhausts the backtracking budget, so the report must say the \
+             comparison had no answer rather than that the key did not match; recorded {:?}",
+            clause,
+            key.len(),
+            messages
+        ),
+        false => assert!(
+            !said,
+            "`{}` over {} characters is decided -- the pattern finds no `b` -- so no explanation is \
+             owed, and one appearing here would mean the reason is attached unconditionally rather \
+             than to the comparisons that had none; recorded {:?}",
+            clause,
+            key.len(),
+            messages
+        ),
+    }
+
+    Ok(())
 }
 
 const CATASTROPHIC: &str = "/(?!x)((a+)+)b/";
