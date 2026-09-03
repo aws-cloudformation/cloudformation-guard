@@ -245,21 +245,138 @@ pub(crate) struct NotComparable {
 /// WHICH PATH THAT FIGURE COVERS, because three comments cite it beside a decision about a different
 /// one. The 143 is the cost of reading `IncomparableKinds` as an undecidable GATE, which is why
 /// `ScanOnPush == 'False' OR ScanOnPush == false` is its canonical shape: an `==` clause, answered by
-/// `EqOperation`. It is not the cost of promoting the membership refusal. `is_one_of` -- the only place
-/// a kind mismatch is discarded on the `IN` path, at its `Err(_) => {}` -- is reached from exactly two
-/// sites, `contained_in`'s membership loop and the `(None, None)` arm's element loop, and `EqOperation`
-/// reaches neither. Measured at `1ba4648d` by promoting that one arm and nothing else: the pinned
-/// aws-guard-rules-registry corpus comes back byte-identical, 576794 bytes of stdout, all five
-/// DEPRECATION lines present and 0 failed rules. The membership promotion is registry-free, and a
-/// reader who takes the 143 as covering it will believe the opposite.
+/// `EqOperation`. It is not the cost of promoting the membership refusal, and `EqOperation` reaches none
+/// of the membership machinery: its impl references neither `is_one_of`, `contained_in`,
+/// `elements_not_matched` nor `substring_or_contained_in`.
 ///
-/// WHAT IT DOES COST, which no comment recorded. 19 clauses of a 676-clause sweep of the membership
+/// THE DISCARD IS THREE ARMS, NOT ONE. An earlier revision of this paragraph called `is_one_of` "the
+/// only place a kind mismatch is discarded on the `IN` path", which is false, and it reached for a
+/// stronger premise than its conclusion needed: reachability is what makes `EqOperation` irrelevant, and
+/// uniqueness got assumed on the way there. Three code-level `Err(_) => {}` arms sit on this path, each
+/// directly below an `Err(err @ Error::RegexError(_))` arm and therefore receiving `NotComparable` and
+/// nothing else -- `is_one_of`'s at `:810`, `contained_in`'s whole-list loop at `:1071`, and
+/// `contained_in`'s scalar arm at `:1182`. Counting the `(None, None)` arm's dropped result, which is not
+/// an `Err(_) => {}`, there are four suppressions, which is what `eval.rs:327-329` and
+/// `eval_tests.rs:12199-12200` have said all along. The sibling comment at `:761-765` in this file says
+/// "Two sites, one reading" about two of them, so this file already contradicted itself one screen down.
+///
+/// Measured at `1ba4648d` by promoting `is_one_of`'s arm and nothing else: the pinned
+/// aws-guard-rules-registry corpus comes back byte-identical, 576794 bytes of stdout, all five
+/// DEPRECATION lines present and 0 failed rules. Re-confirmed at `1b81431c` with that arm promoted and
+/// the release binary rebuilt -- stdout byte-identical at 576794, stderr byte-identical at 4597, five
+/// DEPRECATION lines, corpus rc=0 -- so the result transfers, nothing between the two commits touching
+/// the comparison path. Said explicitly because the two figures were measured at different commits and a
+/// reader would otherwise assume one run. The membership promotion is registry-free, and a reader who
+/// takes the 143 as covering it will believe the opposite.
+///
+/// THAT BYTE COUNT IS INVOCATION-SENSITIVE, so it is a fingerprint only beside the invocation that
+/// produced it: `cfn-guard test -d rules --output-format json` from the corpus root, which is
+/// `check-registry-corpus.sh`'s own shape. `test -d .` from inside `rules` gives 576030, the CI path
+/// shape `test -d aws-guard-rules-registry/rules` gives 581569, and plain text instead of json gives
+/// 291528. A byte-exact figure with no invocation attached is the same trap as a suite total with no
+/// baseline SHA.
+///
+/// The five DEPRECATION lines are five sites carrying the SAME incomparable-membership message, on
+/// stderr, at `secretsmanager_using_cmk.guard:41`,
+/// `iam_user_login_profile_no_plaintext_password.guard:68`,
+/// `kinesis_firehose_redshift_destination_configuration_no_plaintext_password.guard:68`,
+/// `kinesis_firehose_splunk_destination_configuration_no_plaintext_password.guard:68` and
+/// `amazon_mq_broker_users_no_plaintext_password.guard:69`. The count alone reads as five distinct
+/// deprecations, which is a different fact.
+///
+/// WHAT EACH SITE COSTS, SEPARATELY, because a sequencing plan needs per-site prices and nothing in the
+/// tree carried them. Distinct lib-target tests whose verdict or message moves when each site is
+/// promoted -- the three `Err(_) => {}` arms to the form `:768-769` documents, the fourth through the
+/// channel named below, baseline 1414 passed:
+///
+/// ```text
+/// promoted                              tests moved
+/// is_one_of (:810)                               27
+/// whole-list loop (:1071)                         8
+/// scalar loop (:1182)                             3
+/// (None, None) dropped result (:1691)            18
+/// ```
+///
+/// THESE PRICES MAY NOT BE SUMMED. That sentence is the one that matters here, because summing them is
+/// the mistake this paragraph was written to correct. Measured combinations against what the individual
+/// sets predict:
+///
+/// ```text
+/// combination                    predicted   actual   interaction
+/// the three Err(_) sites                33       33             0
+/// dropped result + whole-list            26       29            +3
+/// dropped result + is_one_of             43       59           +16
+/// dropped result + scalar                21       67           +46
+/// all four                               49      111   +65, less 3 masked
+/// ```
+///
+/// The union of the four single-site sets is 49; the all-four run is 111, and `49 + 65 - 3 = 111` closes
+/// exactly. The three `Err(_) => {}` sites ARE additive among themselves at 33, with empty symmetric
+/// difference against the union and inclusion-exclusion closing at 27 + 8 + 3 - 5 = 33 on pairwise
+/// overlaps of 5, 0 and 0. That part is reproducible: a second promotion harness produced a byte-identical
+/// three-site failing set.
+///
+/// WHY IT BREAKS, which is `:1182` and `:1691` being in SERIES rather than parallel. `contained_in`'s
+/// scalar arm ends at `:1186-1203` with `match (found, unanswerable)`: `(true, _)` gives
+/// `Success(ValueIn)`, `(false, Some(reason))` gives `not_comparable_because(..)`, and `(false, None)`
+/// gives `Fail(Compare::ValueIn)`. Promoting `:1182` sets `unanswerable`, which flips `(false, None)` into
+/// `(false, Some(reason))` -- a pairing that returned `Fail(ValueIn)` now returns a `NotComparable`. In the
+/// `(None, None)` arm's `match contained_in(..)`, `Fail(ValueIn)` and `NotComparable` both fell into
+/// `_ => {}`; with `:1691` promoted the second is recorded. So `:1182` MANUFACTURES the inputs `:1691` acts
+/// on, and that is the whole of the +46.
+///
+/// THE RULE, stated because a bare "these are additive" invites extension to a site where it fails, which
+/// is exactly how the wrong figure got here: disjoint individual effects do not imply independence.
+/// `dropped result` and `scalar` have an empty intersection as single-site sets and their combination
+/// still moves 46 more tests than the sum. Additivity held across the three `Err(_)` sites because all
+/// three feed the SAME consumer; it broke the moment a site was added that consumes what another produces.
+///
+/// The fourth site is `_ => {}` and not an `Err(_) => {}`, so it is not reachable by the promotion form
+/// the other three take. It was promoted through the channel the arm already uses for `is_one_of`'s
+/// `Membership::Unanswerable` at `:1861-1866`, carrying the refusal's own `reason` and `cause` rather than
+/// re-deriving either.
+///
+/// Three tests move under a single promotion and are GREEN under all four, which is the signature of a
+/// verdict moved one way by one promotion and back by another:
+/// `a_denylist_named_by_a_variable_denies_what_the_same_list_written_out_denies::case_05_query_bound_nested_element_collision`,
+/// `a_list_denylist_holding_a_nested_list_denies_only_what_it_names::case_68_denied_by_a_nested_element_collision_via_query`
+/// and `which_spelling_of_a_queried_denylist_reaches_which_arm::case_17_nested_entry_denied_unexpanded`.
+/// All three are element-collision cells.
+///
+/// FOR SEQUENCING, the consequence is that a plan needs the combination measured at each step it actually
+/// intends to take, not a per-site price picked off the first table. `dropped result` then `scalar` and
+/// `scalar` then `dropped result` are the two worth pricing, because the series direction is what decides
+/// which order is cheap. The six the whole-list and scalar arms reach and
+/// `is_one_of` does not are `the_notice_asks_about_every_granularity_the_operator_decides_at`'s
+/// `case_01_a_whole_value_pair_only_a_nested_denylist_builds`,
+/// `case_02_the_same_whole_value_pair_at_length_two` and
+/// `case_03_a_whole_value_pair_that_zips_onto_a_regex`, plus
+/// `the_notice_fires_exactly_where_fail_closed_moves_the_answer::case_1_a_clause_that_passes_on_the_incomparability`,
+/// `every_operator_and_operand_shape_agrees_with_a_stated_oracle` and
+/// `generated_rule_shapes_hold_the_evaluator_invariants`.
+///
+/// Three limits on those figures, stated rather than left to be discovered. The denominator is distinct
+/// lib-target tests and NOT clauses of the 676-clause sweep, so 27 does not convert to 19 and no
+/// converted figure appears here -- the ratio would suggest something near 23 of 676, which is
+/// extrapolation across populations. `cargo test` stops after the first failing target, so each run
+/// reported one target rather than sixteen. And 33 is the three `Err(_)` sites only: the fourth
+/// suppression is measured above at 18 alone and 111 in combination, and it is the site that makes the
+/// three-site additivity non-extensible.
+///
+/// WHAT `is_one_of` ALONE COSTS AT CLI LEVEL. 19 clauses of a 676-clause sweep of the membership
 /// shapes move from exit 0 to exit 19: `Pair NOT IN Ubool`, `Ports NOT IN Umap`, `Nest NOT IN D13[*]`,
 /// `AbList[*] NOT IN Uint`, `Deep NOT IN Umap`, `some AbList[*] NOT IN D13[*]` and thirteen more. Each
 /// is a clause that passed on a refusal and now fails closed, which is the answer `docs/CLAUSES.md`
 /// gives for a comparison across kinds that are not both numeric, so the 19 move toward correctness
-/// rather than away. They are verdict changes even so, and they are what this change has to be argued
-/// against -- not the registry, which does not move.
+/// rather than away. They are verdict changes even so, and they are what promoting THAT ONE ARM has to
+/// be argued against -- not the registry, which does not move, and not the other two arms, whose price
+/// is the table above. This prose used to read as though 19 priced the whole membership fail-closed
+/// change. It prices one arm of it, and a lower bound presented as a total misprices the deferral that
+/// this paragraph is the basis for.
+///
+/// Neither that sweep's clause list nor the 54 cited below is committed, so treat both numbers as notes
+/// on what was run; the reproducible half of each claim is the argument beside it. That is the convention
+/// `:1987-1989` already applies to the 140-clause grid, and it holds here for the same reason.
 ///
 /// AND WHY NEITHER ROUTE IS AVAILABLE TO A DIAGNOSTIC FIX, which is a stronger statement than
 /// "deferred" and is measured rather than argued. `incomparable_membership` exists because the notice
@@ -276,6 +393,7 @@ pub(crate) struct NotComparable {
 /// result type stays free of that distinction, the drift risk it carries is a cost of that choice, and
 /// `membership_stops_after` calling the arm's own functions is the mitigation for the risk rather than
 /// a workaround for a missing refactor.
+///
 /// [`Unanswerable::EngineGaveUp`] has no such constituency. The operands were of kinds the comparator
 /// has an arm for and the engine quit part way, so no rule can be relying on the answer -- there is no
 /// answer to rely on, and the same clause decides differently as the subject gets longer.
