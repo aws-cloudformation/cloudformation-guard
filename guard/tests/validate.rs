@@ -1587,15 +1587,39 @@ mod validate_tests {
     /// its basename alone. Two files named `incomparable_membership.guard` in different directories
     /// produced two byte-identical notices.
     ///
-    /// The count was never the symptom and asserting it would miss this: each rules file gets its own
-    /// `RootScope` and therefore its own `BTreeSet`, so two notices are written either way. What was
-    /// lost is that they were the same two characters, and the reader could locate neither clause. So
-    /// this counts *distinct* lines, and separately requires each locator to name the directory that
-    /// tells the two files apart.
+    /// The count is not the symptom *on this path*, so this counts distinct lines and separately
+    /// requires each locator to name the directory that tells the two files apart. What was lost is
+    /// that the two notices were the same two characters, and the reader could locate neither clause.
+    ///
+    /// `a12ff5fd` stated that more broadly than it holds -- "each rules file gets its own `RootScope`
+    /// and so its own `BTreeSet`, so two notices are written either way" -- and a commit message cannot
+    /// be amended, so the correction lives here.
+    ///
+    /// It is true of the single-line path, which this cell runs. That path writes each scope's notices
+    /// straight to stderr as it finishes the file (`validate.rs:981`), so it holds no set and collapses
+    /// nothing; two identical notices are two lines.
+    ///
+    /// It is false of `--structured`. All four of those formats write one document covering every data
+    /// file and every rules file, and hold a single `BTreeSet` across the whole of it --
+    /// `structured.rs:133` for json, yaml and sarif, `xml.rs:25` for junit -- so two byte-identical
+    /// notices dedupe to one. Measured, with only the validate-side locator returned to a basename at
+    /// `b8d3901e`:
+    ///
+    ///     single-line   2 notices, 1 distinct locator
+    ///     -o json       1 notice
+    ///     -o yaml       1 notice
+    ///     -o sarif      1 notice
+    ///     -o junit      1 notice
+    ///
+    /// against 2 notices and 2 distinct locators in all five at `b8d3901e` itself. So for those four
+    /// formats the count *was* a symptom, and one of the two rules files' notices was dropped outright
+    /// rather than merely rendered illegibly.
     ///
     /// The single-line path rather than `--structured`, deliberately: this fixes the locator, and
     /// asserting it through the structured path would make this cell depend on the notices reaching
     /// that path at all, which is a different defect with its own cell above. Red for one reason each.
+    /// `a_deprecation_notice_reaches_the_structured_reporters` is where the counts above would go if
+    /// they are ever worth pinning.
     #[test]
     fn two_rules_files_sharing_a_basename_get_distinct_locators() {
         let mut reader = Reader::default();
