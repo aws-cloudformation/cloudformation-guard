@@ -8850,6 +8850,124 @@ fn a_nested_list_on_the_right_of_in_is_found_in_any_position(
     Ok(())
 }
 
+/// What a denylist written as a list holding a nested list admits, cell by cell.
+///
+/// `a_nested_list_on_the_right_of_in_is_found_in_any_position` above covers the same arm and has four
+/// `NOT IN` cells, and in every one of them the whole left-hand list IS a member of the denylist. So no
+/// cell anywhere in the suite asked what `NOT IN` answers when membership *fails*, and the arm answered
+/// that case by reporting the entire left-hand list as the unmatched diff. The negation wrapper reads
+/// that field as a set of left-hand *elements* and keeps the ones absent from it; a whole list matches
+/// no element, so every element survived, and `NOT IN` failed for every left-hand value whenever the
+/// denylist held any nested list at all. `Pair NOT IN [[99,98]]` -- two disjoint pairs -- exited 19.
+///
+/// Stated rather than derived, because nothing in the suite constrains this. Head, the correct fix, and
+/// two candidate fixes that are wrong in different ways all give 903 passed and 0 failed, so a green
+/// suite after a change here is evidence of nothing. The oracle below is the measurement.
+///
+/// The rule these cells state: `NOT IN` fails if and only if the whole left-hand list is a member of the
+/// right-hand list, OR any left-hand element is. It is not `not(IN)`. `IN` over a list-valued left-hand
+/// side means whole-list membership or a complete subset, so a left-hand list only *partly* present is
+/// outside `IN` and inside `NOT IN`, and both polarities fail -- `Nest`, which is `[1, [9]]`, against a
+/// denylist of `[[9]]` is exactly that. Fail-closed on a partial collision is the same reading
+/// `found_in_string`'s `Partial` applies to substring `IN`, and it is the safe direction: a denylist
+/// that cannot decide must not report compliance.
+///
+/// A verdict-negating fix was built and rejected. It marked the membership branch's failures with a
+/// field mirroring `QueryIn::diff_from` and had the wrapper flip the verdict for them instead of
+/// recomputing a diff. It is smaller and it fixes the six cells above, and it admits four values the
+/// denylist names: `denied_by_a_nested_element_collision` and `denied_by_a_nested_element_that_is_named`
+/// both reach exit 0 under it, because flipping "the whole list is not a member" to PASS says nothing
+/// about the elements. 29 of these cells, against 36 for populating the diff element-wise.
+///
+/// `denied_by_one_flat_element` is the control that separates them and the one to read first if a later
+/// change moves anything here. `Pair NOT IN [1, 3]` must FAIL: `1` is named. Verdict negation turns it
+/// PASS.
+///
+/// The `_whatever_its_depth` cells are why the subset test no longer requires the matching right-hand
+/// element to be a non-list. With that requirement, an element that is itself a list could not
+/// contribute to the subset reading even when the denylist holds it verbatim, so `Nest IN [1, [9]]`
+/// failed while `Nest NOT IN [1, [9]]` also failed -- neither polarity would admit a pair of operands
+/// where every element of the left is written out on the right. It also let the failure branch produce
+/// an empty diff, which contradicts the Fail it is attached to. Without the requirement, "every element
+/// matched" and "the element-wise diff is empty" are the same statement, so a failure always carries the
+/// values that caused it. `in_elements_wrapped_one_deep_is_not_a_subset` is the control on the other
+/// side: dropping the requirement must not make `[1, 2]` a subset of `[[1], [2]]`.
+///
+/// The four `empty` cells pin an inconsistency rather than fixing one, and it is deliberate. An empty
+/// left-hand list is vacuously a subset, so it passes `IN` over a flat denylist and fails over one
+/// holding a nested list, where `contained_in`'s `is_empty` guard keeps it out of the subset reading. A
+/// comparison over an empty collection passing at all is what `vacuous_comparison_notice` in `eval.rs`
+/// is deprecating, so this is not the place to add a second one. They are here so that a change which
+/// moves them says so out loud.
+#[rstest::rstest]
+#[case::undenied_nested_pair("Pair", r#"NOT IN [[99,98]]"#, Status::PASS)]
+#[case::undenied_nested_singleton("Pair", r#"NOT IN [[7]]"#, Status::PASS)]
+#[case::undenied_nested_strings("Pair", r#"NOT IN [["a"],["b"]]"#, Status::PASS)]
+#[case::undenied_mixed_denylist("Pair", r#"NOT IN ["x", ["y"]]"#, Status::PASS)]
+#[case::undenied_strings_against_a_nested_pair("Strs", r#"NOT IN [[1,2]]"#, Status::PASS)]
+#[case::undenied_strings_against_a_mixed_denylist("Strs", r#"NOT IN ["x","y",[9]]"#, Status::PASS)]
+#[case::denied_by_whole_list_membership("Strs", r#"NOT IN [["a","b"]]"#, Status::FAIL)]
+#[case::denied_by_element_collision("Strs", r#"NOT IN ["a","b",[9]]"#, Status::FAIL)]
+#[case::in_nested_pair("Pair", r#"IN [[99,98]]"#, Status::FAIL)]
+#[case::in_nested_singleton("Pair", r#"IN [[7]]"#, Status::FAIL)]
+#[case::in_nested_strings("Pair", r#"IN [["a"],["b"]]"#, Status::FAIL)]
+#[case::in_mixed_denylist("Pair", r#"IN ["x", ["y"]]"#, Status::FAIL)]
+#[case::in_strings_against_a_nested_pair("Strs", r#"IN [[1,2]]"#, Status::FAIL)]
+#[case::in_strings_against_a_mixed_denylist("Strs", r#"IN ["x","y",[9]]"#, Status::FAIL)]
+#[case::in_by_whole_list_membership("Strs", r#"IN [["a","b"]]"#, Status::PASS)]
+#[case::in_by_flat_subset_beside_a_nested_element("Strs", r#"IN ["a","b",[9]]"#, Status::PASS)]
+#[case::denied_by_one_flat_element("Pair", r#"NOT IN [1, 3]"#, Status::FAIL)]
+#[case::undenied_by_a_disjoint_flat_list("Pair", r#"NOT IN [3, 4]"#, Status::PASS)]
+#[case::denied_by_every_flat_element("Pair", r#"NOT IN [1, 2]"#, Status::FAIL)]
+#[case::in_one_flat_element("Pair", r#"IN [1, 3]"#, Status::FAIL)]
+#[case::in_a_disjoint_flat_list("Pair", r#"IN [3, 4]"#, Status::FAIL)]
+#[case::in_every_flat_element("Pair", r#"IN [1, 2]"#, Status::PASS)]
+#[case::in_flat_subset_survives_a_nested_neighbour("Pair", r#"IN [1, 2, [9]]"#, Status::PASS)]
+#[case::denied_by_flat_subset_beside_a_nested_neighbour(
+    "Pair",
+    r#"NOT IN [1, 2, [9]]"#,
+    Status::FAIL
+)]
+#[case::in_elements_wrapped_one_deep_is_not_a_subset("Pair", r#"IN [[1],[2]]"#, Status::FAIL)]
+#[case::undenied_by_elements_wrapped_one_deep("Pair", r#"NOT IN [[1],[2]]"#, Status::PASS)]
+#[case::in_partly_nested_left_is_not_a_subset("Nest", r#"IN [[9]]"#, Status::FAIL)]
+#[case::denied_by_a_nested_element_collision("Nest", r#"NOT IN [[9]]"#, Status::FAIL)]
+#[case::in_a_nested_element_is_a_member("Deep", r#"IN [["a"]]"#, Status::PASS)]
+#[case::denied_by_a_nested_element_that_is_named("Deep", r#"NOT IN [["a"]]"#, Status::FAIL)]
+#[case::in_every_element_found_whatever_its_depth("Nest", r#"IN [1, [9]]"#, Status::PASS)]
+#[case::denied_by_every_element_whatever_its_depth("Nest", r#"NOT IN [1, [9]]"#, Status::FAIL)]
+#[case::in_empty_over_a_flat_list("Empty", r#"IN [1,2,3]"#, Status::PASS)]
+#[case::in_empty_over_a_nested_list("Empty", r#"IN [[9]]"#, Status::FAIL)]
+#[case::denied_empty_over_a_flat_list("Empty", r#"NOT IN [1,2,3]"#, Status::FAIL)]
+#[case::undenied_empty_over_a_nested_list("Empty", r#"NOT IN [[9]]"#, Status::PASS)]
+fn a_list_denylist_holding_a_nested_list_denies_only_what_it_names(
+    #[case] property: &str,
+    #[case] comparison: &str,
+    #[case] expected: Status,
+) -> Result<()> {
+    const INPUT: &str = r#"
+    {
+        Pair: [1, 2],
+        Strs: ["a", "b"],
+        Nest: [1, [9]],
+        Deep: [["a"]],
+        Empty: []
+    }
+    "#;
+
+    let rules = format!("rule membership {{ {property} {comparison} }}");
+
+    assert_eq!(
+        expected,
+        rule_status_in(&rules, INPUT, "membership")?,
+        "clause: {} {}",
+        property,
+        comparison
+    );
+
+    Ok(())
+}
+
 /// `or` is decided by whichever disjunct can decide it, in either order.
 ///
 /// `eval_conjunction_clauses` returned on the first disjunct that raised, so the rest of the
