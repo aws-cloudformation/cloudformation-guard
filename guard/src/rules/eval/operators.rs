@@ -1343,6 +1343,54 @@ impl Comparator for InOperation {
                         // a rule would pass against `["abc"]` and fail against `["abc", "zzz"]` with
                         // nothing in the clause to explain it.
                         //
+                        // That rejection is now measured rather than argued, because the argument it
+                        // rests on is answerable: two or more results prove the operand did not come
+                        // from a `[0]` index, which yields exactly one, so the count looks like the
+                        // provenance signal the `[0]`-versus-`[*]` collapse destroys. What refutes it is
+                        // a query that resolves to several strings without a list anywhere in it.
+                        // `Resources.*.Properties.Name` over two resources delivers two haystacks, and
+                        // under that gate `Empty NOT IN Resources.*.Properties.Name` exits 19 -- the
+                        // empty list denied against two strings nothing compared, which is the false
+                        // report the string exclusion above exists to remove, recovered by adding a
+                        // second resource. The one-resource spelling stays 0, so the boundary it draws
+                        // falls between one resource and two. `a_multi_candidate_string_query_is_not_an_entry_set`
+                        // is that cell, and `Empty NOT IN Strs2[*]` sits in the table above at PASS with
+                        // its literal at FAIL beside it as the residual this leaves.
+                        //
+                        // AND THE `IN` POLARITY OF A NON-LIST RIGHT OPERAND HAS NO REPAIR HERE EITHER,
+                        // which is this check's own defect rather than an inherited one and is a proof
+                        // rather than a preference. `Empty IN Map` exits 0 where the written-out
+                        // `Empty IN {"k": 1}` exits 19, and `N`, `B`, `Flt` and `Nullv` do the same. Take
+                        // a `D1` of `[5]`, one entry, so cardinality cannot discriminate: `D1[0]` and
+                        // `D1[*]` deliver one identical `Int(5)` at one identical path `/D1/0`, so no
+                        // predicate over the value, the kind or the path can separate them, while the
+                        // oracle owes them opposite verdicts -- `D1[0]` IS the operand and answers as `5`
+                        // does, 19, and `D1[*]` names the entry set and answers as `[5]` does, 0.
+                        //
+                        // The asymmetry with `NOT IN` is the whole reason that polarity was repairable:
+                        // `Empty NOT IN 5` and `Empty NOT IN [5]` are BOTH 19, one by `NotComparable`
+                        // failing closed and one by this match negated, so one answer serves both
+                        // spellings. On `IN` they are 19 and 0, so no answer does.
+                        //
+                        // Two repairs serving the other side were built and measured. Firing only for a
+                        // list-valued result moves 21 cells and is a revert: `[*]` over a scalar denylist
+                        // resolves to scalars, so the check becomes a no-op for the shape it exists for
+                        // and `Empty NOT IN D13[*]` returns to 0. Recording the pairing as unanswerable
+                        // is surgical -- every cell it moves is an `IN` cell, no `NOT IN` cell moves --
+                        // and brings seven to the 19 their literals owe while taking `Empty IN Strs`,
+                        // `D13[*]`, `D1[*]`, `Maps[*]` and `Mixed[*]` from 0 to 19. `Strs` is in that
+                        // list because this check fires for any non-string result, a list included, so an
+                        // unexpanded list denylist is answered here and never reaches `contained_in`'s
+                        // list arm. That is over-denial, which the collision arm below records as the
+                        // worse direction for a policy tool, and `SomeList IN Allowed[*]` is the ordinary
+                        // allowlist spelling, so it would start reporting a violation whenever the list
+                        // it checks is empty. It is also the answer the `Denies[0]` proof below already
+                        // rules out for this arm, by the same test: the information is missing from the
+                        // call rather than from the question, and one member of the pair has a definite
+                        // PASS.
+                        // `the_in_polarity_of_a_queried_scalar_right_operand_has_no_repair_in_this_arm`
+                        // carries the pair and both measured prices.
+                        //
                         // A match, not a collision. The collision arm below asks whether the denylist
                         // names one of the left-hand elements, and an empty list has none to name, so no
                         // loop over `elements` can ever record one. What the convention says is that the
