@@ -9628,8 +9628,19 @@ fn which_spelling_of_a_queried_denylist_reaches_which_arm(
     // for it. `DenyNestedEight` is `DenyNestedNine` with the named value changed, so it names nothing
     // `Nest` holds -- the over-denial mirror. `DeepA` and `DenyWrappedA` are the same open bypass in
     // strings rather than integers, so a reader cannot take it for an integer-comparison quirk.
-    // `DenyWrappedOneTwo` is the mirror defect in the other direction, over-denial that is already
-    // present. `DenyWrapOne` is `DenyWrappedOneTwo` with the second entry removed, so that `[0]` and
+    // `DenyWrappedOneTwo` is the mirror defect in the other direction, over-denial. The class predates
+    // this effort but the right-expanded cell does not, and an earlier revision here said it was "already
+    // present and not introduced by anything on this branch", which is false for the cell it annotated.
+    // Measured across three binaries, owed verdicts being written-out PASS, unexpanded PASS,
+    // right-expanded PASS and single-indexed FAIL: at the pre-effort `5a3bfd5` the four are 19, 0, 0, 0,
+    // so the WRITTEN-OUT spelling over-denied and the right-expanded one was right; at `9bcf2053` they
+    // are 0, 0, 19, 19, so the written-out spelling was repaired and the right-expanded one broke.
+    // `element_collision`, the mechanism that produces the current 19, has no occurrence in
+    // `operators.rs` at `5a3bfd5` and arrives at `05232a25`. So this effort has already paid the price
+    // the pair predicts once, without recognizing it as a trade: the over-denial moved from one spelling
+    // to another rather than going away. That is what "at most one member of each pair can be correct"
+    // looks like when it happens to someone.
+    // `DenyWrapOne` is `DenyWrappedOneTwo` with the second entry removed, so that `[0]` and
     // `[*]` over it deliver one identical right-hand result and the same count of them; it is what makes
     // the over-denial's impossibility a pair rather than an analogy. `Wrap13` is the guard: its single
     // element IS `Deny13`, which is the one shape that makes the entry reading and the candidate-set
