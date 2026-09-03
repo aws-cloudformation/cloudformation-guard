@@ -1295,3 +1295,64 @@ fn an_index_names_one_element_or_none() {
         );
     }
 }
+
+/// Two lists are decided on length first, and on equal lengths whatever an element raises is the answer.
+///
+/// The `(List, List)` arm has two exits and the difference between them is load-bearing for comments in
+/// two other files. On unequal lengths it answers `false` without asking an element anything. On equal
+/// lengths it zips and calls itself with `?`, so a pair that refuses refuses for the whole comparison.
+///
+/// Unasserted until now, and the gap cost two wrong comments. `incomparable_membership` in `eval.rs`
+/// said this arm "always returns `Ok` -- `false` on a length mismatch, never a refusal", and the
+/// `(List, Regex)` note beneath it concluded from that premise that a whole-list left-hand side can never
+/// reach the regex engine. The second case below is the counterexample: it is the pair
+/// `Cat NOT IN [[/re/]]` builds, and the zip walks straight into `(String, Regex)`.
+///
+/// The first case is the half of the old sentence that was true, and it is the half the seven-false-alarm
+/// discriminator in that same comment rests on -- `Strs NOT IN ["x","y",["p"]]` stays silent because a
+/// two-element `Strs` against a one-element `["p"]` mismatches on length and answers before any element
+/// is looked at. It holds a refusing element on purpose, so that a future change making the length exit
+/// compare eagerly cannot pass this test.
+#[test]
+fn two_equal_length_lists_propagate_what_their_elements_raise() {
+    let list = |elems: Vec<PathAwareValue>| PathAwareValue::List((Path::root(), elems));
+    let txt = |s: &str| PathAwareValue::String((Path::root(), s.to_string()));
+
+    // Thirty `a` characters is the length at which `(?!x)((a+)+)b` exhausts `fancy_regex`'s backtracking
+    // budget, the same subject the eval tests use. The pattern is stored without its slashes, which is
+    // what `parse_regex_inner` hands the value.
+    let catastrophic = PathAwareValue::Regex((Path::root(), "(?!x)((a+)+)b".to_string()));
+    let thirty_a = txt(&"a".repeat(30));
+
+    assert!(
+        !compare_eq(
+            &list(vec![thirty_a.clone(), txt("b")]),
+            &list(vec![catastrophic.clone()])
+        )
+        .unwrap(),
+        "lists of different lengths must answer false without asking their elements, even when one \
+         element pair would have refused"
+    );
+
+    let spent = compare_eq(&list(vec![thirty_a]), &list(vec![catastrophic])).expect_err(
+        "a String zipped against a Regex must reach the engine, not answer structurally",
+    );
+    assert!(
+        matches!(spent, Error::RegexError(_)),
+        "expected the spent backtracking budget to propagate out of the zip, got {:?}",
+        spent
+    );
+
+    // Not a property of regexes. Any element pair the function cannot decide propagates the same way,
+    // which is why the arm cannot be described as always answering.
+    let refused = compare_eq(
+        &list(vec![PathAwareValue::Int((Path::root(), 1))]),
+        &list(vec![txt("1")]),
+    )
+    .expect_err("an Int against a String has no arm, so the pair of lists must refuse");
+    assert!(
+        matches!(refused, Error::NotComparable(_)),
+        "expected NotComparable to propagate out of the zip, got {:?}",
+        refused
+    );
+}
