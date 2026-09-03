@@ -16220,6 +16220,119 @@ fn a_matched_subset_earns_no_whole_value_refusal_the_operator_never_built(
     Ok(())
 }
 
+/// Element pairings the operator short-circuited past earn no refusal either.
+///
+/// The element-granularity twin of
+/// `a_matched_subset_earns_no_whole_value_refusal_the_operator_never_built` above. That one is about a
+/// pairing the operator's whole-list loop never reached; this one is about pairings inside the element
+/// walk. `elements_not_matched` asks `is_one_of` per left-hand element, and `is_one_of` returns
+/// `Matched` on the first right-hand element that matches, so the pairings after a match are never
+/// built for that element. The predicate walked the full cross product and counted them.
+///
+/// # Why this is a separate test rather than more cells on that one
+///
+/// The two sources are each SUFFICIENT to set `refused`, so a clause can need one fix, the other, or
+/// both, and a table that mixed them would not say which. `ShortIso` is `[[[1]], [[7, 7], [8, 8]]]`
+/// and the two denylists below differ in one element, which is what isolates them:
+///
+/// - against `[[1], [9]]` the skipped pairing is `compare_eq([1], [9])`, which recurses to
+///   `compare_eq(1, 9)` and answers `Ok(false)`. Nothing refuses, so the element loop contributes
+///   nothing and the whole-value gate alone silences the clause. That cell is green before this
+///   change.
+/// - against `[[1], ["a"]]` the skipped pairing is `compare_eq([1], ["a"])`, recursing to
+///   `compare_eq(1, "a")`, which is `NotComparable`. That refuses, so this cell is the one that needs
+///   the element walk observed, and it is red before this change.
+///
+/// One fixture answering oppositely across two denylists is the finding a reader is most likely to
+/// get wrong, so both cells are here rather than only the failing one.
+///
+/// # The sibling and sole-value controls
+///
+/// `ShortIsoSibling` is `ShortIso` minus the matching value. Its inner lists are two elements long,
+/// so every pairing against the one-element denylist entries is `Ok(false)` by length mismatch and
+/// nothing refuses -- silent before and after, which is what attributes the notice to the matched
+/// value rather than to the clause shape. `ShortIsoOnly` keeps only the matching value: the clause
+/// FAILS, so the gate shuts on its own and the absence proves nothing about the predicate. Its status
+/// is tabulated for that reason.
+///
+/// # What is NOT claimed
+///
+/// This does not pin that a kind mismatch stays discarded rather than becoming `Unanswerable`. That
+/// is the fail-closed change gated on the registry rules, and `is_one_of`'s returned `Membership` is
+/// untouched here -- only a flag beside it is written. `a_denylist_refuses_a_value_it_could_not_
+/// evaluate_in_either_spelling` is where the promotion question lives.
+#[rstest::rstest]
+// THE DEFECT. The skipped pairing would have compared an int against a string, so it refuses and the
+// whole-value gate alone does not silence this.
+#[case::a_skipped_pairing_across_kinds(
+    "some ShortIso[*] NOT IN [[1], [\"a\"]]",
+    Status::PASS,
+    false
+)]
+// THE DISCRIMINATOR. Same left operand, and the skipped pairing is int against int, which refuses
+// nothing -- so this cell was already silent and must stay so.
+#[case::the_same_value_where_the_skipped_pairing_is_comparable(
+    "some ShortIso[*] NOT IN [[1], [9]]",
+    Status::PASS,
+    false
+)]
+// THE ATTRIBUTION CONTROL. The matching value dropped; nothing short-circuits.
+#[case::the_same_clause_without_the_matching_value(
+    "some ShortIsoSibling[*] NOT IN [[1], [\"a\"]]",
+    Status::PASS,
+    false
+)]
+// THE GATE SHUTS ON ITS OWN. Only the matching value, so the clause fails.
+#[case::only_the_matching_value_fails_the_clause(
+    "some ShortIsoOnly[*] NOT IN [[1], [\"a\"]]",
+    Status::FAIL,
+    false
+)]
+// THE CHANNEL STILL WORKS. No element matches, so no pairing is skipped and every refusal the walk
+// finds is genuinely owed.
+#[case::a_refusal_from_a_pairing_the_walk_does_build("Deep NOT IN [[1], [2]]", Status::PASS, true)]
+fn a_short_circuited_element_pairing_earns_no_refusal(
+    #[case] clause: &str,
+    #[case] expected_status: Status,
+    #[case] expected_notice: bool,
+) -> Result<()> {
+    // `ShortIso`'s second value has TWO-element inner lists on purpose: every pairing of them
+    // against a one-element denylist entry is `Ok(false)` by length mismatch, so the sibling
+    // contributes no refusal of its own and whatever the notice reports came from the first value.
+    const INPUT: &str = r#"
+    {
+        ShortIso: [[[1]], [[7, 7], [8, 8]]],
+        ShortIsoSibling: [[[7, 7], [8, 8]]],
+        ShortIsoOnly: [[[1]]],
+        Deep: [[9]]
+    }
+    "#;
+
+    let (status, notices) = status_and_deprecations(clause, INPUT)?;
+
+    assert_eq!(
+        expected_status, status,
+        "`{}` must be {:?} for this cell to mean what it says: the notice gate requires the clause \
+         to have passed, so a cell whose status moved is no longer measuring the predicate",
+        clause, expected_status
+    );
+
+    let membership = notices
+        .iter()
+        .any(|notice| notice.contains("could not be compared with any element"));
+
+    assert_eq!(
+        expected_notice,
+        membership,
+        "`{}` must {} the membership notice. Recorded {:?}",
+        clause,
+        if expected_notice { "emit" } else { "not emit" },
+        notices
+    );
+
+    Ok(())
+}
+
 /// Only the two-query arm truncates, and this binds the CALL SITE rather than the helper.
 ///
 /// `the_membership_notice_stops_pairing_where_the_operator_stops` hands

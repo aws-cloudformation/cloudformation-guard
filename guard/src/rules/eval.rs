@@ -572,16 +572,31 @@ fn incomparable_membership(lhs: &[QueryResult], rhs: &[QueryResult]) -> bool {
                 // `contained_in`'s list-against-list arm, which decides at TWO granularities and used to
                 // be read as deciding at one.
                 //
-                // The element pairs are always built, by `elements_not_matched` asking `is_one_of` per
+                // The element pairs are built by `elements_not_matched` asking `is_one_of` per
                 // left-hand element. Not recursively -- for a `Deep` of `[["a"]]` the element is
                 // `["a"]`, and that is the operand `is_one_of` is handed, so a second level would
                 // compare something no clause compares.
+                //
+                // NOT ALL OF THEM, which this arm asserted for two commits. `is_one_of` returns
+                // `Matched` on the first right-hand element that matches, so the pairings after a
+                // match are never built for that element. A nested `for left in lhsl { for right in
+                // rhsl { .. } }` here walked the whole cross product and counted the rest -- the same
+                // class as the whole-value residual below, one granularity down.
+                //
+                // `operators::membership_pairing_refused` is the fix, and the shape is the point: it
+                // runs `is_one_of`'s OWN loop and reports what the pairings that loop built said. The
+                // obvious alternative is to copy the walk's stop condition into this arm -- `if right
+                // == left || compare_eq(left, right) == Ok(true) { break }` -- which reproduces the
+                // defect's cause while fixing its symptom, and is what the prohibition on
+                // `membership_stops_after` in `operators.rs` forbids. Both helpers this arm now calls
+                // observe the operator instead of imitating it.
+                //
+                // Its classification cannot drift from `pair_refused`'s, which is what it replaces:
+                // the flag is set on `is_one_of`'s `Err(_)` arm, and that arm receives everything
+                // except the `RegexError` taken above it -- exactly the partition `pair_refused`
+                // makes.
                 (PathAwareValue::List((_, lhsl)), PathAwareValue::List((_, rhsl))) => {
-                    for left in lhsl {
-                        for right in rhsl {
-                            refused |= pair_refused(left, right);
-                        }
-                    }
+                    refused |= operators::membership_pairing_refused(lhsl, rhsl);
 
                     // And the WHOLE left-hand list against each entry, which that arm walks when no
                     // element matched and the denylist holds a list. Keyed on the same two conditions the
@@ -648,34 +663,28 @@ fn incomparable_membership(lhs: &[QueryResult], rhs: &[QueryResult]) -> bool {
                     // paragraph is this finding verbatim. It survived review because the argument was
                     // checked against the population that satisfies it.
                     //
-                    // A SECOND DIVERGENCE IS STILL OPEN, and this gate does not close it. The element
-                    // loops above walk the full `lhsl` x `rhsl` cross product; the operator does not.
-                    // `elements_not_matched` asks `is_one_of` per left-hand element, and `is_one_of`
-                    // returns `Matched` on the first right-hand element that matches, so later pairings
-                    // for a matched element are never built. This arm counts them.
+                    // THE TWO GRANULARITIES DIVERGED FOR THE SAME REASON and are now closed the same
+                    // way. This one over-counted a whole-value pairing the operator skipped because the
+                    // element diff was empty; the element loop above over-counted element pairings
+                    // `is_one_of` short-circuited past. Both were the predicate re-deriving the
+                    // operator's work and getting a different answer, and both are now questions asked
+                    // of the operator's own functions.
                     //
-                    // Measured, so it is not confused with the residual: with `ShortIso` of
-                    // `[[[1]], [[7, 7], [8, 8]]]`, `some ShortIso[*] NOT IN [[1], ["a"]]` exits 0 and
-                    // still prints the notice with this gate in place. `some ShortIso[*] NOT IN
-                    // [[1], [9]]` -- the SAME left operand -- goes silent with it. The discriminator is
+                    // They are separable, and were separated, because each is sufficient on its own to
+                    // set `refused`. With `ShortIso` of `[[[1]], [[7, 7], [8, 8]]]`,
+                    // `some ShortIso[*] NOT IN [[1], [9]]` needs only the whole-value gate, while
+                    // `some ShortIso[*] NOT IN [[1], ["a"]]` -- the SAME left operand -- needs both,
+                    // because closing one leaves the other carrying the notice. The discriminator is
                     // whether the pairing the operator skipped would have compared incomparable kinds:
-                    // for `[9]` the skipped pair is `compare_eq(1, 9)`, `Ok(false)`, no refusal, so the
-                    // residual was the only live source; for `["a"]` it is `compare_eq(1, "a")`,
-                    // `NotComparable`, a refusal, so closing the residual leaves the other source
-                    // carrying the notice. Two clauses of one fixture answering oppositely is why the
-                    // clause shape cannot be used to tell the two sources apart.
+                    // for `[9]` the skipped pair is `compare_eq(1, 9)`, `Ok(false)`, refusing nothing;
+                    // for `["a"]` it is `compare_eq(1, "a")`, `NotComparable`, a refusal. One fixture
+                    // answering oppositely across two denylists is why the clause shape cannot be used
+                    // to tell the two sources apart, and why a reader must not read one repair as
+                    // covering the other.
                     //
-                    // Not closed here, and the sequencing is deliberate rather than deferral. Closing it
-                    // alone moves nothing observable -- every clause where it matters also has the
-                    // residual firing, and the residual holds the notice up -- so it has no before-and-
-                    // after of its own until this gate lands. It also needs a different shape: this gate
-                    // OBSERVES a diff the operator already computed, while the element loop needs the
-                    // pairing set `is_one_of` actually built, which no accessor reports yet. Restating
-                    // that walk inline here is what must not happen; it is the pattern that produced both
-                    // divergences.
-                    //
-                    // So this arm still over-counts. What it no longer does is count the whole-value
-                    // pairing for a value whose elements all matched.
+                    // The element-loop half moved nothing observable until this gate landed, which is
+                    // why it is the later commit rather than the earlier one: on every clause where it
+                    // mattered the residual also fired, and the residual held the notice up.
                     if rhsl.iter().any(|right| right.is_list())
                         && operators::whole_value_pairing_built(lhsl, rhsl)
                     {

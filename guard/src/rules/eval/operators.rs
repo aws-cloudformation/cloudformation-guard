@@ -991,6 +991,32 @@ fn fail(lhs: Rc<PathAwareValue>, rhs: Rc<PathAwareValue>) -> ValueEvalResult {
 /// is the verdict -- and the claim it replaces, that promoting would change "the shape of the `ListIn`
 /// diff for no input that exists", was wrong about the input and about what moves.
 fn is_one_of(each: &PathAwareValue, rhsl: &[PathAwareValue]) -> Membership {
+    is_one_of_observed(each, rhsl, &mut false)
+}
+
+/// [`is_one_of`], with the kind refusals it discards reported to the caller.
+///
+/// ONE loop, not two. [`super::incomparable_membership`] needs to know whether any pairing this walk
+/// BUILT refused for an incomparability, and the walk short-circuits: `Matched` returns on the first
+/// right-hand element that matches, so later pairings for that element are never built. A predicate
+/// that walks the full cross product counts refusals from comparisons the operator never made. The
+/// only honest way to answer is to be inside this loop rather than beside it, which is why this is
+/// the body and [`is_one_of`] is a wrapper over it.
+///
+/// `refused_incomparably` is set on the same arm the returned `Membership` drops -- the `Err(_)`
+/// below, which receives `NotComparable` and nothing else, the `RegexError` arm above it having
+/// taken the budget case. That is exactly the classification `super::pair_refused` makes, so the
+/// predicate's notion of a refusal and this one cannot drift apart.
+///
+/// The returned `Membership` is untouched, and that is what makes reading this verdict-neutral. A
+/// kind mismatch still does not become `Unanswerable`; promoting it is the fail-closed change
+/// `docs/KNOWN_ISSUES.md` gates on the registry rules, priced at 19 verdicts above, and it is not
+/// what this does. The flag is written and the existing callers pass a throwaway.
+fn is_one_of_observed(
+    each: &PathAwareValue,
+    rhsl: &[PathAwareValue],
+    refused_incomparably: &mut bool,
+) -> Membership {
     let mut unanswerable: Option<Unanswered> = None;
     for elem in rhsl {
         if elem == each {
@@ -1004,7 +1030,7 @@ fn is_one_of(each: &PathAwareValue, rhsl: &[PathAwareValue]) -> Membership {
                     unanswerable = Some(unanswerable_reason(err));
                 }
             }
-            Err(_) => {}
+            Err(_) => *refused_incomparably = true,
         }
     }
 
@@ -1012,6 +1038,29 @@ fn is_one_of(each: &PathAwareValue, rhsl: &[PathAwareValue]) -> Membership {
         Some(unanswered) => Membership::Unanswerable(unanswered),
         None => Membership::NoMatch,
     }
+}
+
+/// Whether any element pairing `contained_in`'s list-against-list arm actually BUILT refused for an
+/// incomparability.
+///
+/// The element-granularity counterpart of [`whole_value_pairing_built`]. That one answers whether a
+/// pairing exists; this one answers what the pairings that exist said. Both exist because
+/// [`super::incomparable_membership`] cannot see the operator's work and had been re-deriving it.
+///
+/// It walks `elements_not_matched`'s walk -- `is_one_of` per left-hand element, short-circuiting on a
+/// match -- so a left-hand element that matched contributes only the pairings up to its match, which
+/// is what the operator compared. The predicate previously walked `lhsl` x `rhsl` entire, and counted
+/// the rest.
+///
+/// Return value discarded from `is_one_of_observed` deliberately: the membership answer is
+/// `elements_not_matched`'s to compute and act on, and duplicating that decision here would be the
+/// re-derivation both helpers exist to avoid. Only the refusal flag is read.
+pub(super) fn membership_pairing_refused(lhsl: &[PathAwareValue], rhsl: &[PathAwareValue]) -> bool {
+    let mut refused = false;
+    for each in lhsl {
+        is_one_of_observed(each, rhsl, &mut refused);
+    }
+    refused
 }
 
 /// What a right-hand list says about one left-hand element.
