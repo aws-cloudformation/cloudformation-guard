@@ -9374,6 +9374,110 @@ fn a_range_in_a_list_denylist_denies_a_list_valued_property(
     Ok(())
 }
 
+/// The `NOT IN` deprecation notice goes out only for a clause the incomparability let pass.
+///
+/// `incomparable_membership` is gated on one thing: that no left-hand value was
+/// `compare_eq`-comparable with any element of the right-hand side. It never consulted the verdict,
+/// and it could not have -- it was called before `cmp.compare` ran, so at that point there was no
+/// verdict to read. The notice's own wording is "<clause> passed because the value could not be
+/// compared with any element of the list", so on a clause that failed it printed the opposite of what
+/// happened. Measured across 231 `NOT IN` shapes: 177 reach the notice, 146 of them pass and 31 fail,
+/// and before this change all 177 printed it.
+///
+/// Which matters because of what the notice is for. It warns that a future release fails closed where
+/// the tool passes today, and it is the line an author greps for to find the clauses that need
+/// migrating before an upgrade. Beside a failure it costs a wasted investigation, and it misdirects
+/// as well: a clause that already fails is not one the fail-closed change will move.
+///
+/// The negative cells are three separate reasons a firing clause fails rather than one case repeated,
+/// which is why there are three groups of them rather than one:
+///
+/// - `a_scalar_denylist_that_already_fails_closed` reaches `NotComparable` instead of the
+///   suppressed-error path, so it fails closed in this release already. The notice's premise that the
+///   pair "is currently read as not a member" is false there.
+/// - The four `_the_denylist_names` cells fail because `contained_in` compares the left-hand list's
+///   *elements* against the right-hand elements. `incomparable_membership` never asks that question:
+///   it compares the whole list value, which is comparable with nothing, so the gate fires on a
+///   clause whose answer was decided perfectly normally.
+/// - `an_empty_left_hand_list` fails on `contained_in`'s deliberate `is_empty` guard.
+///
+/// Asserted through `status_and_deprecations` rather than `status_and_messages`. A deprecation notice
+/// is not a record message -- it goes to `RootScope::deprecations`, which the commands drain to
+/// stderr after evaluation -- so `recorded_comparison_messages` walking the record tree cannot see
+/// one however it is worded, and neither can a `Status`-only assertion. That is why the defect
+/// survived: nothing in the suite read the collection the notice lands in.
+///
+/// Every cell carries its status as well as its notice expectation. Suppressing the notice by moving
+/// a verdict would fix the contradiction and break the clause, so a change that does that has to fail
+/// here rather than read as a repair.
+#[rstest::rstest]
+// Clauses the incomparability lets pass. The notice is true of these and must survive.
+#[case::a_map_against_a_scalar_denylist("Map NOT IN Haystack", Status::PASS, true)]
+#[case::a_nested_list_against_a_scalar_denylist("Deep NOT IN Haystack", Status::PASS, true)]
+#[case::a_list_against_a_disjoint_scalar_denylist("IntList NOT IN Haystack", Status::PASS, true)]
+#[case::a_bool_against_an_int_denylist("Bool NOT IN IntList", Status::PASS, true)]
+#[case::a_map_list_against_an_int_denylist("MapList NOT IN IntList", Status::PASS, true)]
+// Clauses that fail. Each printed the notice before this change.
+#[case::a_scalar_denylist_that_already_fails_closed("Map NOT IN Str", Status::FAIL, false)]
+#[case::an_int_list_the_denylist_names("IntList NOT IN IntList", Status::FAIL, false)]
+#[case::a_string_list_the_denylist_names("StrList NOT IN StrList", Status::FAIL, false)]
+#[case::a_nested_list_the_denylist_names("Deep NOT IN Deep", Status::FAIL, false)]
+#[case::a_map_list_the_denylist_names("MapList NOT IN MapList", Status::FAIL, false)]
+#[case::an_empty_left_hand_list("EmptyList NOT IN Haystack", Status::FAIL, false)]
+// Controls: silent before this change and silent after it.
+#[case::a_denial_that_was_decided("Int NOT IN IntList", Status::FAIL, false)]
+#[case::a_map_denied_by_a_map_denylist("Map NOT IN MapList", Status::FAIL, false)]
+#[case::an_undenied_comparable_value("Int NOT IN Haystack", Status::PASS, false)]
+#[case::the_positive_polarity_never_notices("Map IN Haystack", Status::FAIL, false)]
+fn the_incomparable_membership_notice_is_only_emitted_for_a_clause_that_passed(
+    #[case] clause: &str,
+    #[case] expected: Status,
+    #[case] expect_notice: bool,
+) -> Result<()> {
+    // Flat, and every left-hand shape sits beside the denylist that names it, so a `_the_denylist_names`
+    // cell and its passing counterpart differ only in the right-hand side.
+    const INPUT: &str = r#"
+    {
+        Int: 1,
+        Str: "a",
+        Bool: true,
+        IntList: [1, 2],
+        StrList: ["a", "b"],
+        Deep: [["a"]],
+        Map: { a: 1 },
+        MapList: [{ a: 1 }],
+        EmptyList: [],
+        Haystack: [7, "zzz", false]
+    }
+    "#;
+
+    let (status, notices) = status_and_deprecations(clause, INPUT)?;
+
+    assert_eq!(
+        expected, status,
+        "`{}` changed verdict; this is a diagnostics fix and must move no status",
+        clause
+    );
+
+    let emitted = notices
+        .iter()
+        .any(|n| n.contains("could not be compared with any element"));
+    assert_eq!(
+        expect_notice,
+        emitted,
+        "`{}` reached {:?}, so the incomparable-membership notice should {}; recorded {:?}",
+        clause,
+        status,
+        match expect_notice {
+            true => "have been emitted",
+            false => "have stayed silent",
+        },
+        notices
+    );
+
+    Ok(())
+}
+
 /// `or` is decided by whichever disjunct can decide it, in either order.
 ///
 /// `eval_conjunction_clauses` returned on the first disjunct that raised, so the rest of the
@@ -10600,6 +10704,28 @@ fn the_reason_a_containment_cannot_be_asked_names_the_right_operand(
     );
 
     Ok(())
+}
+
+/// Runs one clause and returns the rule's status together with the deprecation notices recorded.
+///
+/// Separate from `status_and_messages` next door, and the distinction is the reason a notice that
+/// contradicted its own clause went unnoticed for two commits. A deprecation notice is not a record
+/// message: it is inserted into `RootScope::deprecations`, a set the commands drain to stderr once
+/// evaluation is over, and it never appears in the record tree at all. So `recorded_comparison_messages`
+/// cannot see one however it is worded, and a test that wants to assert on a notice has to read the
+/// scope rather than the tree.
+///
+/// The notices come back in `BTreeSet` order rather than emission order. Nothing here depends on the
+/// order, and a caller that starts to should assert on membership instead: two notices about the same
+/// clause are deduplicated by the set, so emission order is not recoverable from it anyway.
+fn status_and_deprecations(clause: &str, input: &str) -> Result<(Status, Vec<String>)> {
+    let rules = format!("rule r {{\n  {clause}\n}}");
+    let rules_file = RulesFile::try_from(rules.as_str())?;
+    let value = PathAwareValue::try_from(input)?;
+    let mut root = root_scope(&rules_file, Rc::new(value));
+    let status = eval_rules_file(&rules_file, &mut root, None)?;
+    let notices = root.deprecations().cloned().collect();
+    Ok((status, notices))
 }
 
 /// Runs one clause and returns the rule's status together with the comparison messages recorded.
