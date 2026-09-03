@@ -9281,13 +9281,30 @@ fn a_denylist_named_by_a_variable_denies_what_the_same_list_written_out_denies(
 ///
 /// No local predicate separates the two, because they are one shape. A list-valued right-hand result is
 /// either the whole denylist, which an unexpanded `Deny13` resolves to, or a single entry, which
-/// `Deny13[*]` and `Deny13[0]` resolve to, and the first wants decomposing while the second wants taking
-/// whole. "An element of the left operand equals the whole right operand" is true of `Nest` against
-/// `[9]` and of `Wrap13` against `[1, 3]` alike, and the first owes FAIL and the second PASS.
+/// `Deny13[*]` resolves to, and the first wants decomposing while the second wants taking whole. "An
+/// element of the left operand equals the whole right operand" is true of `Nest` against `[9]` and of
+/// `Wrap13` against `[1, 3]` alike, and the first owes FAIL and the second PASS.
+///
+/// And no repair confined to this arm can be right, which is a proof rather than a preference about which
+/// reading to prefer. For a `Denies` of `[[1, 3]]` -- one entry -- `Denies[0]` and `Denies[*]` resolve to
+/// the same single value, the inner list `[1, 3]`, at the same path, so `compare` receives one identical
+/// `QueryResult` either way. The oracle owes them opposite verdicts: `Denies[0]` is a single right-hand
+/// operand whose value IS the right-hand list, members `1` and `3`, and `Pair` holds `1`, so FAIL;
+/// `Denies[*]` names the entry set, whose one member is `[1, 3]`, which `Pair` neither is nor holds, so
+/// PASS. `DenyNestedNine[0]` against `DenyNestedNine[*]` is the same pair with the polarity reversed.
+/// Each pair holds one cell that is right today and one that is wrong, and anything written in that arm
+/// moves both together, so at most one member of each pair can be correct. The
+/// `a_single_indexed_entry_denies_by_its_members` group pins this.
+///
+/// That also rules out joining `unanswerable`, the arm's third answer, which fails closed in both
+/// polarities for a pairing that has no right verdict either way. These pairings DO have right verdicts,
+/// and one member of each pair is a PASS, so failing closed would deny a value no denylist names and
+/// would assert that a decided question is undecided. The information is missing from the call, not from
+/// the question, and that is the test for which of the two shapes a new ambiguity has.
+///
 /// `QueryResult` is `Literal | Resolved | UnResolved`, carrying the value and its path and no record of
-/// the traversal, and `binary_operation` receives the right-hand side already resolved. The path will
-/// not stand in: `Denies[0]` is one entry whose path ends in a digit, and a numeric-string map key is a
-/// whole collection whose path ends in a digit too. Carrying the provenance would change
+/// the traversal, and `binary_operation` receives the right-hand side already resolved, consuming the
+/// access expression that separates the two spellings. Carrying the provenance would change
 /// `Comparator::compare` for every operator and would still miss `NOT IN %deny`, which
 /// `a_denylist_named_by_a_variable_denies_what_the_same_list_written_out_denies` covers, since a
 /// variable's binding is resolved before the comparator sees it. So closing this is a change to how a
@@ -9366,18 +9383,22 @@ fn a_denylist_named_by_a_variable_denies_what_the_same_list_written_out_denies(
 //
 // The reason no local predicate separates the two is that they are the same shape. A list-valued
 // `eachr` is either the whole denylist, which `Deny13` unexpanded resolves to, or one entry, which
-// `Deny13[*]` and `Deny13[0]` resolve to, and the two want opposite readings: decompose it for the
-// first, take it whole for the second. `Nest` against an `eachr` of `[9]` and `Wrap13` against an
-// `eachr` of `[1, 3]` are both "an element of the left operand equals the whole right operand", and
-// the first owes FAIL while the second owes PASS. `QueryResult` is `Literal | Resolved | UnResolved`
-// and carries no record of which traversal produced a value, and `binary_operation` is handed the
-// right-hand side already resolved, so the arm cannot ask. The path is not a sound substitute:
-// `Denies[0]` is one entry whose path ends in a digit and a numeric-string map key is a whole
-// collection whose path also ends in a digit. Threading the provenance would change
-// `Comparator::compare` for every operator, and would still not reach `NOT IN %deny`, which
-// `a_denylist_named_by_a_variable_denies_what_the_same_list_written_out_denies` covers. That is a
-// design change rather than a repair to this arm, so this cell records the bypass and the guard cells
-// below record what refuses the shortcut.
+// `Deny13[*]` resolves to, and the two want opposite readings: decompose it for the first, take it
+// whole for the second. `Nest` against an `eachr` of `[9]` and `Wrap13` against an `eachr` of
+// `[1, 3]` are both "an element of the left operand equals the whole right operand", and the first
+// owes FAIL while the second owes PASS. `QueryResult` is `Literal | Resolved | UnResolved` and
+// carries no record of which traversal produced a value, and `binary_operation` is handed the
+// right-hand side already resolved, so the arm cannot ask.
+//
+// Stronger than that, and this is a proof rather than a difficulty: the two spellings can be made
+// indistinguishable. `Denies[0]` and `Denies[*]` over a `Denies` of `[[1, 3]]` deliver the same
+// single value, the inner list `[1, 3]`, at the same path, so `compare` receives one identical
+// `QueryResult` either way -- while the oracle owes them opposite verdicts. The
+// `a_single_indexed_entry_denies_by_its_members` group below carries it. Threading the provenance
+// would change `Comparator::compare` for every operator, and would still not reach `NOT IN %deny`,
+// which `a_denylist_named_by_a_variable_denies_what_the_same_list_written_out_denies` covers. That
+// is a design change rather than a repair to this arm, so this cell records the bypass and the guard
+// cells below record what refuses the shortcut.
 #[case::right_expanded_nested_entry_undenied_no_local_fix(
     "flat",
     "Nest NOT IN DenyNestedNine[*]",
@@ -9417,6 +9438,46 @@ fn a_denylist_named_by_a_variable_denies_what_the_same_list_written_out_denies(
 #[case::an_lhs_element_equal_to_the_whole_denylist_is_undenied_right_expanded(
     "flat",
     "Wrap13 NOT IN Deny13[*]",
+    Status::PASS
+)]
+// THE PROOF that the open cells above cannot be closed inside `InOperation::compare`, as opposed to
+// merely not being closed by the obvious repair. `Denies` is `[[1, 3]]`, one entry. `Denies[0]` and
+// `Denies[*]` therefore resolve to the same single value, the inner list `[1, 3]`, at the same path,
+// and `compare` receives one identical `QueryResult` either way -- the access expression that
+// separates them is consumed by `binary_operation` before any comparator is called.
+//
+// The oracle owes them opposite verdicts. `Denies[0]` names a single right-hand operand whose VALUE is
+// the right-hand list, so its members are `1` and `3` and `Pair` holds `1`: FAIL. `Denies[*]` names the
+// entry set, whose one member is `[1, 3]`, which `Pair` neither is nor holds: PASS. The nested-entry
+// shape is the same pair with the polarity reversed: `DenyNestedNine[0]` has members `9`, which `Nest`
+// does not hold, so PASS, while `DenyNestedNine[*]` has the single member `[9]`, which `Nest` holds, so
+// FAIL.
+//
+// So each pair contains one cell that is right today and one that is wrong, and any change confined to
+// that arm moves both together. That is not an argument about which reading is better; it is a proof
+// that at most one member of each pair can be correct until the provenance survives the call. Measured:
+// deleting the `!eachr.is_list()` guard closes `right_expanded_nested_entry_undenied_no_local_fix` and
+// reddens `a_single_indexed_nested_entry_denies_by_its_members` in the same run.
+//
+// It also disposes of answering "undecidable" and joining `unanswerable`, which is how this arm handles
+// a genuinely incomparable pairing by failing closed in both polarities. `Pair NOT IN Denies[0]` and
+// `Nest NOT IN DenyNestedNine[0]` have definite correct answers that the oracle fixes from the operand
+// values, and one of them is a PASS. Reporting undecidable there would assert that a decided question
+// has no answer, which is the same kind of false claim as reporting a collision nothing established.
+// The information is missing from the call, not from the question -- which is the test for whether
+// `unanswerable` is the honest answer to a new ambiguity or a dodge.
+//
+// An earlier revision of this table described `Denies[0]` as an entry whose path ends in a digit,
+// offered as the reason a path-shape test would be unsound. That was wrong about which reading it
+// wants: as a single-valued right operand it wants its whole value decomposed, exactly as an unexpanded
+// `Deny13` does. The correction strengthens the conclusion rather than weakening it, because the two
+// spellings turn out to be indistinguishable by path as well as by value, which is what makes the pair
+// a proof instead of an argument. Recorded so nobody re-derives the wrong reading.
+#[case::a_single_indexed_entry_denies_by_its_members("flat", "Pair NOT IN Denies[0]", Status::FAIL)]
+#[case::the_same_value_right_expanded_over_denies("flat", "Pair NOT IN Denies[*]", Status::FAIL)]
+#[case::a_single_indexed_nested_entry_denies_by_its_members(
+    "flat",
+    "Nest NOT IN DenyNestedNine[0]",
     Status::PASS
 )]
 // The disjoint mirror of the open cells, in all four spellings. `DenyNestedEight` is `[[8]]`, so it
@@ -9520,7 +9581,8 @@ fn which_spelling_of_a_queried_denylist_reaches_which_arm(
         DenyNestedNine: [[9]],
         DenyNestedEight: [[8]],
         DenyWrappedOneTwo: [[1], [2]],
-        DenyWrappedA: [["a"]]
+        DenyWrappedA: [["a"]],
+        Denies: [[1, 3]]
     }
     "#;
 

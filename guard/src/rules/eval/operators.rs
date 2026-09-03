@@ -1300,19 +1300,44 @@ impl Comparator for InOperation {
                         //
                         // The reason it cannot be keyed on shape is that the two cases ARE one shape. A
                         // list-valued `eachr` is either the whole denylist, which an unexpanded `Deny13`
-                        // resolves to, or one entry, which `Deny13[*]` and `Deny13[0]` resolve to; the
-                        // first has to be decomposed and the second taken whole. "An element of `eachl`
-                        // equals `eachr`" holds for `Nest` against `[9]` and for `Wrap13` against
-                        // `[1, 3]` alike, and the first owes FAIL and the second PASS, so no predicate
-                        // over these two values can separate them. `QueryResult` is
-                        // `Literal | Resolved | UnResolved` and keeps no record of the traversal that
-                        // produced a value, and `binary_operation` is handed the right-hand side already
-                        // resolved, so the arm has nothing to ask. The path is not a sound substitute:
-                        // `Denies[0]` is one entry whose path ends in a digit, and a numeric-string map
-                        // key is a whole collection whose path ends in a digit too. Carrying the
-                        // provenance means changing `Comparator::compare` for every operator, and even
-                        // then it does not reach `NOT IN %deny`, since a variable's binding is resolved
-                        // before any comparator sees it and
+                        // resolves to, or one entry, which `Deny13[*]` resolves to; the first has to be
+                        // decomposed and the second taken whole. "An element of `eachl` equals `eachr`"
+                        // holds for `Nest` against `[9]` and for `Wrap13` against `[1, 3]` alike, and the
+                        // first owes FAIL and the second PASS, so no predicate over these two values can
+                        // separate them.
+                        //
+                        // And no repair confined to this arm can be right, which is stronger than the
+                        // deletion above being wrong, and is a proof rather than a preference. Take a
+                        // `Denies` of `[[1, 3]]`, one entry. `Denies[0]` and `Denies[*]` resolve to the
+                        // same single value, the inner list `[1, 3]`, at the same path, so `compare`
+                        // receives one identical `QueryResult` either way. The oracle owes them opposite
+                        // verdicts: `Denies[0]` is a single right-hand operand whose value IS the
+                        // right-hand list, members `1` and `3`, and a `Pair` of `[1, 2]` holds `1`, so
+                        // FAIL; `Denies[*]` names the entry set, whose one member is `[1, 3]`, which
+                        // `Pair` neither is nor holds, so PASS. The nested shape is the same pair with the
+                        // polarity reversed -- `Nest NOT IN DenyNestedNine[0]` owes PASS and
+                        // `Nest NOT IN DenyNestedNine[*]` owes FAIL. Each pair holds one cell that is
+                        // right today and one that is wrong, and anything written here moves both
+                        // together, so at most one member of each pair can be correct. Measured: the
+                        // deletion above closes `right_expanded_nested_entry_undenied_no_local_fix` and
+                        // reddens `a_single_indexed_nested_entry_denies_by_its_members` in the same run.
+                        //
+                        // Which also rules out answering "undecidable" and joining `unanswerable`, the
+                        // third answer this arm already has for a pairing with no right verdict in either
+                        // polarity. These pairings do have right verdicts, fixed by the operand values
+                        // and the spelling, and one member of each pair is a PASS; failing closed there
+                        // would deny a value no denylist names and would assert that a decided question
+                        // is undecided. The information is missing from the call, not from the question,
+                        // and that is the test for whether `unanswerable` is the honest answer to a new
+                        // ambiguity or a dodge -- when the question itself has no answer, as for a
+                        // genuinely incomparable pairing, `NotComparable` is right.
+                        //
+                        // `QueryResult` is `Literal | Resolved | UnResolved` and keeps no record of the
+                        // traversal that produced a value; `binary_operation` receives the right-hand
+                        // side already resolved and consumes the access expression that separates the two
+                        // spellings. Carrying the provenance means changing `Comparator::compare` for
+                        // every operator, and even then it does not reach `NOT IN %deny`, since a
+                        // variable's binding is resolved before any comparator sees it and
                         // `a_denylist_named_by_a_variable_denies_what_the_same_list_written_out_denies`
                         // covers that spelling. Closing this is a change to how a queried right-hand
                         // operand reaches the comparators, not a repair to this arm.
