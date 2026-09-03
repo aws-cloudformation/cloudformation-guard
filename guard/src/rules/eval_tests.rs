@@ -101,7 +101,13 @@ use super::*;
 // measured 3159 there -- though `a9ad44e8`'s 3159 is correct for `a9ad44e8` itself, and is the one figure
 // in this group that was checked rather than merely survived.
 //
-// **`1ba4648d`'s DELTA is wrong too, which no earlier row in this table does.** It states "3151 ... up
+// **`1ba4648d`'s DELTA is wrong too, and it is the first row here whose wrong figure is a delta rather
+// than a total.** This read "which no earlier row in this table does", and that is false: `ec2b9a5c`
+// states 3087 against a real 3103, having added its own delta to `69628df7`'s 3085 while skipping
+// `e26817a6`'s +16 in between. Same assumed adjacency, one row up, and already annotated as stale in the
+// table above -- so the shape is not new here, only its appearance in a delta is. Do not argue the
+// novelty from author dates either; they survive rebases and are non-monotonic across `ec2b9a5c` and
+// `f2f87b82`. It states "3151 ... up
 // from `d8c2582d`'s 3149 by the one test function added here". 3149 is genuinely `d8c2582d`'s and one
 // test function is genuinely what it adds, so both halves survive inspection separately. What fails is
 // the adjacency the sentence assumes: `d8c2582d` is four commits back rather than the parent, and
@@ -119,6 +125,24 @@ use super::*;
 // rests on a direct measurement or on two derivations that agree. Reconciling test FUNCTIONS against the
 // diff is what makes a wrong total visible; comparing one total against another does not, because a
 // wrong total can be internally consistent.
+//
+// # `1b81431c`'s two, both about counting something other than what it named
+//
+// "Both existing cells that assert it still pass untouched" is two GREP HITS, not two cells. The
+// assertion appears at two sites, but as five loop cells across two tests:
+// `an_empty_selection_skip_says_which_query_matched_nothing`, whose table is `[_; 4]`, and
+// `a_type_block_skip_names_the_cause_it_can_support`, where it is cell 2 of 4. "Both existing tests" is
+// right and "all five existing cells" is right; "both existing cells" is neither. This is the third time
+// on this branch that a grep hit count has been written down as a cell count, which is why it is recorded
+// as a class rather than as an incident: `grep -c` counts lines, and a table-driven test's coverage is
+// counted in cells, so the two agree only when every table has exactly one row.
+//
+// "3159 is `a9ad44e8`'s total two commits later" is off by one under either reading. The chain is
+// `d4286e68` -> `d8c2582d` -> `e2cacdc4` -> `a9ad44e8`: three commits after the SHA the sentence names,
+// and one after the commit it is correcting. Neither distance is two. The true "two" relation is the one
+// the same message states correctly elsewhere -- `d4286e68` is two commits before `e2cacdc4` -- so the
+// number was carried from a neighbouring true claim onto a different pair, which is cheaper to do than to
+// notice.
 //
 // # `b1ff3845`'s loop-table population, and why 44 could not be reproduced
 //
@@ -138,8 +162,12 @@ use super::*;
 // way to tell is to ask whether it equals some other figure plus a remembered delta.
 //
 // Corroborate a population by making the test state it rather than by adding to a remembered number:
-// strip one `: [_; N]` annotation and the failure message reads "1 of 45 tables carry no length" and
-// names the offending line. That is the count the rule actually walks, and it moves when the file does.
+// strip one `: [_; N]` annotation and the failure message names both the count the rule actually walked
+// and the offending line. The count is deliberately NOT reproduced here. This sentence used to quote it
+// as "1 of 45 tables carry no length", which was already 46 by `1b81431c` and moves again every time a
+// test adds a table -- a figure invalidated by the next commit is a maintenance trap wearing the costume
+// of precision, and quoting it here while telling the reader to ask the test was the instruction
+// contradicting its own example. Run the test; it computes what it walked.
 //
 // # `1fd235a5`'s reference sweep, with the population it never stated
 //
@@ -13315,7 +13343,18 @@ fn the_liveness_control_is_still_called_from_every_place_that_owes_it() {
 /// This used to record, as its first limit, that it could not see twelve array literals written inline in a
 /// `for` header: there is no binding to inspect, and covering them meant introducing one per test. That is
 /// done, and those twelve are the difference between the twenty this examined before and the thirty-two it
-/// examined after that commit. The twelve single-line ones in the section below take it to forty-four.
+/// examined after that commit. The twelve single-line ones in the section below take it to forty-five.
+///
+/// That third term read forty-four until this correction, and forty-four is the figure `81eed7de`'s own
+/// ledger calls "nobody's measured figure" -- 128 lines from where that commit corrected it, and left
+/// standing here. Measured per commit the population runs 20, 20, 32, 33, 33, 45, 45, 45, 45 and 46 at
+/// `1b81431c`, with zero unannotated throughout, so the chain's first two terms are right and only the
+/// third was not: thirty-three plus the twelve is forty-five. `81eed7de`'s "One in-tree instance" also
+/// undercounts, because two sat in a single doc comment.
+///
+/// The population is not fixed and no comment should carry it as a constant. Ask the test: strip one
+/// annotation and the failure message states the count it actually walked, which is the only figure that
+/// moves when the file does.
 ///
 /// The conversion was mechanical and the shape rule above is why it needed no widening. An inline table is
 /// written `for (a, b) in [`, with the literal already opening at the end of the line; lifting it to
