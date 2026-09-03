@@ -7784,6 +7784,37 @@ fn a_nested_source_scope_restores_the_outer_file() {
         fallback
     );
 
+    // The restore path proper: an inner scope over a *different* whole file. Its span starts at offset
+    // 0, so `enter` opens it and displaces the outer index, and `Drop` has to put the outer one back
+    // rather than clear it.
+    //
+    // Nothing covered this before, and the two cases above cannot: the outer scope displaced `None`, so
+    // restoring and clearing are the same act for it, and the inner scope above displaced nothing at all.
+    // `previous` is `Option<Option<LineIndex>>` precisely for this third state, and a `Drop` that cleared
+    // in the `Some(_)` arm passed every assertion above. This is what makes the test's name true.
+    let inner_text = "aa\rbb\rcc\rdd\ree\rff\rgg\rhh\r";
+    let inner_span = from_str2(inner_text);
+    let inner_answer = (8, 2);
+    {
+        let _inner = SourceScope::enter(&inner_span);
+        assert_eq!(
+            inner_answer,
+            position_of(&at_third),
+            "while the inner file is open, the same offset is read against the inner text -- if this is \
+             still {:?} the inner scope never opened and the case below proves nothing",
+            (3, 1)
+        );
+    }
+
+    assert_eq!(
+        (3, 1),
+        position_of(&at_third),
+        "the inner scope displaced the outer index, so its Drop must put that index back rather than \
+         clear it -- clearing gives {:?} and the inner's own index gives {:?}",
+        fallback,
+        inner_answer
+    );
+
     drop(outer);
     assert_eq!(
         fallback,
