@@ -3,10 +3,60 @@
 pub mod reader;
 pub mod writer;
 
+/// The lines of `buffer`, ending at `\n`, at `\r\n`, or at a bare `\r`.
+///
+/// `str::lines` cannot be used here, and the difference is one line ending: it splits on `\n` and strips
+/// a `\r` only when one precedes that `\n`, so a file whose lines end with a bare `\r` comes back as a
+/// single line. libyaml, which read the same file before this ever sees it, counts a lone CR as a line
+/// break -- so `L:6` in a report and the excerpt printed beside it came from two different ideas of what
+/// a line is. See `read_cursor_ends_a_line_at_a_bare_carriage_return` for the measured output.
+///
+/// Everything `str::lines` gets right is kept: a terminator at the end of the file adds no empty line,
+/// and a blank line in the middle is a line. Collapsing either renumbers the rest of the excerpt.
+///
+/// Eager rather than an iterator, because the result is a `Vec` of slices into a buffer that is already
+/// in memory, and `ReadCursor` caches every line it reads anyway.
+fn split_lines(buffer: &str) -> Vec<&str> {
+    let bytes = buffer.as_bytes();
+    let mut lines = Vec::new();
+    let mut start = 0;
+    let mut at = 0;
+
+    while at < bytes.len() {
+        match bytes[at] {
+            b'\n' => {
+                lines.push(&buffer[start..at]);
+                at += 1;
+            }
+            b'\r' => {
+                lines.push(&buffer[start..at]);
+                // `\r\n` is one ending, so step over both.
+                at += if bytes.get(at + 1) == Some(&b'\n') {
+                    2
+                } else {
+                    1
+                };
+            }
+            _ => {
+                at += 1;
+                continue;
+            }
+        }
+        start = at;
+    }
+
+    // Text after the last terminator is a line; a file ending in one has nothing after it.
+    if start < bytes.len() {
+        lines.push(&buffer[start..]);
+    }
+
+    lines
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct ReadCursor<'buffer> {
     line_num: usize,
-    line_buffer: std::str::Lines<'buffer>,
+    line_buffer: std::vec::IntoIter<&'buffer str>,
     previous_lines: Vec<(usize, &'buffer str)>,
 }
 
@@ -14,7 +64,7 @@ impl<'buffer> ReadCursor<'buffer> {
     pub(crate) fn new(buffer: &str) -> ReadCursor {
         ReadCursor {
             line_num: 0,
-            line_buffer: buffer.lines(),
+            line_buffer: split_lines(buffer).into_iter(),
             previous_lines: Default::default(),
         }
     }
