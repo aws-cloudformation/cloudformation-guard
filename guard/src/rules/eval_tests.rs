@@ -1970,7 +1970,8 @@ fn a_capture_reads_as_the_union_after_its_block_and_per_iteration_inside_a_neste
 /// block that made it and a key no block made.
 #[test]
 fn a_capture_made_at_rule_level_is_still_readable_inside_a_block() -> Result<()> {
-    for (expected_name, expected) in [("BucketA", Status::PASS), ("BucketZ", Status::FAIL)] {
+    let bucket_expectations: [_; 2] = [("BucketA", Status::PASS), ("BucketZ", Status::FAIL)];
+    for (expected_name, expected) in bucket_expectations {
         let rules = format!(
             r#"
     rule buckets_named {{
@@ -2121,7 +2122,8 @@ fn a_declared_capture_does_not_hide_an_enclosing_binding_of_the_same_name(
         }
     };
 
-    for (expected_value, expected) in [("fromlet", Status::PASS), ("other", Status::FAIL)] {
+    let let_value_expectations: [_; 2] = [("fromlet", Status::PASS), ("other", Status::FAIL)];
+    for (expected_value, expected) in let_value_expectations {
         let rules = rules.replace("EXPECTED", expected_value);
         let rules_file = RulesFile::try_from(rules.as_str())?;
         let value = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(template)?)?;
@@ -5923,7 +5925,8 @@ fn a_number_is_not_a_number_and_a_rule_reference() -> Result<()> {
 
     // Rejected, and loudly: a digit running into a letter is never two clauses, and a bare `.` on
     // either side of the digits is not a number in this grammar.
-    for rejected in ["1x", "2abc", "1e5x", ".5", "1."] {
+    let rejected_spellings: [_; 5] = ["1x", "2abc", "1e5x", ".5", "1."];
+    for rejected in rejected_spellings {
         let rule = format!("rule r {{ Resources.R.Properties.Size == {} }}", rejected);
         assert!(
             RulesFile::try_from(rule.as_str()).is_err(),
@@ -6811,8 +6814,10 @@ fn empty_on_a_boolean_fails_closed_in_both_polarities() -> Result<()> {
         }
     }
 
-    for value in ["true", "false"] {
-        for comparator in ["EMPTY", "!EMPTY"] {
+    let flag_values: [_; 2] = ["true", "false"];
+    for value in flag_values {
+        let empty_comparators: [_; 2] = ["EMPTY", "!EMPTY"];
+        for comparator in empty_comparators {
             let rules = format!(
                 r###"
                 rule flag_check {{
@@ -6901,7 +6906,8 @@ fn a_float_valued_gate_condition_still_guards_its_body() -> Result<()> {
     }"#;
 
     let rules_file = RulesFile::try_from(rules)?;
-    for (label, input) in [("integer", integer_size), ("decimal", decimal_size)] {
+    let size_labels: [_; 2] = [("integer", integer_size), ("decimal", decimal_size)];
+    for (label, input) in size_labels {
         let resources = PathAwareValue::try_from(input)?;
         let mut root = root_scope(&rules_file, Rc::new(resources));
         let status = eval_rules_file(&rules_file, &mut root, None)?;
@@ -7706,7 +7712,8 @@ Cfg:
 "#;
 
     // The same two keys reached two ways: bound as the list itself, and bound as its elements.
-    for preamble in ["let k = Cfg.KeyList", "let k = Cfg.KeyList[*]"] {
+    let key_list_preambles: [_; 2] = ["let k = Cfg.KeyList", "let k = Cfg.KeyList[*]"];
+    for preamble in key_list_preambles {
         let rules = format!(
             "{}\nrule tag_is_bob {{ some Cfg.Tags.{} == {} }}",
             preamble, selection, expected_value
@@ -7769,7 +7776,8 @@ fn an_unresolved_type_block_query_skips_without_aborting_the_file() -> Result<()
     }
     "###;
 
-    for (label, rules) in [("without a when", plain), ("with a when", guarded)] {
+    let when_spellings: [_; 2] = [("without a when", plain), ("with a when", guarded)];
+    for (label, rules) in when_spellings {
         let rules_file = RulesFile::try_from(rules)?;
         let resources = PathAwareValue::try_from(NO_RESOURCES)?;
         let mut root = root_scope(&rules_file, Rc::new(resources));
@@ -9134,13 +9142,15 @@ fn every_operator_and_operand_shape_agrees_with_a_stated_oracle() -> Result<()> 
                 r#"{{ "Resources": {{ "V": {{ "Type": "AWS::EC2::Volume", "Properties": {{ {} }} }} }} }}"#,
                 properties
             );
-            for negated in [false, true] {
+            let negations: [_; 2] = [false, true];
+            for negated in negations {
                 let clause = format!(
                     "{}{FILTER}.Properties.Size {}",
                     if negated { "not " } else { "" },
                     op
                 );
-                for gate in [false, true] {
+                let gate_roles: [_; 2] = [false, true];
+                for gate in gate_roles {
                     let rule = match gate {
                         false => format!("rule r {{\n    {clause}\n}}\n"),
                         true => format!("rule r when {clause} {{\n    {body}\n}}\n"),
@@ -12739,7 +12749,8 @@ fn a_clauses_answer_follows_three_valued_logic_over_every_value_combination() ->
         }
         let value = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(&input)?)?;
 
-        for (quantifier, expected) in [("", &expected_all), ("some ", &expected_some)] {
+        let quantifiers: [_; 2] = [("", &expected_all), ("some ", &expected_some)];
+        for (quantifier, expected) in quantifiers {
             let clause_str = format!("{}Cat[*] NOT IN {}", quantifier, DENYLIST);
             let clause = GuardClause::try_from(clause_str.as_str())?;
 
@@ -13079,8 +13090,8 @@ fn the_liveness_control_is_still_called_from_every_place_that_owes_it() {
 ///
 /// The lengths themselves are the guard: a table annotated `[_; 8]` turns a deleted cell into
 /// `error[E0308]`, because libtest counts test functions and a cell iterated by a `for` loop is not one --
-/// deleting it reads as nothing changed. Thirty-two tables carry a length today. Nothing made the
-/// thirty-third carry one, and nothing could notice: `cargo fmt`, `clippy`, `typos`, `shellcheck` and the
+/// deleting it reads as nothing changed. Forty-four tables carry a length today. Nothing made the
+/// forty-fifth carry one, and nothing could notice: `cargo fmt`, `clippy`, `typos`, `shellcheck` and the
 /// suite are all blind to a missing annotation by construction. So the guard protected exactly the tables
 /// somebody remembered to annotate, which is the shape of the blind spot it was built to close.
 ///
@@ -13100,8 +13111,8 @@ fn the_liveness_control_is_still_called_from_every_place_that_owes_it() {
 ///
 /// This used to record, as its first limit, that it could not see twelve array literals written inline in a
 /// `for` header: there is no binding to inspect, and covering them meant introducing one per test. That is
-/// done, and the twelve are the difference between the twenty this examined before and the thirty-two it
-/// examines now.
+/// done, and those twelve are the difference between the twenty this examined before and the thirty-two it
+/// examined after that commit. The twelve single-line ones in the section below take it to forty-four.
 ///
 /// The conversion was mechanical and the shape rule above is why it needed no widening. An inline table is
 /// written `for (a, b) in [`, with the literal already opening at the end of the line; lifting it to
@@ -13124,18 +13135,31 @@ fn the_liveness_control_is_still_called_from_every_place_that_owes_it() {
 /// number compiles green, and reviewing the diff is the only thing that catches that. No annotation and no
 /// test can take that job over.
 ///
-/// And it examines only the multi-line shape above, so a single-line `[1, 2, 3]` binding is not checked.
-/// That is the price of excluding the ten lines that merely resemble tables, and it is a narrow hole: a
-/// table of cases is written
-/// across lines, and a three-element literal on one line is not the thing whose silent shrinkage this
-/// guards.
+/// # The single-line hole is closed too, because the reason for leaving it open was wrong
 ///
-/// That hole is where the remaining inline literals sit, and they were left there deliberately rather than
-/// missed. Twelve `for` headers still carry their array on one line -- `for negated in [false, true]`,
-/// `for value in ["true", "false"]`, and ten more of that size. Each is a two-to-five element enumeration of
-/// a domain rather than a table of cases, so a cell going missing from one is not a silent loss of coverage:
-/// it is a boolean or a spelling set that no longer covers its domain, which the surrounding assertion
-/// notices. Binding them would add twelve names that say nothing their loop variable does not.
+/// This used to examine only the multi-line shape, and a previous revision of this comment argued the
+/// remaining twelve single-line `for` literals were safe to leave: each was "a two-to-five element
+/// enumeration of a domain rather than a table of cases", so a missing cell would break the surrounding
+/// assertion rather than quietly narrow coverage.
+///
+/// That was an argument, not a measurement, and it is false for ten of the twelve. Measured on 2026-09-03 by
+/// deleting one cell from each and running the whole suite single-threaded: **ten stay green**. Deleting
+/// `"false"` from `for value in ["true", "false"]` halves that test's coverage at 3149 passed, 0 failed, and
+/// the same holds for the bucket and let-value expectation pairs, the five rejected number spellings, the
+/// EMPTY comparators, the size labels, the KeyList preambles, the when spellings, the quantifiers and the
+/// line-ending spellings. Only `for negated in [false, true]` and `for gate in [false, true]` redden, and
+/// not because their assertions differ by polarity: they redden because
+/// `every_operator_and_operand_shape_agrees_with_a_stated_oracle` counts cells into a total and asserts on
+/// it. That protection is real but incidental and non-local -- delete the counter assertion and those two
+/// become silently narrowable as well.
+///
+/// So all twelve carry a length now, and the rule accepts the single-line shape. `];` is what makes the
+/// widening safe rather than a guess: the four lines in this file that begin with `let` and an `[` and are
+/// not Rust -- a CloudFormation `Fn::Join` fragment and three Guard-DSL `let` statements inside Rust string
+/// literals -- all fail it, and before the twelve were bound the widened rule matched zero lines.
+///
+/// One of the twelve is the reason the `=` split moved to the first occurrence rather than the last; see
+/// there. It annotated cleanly, compiled, was protected against deletion, and this test could not see it.
 ///
 /// The source length is asserted before either count, for the reason its sibling above gives: a
 /// reconciliation that reads `0 == 0` reports agreement, and an empty `include_str!` would make "no
@@ -13152,8 +13176,8 @@ fn every_loop_table_carries_its_length() {
     // than of the needle, and a later reader who loosens `starts_with` to `contains` would reintroduce the
     // miscount unless the literal is already broken up.
     const LET: &str = concat!("le", "t ");
-    // The two array-literal openings. Anything else after the `=` is not a table: `vec![`, `r#"Resources[`
-    // and `%captured[` all end their line in `[` too.
+    // The two array-literal openings a MULTI-LINE table can end its `let` line with. Anything else after the
+    // `=` is not a table: `vec![`, `r#"Resources[` and `%captured[` all end their line in `[` too.
     const OPENS_ARRAY: [&str; 2] = ["[", "[("];
 
     assert!(
@@ -13171,11 +13195,24 @@ fn every_loop_table_carries_its_length() {
         if !trimmed.starts_with(LET) {
             continue;
         }
-        // The last `=`, because an annotated binding carries a type before it and that type holds no `=`.
-        let Some((binding, initializer)) = trimmed.rsplit_once('=') else {
+        // The FIRST `=`, which is the binding's: a name holds none, and an annotation like `[_; 8]` holds
+        // none either. It used to be the last, which is equivalent for a multi-line table -- that `let` line
+        // carries no element text, so the only `=` on it is the binding's -- and wrong for a single-line one,
+        // where a cell may hold an `=` of its own. `key_list_preambles` is exactly that: its two cells are
+        // Guard-DSL strings reading `let k = Cfg.KeyList`, so the last `=` sits inside a string literal and
+        // the initializer came out as ` Cfg.KeyList[*]"];`. That binding was annotated, protected by its
+        // length, and invisible here -- which is the state this test exists to make impossible.
+        let Some((binding, initializer)) = trimmed.split_once('=') else {
             continue;
         };
-        if !OPENS_ARRAY.contains(&initializer.trim()) {
+        let initializer = initializer.trim();
+        // Two accepted shapes. A multi-line table opens its literal at the end of the line. A single-line one
+        // carries the whole statement, so it must also CLOSE, which is what `];` tests and what keeps the
+        // widening safe -- see the comment above for the four lines that start with `let` and an `[` and are
+        // not Rust at all.
+        let is_table = OPENS_ARRAY.contains(&initializer)
+            || (initializer.starts_with('[') && trimmed.ends_with("];"));
+        if !is_table {
             continue;
         }
         examined += 1;
@@ -14204,7 +14241,8 @@ fn a_cr_only_rules_file_still_enforces_its_rules() -> Result<()> {
     let cr = "# encryption is mandatory\rrule encrypted {\r  Resources.*.Properties.Encrypted == true\r}\r";
     let lf = cr.replace('\r', "\n");
 
-    for (spelling, rules) in [("CR", cr), ("LF", lf.as_str())] {
+    let line_ending_spellings: [_; 2] = [("CR", cr), ("LF", lf.as_str())];
+    for (spelling, rules) in line_ending_spellings {
         let parsed = crate::rules::parser::rules_file(crate::rules::parser::from_str2(rules))?
             .unwrap_or_else(|| panic!("{} spelling parsed to no rules at all", spelling));
         assert_eq!(
