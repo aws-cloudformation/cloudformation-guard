@@ -1308,11 +1308,14 @@ fn an_index_names_one_element_or_none() {
 /// reach the regex engine. The second case below is the counterexample: it is the pair
 /// `Cat NOT IN [[/re/]]` builds, and the zip walks straight into `(String, Regex)`.
 ///
-/// The first case is the half of the old sentence that was true, and it is the half the seven-false-alarm
-/// discriminator in that same comment rests on -- `Strs NOT IN ["x","y",["p"]]` stays silent because a
-/// two-element `Strs` against a one-element `["p"]` mismatches on length and answers before any element
-/// is looked at. It holds a refusing element on purpose, so that a future change making the length exit
-/// compare eagerly cannot pass this test.
+/// The first case is the half of the old sentence that was true, and it is the half the false-alarm
+/// discriminator in that same comment rested on while the predicate compared whole values:
+/// `Strs NOT IN ["x","y",["p"]]` stayed silent because a two-element `Strs` against a one-element `["p"]`
+/// mismatches on length and answers before any element is looked at. The predicate compares elements now,
+/// so that clause is noticed and the discriminator no longer turns on this exit -- but the exit itself is
+/// still what `compare_eq` does with an unequal pair, and `contained_in`'s whole-list membership reading
+/// still asks it. The case holds a refusing element on purpose, so that a future change making the length
+/// exit compare eagerly cannot pass this test.
 #[test]
 fn two_equal_length_lists_propagate_what_their_elements_raise() {
     let list = |elems: Vec<PathAwareValue>| PathAwareValue::List((Path::root(), elems));

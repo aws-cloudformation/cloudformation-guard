@@ -1682,7 +1682,10 @@ pub(crate) fn compare_eq(first: &PathAwareValue, second: &PathAwareValue) -> Res
 /// one of these elements", `in_cmp`'s list loop the same, and `incomparable_membership` stops emitting
 /// its `NOT IN` deprecation notice because the comparison it probes with now succeeds. Measured, not
 /// predicted -- the mirrored version moved six `IN`/`NOT IN` cells of the operator matrix, and `in`
-/// membership is exactly what must not move.
+/// membership is exactly what must not move. That was measured while the predicate compared whole values;
+/// it flattens both operands now, so which pairs it probes with has moved and the notice half of the
+/// finding would have to be re-measured before being quoted. The six moved cells are the reason the
+/// mirror was rejected and they are about the operator, not the notice.
 ///
 /// Exactly the five pairings the table has, and no others. Swapping every range-against-non-range pair
 /// was the first version and it moved the wording of forty refusals: a range against a `bool` has no arm

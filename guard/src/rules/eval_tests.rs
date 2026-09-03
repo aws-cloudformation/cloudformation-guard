@@ -10100,13 +10100,14 @@ fn a_range_in_a_list_denylist_denies_a_list_valued_property(
 
 /// The `NOT IN` deprecation notice goes out only for a clause the incomparability let pass.
 ///
-/// `incomparable_membership` is gated on one thing: that no left-hand value was
-/// `compare_eq`-comparable with any element of the right-hand side. It never consulted the verdict,
-/// and it could not have -- it was called before `cmp.compare` ran, so at that point there was no
-/// verdict to read. The notice's own wording is "<clause> passed because the value could not be
-/// compared with any element of the list", so on a clause that failed it printed the opposite of what
-/// happened. Measured across 231 `NOT IN` shapes: 177 reach the notice, 146 of them pass and 31 fail,
-/// and before this change all 177 printed it.
+/// `incomparable_membership` is gated on one thing: that some pair of the flattened operands refused to
+/// compare. It never consulted the verdict, and it could not have -- it was called before `cmp.compare`
+/// ran, so at that point there was no verdict to read. The notice's own wording is "<clause> passed
+/// because the value could not be compared with any element of the list", so on a clause that failed it
+/// printed the opposite of what happened. Measured across 231 `NOT IN` shapes: 177 reach the notice, 146
+/// of them pass and 31 fail, and before this change all 177 printed it. Those counts were taken while
+/// the predicate compared whole values and returned on the first answered pair, so they are the record of
+/// why the verdict gate was added rather than a census of what fires today.
 ///
 /// Which matters because of what the notice is for. It warns that a future release fails closed where
 /// the tool passes today, and it is the line an author greps for to find the clauses that need
@@ -10119,16 +10120,20 @@ fn a_range_in_a_list_denylist_denies_a_list_valued_property(
 /// - `a_scalar_denylist_that_already_fails_closed` reaches `NotComparable` instead of the
 ///   suppressed-error path, so it fails closed in this release already. The notice's premise that the
 ///   pair "is currently read as not a member" is false there.
-/// - The four `_the_denylist_names` cells fail because `contained_in` compares the left-hand list's
-///   *elements* against the right-hand elements. `incomparable_membership` never asks that question:
-///   it compares the whole list value, which is comparable with nothing, so the gate fires on a
-///   clause whose answer was decided perfectly normally.
+/// - The four `_the_denylist_names` cells fail because they collide with an element the denylist names,
+///   which is an ordinary decided verdict. They are now silent for a second reason as well, and the
+///   second one is the repair: the predicate compares the left-hand list's elements against the
+///   right-hand elements, as `contained_in` does, so `IntList NOT IN IntList` answers every pair and has
+///   no refusal to report. It used to compare the whole list value -- comparable with nothing -- and fire
+///   on all four, leaving only the verdict gate between the notice and a clause decided perfectly
+///   normally.
 /// - `an_empty_left_hand_list` fails on the vacuous subset reading. `Haystack` holds no list, so
 ///   `contained_in` takes its all-flat branch, where an empty left-hand list has an empty element-wise
 ///   diff and `IN` succeeds on a value with nothing in it; the negation turns that into a failure. An
 ///   earlier revision of this line blamed `contained_in`'s deliberate `is_empty` guard, which lived in
 ///   the other branch and was never reached from here. That guard is gone now and this cell did not
-///   move when it went, which is the evidence.
+///   move when it went, which is the evidence. It too is silent twice over now: flattening an empty list
+///   yields no element to compare, and a predicate with nothing to compare has nothing to warn about.
 ///
 /// Asserted through `status_and_deprecations` rather than `status_and_messages`. A deprecation notice
 /// is not a record message -- it goes to `RootScope::deprecations`, which the commands drain to
@@ -10156,7 +10161,17 @@ fn a_range_in_a_list_denylist_denies_a_list_valued_property(
 // Controls: silent before this change and silent after it.
 #[case::a_denial_that_was_decided("Int NOT IN IntList", Status::FAIL, false)]
 #[case::a_map_denied_by_a_map_denylist("Map NOT IN MapList", Status::FAIL, false)]
-#[case::an_undenied_comparable_value("Int NOT IN Haystack", Status::PASS, false)]
+// Was a control expecting silence, and the silence was the early return's rather than a fact about the
+// clause. `Haystack` is `[7, "zzz", false]`: `1` is answered against `7` and cannot be compared with
+// either of the other two, so this clause passes on two suppressed refusals and a fail-closed release
+// moves it. The predicate returned on the answered pair and never reached them. It is a scalar, so
+// nothing here turns on the granularity fix -- `the_notice_asks_about_the_pairs_the_operator_compared`
+// separates the two faults.
+#[case::an_undenied_value_beside_elements_it_cannot_be_compared_with(
+    "Int NOT IN Haystack",
+    Status::PASS,
+    true
+)]
 #[case::the_positive_polarity_never_notices("Map IN Haystack", Status::FAIL, false)]
 fn the_incomparable_membership_notice_is_only_emitted_for_a_clause_that_passed(
     #[case] clause: &str,
@@ -10207,6 +10222,143 @@ fn the_incomparable_membership_notice_is_only_emitted_for_a_clause_that_passed(
     Ok(())
 }
 
+/// The notice asks about the pairs the operator compared, not about the whole left-hand value.
+///
+/// `incomparable_membership` used to decide on `compare_eq(whole_left_hand_value, element)`, while
+/// `contained_in` decides a list-valued left-hand side by comparing its ELEMENTS. The two questions have
+/// different answers for the commonest denylist shape there is, and the predicate's was the wrong one: a
+/// list of strings against a flat list of strings is `(List, String)` at whole-value granularity, a pair
+/// `compare_eq` has no arm for, so an ordinary compliant rule was told a passing clause would fail closed
+/// in a future release when nothing about it moves.
+///
+/// The first four cells are that class, and they are the observable harm: `Strs NOT IN ["x", "y"]` is what
+/// a rule author writes, every pair it compares is string against string, and it collides with nothing.
+/// Two spellings of each because a written-out denylist and a queried one reach different arms of
+/// `InOperation::compare`, and the predicate is upstream of both.
+///
+/// `a_denylist_entry_no_element_can_be_compared_with` is the other half of the discriminator the predicate's
+/// own note records, and the pair inverts under this fix. Before it, `Strs NOT IN ["x","y"]` emitted and
+/// `Strs NOT IN ["x","y",["p"]]` did not, though both pass and their element-wise facts are identical --
+/// adding a nested list flipped `compare_eq(whole_list, element)` from `Err` to `Ok` because `(List, List)`
+/// is an arm and `(List, String)` is not, so the trigger was decided by the kind of an unrelated denylist
+/// entry. After it, the silence and the notice are the other way round, and each is about a pair the
+/// operator built: `["p"]` is an element every element of `Strs` is compared against and cannot be compared
+/// with, and `"x"` and `"y"` are elements it compares fine.
+///
+/// The two early-return cells are the second fault, which is not the same one and does not go with it. The
+/// loop used to return false on the first pair `compare_eq` answered, deciding
+/// the whole cross product on one pair's evidence, so a denylist holding one element of the right kind
+/// silenced the notice however many of its other elements refused. Aligning the granularity without this
+/// makes it worse rather than better: the element-wise pairs it exposes are walked in the order the
+/// denylist is written, so an answered pair anywhere before a refusing one discarded a refusal that had
+/// already been seen. Measured over 132 shapes, alignment alone took true positives from 72 to 69 and false
+/// negatives from 17 to 20 -- the four false alarms went and eleven true positives went with them. The two
+/// changes are one fix.
+///
+/// The last three cells are controls for what must NOT change:
+///
+/// - `a_left_hand_value_that_is_not_a_list_is_not_flattened` keeps the five aws-guard-rules-registry
+///   notices alive in miniature. Four of those are a `!Ref`-shaped MAP against a regex denylist and the
+///   fifth a MAP against a plain string; a map is not a list, so nothing about it flattens, and if this
+///   cell ever goes silent the registry corpus has lost its notices too.
+/// - `a_nested_element_is_flattened_one_level_only` is red for a recursive flatten. `Deep` is `[["a"]]`, so
+///   one level gives the element `["a"]`, which is what `is_one_of` compares and which no string can be
+///   compared with. Flattening twice would hand the loop `"a"`, answer `Ok(false)` against every element,
+///   and lose a notice that is owed.
+/// - `nothing_refused_so_nothing_is_owed` is the silence that was always right, and it holds the predicate
+///   to "some pair refused" rather than "some pair did not match".
+#[rstest::rstest]
+// The false-alarm class: a list-valued left-hand side against a denylist of its own element kind. Silent
+// after this fix, and each of these four emitted before it.
+#[case::a_flat_denylist_every_element_can_be_compared_with(
+    "Strs NOT IN [\"x\", \"y\"]",
+    Status::PASS,
+    false
+)]
+#[case::the_same_denylist_reached_through_a_query("Strs NOT IN DenyStrs", Status::PASS, false)]
+#[case::an_int_list_against_a_disjoint_int_denylist("Ints NOT IN [7, 8]", Status::PASS, false)]
+#[case::the_same_int_denylist_through_a_query("Ints NOT IN DenyInts", Status::PASS, false)]
+// The other half of the discriminator. Silent before this fix and noticed after it, on the element pair
+// `("a", ["p"])` that the operator does build and cannot decide.
+#[case::a_denylist_entry_no_element_can_be_compared_with(
+    "Strs NOT IN [\"x\", \"y\", [\"p\"]]",
+    Status::PASS,
+    true
+)]
+// The early return, isolated. The whole-value pair `([1,2], [1,9])` is one `compare_eq` answers -- equal
+// lengths, so it zips and reports false -- and it is the first pair the old loop built, which returned on
+// it. Every element pair refuses: `(Int, List)` has no arm and neither has `(Int, String)`. So the old
+// predicate was silent here for a reason that had nothing to do with the pairs the clause was decided on.
+// A denylist nobody writes by hand, and that is the point: it is the shape that separates the two faults.
+#[case::an_answered_pair_no_longer_decides_the_whole_cross_product(
+    "Ints NOT IN [[1, 9], \"x\"]",
+    Status::PASS,
+    true
+)]
+// The same fault where the left-hand side is a scalar and nothing flattens, so this cell moves under the
+// early return alone. `Haystack` is `[7, "zzz", false]`: `"a"` is answered against `"zzz"` and refuses
+// against `7` and `false`.
+#[case::a_scalar_beside_the_elements_it_cannot_be_compared_with(
+    "Str NOT IN Haystack",
+    Status::PASS,
+    true
+)]
+// Controls.
+#[case::a_left_hand_value_that_is_not_a_list_is_not_flattened(
+    "Map NOT IN Haystack",
+    Status::PASS,
+    true
+)]
+#[case::a_nested_element_is_flattened_one_level_only("Deep NOT IN DenyStrs", Status::PASS, true)]
+#[case::nothing_refused_so_nothing_is_owed("Int NOT IN DenyInts", Status::PASS, false)]
+fn the_notice_asks_about_the_pairs_the_operator_compared(
+    #[case] clause: &str,
+    #[case] expected: Status,
+    #[case] expect_notice: bool,
+) -> Result<()> {
+    // Every denylist here is disjoint from every left-hand value, so no cell's verdict rests on a
+    // collision and the notice expectation is the only thing that separates them.
+    const INPUT: &str = r#"
+    {
+        Int: 1,
+        Str: "a",
+        Strs: ["a", "b"],
+        Ints: [1, 2],
+        Deep: [["a"]],
+        Map: { a: 1 },
+        DenyStrs: ["x", "y"],
+        DenyInts: [7, 8],
+        Haystack: [7, "zzz", false]
+    }
+    "#;
+
+    let (status, notices) = status_and_deprecations(clause, INPUT)?;
+
+    assert_eq!(
+        expected, status,
+        "`{}` changed verdict; this is a diagnostics fix and must move no status",
+        clause
+    );
+
+    let emitted = notices
+        .iter()
+        .any(|n| n.contains("could not be compared with any element"));
+    assert_eq!(
+        expect_notice,
+        emitted,
+        "`{}` reached {:?}, so the notice should {}; recorded {:?}",
+        clause,
+        status,
+        match expect_notice {
+            true => "have been emitted",
+            false => "have stayed silent",
+        },
+        notices
+    );
+
+    Ok(())
+}
+
 /// The notice goes out exactly where the coming fail-closed release changes the clause's answer.
 ///
 /// A previous revision gated this on whether the file *reports* the clause, and reached that gate
@@ -10239,8 +10391,11 @@ fn the_incomparable_membership_notice_is_only_emitted_for_a_clause_that_passed(
 /// query's own `match_all`, since "did this clause pass" needs one value for `some` and every value
 /// otherwise. That reading is load-bearing rather than tidy: an `all(PASS)` one is silent on a `some`
 /// clause that passes on a genuine incomparability while a sibling value fails to a spent regex budget.
-/// It also costs a false alarm, and `a_some_clause_one_value_of_which_fails` below is that cost;
-/// `clause_passed` weighs the two.
+/// `a_some_clause_that_passes_on_a_refusal` is that shape here and `a_refusing_pair_beside_a_spent_budget`
+/// is it with the budget; `clause_passed` weighs the two readings. It used to cost a false alarm as well --
+/// `a_some_clause_one_value_of_which_fails` was that cost, on a clause every pair of which is int against
+/// int -- and it does not any more, because that noise came from the predicate's whole-value premise rather
+/// than from this reading of the verdict.
 ///
 /// The cells that changed answer when the role left this gate are the two former `absorb` ones, the
 /// filter, and `an_already_fail_closed_gate`. The rest are controls, and each pins a different edge:
@@ -10259,39 +10414,57 @@ fn the_incomparable_membership_notice_is_only_emitted_for_a_clause_that_passed(
 ///   measures the `Assertion` role.
 ///
 /// The mixed clause is `Resources.*.Properties.Ports NOT IN [1, 3]` over `A: [1, 2]` and `B: [7, 8]`:
-/// one value fails on the collision, the other passes with the incomparability. It appears three times
-/// -- asserted, gated, and with `some` -- because `match_all` and not the role is what decides it.
+/// one value fails on the collision, the other does not. It appears three times -- asserted, gated, and
+/// with `some` -- because `match_all` and not the role is what decides its verdict. All three are silent,
+/// and the two that fail are silent for a different reason from the one that passes: the clause the change
+/// moves has to have a pair nothing can decide, and this denylist has none. An earlier revision described
+/// the passing one as passing "with the incomparability", which was the whole-value premise talking.
+///
+/// The passing cells therefore carry a denylist entry of another kind -- `[1, "x"]` or `[7, "x"]` rather
+/// than `[1, 3]` or `[7, 8]` -- since that is what a clause whose answer the fail-closed release moves
+/// looks like once the predicate asks about the pairs the operator built. Their statuses are the ones the
+/// int-only spellings had, so the roles and the fold this table is about are unchanged.
 ///
 /// Through `status_and_deprecations`' sibling rather than `recorded_comparison_messages`, for the
 /// reason given on that helper: a notice never enters the record tree.
 #[rstest::rstest]
-// Clauses that reach PASS on the incomparability. These are the ones the change moves.
+// Clauses that reach PASS on a pair nothing can decide. These are the ones the change moves.
 #[case::an_assertion_that_passes(
-    "rule r { Resources.B.Properties.Ports NOT IN [1, 3] }",
+    "rule r { Resources.B.Properties.Ports NOT IN [1, \"x\"] }",
     Status::PASS,
     ExpectedNotice::Passed
 )]
 #[case::a_gate_that_passes(
-    "rule r when Resources.A.Properties.Ports NOT IN [7, 8] { Resources.A.Properties.Ports EXISTS }",
+    "rule r when Resources.A.Properties.Ports NOT IN [7, \"x\"] { Resources.A.Properties.Ports EXISTS }",
     Status::PASS,
     ExpectedNotice::Passed
 )]
 // `some` reaches PASS on one value while another fails, and the verdict is read under the query's own
-// `match_all`, so the clause counts as passing and is noticed.
+// `match_all`, so the clause counts as passing and is eligible to be noticed. Whether it IS noticed is the
+// predicate's question, and the answer here is no: every pair `contained_in` compares is int against int --
+// `[1, 2]` collides with `1` element-wise and `[7, 8]` does not -- so nothing about this clause is
+// undecidable and the fail-closed release leaves it where it is.
 //
-// This cell is the cost of that reading, stated where it can be seen rather than in a commit message.
-// Every pair `contained_in` compared here is int against int -- `[1, 2]` collides with `1` element-wise
-// and `[7, 8]` does not -- so the notice is owed to `incomparable_membership`'s whole-value premise and is
-// one of the false alarms it documents. An `all(PASS)` reading is silent here, and it is also silent on
-// `a_refusing_pair_beside_a_spent_budget` below, which is a true positive. Keeping this one quiet costs
-// that one, and `clause_passed` says why the two cannot be separated: a spent regex budget fails a value
-// on a pair that is neither a collision nor an incomparability.
+// This cell expected the notice while the predicate compared whole values, and that expectation was one of
+// the false alarms the whole-value premise produced. It is the third of the mixed-clause trio below, so the
+// three still differ only in role and quantifier. `a_some_clause_that_passes_on_a_refusal` is the paired
+// cell that keeps `some` covered in the other direction.
 #[case::a_some_clause_one_value_of_which_fails(
     "rule r { some Resources.*.Properties.Ports NOT IN [1, 3] }",
     Status::PASS,
+    ExpectedNotice::Silent
+)]
+// The same shape with one denylist entry of another kind, which is what makes the clause's answer rest on
+// a pair nothing can decide: `7` and `8` are answered against `1` and refuse against `"x"`. `some` is what
+// carries the clause to PASS while `A` fails on its collision, so this is where the `match_all`-aware
+// verdict reading in `clause_passed` is observable through a notice.
+#[case::a_some_clause_that_passes_on_a_refusal(
+    "rule r { some Resources.*.Properties.Ports NOT IN [1, \"x\"] }",
+    Status::PASS,
     ExpectedNotice::Passed
 )]
-// Clauses that do not pass. The change leaves every one of these where it is.
+// Clauses the change leaves where they are: the two below do not pass at all, and the `some` cell above
+// passes with every pair answered.
 #[case::an_assertion_that_fails(
     "rule r { Resources.A.Properties.Ports NOT IN [1, 3] }",
     Status::FAIL,
@@ -10320,7 +10493,7 @@ fn the_incomparable_membership_notice_is_only_emitted_for_a_clause_that_passed(
 )]
 // Controls.
 #[case::a_passing_gate_beside_a_failing_body(
-    "rule r when Resources.A.Properties.Ports NOT IN [7, 8] { Resources.A.Properties.Missing EXISTS }",
+    "rule r when Resources.A.Properties.Ports NOT IN [7, \"x\"] { Resources.A.Properties.Missing EXISTS }",
     Status::FAIL,
     ExpectedNotice::Passed
 )]
@@ -10391,12 +10564,15 @@ fn the_incomparable_membership_notice_is_emitted_where_fail_closed_moves_the_cla
 /// naming here. "`(List, Regex)` is not an arm, so the whole-list spelling never reaches the engine"
 /// joins a premise to a conclusion, and the conclusion fails under both readings of what it is about.
 ///
-/// Of `incomparable_membership` it holds only for a FLAT denylist. That predicate compares the WHOLE
-/// left-hand value against each element of the right-hand side flattened one level, so
-/// `Cat NOT IN [/re/]` does ask `compare_eq(List, Regex)` and does refuse without running anything --
-/// but `Cat NOT IN [[/re/]]` hands it `(List, List)`, which zips into `(String, Regex)` and runs the
-/// pattern. So the predicate reaches the engine on a whole-list left-hand side too, and the sentence was
-/// never true of it in general, only of the input this cell happens to use.
+/// Of `incomparable_membership` it was true only for a FLAT denylist, and only while that predicate
+/// compared the WHOLE left-hand value against each element of the right-hand side flattened one level.
+/// Then `Cat NOT IN [/re/]` asked `compare_eq(List, Regex)` and refused without running anything, while
+/// `Cat NOT IN [[/re/]]` was handed `(List, List)`, which zips into `(String, Regex)` and runs the
+/// pattern -- so the predicate reached the engine on a whole-list left-hand side too, and the sentence was
+/// never true of it in general, only of the input this cell happens to use. Both operands are flattened
+/// now, so the two spellings have swapped: the flat one builds `(String, Regex)` and reaches the engine,
+/// and the nested one builds `(String, List)` and refuses. Neither is observable here, because both
+/// clauses fail and the verdict gate suppresses the notice either way.
 ///
 /// Of the CLAUSE it is false for the flat spelling as well, because the clause also runs
 /// `contained_in`'s element-wise pass, where each String element of `Cat` meets the `Regex` through the
@@ -10470,12 +10646,17 @@ fn the_incomparable_membership_notice_is_emitted_where_fail_closed_moves_the_cla
 // gate that reached it -- a gate that fails answers the same before and after the fail-closed change.
 //
 // SKIP rather than FAIL, and this is the cell that separates `undecided_gate` from the predicate above
-// it. The two ask different questions of different operands. The predicate probes the whole left-hand
-// value against each element, so `compare_eq(Cat, /^a+$/)` refuses and it fires. The clause is decided
-// element by element, where `"aaa..."` against `/^a+$/` matches -- so `contained_in` answers Success,
-// `NOT IN` negates it, and the FAIL is a decided verdict with no undecided comparison result anywhere in
-// it. `undecided_gate` reads the results, finds nothing undecided, and declines. A whole-value refusal
-// that no comparison result carries is not something a gate can fail closed on.
+// it. The clause is decided element by element, where `"aaa..."` against `/^a+$/` matches -- so
+// `contained_in` answers Success, `NOT IN` negates it, and the FAIL is a decided verdict with no undecided
+// comparison result anywhere in it. `undecided_gate` reads the results, finds nothing undecided, and
+// declines.
+//
+// The predicate declines too, and it used to fire: probing the whole left-hand value gave it
+// `compare_eq(Cat, /^a+$/)`, which is not an arm and refused, and only the verdict gate stood between that
+// refusal and a notice on a clause the regex plainly answered. It compares elements now, gets the match,
+// and has nothing to report. So this cell is `Silent` twice over, and the surviving half of what it marks
+// is the report: the run says nothing at all about a clause it could not evaluate, because its FAIL is
+// decided and no result carries an undecided answer.
 #[case::an_ordinary_regex_against_a_whole_list_in_a_condition(
     "rule r when Cat NOT IN [/^a+$/] { Cat EXISTS }",
     Status::SKIP,
@@ -10498,8 +10679,10 @@ fn a_spent_backtracking_budget_is_not_an_incomparable_pair(
 ) -> Result<()> {
     // Thirty `a` characters is the length at which `(?!x)((a+)+)b` exhausts the budget, the same
     // subject `a_regex_that_exceeds_the_backtrack_limit_fails_the_clause_instead_of_aborting` uses.
-    // `Mixed` carries one element the pattern answers on, because one comparable pair is enough to
-    // silence the notice on its own and a cell has to be able to tell the two causes apart.
+    // `Mixed` carries one element the pattern answers on, so the clause has a pair that decides beside the
+    // one that gave up and a cell can tell the two causes apart. That was written when one comparable pair
+    // silenced the notice by itself; it no longer does, and the cell is silent because nothing here
+    // refuses -- neither `(String, Regex)` pair is a kind mismatch.
     const INPUT: &str = r#"
     {
         Cat: ["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"],
@@ -10529,10 +10712,15 @@ fn a_spent_backtracking_budget_is_not_an_incomparable_pair(
 /// notice. What does not follow is that no *other* pair is one.
 ///
 /// The cells are the isolation. `A` is a string thirty `a` characters long, which exhausts the budget
-/// against this pattern; `B` is a list, and `(List, Regex)` is not a `compare_eq` arm at all, so its pair
-/// refuses with `NotComparable` -- a real incomparability, and the shape the notice exists for. Measured
-/// before this: `B` alone earns the notice, `A` alone earns nothing and fails, and the two together earn
-/// nothing. Adding `A` to the query destroyed the warning `B` was owed, on a clause that passes.
+/// against this pattern; `B` is a list of ints, and `(Int, Regex)` is not a `compare_eq` arm at all, so
+/// its pairs refuse with `NotComparable` -- a real incomparability, and the shape the notice exists for.
+/// Measured before this: `B` alone earns the notice, `A` alone earns nothing and fails, and the two
+/// together earn nothing. Adding `A` to the query destroyed the warning `B` was owed, on a clause that
+/// passes.
+///
+/// `B`'s refusal used to be the whole-value pair `(List, Regex)` rather than its elements. The predicate
+/// flattens both operands now, so the refusing pairs are `(1, /re/)` and `(2, /re/)`; the cell is
+/// unchanged because neither reading can compare an int with a pattern.
 ///
 /// `some` is required and is not incidental. A value whose pair exhausts the budget fails its own
 /// `contained_in` pass, because `match_value` promotes `RegexError`, so under `match_all` the clause
@@ -10540,11 +10728,13 @@ fn a_spent_backtracking_budget_is_not_an_incomparable_pair(
 /// defect. `some` lets `B` carry the clause to PASS while `A` fails, which is the only shape where the
 /// early return is observable through the gate at all.
 ///
-/// So the silencing is per pair now: a `RegexError` pair is passed over, and the notice goes out if some
-/// other pair refused and none was answered. A pair that *was* answered still returns immediately -- that
-/// is the documented early return, and `a_comparable_element_beside_the_catastrophic_one` in the test
-/// above pins it, which is why this fix does not widen the notice to clauses decided on a comparable
-/// element.
+/// So the silencing is per pair: a `RegexError` pair is passed over and the notice goes out if some other
+/// pair refused. It used to say "and none was answered", because an answered pair returned for the whole
+/// clause; that early return is gone, for the reason `incomparable_membership` now records -- a value
+/// passes `NOT IN` by matching nothing, so an answered pair says only that this element was not the
+/// collision. `a_comparable_element_beside_the_catastrophic_one_fails_closed` in the test above still
+/// expects silence and still gets it, because nothing in that clause refuses: one pair spends the budget
+/// and the other answers.
 #[rstest::rstest]
 // The list value alone. Its pair refuses, the clause passes, and the notice is owed.
 #[case::a_refusing_pair_alone("some Multi.B.V NOT IN [/(?!x)((a+)+)b/]", Status::PASS, true)]
@@ -10563,8 +10753,8 @@ fn a_spent_budget_on_one_value_does_not_silence_another_values_notice(
     #[case] expect_notice: bool,
 ) -> Result<()> {
     // Thirty `a` characters is the length at which `(?!x)((a+)+)b` exhausts the budget, matching the
-    // test above. `B` holds a list so that its whole-value pair against the pattern reaches
-    // `compare_values`' catch-all rather than the regex engine.
+    // test above. `B` holds ints so that its pairs against the pattern reach `compare_values`' catch-all
+    // rather than the regex engine, whichever granularity the predicate compares at.
     const INPUT: &str = r#"
     {
         Multi: {
@@ -10682,10 +10872,11 @@ fn assert_notice(rules: &str, status: Status, expected: ExpectedNotice, notices:
 /// gate cannot satisfy the first, and a change to `!=` cannot satisfy the second.
 ///
 /// **One element in the denylist and a scalar on the left, both required.** A second element gives the
-/// clause a pair `!=` never sees, so the two spellings stop being the same question. And a list left-hand
-/// side makes `incomparable_membership` compare the whole value where `contained_in` compares elements,
-/// which is the divergence that produces this predicate's documented false alarms -- a cell built that way
-/// would measure the predicate's premise rather than the clause.
+/// clause a pair `!=` never sees, so the two spellings stop being the same question. And `!=` on a
+/// list-valued left-hand side is not the fail-closed spelling of `NOT IN` on one: `NOT IN` reads a list
+/// element-wise through `contained_in` while `!=` compares the whole value, so the pair of clauses would
+/// differ in what they compare as well as in how they treat a refusal, and the measurement would not be
+/// about the notice at all.
 ///
 /// Substituting the right-hand side for one nothing can be compared with was tried first and is wrong,
 /// which is worth recording because it looks equivalent. `NOT IN` over such an operand does not fail
