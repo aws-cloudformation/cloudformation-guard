@@ -1,0 +1,16 @@
+#
+# Byte-identical to its sibling under `../first/`, and that is the point of the fixture: two rules
+# files whose only difference is the directory they sit in.
+#
+# Both emit the `NOT IN` deprecation notice against `vacuous-and-incomparable-template.yaml`, whose
+# `Name` is the string "50" and so cannot be compared with any integer in the list. The notice ends
+# with the clause's source position, so the two files can only be told apart by what that position
+# names the file. A locator that is the bare `incomparable_membership.guard` makes the two notices
+# byte-identical and the reader can locate neither.
+#
+# Identical content rather than merely similar: any difference in the clause would show up in the
+# notice's `Display` and let the two lines differ for a reason that is not the locator.
+#
+rule incomparable_membership {
+    Name not IN [10, 50, 100]
+}

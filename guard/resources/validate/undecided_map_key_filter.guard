@@ -1,0 +1,24 @@
+#
+# A map-key filter whose regex exhausts its backtracking budget.
+#
+# Eighteen `a` characters is the threshold for `(?!x)((a+)+)b` on this path: a seventeen-character key
+# exited 19 and an eighteen-character key exited 255. That makes the failure template-driven -- an author
+# lengthening a map key by one byte turned a policy verdict into a crash.
+#
+# `real_binary_operation` is the `[ keys <op> ... ]` path and collected no evidence about undecided
+# comparisons. `each_lhs_compare` matched `Error::NotComparable` and propagated everything else, so a
+# `RegexError` left the evaluator unclassified: the full report printed, then `main` reported "Error
+# occurred Regex expression parse error for rules file" and exited 255, which `guard/tests/utils.rs`
+# names `INTERNAL_FAILURE`. All four comparators were affected -- `==`, `!=`, `IN` and `NOT IN`.
+#
+# The second rule exists so the file has a verdict to lose, and so the exit code being 19 rather than 255
+# is attributable: the crash printed its report first, so a test reading only the report would have
+# passed while the tool was reporting that it had broken.
+#
+rule unrelated_violation {
+    Region == 'no-such-region-zzz'
+}
+
+rule k_eq_regex {
+    Cfg[ keys == /(?!x)((a+)+)b/ ] !empty
+}

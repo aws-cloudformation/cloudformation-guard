@@ -1,7 +1,9 @@
 use super::exprs::*;
 use super::*;
 use crate::rules::eval::operators::Comparator;
-use crate::rules::eval_context::{block_scope, resolve_function, ValueScope};
+use crate::rules::eval_context::{
+    block_scope, interpolated_keys, query_retrieval, resolve_function, ValueScope,
+};
 use crate::rules::path_value::compare_eq;
 use std::collections::HashMap;
 
@@ -212,10 +214,12 @@ pub(super) enum EvaluationResult {
 /// Explanation attached to a clause that could not compare because its right-hand reference
 /// resolved to no values.
 ///
-/// Names the remedy as well as the cause. An author who genuinely expects a possibly-empty
-/// reference can wrap the clause in `when <reference> !empty { ... }`: the gate's own
-/// `!empty` check fails when the reference is empty, so the block is skipped rather than
-/// failed, and the comparison never runs.
+/// Points at what binds the reference, which is where the fault is. It used to name `when
+/// <reference> !empty { ... }` as the remedy, and that is not one: the gate's own `!empty` check
+/// fails when the reference is empty, so the block is skipped and the comparison never runs. An
+/// author following the advice turned a check that was failing for a reason into a check that does
+/// not run, at exit 0, which is the outcome this message exists to prevent. Saying so is worth the
+/// extra sentence, because the advice was there for two releases.
 fn empty_reference_message(negated: bool) -> String {
     let clause = if negated {
         "negated comparison"
@@ -223,29 +227,300 @@ fn empty_reference_message(negated: bool) -> String {
         "comparison"
     };
     format!(
-        "The {clause} could not be performed: the reference on the right-hand side resolved \
-         to no values. If an empty reference is expected here, guard the clause with `when \
-         <reference> !empty {{ ... }}` so it is skipped rather than failed."
+        "The {clause} could not be performed: the reference on the right-hand side resolved to no \
+         values, so the clause fails. Look at what binds the reference -- a `let` or a filter \
+         capture that selected nothing. `when <reference> !empty {{ ... }}` skips the clause rather \
+         than satisfying it."
     )
 }
 
-/// Notice for a comparison that passed without comparing anything, because the value it selected was
-/// an empty collection.
+/// True when some pair the membership comparison builds cannot be compared at all.
 ///
-/// `docs/QUERY_AND_FILTERING.md` lists `Tags: []` alongside a missing key and an empty map as a
-/// retrieval error, and says all retrieval errors are failures. The other two do fail; this one passes,
-/// which makes it the odd one out rather than a design choice. It is not changed in this release
-/// because the change turns a passing run into a failing one, and a rule author deserves to hear about
-/// that before a pipeline does.
-/// A notice when no left-hand value can be compared with any element of the right-hand list.
+/// The pairs are the ones `contained_in` builds, at every granularity it decides at, asked per pair of
+/// operand VALUES rather than over one flattened cross product. Three cases and each arm below names its
+/// own: two lists are decided element by element, and also whole-list against each entry when the denylist
+/// holds a list; a list against anything else is refused on the SHAPES with no comparison performed at
+/// all; and a value that does not decompose is compared as itself. One refusal is enough and an answered
+/// pair cancels nothing: a clause that matched nothing passed on every pair it built, so a pair it could
+/// not decide is part of what its answer rests on.
 ///
-/// Returns `None` the moment one pair is comparable, so a mixed list that contains anything of the
-/// right kind is left alone -- that case decides on the comparable element and is not changing.
-fn incomparable_membership(
-    lhs: &[QueryResult],
-    rhs: &[QueryResult],
-    context: &str,
-) -> Option<String> {
+/// Flattening both operands one level and taking the cross product was the previous shape, and it reaches
+/// the element pairs correctly. What it cannot reach is the other two: a flattened pair set has no whole
+/// value left in it to carry the second granularity, and a refusal that never calls `compare_eq` leaves no
+/// result for a predicate built on `compare_eq` answers to read. Both were measured as missing rather than
+/// argued -- see the grid below.
+///
+/// `RegexError` is not a refusal here -- see the arm below, which says why an exhausted backtracking budget
+/// is a comparable pair the engine gave up on.
+///
+/// Half of the condition, not all of it. True here means the clause's answer *could* have come from the
+/// incomparability, and the caller still has to read the verdict, because only a clause that passed on
+/// such a pair is one the coming fail-closed release moves. See `binary_operation`.
+///
+/// # It used to ask two different questions, and both answers were wrong
+///
+/// Fault (a), granularity. It decided on the comparability of the **whole left-hand value** against each
+/// flattened right-hand element, while `is_one_of` and `contained_in` decide a list-valued left-hand side
+/// by comparing its elements. The consequence was not academic: it emitted a DEPRECATION on ordinary,
+/// well-typed, compliant denylist checks, telling the author a passing rule would fail closed in a future
+/// release when it will not.
+///
+/// ```text
+/// Actions: ["s3:GetObject", "s3:PutObject"]
+/// rule r { Actions NOT IN ["s3:DeleteBucket", "s3:PutBucketPolicy"] }   # exit 0 + DEPRECATION
+/// ```
+///
+/// Every pair the operator compared there is string against string, all answerable, nothing suppressed.
+/// The discriminator that made the diagnosis certain rather than plausible was one variable:
+/// `Strs NOT IN ["x","y"]` emitted and `Strs NOT IN ["x","y",["p"]]` did not, both passing, element-wise
+/// facts identical. Adding an irrelevant nested list flipped `compare_eq(whole_lhs_list, element)` from
+/// `Err` to `Ok`, because of which arm each pair lands on. `compare_eq` answers `(List, List)` itself, and
+/// for that pair the length decides: a two-element `Strs` against the one-element `["p"]` mismatches, so
+/// the arm returns `Ok(false)` without looking at an element. It is not always `Ok` -- on EQUAL lengths it
+/// zips and propagates with `?`, so an element that refuses refuses for the whole pair, and
+/// `two_equal_length_lists_propagate_what_their_elements_raise` in `path_value_tests.rs` pins both exits.
+/// `compare_eq` has no `(List, String)` arm at all, so that pair falls through its `(_, _)` arm into
+/// `compare_values`, whose own catch-all refuses with `NotComparable`. So the trigger was decided by the
+/// *kind* of an unrelated denylist element rather than by anything about the comparison the clause
+/// performed. Under the element-wise reading the same pair of clauses inverts, and both answers are now
+/// about pairs the operator built: `["p"]` is an element every element of `Strs` is compared against and
+/// cannot be compared with, and `"x"` and `"y"` are elements it compares fine.
+///
+/// Fault (b), the early return. The loop answered false on the first pair `compare_eq` answered, which
+/// decided the whole cross product on one pair's evidence. `Str NOT IN Haystack` over `["zzz", 7, false]`
+/// stayed silent because `"a"` and `"zzz"` are comparable, though `"a"` against `7` is exactly the pair a
+/// fail-closed release will refuse. The note that used to sit at the top of this comment defended it --
+/// "a mixed list that contains anything of the right kind is left alone" -- and that is a statement about
+/// which pair is convenient to stop at, not about what the clause's answer rested on.
+///
+/// # The two faults are one fix, measured rather than argued
+///
+/// Fixing (a) alone makes the predicate worse. The element-wise pairs it exposes are walked in the order
+/// the denylist is written, so an answered pair anywhere ahead of a refusing one hits (b) and discards a
+/// refusal that had already been seen. Over 132 clause shapes, classified against an oracle taken from
+/// `compare_eq`'s own answers over the pairs the OPERATOR built -- recorded by instrumenting `compare_eq`
+/// with this predicate's own calls suppressed, so the measurement cannot confirm itself:
+///
+/// ```text
+///                        true positives   false alarms   beside a FAIL   false negatives   agreeing
+/// before                             72              4               0                17         39
+/// alignment alone                    69              0               0                20         43
+/// alignment + no early return        88              0               0                 1         43
+/// ```
+///
+/// Eleven true positives went with the four false alarms under alignment alone, which is why the two
+/// arrived together. The 132-shape grid is a reconstruction: it is twelve left-hand shapes against eleven
+/// right-hand ones over one document, chosen to cover both fault classes and the discriminator above, and
+/// it is not the enumeration the earlier 73/7/0/10/42 figures came from -- that one was never committed, so
+/// its counts and these are not comparable cell for cell. What is comparable is the before-and-after on one
+/// grid, which is the row pair above.
+///
+/// # The alignment took thirteen owed notices with it, and this is the count
+///
+/// **Corrected on 2026-09-03, and it is a correction of a number rather than a disagreement about a
+/// reading.** The paragraph here said the one remaining false negative was `EmptyList NOT IN Str`, and that
+/// it was the only cell whose notice the alignment took away rather than corrected. Wrong by twelve. The
+/// oracle above is `compare_eq`'s own answers over the pairs the operator built, which is the very thing
+/// the alignment changed, so it could not see a pair the operator builds and the predicate does not.
+///
+/// Re-measured against an oracle that does not depend on this predicate at all: a release binary built with
+/// the four `NotComparable` suppressions promoted the way `RegexError` already is -- `is_one_of`,
+/// `contained_in`'s whole-list loop, `contained_in`'s scalar loop, and the `(None, None)` arm's dropped
+/// result -- and the notice taken as owed exactly where the clause PASSES today and answers differently
+/// under that binary. That is the notice's own sentence, "a future release fails closed here", read off the
+/// language. Over 1080 clause shapes, eighteen left-hand values against thirty right-hand spellings in both
+/// polarities over one document:
+///
+/// ```text
+///                              true positives   false alarms   beside a non-PASS   false negatives   agreeing
+/// before the alignment                    289             16                   0                81        694
+/// the alignment                           355              0                   0                15        710
+/// both granularities and the shape        370              0                   0                 0        710
+/// ```
+///
+/// Measured at `c67f8774` against a `b8d3901e`-based oracle; four `[]`-against-a-string cells no longer owe
+/// a notice at this commit. That is the whole caveat on the third row, and it is bounded rather than vague:
+/// `69628df7` is the only change in `b8d3901e..HEAD` that removes a path into the four promoted sites, its
+/// skip is gated on the left-hand VALUE being a zero-element `List` and the right-hand RESULT being a
+/// `String`, so the affected set is exactly {left resolving to `[]`} x {right resolving to a String} x {both
+/// polarities}. Of those, only the `NOT IN` half was ever owed: the `IN` half FAILed at `abbf73a7`, so
+/// `clause_passed` suppressed the notice and nothing was owed there.
+///
+/// `EmptyOuter`, spelled `[[]]`, is NOT in that set and its two rows stand. It is a ONE-element list, so
+/// `elements.is_empty()` is false and the skip never fires; the `f54089b4` sweep names `[]` and `[[]]` as two
+/// left-hand shapes and only the first is affected. Do not read the caveat as covering both.
+///
+/// **Like the 132-shape grid above, this one is not reproducible from the tree.** Its clause list -- the
+/// eighteen left-hand values and thirty right-hand spellings -- was never committed, so the other rows cannot
+/// be re-derived or falsified from a checkout, and no figure in them should be restated as a property of
+/// this tree. The 94-clause sweep in `eval_tests.rs` and the 140-clause grid in `operators.rs` both carry
+/// this admission; this table did not, which is how the third row's zeros came to read as current. If the
+/// question comes up again, commit the clause list.
+///
+/// One further reason a row here may have moved, recorded rather than resolved: `07774380` took the
+/// `[ keys <op> ... ]` path from 255 to 19. Any such clause in the uncommitted list moved for that reason and
+/// not for anything about the notice. The grid is described as membership spellings, so none is expected --
+/// but that is an expectation about a list nobody can read, so the staleness should not be attributed to a
+/// single cause.
+///
+/// So the alignment removed 29 notices: the 16 false alarms, which is the win, and 13 that were owed. The
+/// 13 are what "wrong by twelve" counts. The 15 false negatives are the 13 plus two that were never emitted
+/// in either release -- `EmptyOuter NOT IN [[2], [7, 8]]` and `Nest NOT IN [[2], [7, 8]]`, whose whole-value
+/// pair the old predicate did build and did get an answer for, because two lists of equal length zip.
+///
+/// Of the 15, seven are the second granularity and eight are the shape refusal. Attributed by measurement
+/// rather than by reading: a build carrying each half alone notices its own seven or eight, neither notices
+/// the other's, and no cell needed both. The smallest of each is worth carrying, because neither is exotic.
+/// The granularity one is an `EmptyOuter` of `[[]]` against `[[1]]`, where every element pair is answered --
+/// `compare_eq([], [1])` mismatches on length -- and the whole-value pair has equal lengths, so it zips and
+/// `compare_eq([], 1)` refuses. The shape one is a `Ports` of `[85]` against a `D13[*]` of `1` and `3`,
+/// where the element pairs are int against int and the operator never compared them: it paired the whole
+/// list with a scalar and refused on the kinds.
+///
+/// `EmptyList NOT IN Str` WAS one of the 13, and this paragraph used to say it "is a shape refusal,
+/// `([], "abc")`, which is there whether or not anything flattens". That was true at `c67f8774` and is false
+/// now. `69628df7` gave the `(None, None)` arm its own skip for a string right operand paired with an empty
+/// left-hand list -- the `uncompared_pairings` skip under `elements.is_empty()` in `contained_in`, above the
+/// only `contained_in` call that arm makes -- so the
+/// pair is never built and there is no refusal for the clause to pass on. The half of the old paragraph that
+/// still holds is the diagnosis of the error it was correcting: reaching "not repairable" from the element
+/// pairs, of which there are indeed none, and stating it of the clause.
+///
+/// The VERDICT question that cell also sits in is a different one and is untouched: `Empty NOT IN Str`
+/// against `Empty NOT IN Strs[*]` owe opposite answers from operands no predicate can tell apart, which
+/// `27383c98` proves and which nothing here moves. A notice is not a verdict, and the impossibility is
+/// about the verdict.
+///
+/// And the empty-left-hand family OWED two notices here rather than one, which was the same paragraph's
+/// other error. This paragraph said "owes", present tense, and at `69628df7` the family owes neither.
+/// `Empty NOT IN Ustr` was the documented one; `Empty NOT IN Strs[*]` was the second, easy to read past
+/// because it looks like a different shape -- the right operand is a query that EXPANDS to strings rather
+/// than a string, so it reached the same `(None, None)` arm with the same `([], "a")` shape pair, and it is
+/// not a `Str`. Both emitted at `e8a03dda` and both went silent at `b8d3901e`, which is unchanged history.
+/// The 120-cell sweep behind "the pair is the whole family" -- 30 right-operand kinds in both polarities for
+/// a `[]` and a `[[]]` -- established the family, and the family is what the skip above took out in one go.
+///
+/// What they get instead, measured with the release binary at `69628df7` over
+/// `{Empty: [], Str: "abc", Ustr: "abc", Strs: ["abc"]}`: `Empty NOT IN Ustr`, `Empty NOT IN Str`,
+/// `Empty NOT IN Strs[*]` and `Empty IN Ustr` each exit 0 printing `vacuous_comparison_notice` -- "passed
+/// without comparing anything" -- and none of the four prints "could not be compared with any element of the
+/// list". The literal `Empty NOT IN "abc"` prints that same notice and always has, so the query spellings
+/// joined their literal rather than losing a diagnostic.
+///
+/// This predicate had not been told, and the shape arm below has been told now: its `vacuous_match` is
+/// `lhsl.is_empty()` alone, because the operator skips an empty left-hand list against every right-hand
+/// kind and the condition named only the string.
+///
+/// It was described here as latent rather than live, on the reasoning that the verdict gate reads
+/// `clause_passed` and a clause whose only pairing was skipped compared nothing. That reasoning is sound
+/// and its scope was not: it holds for a left operand whose SOLE value is the empty list, which is the
+/// population the sentence was checked against, and `refused` is ORed over the whole cross product. Give
+/// the empty list a sibling that IS compared and the skipped pairing's refusal rides out on it. With `Mix`
+/// of `[[], "q"]` against a `Ustr` of `"abc"`, `Mix[*] NOT IN Ustr` exited 0 and printed "could not be
+/// compared with any element of the list" -- decided by `"q"` against `"abc"`, String against String,
+/// while the `[]` that produced the refusal was compared with nothing. So it was live, and the sole-value
+/// population is what hid it.
+///
+/// The family is narrow because the sibling has to do three things at once: be compared, contribute no
+/// refusal of its own, and still let the clause pass. A non-string sibling refuses on its own pairing and
+/// the clause fails closed, and a sibling the haystack contains fails it on the match; either way the
+/// verdict gate suppresses whatever this answered. Measured over a 210-clause grid of the mixed-left
+/// shapes, three reach it -- `Mix[*]`, `MixRev[*]` and `MixTwoStr[*]` against a queried string -- and the
+/// fix moves exactly those three and no verdict anywhere.
+/// `a_skipped_pairing_does_not_earn_a_sibling_a_membership_notice` carries them.
+///
+/// Strengthening `clause_passed` is NOT the repair, and that path is closed rather than merely
+/// unattractive: a clause that compared nothing cannot reach `clause_passed = true` by either route.
+/// Through `QueryValueResult`, `nothing_was_compared` in the two-query arm suppresses the only push, so
+/// the vector is empty and the `!values.is_empty()` test rejects it; through `EmptyQueryResult`, all five
+/// constructions in `binary_operation` yield FAIL or SKIP and none can be PASS. The defect is entirely
+/// that this predicate answers `refused` for a pairing the operator declined to build.
+///
+/// Worth knowing for the next reader of an empty per-value vector, because it looks like a contradiction
+/// and is not one. A vacuous clause exits 0 while `clause_passed` is false, and both readers compute from
+/// the same vector at the same moment -- they ask different questions of emptiness. `clause_passed` asks
+/// whether a value passed and gets no; the reporting fold asks whether a value FAILED, also gets no, and
+/// `match_all` turns that into PASS. There is no race and no bug here. That the two answers happen to fail
+/// safe is a property of this call site rather than of the pattern, so a new reader of an empty vector has
+/// to establish its own direction rather than inherit this one.
+///
+/// The wider grid a repair has to survive is not this one, because a before-and-after only covers the
+/// shapes it enumerates. 928 further shapes -- the `[0]`/`[*]` spellings the impossibility proofs turn on, a
+/// two-value left query and `some`, an empty string, an empty map and a null on the left -- carry 25 more
+/// owed notices at the alignment and none after. Then 402 more with a LITERAL on the left, which is the one
+/// arm reached by reading rather than by measurement: `InOperation::compare`'s `(Some, None)` arm decides a
+/// list-valued literal with `Vec::contains`, which is `PartialEq` and cannot refuse, so it should own no
+/// owed notice. It does not. A list written out on the left of a clause does not parse at all, so that arm
+/// is reachable only through a `let`, and 306 `let`-bound cells reach 61 true positives with nothing owed
+/// and nothing spurious.
+///
+/// Across all 2410 cells: no false alarm, no owed notice missed, and status, exit code and stdout byte
+/// count identical to the merge-base. This is diagnostics.
+///
+/// # The branch this predicate cannot model, and why that is not a gap yet
+///
+/// `InOperation::compare`'s `(Some, None)` arm decides a list-valued LITERAL against a right-hand side
+/// holding no list with `!rhs.contains(elem)` -- `Vec::contains`, so `PartialEq` and no `compare_eq`
+/// anywhere. Nothing in that branch can refuse, so nothing this predicate reads is produced there, and no
+/// shape test helps either: the shape arm above is about a refusal `contained_in` returns, and this branch
+/// never calls `contained_in`.
+///
+/// Measured rather than left open. 160 cells satisfy the branch's own condition -- eight list literals bound
+/// with `let`, against ten queries resolving only to non-list values, both polarities -- and the fail-closed
+/// build moves NONE of them, so nothing is owed there. No notice is emitted either.
+///
+/// But the silence is OVER-DETERMINED, and saying so is the point of this section. All 80 `NOT IN` cells of
+/// that shape FAIL, at the merge-base and here alike, so `clause_passed` in `binary_operation` gates the
+/// notice off whatever this predicate answered. So the measurement does not show the shape arm staying
+/// quiet on the branch, and an earlier draft of this paragraph claimed it did -- reading absence of a notice
+/// as evidence about a predicate whose answer nothing consulted. What it does show is narrower and still
+/// worth having: no clause of that shape reaches the state this notice describes, so there is no notice to
+/// owe and none to get wrong. `a_membership_decided_by_partial_eq_owes_no_notice` carries three of the
+/// cells, and its own comment says which half of it can fail.
+///
+/// The oracle's reach is the second limit and it is independent of the first. The fail-closed build promotes
+/// four `compare_eq` suppressions and this branch calls none of them, so "the change moves this clause"
+/// cannot be true of any cell decided there whatever its verdict. If a later release fails that branch
+/// closed, or gives it a comparison that can refuse, both limits lift at once and this predicate is not
+/// where the answer would come from -- there is nothing for it to read.
+///
+/// # The `[*]` bypass this fix waited on, and why the wait is over
+///
+/// Alignment was blocked, deliberately, while the `[*]` membership bypass was open. Measured on a tree with
+/// the granularity change and nothing else: the suite stayed green, all five aws-guard-rules-registry
+/// notices survived, the false alarms went -- and `Pair NOT IN Deny13[*]`, with `{"Pair":[1,2],"Deny13":[1,3]}`,
+/// went from exit 0 *with* the notice to exit 0 **silent**. That clause admitted a value its denylist names,
+/// and no test in the suite failed when it did. So the noise was accepted for one true positive on a live
+/// bypass at exit 0, and only until the bypass closed.
+///
+/// `e331c6b` closed the right-expanded denylist arm and the re-measurement was run rather than assumed:
+/// `Pair NOT IN Deny13[*]` over the same document is exit 0 with the notice at `b05f922` and **exit 19 and
+/// silent** at `8ed1b54`, across six spellings. Re-verified again here, after `f6639d5`, `6aeb59b` and
+/// `20c72f0` had each touched the neighbourhood.
+///
+/// Why it is silent depends on the spelling, and an earlier revision of this paragraph gave one reason for
+/// both. Asserted -- the spelling `8ed1b54` measured -- the verdict gate suppresses it and the report does
+/// name the clause: exit 19, `provided value [[1,2]] did match expected value in [[1,3]]`. As a `when`
+/// condition the verdict gate still suppresses it and the report names nothing at all: exit 0, empty
+/// stdout. Both are silent and only the first is silent for the reason given, so the sentence was true of
+/// what it measured and false as a general claim. Every spelling of that clause is now silent, in either
+/// role.
+///
+/// # What this does not fix
+///
+/// The kind-mismatch half of the underlying defect. `NOT IN` still reads a pair it cannot compare as "not
+/// a member" and passes, which `docs/KNOWN_ISSUES.md` records and which `!=` already refuses. Failing
+/// closed here needs five aws-guard-rules-registry rules changed first, for the reasons
+/// [`incomparable_membership_notice`] sets out, and this predicate is the warning that goes out meanwhile.
+/// Those five notices are what the granularity fix had to leave alone, and it does: four are a `!Ref`-shaped
+/// MAP against a regex denylist and the fifth a MAP against a plain `String`, and a map is not a list, so
+/// nothing about them flattens. The same fact keeps them clear of both arms added since: the second
+/// granularity needs a list on the left, and so does the shape refusal, so all five stay on the
+/// does-not-decompose arm they were always answered by. Measured rather than inferred -- the five notice
+/// bodies before their `Location[...]` tails are byte-identical to the ones the merge-base prints.
+/// `a_left_hand_value_that_is_not_a_list_is_not_flattened` pins that shape as a unit cell and the registry
+/// corpus pins the five themselves.
+fn incomparable_membership(lhs: &[QueryResult], rhs: &[QueryResult]) -> bool {
     let values = |results: &[QueryResult]| -> Vec<Rc<PathAwareValue>> {
         results
             .iter()
@@ -256,37 +531,537 @@ fn incomparable_membership(
             .collect()
     };
     let lhs_values = values(lhs);
-    if lhs_values.is_empty() {
-        return None;
+    let rhs_values = values(rhs);
+    // Nothing on one side is nothing compared, and nothing compared is nothing to warn about. About the
+    // VALUES and not their elements: an empty list is a value `contained_in` receives and answers for,
+    // and the arms below say what it answers.
+    if lhs_values.is_empty() || rhs_values.is_empty() {
+        return false;
     }
-    let mut elements = Vec::new();
-    for each in values(rhs) {
-        match &*each {
-            PathAwareValue::List((_, list)) => {
-                elements.extend(list.iter().cloned().map(Rc::new));
-            }
-            _ => elements.push(Rc::clone(&each)),
-        }
-    }
-    if elements.is_empty() {
-        return None;
-    }
+
+    // Whether `InOperation::compare` will take its `(None, None)` arm, which is the one thing here that
+    // is about the call rather than about the values. That arm drops the refusal the shape arm below is
+    // about; every other arm reports it and the clause fails closed on it already. Asked of
+    // `operators::is_literal` rather than re-derived, so the two cannot drift.
+    let both_queried = operators::is_literal(lhs).is_none() && operators::is_literal(rhs).is_none();
+
+    // Some pair refused for a reason that is an incomparability. Tracked rather than returned, because
+    // the answer is a property of every pair the clause was decided on: one refusal is enough, and no
+    // refusal at all means there is nothing here to warn about.
+    //
+    // An answered pair cancels nothing. It used to `return false`, on the reading that a clause with
+    // anything comparable in it decided on the comparable pair. That is false of `NOT IN`: a value
+    // passes it by matching NOTHING, so every pair was built and an answered one says only that this
+    // element was not the collision.
+    //
+    // ONE answered pair anywhere silenced the whole predicate, and position had nothing to do with it.
+    // That `return false` returned from the FUNCTION rather than from the element loop, so the first pair
+    // `compare_eq` could answer ended the walk wherever it sat. An earlier revision of this note said the
+    // silence was a matter of walking order -- `Str NOT IN Haystack` over `["zzz", 7, false]` "silent
+    // because `\"zzz\"` is written first, and noticed if it is written last" -- and that is wrong, in a way
+    // that reads as an explanation. Measured on 2026-09-03 with release binaries: `["zzz", 7, false]`,
+    // `[false, 7, "zzz"]` and `[7, false, "zzz"]` are ALL silent at `e8a03dda` and all noticed at
+    // `b8d3901e`, so rewriting the denylist so the answerable element comes last changes nothing. The
+    // substance stands -- an answered pair discarded a refusal that had already been seen -- and only the
+    // order framing was false. Worth spelling out because "reorder the denylist" is a plausible thing for a
+    // reader to try, and it would tell them the predicate was fixed when it was not.
+    let mut refused = false;
     for value in &lhs_values {
-        for element in &elements {
-            if compare_eq(value, element).is_ok() {
-                return None;
+        for element in rhs_values_paired_with(value, &rhs_values, both_queried) {
+            match (&**value, &**element) {
+                // `contained_in`'s list-against-list arm, which decides at TWO granularities and used to
+                // be read as deciding at one.
+                //
+                // The element pairs are built by `elements_not_matched` asking `is_one_of` per
+                // left-hand element. Not recursively -- for a `Deep` of `[["a"]]` the element is
+                // `["a"]`, and that is the operand `is_one_of` is handed, so a second level would
+                // compare something no clause compares.
+                //
+                // NOT ALL OF THEM, which this arm asserted for two commits. `is_one_of` returns
+                // `Matched` on the first right-hand element that matches, so the pairings after a
+                // match are never built for that element. A nested `for left in lhsl { for right in
+                // rhsl { .. } }` here walked the whole cross product and counted the rest -- the same
+                // class as the whole-value residual below, one granularity down.
+                //
+                // PRE-EXISTING at `1b81431c`, and not a regression of the range that repaired it. The
+                // nested walk sat three lines above the line that range changed, which is close enough
+                // to read as introduced by it, so the provenance is stated rather than left to a
+                // reader's inference. Recorded HERE, in the tree, rather than only in a commit message:
+                // the first version of this sentence lived in a message, a history rewrite dropped it,
+                // and a reader opening this file in a year has the tree and not the log. Cited by
+                // construct -- `elements_not_matched` asking `is_one_of` per element -- because the line
+                // coordinates for this arm have already moved once in this round.
+                //
+                // `operators::membership_pairing_refused` is the fix, and the shape is the point: it
+                // runs `is_one_of`'s OWN loop and reports what the pairings that loop built said. The
+                // obvious alternative is to copy the walk's stop condition into this arm -- `if right
+                // == left || compare_eq(left, right) == Ok(true) { break }` -- which reproduces the
+                // defect's cause while fixing its symptom, and is what the prohibition on
+                // `membership_stops_after` in `operators.rs` forbids. Both helpers this arm now calls
+                // observe the operator instead of imitating it.
+                //
+                // Its classification cannot drift from `pair_refused`'s, which is what it replaces:
+                // the flag is set on `is_one_of`'s `Err(_)` arm, and that arm receives everything
+                // except the `RegexError` taken above it -- exactly the partition `pair_refused`
+                // makes.
+                (PathAwareValue::List((_, lhsl)), PathAwareValue::List((_, rhsl))) => {
+                    refused |= operators::membership_pairing_refused(lhsl, rhsl);
+
+                    // And the WHOLE left-hand list against each entry, which that arm walks when no
+                    // element matched and the denylist holds a list. Keyed on the same two conditions the
+                    // operator branches on, because those are what decide whether the loop exists to
+                    // refuse in: a flat denylist never reaches it, and reinstating the whole-value pair
+                    // there is exactly the false-alarm class the alignment removed --
+                    // `Strs NOT IN ["x", "y"]` is `(List, String)`, which has no arm, on a clause every
+                    // pair of which is string against string.
+                    //
+                    // Gated on the elements having failed to match, because the operator's loop is. The
+                    // operator gates this loop TWICE and the predicate mirrored only the first: the
+                    // `any(is_list)` condition is the outer `if` of `contained_in`'s list-against-list
+                    // arm, and `if !flat_subset` inside it is the second, where `flat_subset` is
+                    // `elements_not_matched(lhsl, rhsl)`'s diff being empty. Both are cited by construct
+                    // rather than by line, because this comment sits in a file later commits insert into
+                    // and the numbers that used to be here had already moved.
+                    //
+                    // `operators::whole_value_pairing_built` is the second gate, and it OBSERVES the
+                    // diff rather than re-deriving it -- it calls the same `elements_not_matched` the arm
+                    // calls. That is the distinction this arm insists on everywhere else, and it is the
+                    // reason a re-derivation would have been the wrong fix while this is the right one:
+                    // a condition spelled out here can drift from the one the operator branches on, and
+                    // a call cannot. `both_queried` above is read from `operators::is_literal` for the
+                    // same reason.
+                    //
+                    // It subsumes the `lhsl.is_empty()` guard that used to stand here, which was the
+                    // empty-list special case of exactly this gate: an empty `lhsl` has nothing to leave
+                    // unmatched, so its diff is empty, so the operator builds no whole-value pairing for
+                    // it either. Keeping both would be two guards where one answers, and neither would
+                    // then be tested on its own. Measurable from outside: `Empty IN [[9], 5]` exits 0,
+                    // which is `contained_in` answering `Success`.
+                    //
+                    // UNGATED by `both_queried`, and an earlier revision wrote `both_queried &&
+                    // lhsl.is_empty()`, which is the inverse of the coverage needed. The QUERIED path
+                    // needs no guard here: `membership_stops_after(empty, X)` is true for every
+                    // non-String X, so any list element is a stop and the exclusive prefix drops it,
+                    // leaving only Strings inside `[0..at)` -- and a String is not a list, so this arm is
+                    // unreachable. The LITERAL path is the one that reaches it, because
+                    // `rhs_values_paired_with` returns its whole slice from the `!both_queried` early
+                    // return before the endpoint is ever consulted, so the prefix cannot help there.
+                    //
+                    // THE RESIDUAL THIS CLOSES was left open here as latent, and the argument for that
+                    // was false. It ran: every element matching means `contained_in` returns `Success`,
+                    // which is a match, which fails `NOT IN`, so the verdict gate shuts. That is
+                    // per-value, and the gate is not. `clause_passed` reads the query's own `match_all`,
+                    // and for `some` it is `any(status == PASS)` -- so one failing value does not shut
+                    // it. A passing sibling holds it open while the residual value's refusal sets
+                    // `refused`, and the notice goes out naming a reason that is false about the value
+                    // that actually passed.
+                    //
+                    // Measured with `Iso` of `[[[1]], [[7], [8]]]`: `some Iso[*] NOT IN [[1], [9]]`
+                    // exits 0 and printed the notice, whose subject is `[[7], [8]]` -- every element of
+                    // it compared int against int and decided false. Dropping the residual value leaves
+                    // exit 0 and no notice, which attributes it; keeping only the residual value exits
+                    // 19, which is the sole-value population the false argument was checked against. The
+                    // filter spelling `Resources.*[ some Props.V[*] NOT IN [[1], [9]] ]` does it too,
+                    // and that is the shape the registry rules are written in.
+                    //
+                    // Its own precedent is one arm down, and reading it would have caught this. The
+                    // `(List, right)` arm below records the same failure mode about its own repair: an
+                    // argument true of a left operand whose ONLY value is the empty list, and false as
+                    // soon as the empty list has a sibling, because `refused` ORs over the whole cross
+                    // product. Substitute "every element matched" for "the empty list" and that
+                    // paragraph is this finding verbatim. It survived review because the argument was
+                    // checked against the population that satisfies it.
+                    //
+                    // THE TWO GRANULARITIES DIVERGED FOR THE SAME REASON and are now closed the same
+                    // way. This one over-counted a whole-value pairing the operator skipped because the
+                    // element diff was empty; the element loop above over-counted element pairings
+                    // `is_one_of` short-circuited past. Both were the predicate re-deriving the
+                    // operator's work and getting a different answer, and both are now questions asked
+                    // of the operator's own functions.
+                    //
+                    // They are separable, and were separated, because each is sufficient on its own to
+                    // set `refused`. With `ShortIso` of `[[[1]], [[7, 7], [8, 8]]]`,
+                    // `some ShortIso[*] NOT IN [[1], [9]]` needs only the whole-value gate, while
+                    // `some ShortIso[*] NOT IN [[1], ["a"]]` -- the SAME left operand -- needs both,
+                    // because closing one leaves the other carrying the notice. The discriminator is
+                    // whether the pairing the operator skipped would have compared incomparable kinds:
+                    // for `[9]` the skipped pair is `compare_eq(1, 9)`, `Ok(false)`, refusing nothing;
+                    // for `["a"]` it is `compare_eq(1, "a")`, `NotComparable`, a refusal. One fixture
+                    // answering oppositely across two denylists is why the clause shape cannot be used
+                    // to tell the two sources apart, and why a reader must not read one repair as
+                    // covering the other.
+                    //
+                    // The element-loop half moved nothing observable until this gate landed, which is
+                    // why it is the later commit rather than the earlier one: on every clause where it
+                    // mattered the residual also fired, and the residual held the notice up.
+                    // THE GATE WAS REPAIRED AND THE BODY WAS NOT, which is the fourth instance of this
+                    // class and the last one in this arm. `whole_value_pairing_built` answers whether
+                    // the operator's whole-list loop RUNS; it says nothing about how far that loop
+                    // walks. The operator's loop `break`s on the first entry that matches -- by
+                    // `PartialEq` or by `compare_eq` answering `Ok(true)` -- and this body used to walk
+                    // every entry regardless, so a correctly gated loop still counted pairings the
+                    // operator never compared.
+                    //
+                    // Worth naming as its own mistake rather than as more of the same: replacing a
+                    // re-derived CONDITION with an observed one reads as having brought the whole loop
+                    // into line, and the body is a second place the same question has to be asked. The
+                    // gate repair left this walk byte-identical to what it was before that commit.
+                    //
+                    // `membership_pairing_refused` over a one-element left side is the body, because
+                    // the operator's whole-list walk IS `is_one_of` over the whole value -- that
+                    // function now runs it, so there is one walk and the predicate reads it. The gate
+                    // stays `whole_value_pairing_built`: two observations of the operator, one per
+                    // question, neither re-derived.
+                    //
+                    // Its latency argument does NOT transfer from the `(left, List)` arm below, and
+                    // assuming it did is what would have hidden this. That arm is suppressed because
+                    // `compare_eq` has no edge between its numeric and textual comparability classes,
+                    // so a sibling comparable to the offending entry refuses on its own account. The
+                    // `(List, List)` arm bridges those classes: `compare_eq` on two lists compares
+                    // LENGTH first and answers `Ok(false)` on a mismatch without examining element
+                    // kinds. So a length-1 sibling is comparable to every length-2 entry, contributes
+                    // no refusal of its own, and leaves the suspect's phantom refusal carrying the
+                    // notice alone.
+                    //
+                    // Measured with `Whole` of `[[[1], [2]], [[9]]]`:
+                    // `some Whole[*] NOT IN [[[1],[2]], ["a","b"]]` exits 0 and printed the notice. The
+                    // suspect `[[1], [2]]` is `PartialEq`-equal to entry 0, so the operator breaks
+                    // there and never reaches `["a","b"]`; this body did, and `compare_eq` zipped two
+                    // length-2 lists into `compare_eq([1], "a")`, a refusal on kinds. The sibling
+                    // `[[9]]` answers `Ok(false)` on length against both entries and refuses nothing,
+                    // so the clause passes on a perfectly comparable value. Sibling alone is silent,
+                    // suspect alone exits 19, and the unquantified spelling exits 19 -- the notice
+                    // needed `some` and a sibling. The registry filter spelling fires too, so this one
+                    // is user-visible rather than latent.
+                    if rhsl.iter().any(|right| right.is_list())
+                        && operators::whole_value_pairing_built(lhsl, rhsl)
+                    {
+                        refused |= operators::membership_pairing_refused(
+                            std::slice::from_ref(&**value),
+                            rhsl,
+                        );
+                    }
+                }
+
+                // A list against a value that is not one, which `contained_in` refuses on the SHAPES: it
+                // dispatches on the left value first, so this pair reaches its `List` arm's catch-all and
+                // answers `NotComparable` without asking `compare_eq` anything. There is no comparison
+                // result to read, so the shape is what carries the refusal -- a predicate built from
+                // `compare_eq` answers alone cannot see this class by construction, which is why it went
+                // quiet on `Ports NOT IN D13[*]` and `Maps NOT IN Umap` when the operands were flattened
+                // into pairs that are perfectly comparable.
+                //
+                // A shape test and NOT a `compare_eq` call standing in for one, which is the distinction
+                // this arm exists to keep. Asking `compare_eq(whole_list, right)` here would produce a
+                // refusal for most of these operands and would look like it worked, and it would be the
+                // same defect the flatten was fixing: the predicate answering about a comparison the
+                // operator never performed. `contained_in` compares nothing in this case, so what is
+                // recorded is the fact that it declined, which is what the clause actually passed on.
+                (PathAwareValue::List((_, lhsl)), right) => {
+                    // The element question `contained_in` never asks, which the `(None, None)` arm asks
+                    // for it with `is_one_of(element, [eachr])`.
+                    //
+                    // ONLY WHERE THE ARM ASKS IT, which was the missing condition rather than a missing
+                    // stop. A DIFFERENT CLASS from every repair above it in this function, and saying so
+                    // is the point rather than modesty about it: those were all a predicate walking
+                    // FURTHER than the operator -- a loop counting pairings a `break` had already
+                    // skipped -- and each was closed by asking the operator's own function how far its
+                    // walk went. `pair_refused` is correctly aligned here and this loop stops where it
+                    // should. What was absent is the question of whether any element-versus-right
+                    // pairing exists at all to be refused in: `contained_in` dispatches
+                    // on the left value, so a list against a non-list reaches its `List` arm's catch-all
+                    // and answers `NotComparable` carrying the two WHOLE values, never decomposing. Each
+                    // element then contributed a refusal for a comparison nobody made.
+                    //
+                    // Measured with `Mixed` of `[["a"], 7]`: `some Mixed[*] NOT IN 5` exits 0 and
+                    // printed the notice, which is false about that clause. `["a"]` is the only value
+                    // that could not be compared and it FAILED -- suspect alone exits 19 with
+                    // `Can not compare type ... Value=["a"], Value=5`, the whole values -- while `7`
+                    // passed on an ordinary `Ok(false)`. Nothing was read as "not a member", so there was
+                    // nothing to warn about. Sibling alone is silent, which attributes it.
+                    //
+                    // `operators::element_pairings_built` is the condition, and it is asked of
+                    // `operators::is_literal` for the reason the whole module gives: a condition written
+                    // out here can drift from the one the arm branches on, and a call cannot. It is not
+                    // `both_queried`. That flag names ONE of `InOperation::compare`'s four arms and
+                    // collapses the other three, and two of the three collapsed arms do decompose --
+                    // `(None, Some)` against a `String` expands the left-hand list into one `string_in`
+                    // per element, and `(Some, None)` with no list among the right-hand values builds an
+                    // element-wise `Vec::contains` diff. Both are refusals the operator really makes, so
+                    // both are notices owed, and a gate keyed on `both_queried` alone silences them.
+                    //
+                    // The shape refusal below is keyed on `both_queried` and is RIGHT to be, which is
+                    // why the two conditions differ rather than being shared. That one is about whether
+                    // the refusal `contained_in` returns for the whole pair survives into the results,
+                    // and only the `(None, None)` arm drops it. This one is about whether the arm builds
+                    // element pairings in the first place. Same match arm, two different questions, and
+                    // reading the lower one as settling the upper one is what left this ungated.
+                    if operators::element_pairings_built(lhs, rhs, right) {
+                        for left in lhsl {
+                            refused |= pair_refused(left, right);
+                        }
+                    }
+
+                    // The shape refusal itself, on the clauses that pass on it. Two conditions, and
+                    // each excludes a shape that does not pass on it rather than one that is merely
+                    // inconvenient.
+                    //
+                    // `both_queried`, because only the `(None, None)` arm drops the refusal. A literal
+                    // right-hand side reaches `(None, Some)`, which pushes the `NotComparable` straight
+                    // into the results, so `Ports NOT IN 5` is already exit 19 where the queried
+                    // `Ports NOT IN Uint` is exit 0 on the same two values. A literal STRING does not
+                    // reach `contained_in` at all -- that arm takes the `string_in` path per element --
+                    // so `Empty NOT IN "abc"` has no refusal to pass on either, and counting it would be
+                    // a false alarm rather than a suppressed one.
+                    //
+                    // The vacuous match, because it happens first. The `(None, None)` arm reads an empty
+                    // left-hand list as vacuously present in anything that denotes a set and continues
+                    // the outer loop, so `contained_in` is never called and `Empty NOT IN D13[*]` fails
+                    // on the match rather than passing on a refusal.
+                    //
+                    // An empty left-hand list, whatever the right operand is, because the operator skips
+                    // the pairing for every right-hand kind and this condition used to name only one of
+                    // them.
+                    //
+                    // It carried `&& !matches!(right, PathAwareValue::String(_))`, which read "a string is
+                    // the exclusion in the operator, so it is the exclusion here". That stopped being true
+                    // at `69628df7`, which gave the string pairing a skip of its own: an empty left-hand
+                    // list against a string increments `uncompared_pairings` and `continue`s, and against
+                    // anything else takes `continue 'each_lhs`. Both leave before `contained_in` is called,
+                    // so no right-hand kind reaches the refusal and the whole `lhsl.is_empty()` case is a
+                    // pairing the operator never builds.
+                    //
+                    // What the stale half cost, which is a live false notice rather than dead code. The
+                    // earlier note here said no notice goes out because the gate in `binary_operation` also
+                    // requires `clause_passed`, and a clause whose only pairing was skipped compared
+                    // nothing. That is true of a left operand whose ONLY value is the empty list, which is
+                    // the population it was checked against, and false as soon as the empty list has a
+                    // sibling: `refused` ORs over the whole cross product, so a skipped pairing's refusal
+                    // rides out on a sibling that was compared and decided the clause. With `Mix` of
+                    // `[[], "q"]` and `Ustr` of `"abc"`, `Mix[*] NOT IN Ustr` exits 0 and printed the
+                    // membership notice, whose subject is `"q"` against `"abc"` -- String against String,
+                    // comparable, decided false -- while the `[]` that produced the refusal was compared
+                    // with nothing. Dropping `[]` from the left operand drops the notice, which is what
+                    // attributes it to the skip.
+                    //
+                    // `a_skipped_pairing_does_not_earn_a_sibling_a_membership_notice` is that shape with the
+                    // `NoEmpty` control beside it, and
+                    // `every_string_spelling_warns_through_the_channel_that_is_true_of_it` is the
+                    // sole-value population this condition was right about.
+                    //
+                    // The widened condition holds, and the argument is structural rather than a sweep --
+                    // worth recording because a soundness claim is cheap to assert and rarely grounded.
+                    // Inside `InOperation::compare`'s `(None, None)` arm an empty left-hand list never
+                    // reaches `contained_in` for ANY right-hand kind: against a `String` the arm
+                    // increments `uncompared_pairings` and `continue`s, and against every other kind it
+                    // takes `continue 'each_lhs`, both above the `found_in_string` call. So no right-hand
+                    // kind is owed the shape refusal and `lhsl.is_empty()` cannot be too wide. The other
+                    // half is that `both_queried` is asked of `operators::is_literal`, the same function
+                    // that selects that arm, so the predicate and the arm cannot drift into disagreeing
+                    // about which pairs exist. Neither half depends on a clause list, so both survive a
+                    // rebase; prefer them to a re-run of the grid.
+                    let vacuous_match = lhsl.is_empty();
+                    if both_queried && !vacuous_match {
+                        refused = true;
+                    }
+                }
+
+                // `contained_in`'s `rest` arm against a list: the left value is the operand `compare_eq`
+                // receives, so the value and the element it contributes are the same thing and nothing
+                // is missing at a second granularity.
+                //
+                // THE THIRD SITE OF THE SHORT-CIRCUIT CLASS, closed the same way as the two above. This
+                // loop used to walk every entry of `rhsl`; `contained_in`'s scalar arm `break`s on the
+                // first entry that matches, so the entries after a match are pairings the operator never
+                // built. Three arms, three instances of one divergence -- the predicate walking further
+                // than the operator did -- and closing two while documenting the third would have left
+                // the module with two rules instead of one.
+                //
+                // `operators::membership_pairing_refused` with a one-element left side, because the
+                // operator's walk for a scalar IS `is_one_of` over the same slice. Same shared-walk shape
+                // as the element-loop repair: it runs the operator's loop and reads what the pairings that
+                // loop built said, rather than restating the stop condition here.
+                //
+                // IT WAS MEASURED LATENT AND REPAIRED ANYWAY, which is `membership_stops_after`'s own
+                // rule and is followed here deliberately rather than re-decided. That note reads: "LATENT,
+                // AND REPAIRED ANYWAY ... the suppression lives in a different function from the
+                // divergence, though, so changing what either short-circuit fires on -- or adding a third
+                // beside them -- makes it live with nothing in the tree to flag it." Verbatim true of this
+                // arm: the verdict gate in `binary_operation` is what suppressed it, and the gate is not
+                // in this function.
+                //
+                // The measurement, kept because it is what the repair rests on rather than a guess about
+                // reach. Over a 23,496-clause grid, closing this moved 66 predicate answers and ZERO
+                // notices -- 12,771 before and after, 0 gained, 0 exit-code movement, 0 stdout movement.
+                // The predicate figure came from an instrumented binary computing the arm under both
+                // policies in one run, so a change the gate hides is still counted, and every clause
+                // reached the predicate, so the denominator was complete. `a_short_circuited_scalar_
+                // pairing_earns_no_refusal` is the cell that binds it; nothing in the suite did before.
+                //
+                // THE ZERO IS A MEASUREMENT AND NOT A DEAD INSTRUMENT, which the probe's own positive
+                // control is what establishes -- a run that answers "no movement" because it observed
+                // nothing looks identical to one that observed everything and found no movement. Two
+                // hand-checked clauses separate them. `Uint NOT IN [7, [9]]` over a `Uint` of 7 reported
+                // the two policies DISAGREEING, so the probe could see this arm at all; and
+                // `some Mixed[*] NOT IN [7, [9]]` over `[7, 99]` reported them AGREEING, because the
+                // sibling `99` refuses against `[9]` on its own account and the over-count changes
+                // nothing there. Without the first, 0 of 12,771 would prove only that the probe was
+                // blind.
+                //
+                // Why the gate caught all 66. The over-count needs a denylist entry that MATCHES the left
+                // value, or the walk does not stop early, and a later entry INCOMPARABLE to it, or the
+                // skipped pairing refuses nothing. A matched value fails `NOT IN`, so only a sibling can
+                // carry the clause -- but `compare_eq`'s comparability splits roughly into a numeric class
+                // and a textual one, and mixing them is what makes the skipped pairing refuse, so a
+                // sibling comparable to the offending entry sits in the other class from the matched entry
+                // and refuses against that instead, earning the notice on its own account.
+                //
+                // THAT ARGUMENT EXPLAINS THE MEASUREMENT RATHER THAN STANDING IN FOR IT. It is the shape
+                // of argument that was wrong twice on this branch -- the whole-value residual was called
+                // latent on a per-value reading of the gate, and the `(List, right)` arm records the
+                // identical error about its own repair. Six hand-built attempts at a non-refusing sibling
+                // all kept the notice, which is evidence and not proof. "Latent" was a property of the
+                // measured population, and that is the reason this is repaired rather than left resting
+                // on it.
+                (left, PathAwareValue::List((_, rhsl))) => {
+                    refused |=
+                        operators::membership_pairing_refused(std::slice::from_ref(left), rhsl);
+                }
+
+                // Two values neither of which decomposes, which `contained_in` hands to `match_value`.
+                (left, right) => refused |= pair_refused(left, right),
             }
         }
     }
-    Some(incomparable_membership_notice(context))
+    refused
 }
 
-fn vacuous_comparison_notice(context: &str) -> String {
+/// The right-hand values `InOperation::compare`'s `(None, None)` arm pairs this left-hand value with.
+///
+/// A PREFIX of `rhs_values`, because that arm stops pairing a left-hand value at the first right-hand
+/// value that matches it and [`incomparable_membership`] has to stop where the arm stops. Without
+/// this the predicate counted refusals from pairings the arm never built --
+/// [`operators::membership_stops_after`] carries the measurement and why a copy of the arm's rule
+/// must not live here.
+///
+/// The stopping pairing is EXCLUDED along with the later ones, because a value that stops has MATCHED.
+/// All three stops are matches: the empty-left skip reads an empty list as vacuously present, which is
+/// the convention `InOperation::compare` states where it takes that skip; `found_in_string` answering
+/// `All` is a full string containment; `contained_in` answering `Success` is a membership. A matched
+/// value FAILS `NOT IN`, so it cannot be the value a passing `NOT IN` clause passed on, and counting its
+/// refusals credits a passing clause with a refusal belonging to a value that failed.
+///
+/// An earlier revision included it, reasoning that the arm "reaches `contained_in` for it and only skips
+/// the element loop". That is true of one stop of the three and was being used to justify all three: the
+/// empty-left skip reaches NEITHER `found_in_string` nor `contained_in`, and an `All` reaches only
+/// `found_in_string`. Excluding the pairing is both simpler to state and correct for all three, and it
+/// settles rather than defers the question that revision left open -- a list-against-list `Success`
+/// whose element pairs refuse while the subset holds, `["x", 1]` inside `["x", 1]`, is precisely the
+/// accounting now dropped.
+///
+/// Exclusive is a strict reduction in what the predicate counts, so the direction of risk is silence
+/// where a notice was owed, and the argument that it cannot happen is the one above rather than a sweep:
+/// the stopping value matched, so its clause fails, and the gate in `binary_operation` emits nothing for
+/// a clause that did not pass. What this drops was unreachable through the notice.
+///
+/// NOT the empty-left skip against a STRING, which is not a stop at all.
+/// [`operators::membership_stops_after`] answers false there, because the arm skips that one pairing
+/// with a plain `continue` and KEEPS the value. So an empty left-hand list still reaches the
+/// `(List, right)` arm above, and the `vacuous_match` exclusion there is still the only thing keeping
+/// its shape refusal out. This change does not subsume it.
+///
+/// Whole slice when the call is not `(None, None)`, because the stop belongs to that arm alone. The
+/// literal-right-hand arm walks every right-hand value with no short-circuit, so truncating there
+/// would drop pairings it does build. `both_queried` is read from the same `operators::is_literal`
+/// that selects the arm, so the two cannot disagree about which one runs.
+fn rhs_values_paired_with<'v>(
+    value: &Rc<PathAwareValue>,
+    rhs_values: &'v [Rc<PathAwareValue>],
+    both_queried: bool,
+) -> &'v [Rc<PathAwareValue>] {
+    if !both_queried {
+        return rhs_values;
+    }
+
+    match rhs_values
+        .iter()
+        .position(|element| operators::membership_stops_after(value, element))
+    {
+        Some(at) => &rhs_values[..at],
+        None => rhs_values,
+    }
+}
+
+/// Whether one pair the membership comparison built refused for a reason that is an incomparability.
+///
+/// Not every `Err` is one. `fancy_regex` returns a `Result` from `is_match` because its backtracking
+/// engine can run out of budget, so a `String` against a `Regex` -- a pair `compare_eq` has an arm for,
+/// and builds the pattern for -- refuses with `RegexError` after comparing operands of perfectly
+/// comparable kinds. Counted as incomparability, it produced a notice whose stated reason was wrong: the
+/// engine quit, the values were fine, and rewriting the operands to "values of the same kind" would not
+/// change anything.
+///
+/// Answered per pair rather than for the clause, and that is the second half of the same correction. It
+/// used to `return false` for the whole cross product on the evidence of one pair, and the pair it is
+/// right about is its own. `some Multi.*.V NOT IN [/re/]` over a thirty-character `a` string and a list of
+/// ints: the string exhausts the budget, the ints refuse against the pattern -- `(Int, Regex)` is not an
+/// arm -- and the clause passes on the list. Measured, the list alone earned the notice and the two
+/// together earned nothing, so an unrelated sibling value's spent budget destroyed a warning that was
+/// owed. `a_spent_budget_on_one_value_does_not_silence_another_values_notice` pins all three.
+///
+/// Narrow on purpose: only the budget, never a kind mismatch. Passing over every `Err` would silence the
+/// class this notice exists for, which is the tracked defect in `docs/KNOWN_ISSUES.md`.
+///
+/// Which pairs reach the budget arm moved when the caller stopped comparing whole values against
+/// elements, and the two spellings this arm was written around swapped places. A FLAT denylist holding a
+/// regex now hands it the left-hand list's ELEMENTS against that regex, so `Cat NOT IN [/re/]` over a
+/// one-element `Cat` builds `(String, Regex)` and arrives with a spent budget -- where it used to build
+/// `(List, Regex)`, which is not an arm, and be counted as a kind refusal. A denylist holding a NESTED
+/// list is the mirror: the element pair is `(String, List)`, a real `NotComparable`, where the
+/// whole-value pair was `(List, List)` and zipped into `(String, Regex)`. That whole-value pair is built
+/// again for the nested spelling, by the second granularity in the caller, so the nested clause now
+/// reaches both.
+///
+/// Neither swap is observable through the notice, because both clauses fail: `match_value` promotes
+/// `RegexError` for the flat spelling and `contained_in` promotes it for the nested one, so the verdict
+/// gate in `binary_operation` suppresses whatever this answered. Measured with the release binary on a
+/// `Cat` of one thirty-character string of `a`s: `rule r { Cat NOT IN [/(?!x)((a+)+)b/] }` and
+/// `rule r { Cat NOT IN [[/(?!x)((a+)+)b/]] }` each exit 19 with nothing on stderr, before this change
+/// and after it. `a_spent_backtracking_budget_is_not_an_incomparable_pair` and
+/// `a_denylist_refuses_a_value_it_could_not_evaluate_in_either_spelling` hold both.
+///
+/// Nothing is lost by narrowing it. Where the budget is the only thing that refused the notice still
+/// does not go out, which is the case this exclusion was added for; and such a clause is answered
+/// elsewhere anyway, since `match_value` promotes `RegexError` and the clause fails saying the expression
+/// could not be evaluated. That last part is true of an assertion and not of a gate -- a failing gate is
+/// reported by nothing -- but the notice is not the thing to fix it with, because a clause that does not
+/// pass is not one the coming fail-closed change moves.
+fn pair_refused(lhs: &PathAwareValue, rhs: &PathAwareValue) -> bool {
+    match compare_eq(lhs, rhs) {
+        Ok(_) | Err(Error::RegexError(_)) => false,
+        Err(_) => true,
+    }
+}
+
+/// Notice for a comparison that passed without comparing anything, because the value it selected was
+/// an empty collection.
+///
+/// `docs/QUERY_AND_FILTERING.md` lists `Tags: []` alongside a missing key and an empty map as a
+/// retrieval error, and says all retrieval errors are failures. The other two do fail; this one passes,
+/// which makes it the odd one out rather than a design choice. It is not changed in this release
+/// because the change turns a passing run into a failing one, and a rule author deserves to hear about
+/// that before a pipeline does.
+///
+/// Carries the clause's source position for the reason given on [`incomparable_membership_notice`]: the
+/// context is a `Display` that names no rule and no file, so two clauses rendering alike collapse in the
+/// set these are collected in.
+fn vacuous_comparison_notice(context: &str, location: &FileLocation<'_>) -> String {
     format!(
         "DEPRECATION: {} passed without comparing anything, because the query selected an empty \
          collection. From the next release this reports a failure, matching a missing key and an empty \
-         map. Guard the clause with `when <query> !empty {{ ... }}` if an empty collection is expected.",
-        context
+         map. Guard the clause with `when <query> !empty {{ ... }}` if an empty collection is expected. \
+         The clause is at {}.",
+        context, location
     )
 }
 
@@ -297,29 +1072,142 @@ fn vacuous_comparison_notice(context: &str) -> String {
 /// `false` as a tracked defect. `!=` already fails closed on the same operands; `NOT IN` does not.
 ///
 /// Not changed in this release, and the reason is specific rather than caution: five rules in
-/// aws-guard-rules-registry use `NOT IN` inside a filter predicate to catch a `!Ref`-shaped value, and
-/// failing closed makes the filter select fewer resources, which turns a reported violation into a
-/// pass. Those rules have to change first.
-fn incomparable_membership_notice(context: &str) -> String {
+/// aws-guard-rules-registry rely on the current reading, and failing closed breaks them. They have to
+/// change first.
+///
+/// Four of the five and the fifth break differently, which is worth stating because one sentence used to
+/// cover all five and described only the four. The four are filter predicates matching a `!Ref`-shaped
+/// value against a regex denylist -- `some Properties.Users[*].Password not in [ /{{resolve\:...}}/, ... ]`
+/// in `amazon_mq_broker_users_no_plaintext_password.guard:69` and its three siblings. Failing closed there
+/// makes the filter select fewer resources, so a reported violation becomes a pass: the dangerous
+/// direction, because nothing in the output changes.
+///
+/// The fifth is `secretsmanager_using_cmk.guard:41`,
+/// `%aws_secretsmanager_secret_cmk.Properties.KmsKeyId not in ["alias/aws/secretsmanager"]`, and it is a
+/// rule-body assertion rather than a filter, with a plain `String` element rather than a regex. Its pair is
+/// `compare_eq(Map, String)` -- `KmsKeyId` is `{Ref: MyKMSKey}` in the fixture -- which has no arm and
+/// reaches `compare_values`' catch-all. Failing closed there fails the clause, so the rule reports a
+/// violation against a template that satisfies it by pointing at a customer-managed key. That is a false
+/// alarm rather than a hidden one, and it is visible, so do not carry the filter argument over to it: the
+/// harm is the opposite direction and the remedy for the rule is a different one.
+///
+/// Ends with the clause's source position, which is what makes the notice identify its own subject.
+/// `context` is the clause's `Display` and carries no rule name, no file and no position, so two clauses
+/// that differ only in something the rendering drops -- most easily a variable, since `%v NOT IN [1]`
+/// renders alike however `v` is bound -- produced the same string, and `RootScope::deprecations` is a
+/// `BTreeSet`. Two clauses then reported as one line, and an author who fixed the clause that line
+/// appears to name was told nothing about the other.
+///
+/// A position rather than a counter or the offending value, because the set still has collapsing to do:
+/// a rules file is evaluated once per test case, and `a_deprecation_notice_reaches_the_test_command`
+/// requires two notices from three cases rather than six. A position is fixed at parse time, so it is
+/// the same on every evaluation of one clause and different between two;  anything that varied per
+/// emission would separate the duplicates as well as the distinct clauses.
+fn incomparable_membership_notice(context: &str, location: &FileLocation<'_>) -> String {
     format!(
         "DEPRECATION: {} passed because the value could not be compared with any element of the list, \
          which is currently read as \"not a member\". A future release fails closed here, as `!=` \
-         already does. Compare against values of the same kind, or use `!=` if that is the intent.",
-        context
+         already does. Compare against values of the same kind, or use `!=` if that is the intent. The \
+         clause is at {}.",
+        context, location
     )
 }
 
 /// Explanation attached to a clause whose left-hand variable resolved to no values.
 ///
-/// Distinct from [`empty_reference_message`], which is about the right-hand side. Both say the same
-/// thing about enforcement -- nothing was compared -- but the remedy differs: the author has to decide
-/// whether an empty selection is expected, and if it is, guard the clause rather than rely on it
-/// silently passing.
+/// Distinct from [`empty_reference_message`] only in which side it is about; both point at what binds
+/// the name and both say what guarding the clause would actually do.
+///
+/// This is the message a capture that matched no entry produces, and the reason the old wording
+/// mattered so much: it told the author to write `when %name !empty { ... }`, which skips the block, so
+/// the reading that looks like "make the rule tolerate an empty selection" is "stop checking". The
+/// clause is failing because nothing was compared, and the thing to change is the query or filter that
+/// was supposed to bind the name.
 fn empty_lhs_message() -> String {
     "The comparison could not be performed: the variable on the left-hand side resolved to no \
-     values, so there was nothing to compare. If an empty selection is expected here, guard the \
-     clause with `when <variable> !empty { ... }` so it is skipped rather than failed."
+     values, so the clause fails. Look at what binds the variable -- a `let` or a filter capture \
+     that selected nothing. `when <variable> !empty { ... }` skips the clause rather than \
+     satisfying it."
         .to_string()
+}
+
+/// Why a rule did not apply when its query selected nothing, for the two sites that know it.
+///
+/// `find_skip_reason` surfaces *refusals* -- a comparison that could not be decided -- and an empty
+/// selection is not one. So this is a different sentence rather than a reuse of the refusal wording,
+/// and it says what the two call sites actually branched on: the query ran, and it matched nothing.
+///
+/// [`empty_lhs_message`] is the neighbouring helper and is deliberately not reused. It is about the
+/// left-hand *variable* of a comparison resolving to no values, so it tells the reader to look at
+/// what binds the variable and says the clause fails. Neither half holds here: these are ordinary
+/// queries with no variable to bind -- `Resources[ keys == /Z9/ ]` is the measured case -- and the
+/// outcome is a SKIP, not a failure. Pointing a reader at a `let` they never wrote is the same class
+/// of mistake as naming a condition a rule does not contain.
+///
+/// The query is named because it is the one thing that makes the line actionable, and no cause is
+/// named at all -- which is a correction, not caution. The first draft said an empty selection is
+/// what "a path the data does not have, an empty collection, and a filter that excluded every value
+/// all produce alike", and two of those three are false here. Measured on this input:
+///
+/// ```text
+/// Resources[ keys == /Z9/ ] { ... }      exit 0  SKIP   reaches here
+/// Resources.*[ Type == "nope" ] { ... }  exit 0  SKIP   reaches here
+/// Resources.Absent.Type == "x"           exit 19 FAIL   does not
+/// Resources.One.Properties.Tags[*] { }   exit 19 FAIL   does not, over `Tags: []`
+/// Resources.*.Type == "x"                exit 19 FAIL   does not, over `Resources: {}`
+/// ```
+///
+/// A missing path and an empty collection fail closed somewhere else rather than arriving as an
+/// empty selection, so a filter that excluded every value is the only producer measured. That is
+/// still not put in the sentence: one sampled producer is not proof of the only producer, and
+/// telling an author to check filters on a query that has none would be the same mistake as naming
+/// a condition the rule does not contain. The query is printed and the author reads their own query.
+///
+/// Rendered through [`SliceDisplay`], which is what every other query-naming message in this file
+/// uses, so a filter prints as the parser's own name for it -- `Resources. (map-key-filter-clauses)`
+/// rather than `Resources[ keys == /Z9/ ]`. Ugly and not wrong; changing it would move every one of
+/// those messages and belongs on its own.
+///
+/// # Every claim here is about this query and nothing wider
+///
+/// This sentence used to end "Nothing was refused -- the query ran and matched nothing", and the
+/// first half of that was a claim about the whole rule made from a fact local to one query. This
+/// function is handed a query. It cannot see the rule's other clauses, so it cannot know whether one
+/// of them was refused -- and when one was, the sentence said otherwise:
+///
+/// ```text
+/// rule r {
+///     Resources[ keys == /Z9/ ] { Type == "AWS::S3::Bucket" }
+///     or Resources.*[ Properties.KmsKeyId == "alias/aws/s3" ].Type == "nope"
+/// }
+/// ```
+///
+/// over `KmsKeyId: {Ref: MyKey}`, the second disjunct's filter compares a map against a string and is
+/// refused. Exit 0 either way, and the report said "Nothing was refused". Swapping the two disjuncts
+/// makes the same rule on the same data report "a comparison in one of its query filters reported:
+/// PathAwareValues are not comparable map, String" instead, so the false half was also suppressing the
+/// one actionable fact in the report, and which of the two a reader saw depended on the order they
+/// happened to write their disjuncts in.
+///
+/// Narrowing the claim to this query rather than dropping it does not work either, and that is worth
+/// recording because it is the tempting repair. A refused comparison inside *this* query's own filter
+/// also arrives here with an empty selection -- `Resources.*[ Properties.Size > 10 ]` over
+/// `Size: "50"` sets this message on its `BlockGuardCheck` and is merely shadowed by the deeper
+/// refusal that `find_skip_reason` finds first. So "nothing about this query was undecidable" is
+/// unsupportable at this site too.
+///
+/// What is left is what the branch condition gives: the query ran, and it selected nothing. "Ran" is
+/// worth keeping and is local -- the `Err` arm above returns before this point, so reaching here means
+/// the query resolved rather than failed.
+///
+/// Not fixed here, and not this defect: which of two sibling reasons surfaces still depends on clause
+/// order, because the walk takes the first child carrying a message. That is a ranking question in
+/// `find_skip_reason` rather than a false claim in a sentence, and the two want separate changes.
+fn empty_selection_message(query: &[QueryPart<'_>]) -> String {
+    format!(
+        "the rule did not apply because the query {} ran and selected no values from this input.",
+        SliceDisplay(query)
+    )
 }
 
 /// Why a clause is being evaluated, which decides what an unevaluatable clause
@@ -360,11 +1248,21 @@ pub(crate) enum ClauseRole {
 /// An error meaning the clause could not be evaluated at all, as opposed to the evaluation
 /// machinery having gone wrong.
 ///
-/// Only `EMPTY` against a type that cannot be empty produces this today. It is matched rather than
-/// propagated because the two are answered differently: an unevaluatable clause is a verdict about
-/// that clause, while a genuine failure of the machinery should still stop the run.
+/// Two kinds produce it, and they differ only in what they say. `IncompatibleError` covers operands the
+/// comparator has no arm for -- `EMPTY` against a type that cannot be empty, a function argument the
+/// input cannot supply -- and `UndecidableComparison` covers a comparison that ran and was abandoned,
+/// today a spent `fancy_regex` backtracking budget. Both are verdicts about the clause and both are
+/// classified together here, because every caller asks the same question of them: does this clause fail
+/// closed as an assertion and keep its error as a gate. The two exist separately so the message can be
+/// true; see [`Error::UndecidableComparison`].
+///
+/// It is matched rather than propagated because an unevaluatable clause is a verdict about that clause,
+/// while a genuine failure of the machinery should still stop the run.
 fn is_unevaluatable(e: &Error) -> bool {
-    matches!(e, Error::IncompatibleError(_))
+    matches!(
+        e,
+        Error::IncompatibleError(_) | Error::UndecidableComparison(_)
+    )
 }
 
 impl ClauseRole {
@@ -713,7 +1611,33 @@ struct ComparisonWithRhs {
 #[allow(dead_code)]
 struct NotComparableWithRhs {
     reason: String,
+    /// Why there was no answer, for the same reason [`operators::NotComparable`] carries it: the map-key
+    /// path has to tell a refusal to compare kinds from an evaluation the engine abandoned, and the
+    /// reason string cannot be classified after the fact.
+    cause: operators::Unanswerable,
     pair: LhsRhsPair,
+}
+
+/// A refusal to compare, built the same way at each of the three sites that raise one.
+///
+/// Shared so the classification happens once, in `operators::unanswerable_reason`, rather than three
+/// times by hand. Before this, `each_lhs_compare` matched `Error::NotComparable` and propagated
+/// everything else, so a `RegexError` from a spent backtracking budget left the evaluator entirely: the
+/// full report printed, then `main` reported "Error occurred Regex expression parse error for rules
+/// file" and exited 255, which `guard/tests/utils.rs` names `INTERNAL_FAILURE`. Measured on
+/// `Cfg[ keys == /(?!x)((a+)+)b/ ]`, the threshold was template-driven -- a seventeen-character key
+/// exited 19 and an eighteen-character key exited 255 -- and all four comparators were affected.
+fn map_key_refusal(
+    err: Error,
+    lhs: Rc<PathAwareValue>,
+    rhs: Rc<PathAwareValue>,
+) -> ComparisonResult {
+    let unanswered = operators::unanswerable_reason(err);
+    ComparisonResult::NotComparable(NotComparableWithRhs {
+        reason: unanswered.reason,
+        cause: unanswered.cause,
+        pair: LhsRhsPair { lhs, rhs },
+    })
 }
 
 struct UnResolvedRhs {
@@ -744,7 +1668,13 @@ where
                         }));
                     }
 
-                    Err(Error::NotComparable(reason)) => {
+                    // Any refusal, not only `NotComparable`. This arm used to name that one variant and
+                    // leave a sibling `Err(e) => return Err(e)`, so a spent backtracking budget left the
+                    // evaluator unclassified; see `map_key_refusal`. Both kinds are now offered the
+                    // element-wise retries below, which is a second chance at a decidable answer rather
+                    // than a change of meaning: a shorter element may finish inside the budget where the
+                    // whole value did not.
+                    Err(e) => {
                         if lhs.is_list() {
                             // && each_rhs_resolved.is_scalar() {
                             if let PathAwareValue::List((_, inner)) = &*lhs {
@@ -762,19 +1692,11 @@ where
                                             ));
                                         }
 
-                                        Err(Error::NotComparable(reason)) => {
-                                            statues.push(ComparisonResult::NotComparable(
-                                                NotComparableWithRhs {
-                                                    reason,
-                                                    pair: LhsRhsPair {
-                                                        lhs: Rc::new(each.clone()),
-                                                        rhs: Rc::clone(each_rhs_resolved),
-                                                    },
-                                                },
-                                            ));
-                                        }
-
-                                        Err(e) => return Err(e),
+                                        Err(e) => statues.push(map_key_refusal(
+                                            e,
+                                            Rc::new(each.clone()),
+                                            Rc::clone(each_rhs_resolved),
+                                        )),
                                     }
                                 }
                                 continue;
@@ -801,21 +1723,11 @@ where
                                                 ));
                                             }
 
-                                            Err(Error::NotComparable(reason)) => {
-                                                statues.push(ComparisonResult::NotComparable(
-                                                    NotComparableWithRhs {
-                                                        reason,
-                                                        pair: LhsRhsPair {
-                                                            lhs: Rc::clone(&lhs),
-                                                            rhs: Rc::new(
-                                                                rhs_inner_single_element.clone(),
-                                                            ),
-                                                        },
-                                                    },
-                                                ));
-                                            }
-
-                                            Err(e) => return Err(e),
+                                            Err(e) => statues.push(map_key_refusal(
+                                                e,
+                                                Rc::clone(&lhs),
+                                                Rc::new(rhs_inner_single_element.clone()),
+                                            )),
                                         }
                                         continue;
                                     }
@@ -823,16 +1735,12 @@ where
                             }
                         }
 
-                        statues.push(ComparisonResult::NotComparable(NotComparableWithRhs {
-                            reason,
-                            pair: LhsRhsPair {
-                                lhs: Rc::clone(&lhs),
-                                rhs: Rc::clone(each_rhs_resolved),
-                            },
-                        }));
+                        statues.push(map_key_refusal(
+                            e,
+                            Rc::clone(&lhs),
+                            Rc::clone(each_rhs_resolved),
+                        ));
                     }
-
-                    Err(e) => return Err(e),
                 }
             }
 
@@ -894,7 +1802,14 @@ fn report_value<'r, 'value: 'r, 'loc: 'value>(
             None,
         ),
         //},
+        // The reason is carried rather than dropped. This arm bound the pair and discarded `reason`
+        // through the `..`, so a key comparison that had no answer recorded a bare FAIL and the console
+        // rendered it as "provided value [...] did not match expected value [...]" -- which asserts the
+        // comparison was made and answered no. For a spent backtracking budget that is false, and it is
+        // the sentence a rule author reads. Every other site that records a refusal already carries its
+        // reason into the `Error Message` slot; this one is brought into line.
         ComparisonResult::NotComparable(NotComparableWithRhs {
+            reason,
             pair:
                 LhsRhsPair {
                     rhs: rhs_value,
@@ -905,7 +1820,7 @@ fn report_value<'r, 'value: 'r, 'loc: 'value>(
             QueryResult::Resolved(Rc::clone(lhs_value)),
             Some(QueryResult::Resolved(Rc::clone(rhs_value))),
             false,
-            None,
+            Some(reason.clone()),
         ),
         //            },
         ComparisonResult::UnResolvedRhs(UnResolvedRhs {
@@ -960,8 +1875,32 @@ fn report_all_values<'r, 'value: 'r, 'loc: 'value>(
     Ok(status)
 }
 
-fn report_at_least_one<'r, 'value: 'r, 'loc: 'value>(
+/// How several right-hand comparisons about ONE left-hand value fold into that value's verdict.
+///
+/// Membership and negated membership are not the same fold, and treating them as one is what made a
+/// denylist of two or more elements select the keys it denies. `keys IN [a, b]` holds when the key
+/// matches either, so one true answer settles it. `keys NOT IN [a, b]` holds only when the key
+/// differs from both -- `Name` against `[Name, Zebra]` answers false then true, and taking either
+/// one admitted a key that is verbatim in the list.
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+enum SameLhsFold {
+    /// One comparison satisfies the clause. `IN`.
+    AtLeastOne,
+    /// Every comparison must. `NOT IN`, and the reason it is not the negation of `AtLeastOne`
+    /// applied afterwards: `in_cmp` has already inverted each pair, so what is left to do is require
+    /// all of them rather than any.
+    All,
+}
+
+/// One verdict per left-hand value, folding that value's comparisons with `fold`.
+///
+/// Groups by left-hand value in a `HashMap` and iterates it, so the order statuses come out in is
+/// not defined. That is not observable today because `real_binary_operation` calls this once per key
+/// and each call therefore yields one status. Do not widen a caller to hand it several left-hand
+/// values at once without sorting the groups first.
+fn report_by_lhs<'r, 'value: 'r, 'loc: 'value>(
     rhs_comparisons: Vec<ComparisonResult>,
+    fold: SameLhsFold,
     cmp: (CmpOperator, bool),
     context: String,
     custom_message: Option<String>,
@@ -990,7 +1929,10 @@ fn report_at_least_one<'r, 'value: 'r, 'loc: 'value>(
                     .or_insert(vec![])
                     .push((each, QueryResult::Resolved(Rc::clone(rhs))));
             }
-
+            // The reason itself is read below, off `results`, rather than collected here. Grouping is
+            // per left-hand value and the record is per left-hand value, so the reason has to be the
+            // one belonging to THIS key -- collecting into a single variable while walking every
+            // pairing would let one key's refusal be reported against another's failure.
             ComparisonResult::UnResolvedRhs(UnResolvedRhs { rhs, lhs }) => {
                 if let QueryResult::UnResolved(..) = rhs {
                     by_lhs_value
@@ -1003,20 +1945,27 @@ fn report_at_least_one<'r, 'value: 'r, 'loc: 'value>(
     }
 
     for (lhs, results) in by_lhs_value.iter() {
-        let found = results.iter().find(|(r, _rhs)| {
+        // A comparison satisfies the clause only when it was answerable AND came out true, so a
+        // `NotComparable` or an unresolved right-hand side never counts as one. That is what keeps
+        // `All` from passing on a pairing nothing could decide, the way `!=` already refuses to.
+        let satisfies = |(r, _rhs): &(&ComparisonResult, QueryResult)| {
             matches!(
                 r,
                 ComparisonResult::Comparable(ComparisonWithRhs { outcome: true, .. })
             )
-        });
-        match found {
-            Some(_) => {
+        };
+        let satisfied = match fold {
+            SameLhsFold::AtLeastOne => results.iter().any(satisfies),
+            SameLhsFold::All => results.iter().all(satisfies),
+        };
+        match satisfied {
+            true => {
                 eval_context.start_record(&context)?;
                 eval_context
                     .end_record(&context, RecordType::ClauseValueCheck(ClauseCheck::Success))?;
                 statues.push((QueryResult::Resolved(Rc::clone(lhs)), Status::PASS))
             }
-            None => {
+            false => {
                 eval_context.start_record(&context)?;
 
                 let to_collected = results
@@ -1024,12 +1973,32 @@ fn report_at_least_one<'r, 'value: 'r, 'loc: 'value>(
                     .map(|(_, rhs)| rhs.clone())
                     .collect::<Vec<QueryResult>>();
 
+                // The reason travels with the record, which is what `report_value` does for the `==`
+                // and `!=` spellings of this same question. `message` was `None` unconditionally, so a
+                // key whose comparison had no answer was rendered by the reporters as one that was
+                // compared and came out wrong: `NOT IN` printed "provided value [...] did match
+                // expected value in [...]", asserting a success about a comparison fancy_regex
+                // abandoned, and `IN` printed the mirror. 07774380 fixed the sibling and its scoping
+                // sentence named this function without changing it.
+                //
+                // The first refusal among this key's pairings, and only when the fold came out false.
+                // A key that satisfied the clause has a verdict that did not rest on the pairing that
+                // failed, so there is nothing to explain -- the same precedence the `Comparable` arm of
+                // `satisfies` already applies. First rather than all, because a clause names one
+                // pattern in practice and the scalar arm reports one reason too.
+                let reason = results.iter().find_map(|(r, _)| match r {
+                    ComparisonResult::NotComparable(NotComparableWithRhs { reason, .. }) => {
+                        Some(reason.clone())
+                    }
+                    _ => None,
+                });
+
                 eval_context.end_record(
                     &context,
                     RecordType::ClauseValueCheck(ClauseCheck::InComparison(InComparisonCheck {
                         from: QueryResult::Resolved(Rc::clone(lhs)),
                         to: to_collected,
-                        message: None,
+                        message: reason,
                         custom_message: custom_message.clone(),
                         status: Status::FAIL,
                         comparison: cmp,
@@ -1055,6 +2024,21 @@ where
 /// `role` decides what a positive comparison against an empty reference reports: it
 /// is unsatisfiable, so it fails as an [`ClauseRole::Assertion`] but must stay a SKIP
 /// as a [`ClauseRole::Gate`]. See [`ClauseRole`] for why failing a gate is unsafe.
+// Nine arguments, two over the lint's limit; the last two are `location` and `match_all`. `location` is
+// there for the deprecation notice at the bottom and `match_all` for both that notice and
+// `undecided_gate` beside it. Two ways to get back under it were considered and both cost more than the
+// lint does.
+//
+// Folding either into `context` is the obvious one and it is not a refactor, it is a behaviour change:
+// `context` is what every record in this function is filed under and what the reporters print, so widening
+// it moves report text and the golden files with it. This change is diagnostics only.
+//
+// Taking `&AccessClause` in place of `lhs_query`, `custom_message`, `location` and `match_all` -- all four
+// are its fields or its query's, and the one call site has it -- would reach five. That is a better
+// signature and it rewrites the interior of a four-hundred-line function to reach a lint limit, with no
+// behavioural gain and a real chance of a transcription error in the arms that clone `custom_message`.
+// Worth doing on its own, next to nothing else.
+#[allow(clippy::too_many_arguments)]
 fn binary_operation<'value, 'loc: 'value>(
     lhs_query: &'value [QueryPart<'loc>],
     rhs: &[QueryResult],
@@ -1063,19 +2047,91 @@ fn binary_operation<'value, 'loc: 'value>(
     custom_message: Option<String>,
     eval_context: &mut dyn EvalContext<'value, 'loc>,
     role: ClauseRole,
+    // Where the clause is written, for the notice below and nothing else.
+    location: &FileLocation<'loc>,
+    // Whether the query needs every value or any one of them, which is what "did this clause pass" means
+    // for it. Passed in rather than read off `lhs_query`, because that is the `query` field alone while the
+    // flag lives on the `AccessQuery` around it; the single caller has both. Read by the notice at the
+    // bottom and by `undecided_gate` beside it, which asks a different question of it -- see there.
+    match_all: bool,
 ) -> Result<EvaluationResult> {
     let lhs = eval_context.query(lhs_query)?;
-    // Checked before the comparison rather than after, because the answer is not recoverable from the
-    // result: the not-flag has already turned "no element matched" into a success by then, and a
-    // success from an incomparable operand looks exactly like a real one. Only `NOT IN` reaches this,
-    // so the extra comparisons cost nothing on any other clause.
-    if cmp.1 && cmp.0 == CmpOperator::In {
-        if let Some(notice) = incomparable_membership(&lhs, rhs, &context) {
-            eval_context.record_deprecation(notice);
-        }
-    }
+    // Computed here and emitted at the bottom, because neither end of the comparison has both halves
+    // of the condition.
+    //
+    // It has to be computed before, because the incomparability is not recoverable from the result:
+    // the not-flag has already turned "no element matched" into a success by then, and a success from
+    // an incomparable operand looks exactly like a real one. Only `NOT IN` reaches this, so the extra
+    // comparisons cost nothing on any other clause.
+    //
+    // It has to be emitted after, because the notice says the clause *passed* on the incomparability and
+    // there is no verdict here to check that against. Gated on the incomparability alone it printed that
+    // beside a FAIL, which is the opposite of what happened. Measured across 231 `NOT IN` shapes: 177
+    // reach the notice, 146 pass and 31 fail, and every one of the 31 printed it.
+    //
+    // Two things `e26817a6`'s message says about this predicate need correcting here, because a message
+    // cannot be amended.
+    //
+    // It cites the predicate as `eval.rs:1567`. That was right at `e26817a6` and is not right now: the
+    // line has moved. Cite the symbol instead -- the `membership_is_incomparable` binding in
+    // `binary_operation`. The quoted source text in that message is exact, which is what keeps it
+    // findable, so search for the text and not for the number. This is the same rot `a1e552fe` wrote the
+    // prefer-the-symbol rule against, and it happened inside the twelve commits that wrote the rule.
+    //
+    // And it attributes `"8 over-denials and creates 0"` to `69628df7` as a quotation. That string does
+    // not appear in `69628df7`'s message. The nearest real text there is "trading eight over-denials for
+    // four", which prices the REJECTED `unanswerable` repair rather than what `69628df7` fixed. The
+    // companion quotation in the same sentence, "no `NOT IN` cell moves", IS verbatim, and it is the one
+    // the conclusion rests on: that `69628df7` created 25 silent `NOT IN` over-denials while claiming
+    // none moved. The finding stands on the quotation that is real; the other one is not a paraphrase to
+    // be tracked down, it is a sentence to stop looking for.
+    //
+    // Two further claims in that message are about the residual query-versus-literal set rather than the
+    // verdict, and both need correcting.
+    //
+    // "all 12 are over-admissions, the safer direction" holds over that commit's own 432-clause sweep and
+    // does not generalize, which is how it reads. Over-denials survive in that set. With `NoEmptyPartial`
+    // of `["ab"]` and `Strs2` of `["abc", "zzz"]`, `NoEmptyPartial NOT IN Strs2[*]` exits 19 while
+    // `NoEmptyPartial NOT IN ["abc", "zzz"]` exits 0 -- the query denying a value its literal admits,
+    // because `found_in_string` reads substring containment where the literal reads membership. Identical
+    // at `abbf73a7`, `69628df7`, `e26817a6` and here, so it is pre-existing and this branch created none
+    // of it. Two of four enumerated query/literal pairs are over-denials; that population is those four
+    // pairs and no claim is made about a wider one.
+    //
+    // And the two cells that message calls "the two new ones" are misattributed and mislabeled. They are
+    // `Empty IN Strs[0]` and `Empty IN Strs[*]`, and both moved FAIL to PASS at `69628df7`, not here:
+    // exit 19 at `abbf73a7`, exit 0 at `69628df7` and after. At `e26817a6` they are not disagreements at
+    // all, query and literal both exiting 0. The label is wrong as well: `Strs[0]` and `Strs[*]` never
+    // diverge FROM EACH OTHER. Over 56 enumerated cells -- seven left operands, both polarities, four
+    // right-hand spellings -- they return identical verdicts at `abbf73a7`, `69628df7`, `e26817a6` and
+    // here. What diverges is the queried string against the written-out list, and the surviving instance
+    // is `Empty NOT IN Strs[*]` at 0 against its literal's 19, in the `NOT IN` polarity, at every commit
+    // measured. Prefer this correction to the number: a wrong count invites recomputation, while a wrong
+    // mechanism name gets believed.
+    //
+    // None of that touches the impossibility argument carried above `found_in_string` and in
+    // `eval_tests.rs`. That one is about the verdicts an oracle OWES two spellings which resolve to the
+    // same value -- a statement about the specification, not about observed divergence, and it stands.
+    // What is corrected here is only a message reusing its name for a pair of cells it does not describe.
+    let membership_is_incomparable =
+        cmp.1 && cmp.0 == CmpOperator::In && incomparable_membership(&lhs, rhs);
     let results = cmp.compare(&lhs, rhs)?;
-    match results {
+    // The first comparison the operator could not answer, as opposed to one it answered no.
+    //
+    // Collected while the results are walked because it is not recoverable afterwards. Both outcomes
+    // arrive at the `NotComparable` arm below as `Status::FAIL`, and `EvaluationResult` carries
+    // statuses and values -- nothing that says whether a FAIL was a verdict or an absence of one. The
+    // reason is kept so the failure the gate produces can name the pattern or the operand kinds rather
+    // than announcing an undecidable condition and stopping there.
+    //
+    // First rather than all of them, matching `is_one_of` and `elements_not_matched`: a clause naming
+    // one reason is what the console renders for a clause anyway.
+    let mut evidence = ResultEvidence::default();
+    // Annotated, and bound before it is unwrapped. Every arm below is an `Ok(..)`, and the function's
+    // return type used to pin their error type because the match was the tail expression. It is not
+    // any more, and `?` erases the error type through `From`, so without the annotation the arms infer
+    // nothing.
+    let outcome: Result<EvaluationResult> = match results {
         // The left-hand query selected nothing, so there was nothing to compare. Which answer that
         // deserves depends on the shape of the query, and the two cases are not alike.
         //
@@ -1103,7 +2159,15 @@ fn binary_operation<'value, 'loc: 'value>(
                     },
                     Some(empty_lhs_message()),
                 ),
-                false => EvaluationResult::EmptyQueryResult(Status::SKIP, None),
+                // Carries the reason for the same purpose the arm above carries one. This branch is
+                // reached with the query in hand and `is_empty()` already decided, so the fact is
+                // known here and was simply not written down: `find_skip_reason` reads this message
+                // off the `GuardClauseBlockCheck` the caller builds from it, and a `None` made a
+                // clause-form empty selection report a SKIP with no reason at all.
+                false => EvaluationResult::EmptyQueryResult(
+                    Status::SKIP,
+                    Some(empty_selection_message(lhs_query)),
+                ),
             })
         }
 
@@ -1189,7 +2253,12 @@ fn binary_operation<'value, 'loc: 'value>(
             let mut statues: Vec<(QueryResult, Status)> = Vec::with_capacity(lhs.len());
             for each in results {
                 match each {
+                    // A value the query could not produce. Decided rather than undecided: the property
+                    // is absent, which is a fact about the document, and the comparison then fails on
+                    // it definitively. Recording it as decided is also what keeps a gate over an absent
+                    // property reporting the rule as not applicable, which is where it already was.
                     operators::ValueEvalResult::LhsUnresolved(ur) => {
+                        evidence.decided_failure = true;
                         eval_context.start_record(&context)?;
                         eval_context.end_record(
                             &context,
@@ -1210,6 +2279,9 @@ fn binary_operation<'value, 'loc: 'value>(
                     operators::ValueEvalResult::ComparisonResult(
                         operators::ComparisonResult::RhsUnresolved(urhs, lhs),
                     ) => {
+                        // Decided, for the same reason as the arm above: the reference resolved to
+                        // nothing, and there is nothing undecided about comparing against nothing.
+                        evidence.decided_failure = true;
                         eval_context.start_record(&context)?;
                         eval_context.end_record(
                             &context,
@@ -1230,6 +2302,21 @@ fn binary_operation<'value, 'loc: 'value>(
                     operators::ValueEvalResult::ComparisonResult(
                         operators::ComparisonResult::NotComparable(nc),
                     ) => {
+                        // The one arm that can be either. An abandoned evaluation is undecided; a
+                        // refusal to compare kinds is a decided no, because rule authors write a value
+                        // against both spellings it might carry and rely on the pairing that does not
+                        // apply answering "no" rather than "unknown". See `Unanswerable` for what
+                        // reading that one the other way costs.
+                        match nc.cause {
+                            operators::Unanswerable::EngineGaveUp => {
+                                if evidence.undecided.is_none() {
+                                    evidence.undecided = Some(nc.reason.clone());
+                                }
+                            }
+                            operators::Unanswerable::IncomparableKinds => {
+                                evidence.decided_failure = true
+                            }
+                        }
                         eval_context.start_record(&context)?;
                         eval_context.end_record(
                             &context,
@@ -1291,73 +2378,34 @@ fn binary_operation<'value, 'loc: 'value>(
 
                     operators::ValueEvalResult::ComparisonResult(
                         operators::ComparisonResult::Fail(cmpr),
-                    ) => match cmpr {
-                        operators::Compare::Value(pair) => {
-                            eval_context.start_record(&context)?;
-                            eval_context.end_record(
-                                &context,
-                                RecordType::ClauseValueCheck(ClauseCheck::Comparison(
-                                    ComparisonClauseCheck {
-                                        status: Status::FAIL,
-                                        message: None,
-                                        custom_message: custom_message.clone(),
-                                        comparison: cmp,
-                                        from: QueryResult::Resolved(Rc::clone(&pair.lhs)),
-                                        to: Some(QueryResult::Resolved(pair.rhs)),
-                                    },
-                                )),
-                            )?;
-                            statues
-                                .push((QueryResult::Resolved(Rc::clone(&pair.lhs)), Status::FAIL));
-                        }
+                    ) => {
+                        // Every shape under here is a comparison the operator performed and answered
+                        // no. Recorded once for the whole arm rather than in each of its four branches:
+                        // they differ in what they report, not in whether the answer exists.
+                        evidence.decided_failure = true;
+                        match cmpr {
+                            operators::Compare::Value(pair) => {
+                                eval_context.start_record(&context)?;
+                                eval_context.end_record(
+                                    &context,
+                                    RecordType::ClauseValueCheck(ClauseCheck::Comparison(
+                                        ComparisonClauseCheck {
+                                            status: Status::FAIL,
+                                            message: None,
+                                            custom_message: custom_message.clone(),
+                                            comparison: cmp,
+                                            from: QueryResult::Resolved(Rc::clone(&pair.lhs)),
+                                            to: Some(QueryResult::Resolved(pair.rhs)),
+                                        },
+                                    )),
+                                )?;
+                                statues.push((
+                                    QueryResult::Resolved(Rc::clone(&pair.lhs)),
+                                    Status::FAIL,
+                                ));
+                            }
 
-                        operators::Compare::ValueIn(pair) => {
-                            eval_context.start_record(&context)?;
-                            eval_context.end_record(
-                                &context,
-                                RecordType::ClauseValueCheck(ClauseCheck::InComparison(
-                                    InComparisonCheck {
-                                        status: Status::FAIL,
-                                        message: None,
-                                        custom_message: custom_message.clone(),
-                                        comparison: cmp,
-                                        from: QueryResult::Resolved(Rc::clone(&pair.lhs)),
-                                        to: vec![QueryResult::Resolved(pair.rhs)],
-                                    },
-                                )),
-                            )?;
-                            statues
-                                .push((QueryResult::Resolved(Rc::clone(&pair.lhs)), Status::FAIL));
-                        }
-
-                        operators::Compare::ListIn(lin) => {
-                            eval_context.start_record(&context)?;
-                            eval_context.end_record(
-                                &context,
-                                RecordType::ClauseValueCheck(ClauseCheck::InComparison(
-                                    InComparisonCheck {
-                                        status: Status::FAIL,
-                                        message: None,
-                                        custom_message: custom_message.clone(),
-                                        comparison: cmp,
-                                        from: QueryResult::Resolved(Rc::clone(&lin.lhs)),
-                                        to: vec![QueryResult::Resolved(lin.rhs)],
-                                    },
-                                )),
-                            )?;
-                            statues
-                                .push((QueryResult::Resolved(Rc::clone(&lin.lhs)), Status::FAIL));
-                        }
-
-                        operators::Compare::QueryIn(qin) => {
-                            let rhs = qin
-                                .rhs
-                                .iter()
-                                .cloned()
-                                .map(QueryResult::Resolved)
-                                .collect::<Vec<_>>();
-
-                            for lhs in qin.diff {
+                            operators::Compare::ValueIn(pair) => {
                                 eval_context.start_record(&context)?;
                                 eval_context.end_record(
                                     &context,
@@ -1367,19 +2415,342 @@ fn binary_operation<'value, 'loc: 'value>(
                                             message: None,
                                             custom_message: custom_message.clone(),
                                             comparison: cmp,
-                                            from: QueryResult::Resolved(Rc::clone(&lhs)),
-                                            to: rhs.clone(),
+                                            from: QueryResult::Resolved(Rc::clone(&pair.lhs)),
+                                            to: vec![QueryResult::Resolved(pair.rhs)],
                                         },
                                     )),
                                 )?;
-                                statues
-                                    .push((QueryResult::Resolved(Rc::clone(&lhs)), Status::FAIL));
+                                statues.push((
+                                    QueryResult::Resolved(Rc::clone(&pair.lhs)),
+                                    Status::FAIL,
+                                ));
+                            }
+
+                            operators::Compare::ListIn(lin) => {
+                                eval_context.start_record(&context)?;
+                                eval_context.end_record(
+                                    &context,
+                                    RecordType::ClauseValueCheck(ClauseCheck::InComparison(
+                                        InComparisonCheck {
+                                            status: Status::FAIL,
+                                            message: None,
+                                            custom_message: custom_message.clone(),
+                                            comparison: cmp,
+                                            from: QueryResult::Resolved(Rc::clone(&lin.lhs)),
+                                            to: vec![QueryResult::Resolved(lin.rhs)],
+                                        },
+                                    )),
+                                )?;
+                                statues.push((
+                                    QueryResult::Resolved(Rc::clone(&lin.lhs)),
+                                    Status::FAIL,
+                                ));
+                            }
+
+                            operators::Compare::QueryIn(qin) => {
+                                // The diff is compared against the operand it did *not* come from. Every
+                                // element of it is filed below as `from`, and the message reads
+                                // "property [from] was not present in [to]" -- so with the diff taken from
+                                // the right-hand operand and `to` also the right-hand operand, the finding
+                                // asserted that a value was absent from a set that visibly contained it.
+                                // `==` between two queries can produce either side, so which one this is
+                                // has to be read from the result rather than assumed.
+                                let compared_with = match qin.diff_from {
+                                    operators::DiffFrom::Lhs => &qin.rhs,
+                                    operators::DiffFrom::Rhs => &qin.lhs,
+                                };
+                                let rhs = compared_with
+                                    .iter()
+                                    .cloned()
+                                    .map(QueryResult::Resolved)
+                                    .collect::<Vec<_>>();
+
+                                for lhs in qin.diff {
+                                    eval_context.start_record(&context)?;
+                                    eval_context.end_record(
+                                        &context,
+                                        RecordType::ClauseValueCheck(ClauseCheck::InComparison(
+                                            InComparisonCheck {
+                                                status: Status::FAIL,
+                                                message: None,
+                                                custom_message: custom_message.clone(),
+                                                comparison: cmp,
+                                                from: QueryResult::Resolved(Rc::clone(&lhs)),
+                                                to: rhs.clone(),
+                                            },
+                                        )),
+                                    )?;
+                                    statues.push((
+                                        QueryResult::Resolved(Rc::clone(&lhs)),
+                                        Status::FAIL,
+                                    ));
+                                }
                             }
                         }
-                    },
+                    }
                 }
             }
             Ok(EvaluationResult::QueryValueResult(statues))
+        }
+    };
+    let outcome = outcome?;
+
+    // A gate whose comparison had no answer keeps the error instead of answering FAIL.
+    //
+    // This is the same fail-open `ClauseRole::Gate` exists to prevent, reached through the one channel
+    // that was not carrying it. `is_unevaluatable` recognises `IncompatibleError`, so `!EMPTY` against a
+    // boolean already fails a gate closed. A comparison that could not be decided never becomes an
+    // `Error` at all: `is_one_of` promotes a spent backtracking budget to `Membership::Unanswerable`,
+    // which arrives at the arm above as a per-value `Status::FAIL`. One level out `eval_rule` and
+    // `eval_when_condition_block` map every non-PASS condition to SKIP, so the body was dropped at exit
+    // 0. Measured on a `Cat` of one thirty-character string of `a`s, every spelling leaking:
+    //
+    //     rule guarded when Cat NOT IN [[/(?!x)((a+)+)b/]] { MustBeTrue == true }   exit 0
+    //     rule guarded when Cat NOT IN [/(?!x)((a+)+)b/]   { MustBeTrue == true }   exit 0
+    //     rule guarded when Cat[*] NOT IN [/(?!x)((a+)+)b/] { MustBeTrue == true }  exit 0
+    //     rule guarded when Enabled !EMPTY                 { MustBeTrue == true }   exit 19
+    //     rule direct { MustBeTrue == true }                                        exit 19
+    //
+    // An error and not a status, which is the whole reason this works. `own_skip_reason` in
+    // `eval_context.rs` reached the same diagnosis and concluded it could not be fixed, because "both
+    // FAIL and SKIP on a condition drop the block it guards, so telling them apart needs a status that
+    // means 'could not tell', which `Status` does not have". True of that site, which is a reporter. The
+    // evaluator has such a channel: an `Err` is not folded by `eval_conjunction_clauses` into the FAIL
+    // that outranks passing siblings -- it is held, discarded if a later disjunct decides the `or`, and
+    // otherwise returned for the caller to split by role. That is exactly the shape the arms above want,
+    // which is why `EmptyRhsUnsatisfiable` and its neighbours had to settle for SKIP-as-a-gate and this
+    // does not.
+    //
+    // `UndecidableComparison`, and `is_unevaluatable` recognises it alongside `IncompatibleError`, so
+    // every existing `(is_unevaluatable, is_strict)` site handles it with no new plumbing: a gate
+    // propagates it and fails its own rule closed, and an outer assertion turns it into the FAIL that
+    // keeps the rest of the file reporting.
+    //
+    // Its own variant rather than `IncompatibleError`, which is what this used to raise, and the reason
+    // is the message. `IncompatibleError` renders as "Types or variable assignments are incompatible
+    // `<reason>`", and that claim is false here: the operands were of kinds the comparator has an arm
+    // for and the engine quit part way. Both frames that print it inherited the falsehood -- the rule
+    // frame read "not applicable: Types or variable assignments are incompatible `The regular
+    // expression could not be evaluated ...`", and the filter frame wrapped the same sentence in "due
+    // to retrieval error ... when handling clause, bailing". The new variant renders as its reason
+    // alone, so each frame supplies its own framing and neither asserts a type mismatch.
+    //
+    // Gate only. An assertion already fails closed here and its report names the clause and the operand
+    // values; converting would replace that with a rule-level failure and lose the comparison record.
+    // `a_catastrophic_regex_asserted` and `the_whole_list_spelling_now_refuses` pin that half.
+    //
+    // An abandoned evaluation only, never a refusal to compare kinds, and that boundary is measured
+    // rather than chosen for safety. Rule authors write a value against both spellings it might carry
+    // and rely on the pairing that does not apply answering "no" rather than "unknown"; the registry's
+    // `ScanOnPush == 'False' OR ScanOnPush == false` is the canonical shape. Reading a kind mismatch as
+    // undecidable moves 143 rules of the pinned aws-guard-rules-registry corpus off their expectations,
+    // most of them suppression tests expecting SKIP, where the merge-base has 0 failed rules. So the
+    // kind-mismatch half of this defect stays open, tracked in `docs/KNOWN_ISSUES.md` behind the same
+    // precondition `incomparable_membership_notice` already records -- those rules have to change first
+    // -- and the notice is what covers it meanwhile. `Unanswerable` carries the split.
+    //
+    // That 143 is the cost of reading `IncomparableKinds` as an undecidable GATE, reached by `==` and
+    // `!=` -- which is why the `ScanOnPush` idiom is its canonical shape. It is NOT the cost of
+    // promoting the membership refusal, which is registry-free: measured at `1ba4648d`, promoting
+    // `is_one_of`'s `Err(_)` arm alone leaves the corpus byte-identical at 576794 bytes with all five
+    // notices and 0 failed rules, and moves 19 clause verdicts instead. `Unanswerable`'s own doc in
+    // `operators.rs` carries both figures and why neither route is open to a diagnostic fix.
+    //
+    // The caller's fold is respected rather than preempted, which is the second thing `match_all` is read
+    // for here, and both quantifiers have a value that decides the clause without the undecided ones.
+    // `undecided_gate` holds the table and says which arm answers what.
+    if let Some(reason) = undecided_gate(&outcome, evidence, match_all, role) {
+        return Err(Error::UndecidableComparison(reason));
+    }
+
+    // Which notice, or none: the verdict picks the wording, and the role decides whether a failure is
+    // worth a notice at all.
+    //
+    // The question is not what the clause answered, it is whether the file reports that answer. A
+    // notice on a clause the report already names as failing contradicts the line the author greps,
+    // which is why the failing case was suppressed. But that suppression was justified with "a clause
+    // with a failing value already exits the file 19", and that is only true of an assertion. A `when`
+    // condition or a filter predicate that fails does not fail the file: `eval_conjunction_clauses`
+    // counts the FAIL, `eval_rule` maps every non-PASS condition to SKIP, and the rule or the selection
+    // it guards is dropped at exit 0. Measured on `Ports: [1, 2]`: `when Ports NOT IN [1, 3]` exits 0
+    // with an empty report -- and, before this, an empty stderr with it -- while the same clause
+    // asserted exits 19. So the one shape the notice exists for, a green file that quietly stopped
+    // checking, was the shape it did not reach.
+    //
+    // The role is deliberately not consulted. A previous revision asked it instead of the verdict, on
+    // the reading that `ClauseRole` carries whether the file reports the clause, so a failing `Gate`
+    // could be noticed as an absorbed failure. `ClauseRole`'s own documentation says what it answers --
+    // whether an *unevaluatable* clause FAILs or SKIPs -- and reportedness is not it. Two `Assertion`
+    // routes absorb a failure at exit 0, a disjunct beside a passing disjunct and `some`, so the role
+    // does not even correlate with reportedness in one direction.
+    //
+    // Nor can reportedness be obtained here by asking something else, which is the more useful half. It
+    // is a function of statuses this function returns before anything computes: an `or` is decided by a
+    // sibling disjunct that may not have run -- `eval_conjunction_clauses` short-circuits on the first
+    // PASS, so in `Other == 5 or Ports NOT IN [1, 3]` the second disjunct is never evaluated at all --
+    // and a gate clause appears in the report exactly when some later clause in the same rule fails.
+    // Measured: with the failing sibling inside the rule the report names the gate clause, and with it
+    // moved to a second rule the report does not. Neither fact exists yet at this line.
+    //
+    // It is not needed. The notice says a future release fails closed where this one passes, so it
+    // belongs on the clauses whose answer that change moves. A clause that does not pass today does not
+    // move, and that is measured rather than argued: `!=` already fails closed, so the destination is
+    // observable now, and a clause that already reaches `NotComparable` answers the same as one that
+    // fails on a named element -- FAIL asserted, and the rule skipped at exit 0 as a gate.
+    // `the_notice_fires_exactly_where_fail_closed_moves_the_answer` pins that against the fail-closed
+    // spelling of each shape, so it goes red if the language stops agreeing.
+    //
+    // So the gate is the verdict, and the verdict alone -- which is what it was before the role joined it.
+    // Read under the query's own `match_all`, because "did this clause pass" means one value for `some`
+    // and every value otherwise; `clause_passed` says why that is not interchangeable with `all(PASS)`,
+    // and what the difference costs.
+    if membership_is_incomparable && clause_passed(&outcome, match_all) {
+        eval_context.record_deprecation(incomparable_membership_notice(&context, location));
+    }
+
+    Ok(outcome)
+}
+
+/// What the per-value results carried, beyond the statuses [`EvaluationResult`] holds.
+///
+/// Both fields answer questions the status vector cannot. A value whose comparison had no answer and a
+/// value whose comparison answered no both arrive as `Status::FAIL`, so "was anything undecided" and
+/// "was anything decided against" are indistinguishable after the fact. Collected in the loop that
+/// builds the statuses, where each arm knows which of the two it is.
+///
+/// Grouped rather than passed as two parameters because they are only ever read together, by
+/// [`undecided_gate`], and because a bare `Option<String>` beside a bare `bool` at a call site says
+/// nothing about which is which.
+#[derive(Default)]
+struct ResultEvidence {
+    /// The first reason a comparison could not be answered, if one could not.
+    undecided: Option<String>,
+    /// Whether some value's comparison was performed and answered no. A refusal to compare kinds counts
+    /// here, not in `undecided`; see [`operators::Unanswerable`].
+    decided_failure: bool,
+}
+
+/// The reason a gate has no answer, when that is what happened.
+///
+/// `None` means the clause may answer with a status. `Some(reason)` means the gate has no answer and
+/// [`binary_operation`] must keep the error rather than report the FAIL its values carry.
+///
+/// # The table
+///
+/// This is three-valued logic over a quantifier, and writing it out is the only way to see that the two
+/// arms are mirror images rather than one rule with a special case:
+///
+/// ```text
+/// match_all  ->  no      if ANY value decided no
+///                unknown if none did and some value is unknown
+///                yes     if every value decided yes
+/// some       ->  yes     if ANY value decided yes
+///                unknown if none did and some value is unknown
+///                no      if every value decided no
+/// ```
+///
+/// Only the middle row of each is this function's business; the outer two are the status the caller's
+/// fold already produces. So each arm asks for the value that *decides* the clause without consulting
+/// the unknown ones, and declines when it finds one.
+///
+/// The first version of this had the `some` arm and no `match_all` arm, returning unknown whenever
+/// anything was undecided. That is `AND(no, unknown) = unknown`, and the right answer is `no`: a clause
+/// needing every value is decided the moment one value definitively fails. Measured on
+/// `Cat = [<thirty a characters>, "zzz"]` against `Cat[*] NOT IN [/(?!x)((a+)+)b/, "zzz"]`, a rule gated
+/// on that clause went from not-applicable to a reported violation -- an undecided sibling manufacturing
+/// a verdict out of an already-decided conjunction.
+/// `a_clauses_answer_follows_three_valued_logic_over_every_value_combination` pins all seven value
+/// subsets against both quantifiers, because the change that introduced the defect was checked against
+/// three shapes and both wrong cells were outside them.
+///
+/// # Why the `some` arm borrows and the `match_all` arm does not
+///
+/// The `some` arm is [`clause_passed`]'s own, called rather than reimplemented: "did any value pass" is
+/// the same predicate over the same vector for both of us, and two copies that agree are the setup for
+/// the next divergence.
+///
+/// The `match_all` arm cannot borrow from it, and that is a difference of question rather than of
+/// answer. [`clause_passed`] asks "did this clause pass", which decides eligibility for a notice about a
+/// future release; under `match_all` that is every-value-passed. This asks "is this clause still
+/// undecided", whose `match_all` answer turns on a decided *failure* -- a question about the FAILs, not
+/// the PASSes, and one the status vector cannot answer at all without [`ResultEvidence`]. Unifying them
+/// would have to pick one meaning for `match_all` and would hand the other caller the wrong one.
+///
+/// # Disjoint from the notice
+///
+/// By construction rather than by ordering, under both readings. This fires only when `undecided` is
+/// `Some`, and the arm that sets it pushes a `Status::FAIL` for that value. Under `match_all` the notice
+/// needs every value PASS, which that FAIL denies. Under `some` the notice needs one PASS, and this
+/// declines outright when there is one. So no result satisfies both, and the early return can never
+/// suppress a notice that would otherwise have gone out.
+///
+/// Takes the evidence by value: the caller has no use for it once this declines, and threading a
+/// reference would make the `Err` construction clone a string on the path that is about to fail.
+fn undecided_gate(
+    result: &EvaluationResult,
+    evidence: ResultEvidence,
+    match_all: bool,
+    role: ClauseRole,
+) -> Option<String> {
+    let reason = evidence.undecided?;
+
+    if role.is_strict() {
+        return None;
+    }
+
+    // `some` is decided by any value that passed, so an undecided sibling changes nothing.
+    if !match_all && clause_passed(result, false) {
+        return None;
+    }
+
+    // `match_all` is decided by any value that failed for a reason, which is the mirror of the line
+    // above and the arm that was missing.
+    if match_all && evidence.decided_failure {
+        return None;
+    }
+
+    Some(reason)
+}
+
+/// True when the clause reached PASS, under the `match_all` its query was written with.
+///
+/// The clause and not any one value, because the notice this gates makes a claim about the clause --
+/// "<clause> passed" -- and the clause is what the coming fail-closed change will or will not move. How
+/// many values that takes is the query's own question: `match_all` needs every one, `some` needs one, and
+/// this matches the fold the caller applies to these same statuses to get the status it reports.
+///
+/// Reading `all(PASS)` for both was tried, on the argument that the two agree wherever this notice can
+/// fire: a value only collides with an element it can be compared with, so a genuine incomparability
+/// should mean no collision and every value passing. **That argument is wrong, and the counterexample is a
+/// spent regex budget.** `match_value` promotes `RegexError`, so a value can fail on a pair that is
+/// neither a collision nor an incomparability -- comparable in kind, engine gave up.
+/// `some Multi.*.V NOT IN [/re/]` over a thirty-character `a` string and the list `[1, 2]` is exactly
+/// that: the string's pair exhausts the budget and fails, the list's ints refuse against the pattern, and
+/// the clause reaches PASS on the list. An `all(PASS)` reading is silent there, and it is silent on a true
+/// positive. `a_refusing_pair_beside_a_spent_budget` is that cell.
+///
+/// So the two readings are not interchangeable. This one used to carry a cost as well, and it does not any
+/// more: it let `some` reach the whole-value false-alarm class the predicate then had, where a list is
+/// incomparable entire while its elements are not, so `some Resources.*.Properties.Ports NOT IN [1, 3]`
+/// over `[1, 2]` and `[7, 8]` warned on a clause every pair of which was int against int. That noise came
+/// from the predicate's granularity rather than from this reading of the verdict, and it went with the
+/// alignment fix -- `a_some_clause_one_value_of_which_fails` is that clause, now expecting silence, and
+/// `a_some_clause_that_passes_on_a_refusal` beside it is the shape this reading exists for.
+///
+/// An empty result is not a pass under either reading. Nothing decided means nothing passed, and a notice
+/// saying otherwise would be the same defect with a different cause. Unreachable from the notice as
+/// things stand -- `incomparable_membership` answers false unless some left-hand value resolved, and a
+/// resolved value produces a status -- so it is a guard against a future caller rather than a case in
+/// play.
+fn clause_passed(result: &EvaluationResult, match_all: bool) -> bool {
+    match result {
+        EvaluationResult::EmptyQueryResult(status, _) => *status == Status::PASS,
+        EvaluationResult::QueryValueResult(values) => {
+            !values.is_empty()
+                && match match_all {
+                    true => values.iter().all(|(_, status)| *status == Status::PASS),
+                    false => values.iter().any(|(_, status)| *status == Status::PASS),
+                }
         }
     }
 }
@@ -1399,6 +2770,24 @@ pub(super) fn real_binary_operation<'value, 'loc: 'value>(
     eval_context: &mut dyn EvalContext<'value, 'loc>,
 ) -> Result<EvaluationResult> {
     let mut statues: Vec<(QueryResult, Status)> = Vec::with_capacity(lhs.len());
+    // The first key comparison that had no answer, if any had none. See the return below.
+    let mut undecided: Option<String> = None;
+
+    // One key per right-hand value, before anything counts them or compares against them.
+    //
+    // `resolve_variable` answers with the results a query produced, and one result can hold a list:
+    // `let names = Cfg.KeyList` over `KeyList: [Name, Owner]` is a single `Resolved` naming two keys.
+    // `widened_for` was handed `rhs.len()`, so that counted as one and `keys == %names` stayed strict
+    // equality. `compare_eq` then refused every key-against-list pairing, the filter selected nothing,
+    // and the clause SKIPped -- the run exited 0 with nothing in the report, while the same key names
+    // spelled `%names[*]` widened to membership and failed at 19. Two spellings of one clause, and the
+    // silent one was wrong.
+    //
+    // Flattened rather than counted. A count alone fixes the widening and leaves `each_lhs_compare`
+    // below reading the unflattened `rhs` one line later, so "the right-hand values" would mean two
+    // different things inside one function. `interpolated_keys` is the same one-level expansion the
+    // variable-key path already does for the same reason, reused rather than written twice.
+    let rhs = &interpolated_keys(rhs);
 
     let cmp = cmp.widened_for(rhs.len());
     let recorded_cmp = cmp.as_cmp_operator();
@@ -1437,11 +2826,36 @@ pub(super) fn real_binary_operation<'value, 'loc: 'value>(
                     }
                 };
 
+                // Read before the fold consumes `r`. A key whose comparison had no answer becomes a
+                // `Status::FAIL` like a key that plainly did not match, and one level up that means
+                // "not selected" -- so the selection silently shrinks by a key nobody decided about,
+                // and an assertion over the smaller selection can pass.
+                if undecided.is_none() {
+                    undecided = r.iter().find_map(|each| match each {
+                        ComparisonResult::NotComparable(nc)
+                            if nc.cause == operators::Unanswerable::EngineGaveUp =>
+                        {
+                            Some(nc.reason.clone())
+                        }
+                        _ => None,
+                    });
+                }
+
                 match cmp {
-                    // Membership is satisfied by one match, so the report folds that way.
+                    // Membership is satisfied by one match. Negated membership is not: a key is
+                    // outside a set only if it differs from every element, so `NOT IN` folds with
+                    // ALL. Both shared the one-match fold, which is why any denylist of two or more
+                    // distinct elements selected the keys it denies -- `Name` against
+                    // `[Name, Zebra]` answers false then true, and one true was enough. `NotEq`
+                    // below already folds with ALL and is correct, so this brings the two negated
+                    // comparators into line rather than inventing a rule for one of them.
                     MapKeyComparator::In | MapKeyComparator::NotIn => {
-                        statues.extend(report_at_least_one(
+                        statues.extend(report_by_lhs(
                             r,
+                            match cmp {
+                                MapKeyComparator::NotIn => SameLhsFold::All,
+                                _ => SameLhsFold::AtLeastOne,
+                            },
                             recorded_cmp,
                             context.clone(),
                             custom_message.clone(),
@@ -1463,7 +2877,38 @@ pub(super) fn real_binary_operation<'value, 'loc: 'value>(
             }
         };
     }
-    Ok(EvaluationResult::QueryValueResult(statues))
+
+    // A selection nobody could decide fails the clause closed rather than selecting a subset.
+    //
+    // `undecided_gate` is the sibling of this, and the differences are why this is written out rather
+    // than calling it. There is no `role` to split on: `real_binary_operation`'s only caller is the
+    // `[ keys <op> ... ]` filter in `eval_context.rs`, and a filter predicate is always a gate, so the
+    // fail-closed direction is the only one available. And there is no decided-failure mirror, because
+    // a key that plainly does not match decides nothing about the selection -- it is simply not in it,
+    // which is the ordinary case rather than an answer about the whole filter.
+    //
+    // Known cost, and it is a cost rather than an oversight: `Cfg[ keys == /re/ ] !empty` over a key the
+    // pattern decidedly matches BESIDE an undecided key reports a failure, where three-valued logic
+    // would answer yes on the strength of the matching key. Telling those apart needs the enclosing
+    // operator, which this function is not given -- non-emptiness is decided there while membership is
+    // not, and only the caller knows which of the two it asked about.
+    //
+    // The cost is the whole QUERY and not the one map, which is wider than this paragraph used to say.
+    // `Err` here leaves `real_binary_operation` for every value the query selected, so a sibling map with
+    // no undecided key in it is lost too. Measured with the release binary at `69628df7` on
+    // `rule d { Resources.*.Cfg[ keys == /(?!x)((a+)+)b/ ] !empty }`, where `R1.Cfg` is `{<18 a's>: 1}` and
+    // `R2.Cfg` is `{aaab: 2}`: exit 19 naming only `/Resources/R1/Cfg`, with `R2` absent from the report
+    // entirely -- and `R2` alone over the same rule exits 0. So a PASS that the document contains does not
+    // appear anywhere in the run. Same result with 30 a's, so it is not a threshold artifact.
+    //
+    // Nothing regresses even so, and that is measured rather than assumed for the wider shape as well:
+    // at `b8d3901e` the two-resource document exited 255 with "Error executing regex: Max limit for
+    // backtracking count exceeded" and named neither map, so `R2`'s PASS was not available there either.
+    // 255 to 19 with one map named is strictly more than that run gave.
+    match undecided {
+        Some(reason) => Err(Error::UndecidableComparison(reason)),
+        None => Ok(EvaluationResult::QueryValueResult(statues)),
+    }
 }
 
 #[allow(clippy::never_loop)]
@@ -1494,6 +2939,15 @@ pub(in crate::rules) fn eval_guard_access_clause<'value, 'loc: 'value>(
                 LetValue::Value(rhs_val) => {
                     (vec![QueryResult::Literal(Rc::new(rhs_val.clone()))], true)
                 }
+                // The same treatment the clause's own query gets further down, for the same reason.
+                //
+                // Both arms recorded the clause as failing and then propagated the error regardless, so
+                // an unevaluatable right-hand side aborted the run at 255 while the identical error on
+                // the left exited 19. `%fine == %too_big` and `%too_big == %fine` disagreed about
+                // whether a template that does not fit an i64 is a policy failure or a broken tool.
+                //
+                // Only for an assertion, and a gate still keeps the error, which is the split the
+                // left-hand side and `eval_when_condition_block` already use.
                 LetValue::AccessClause(acc_querty) => match resolver.query(&acc_querty.query) {
                     Ok(result) => (result, false),
                     Err(e) => {
@@ -1505,7 +2959,10 @@ pub(in crate::rules) fn eval_guard_access_clause<'value, 'loc: 'value>(
                                 message: Some(format!("Error {e} when handling clause, bailing")),
                             }),
                         )?;
-                        return Err(e);
+                        return match (is_unevaluatable(&e), role.is_strict()) {
+                            (true, true) => Ok(Status::FAIL),
+                            _ => Err(e),
+                        };
                     }
                 },
                 LetValue::FunctionCall(FunctionExpr {
@@ -1521,7 +2978,10 @@ pub(in crate::rules) fn eval_guard_access_clause<'value, 'loc: 'value>(
                                 message: Some(format!("Error {e} when handling clause, bailing")),
                             }),
                         )?;
-                        return Err(e);
+                        return match (is_unevaluatable(&e), role.is_strict()) {
+                            (true, true) => Ok(Status::FAIL),
+                            _ => Err(e),
+                        };
                     }
                 },
             },
@@ -1543,15 +3003,15 @@ pub(in crate::rules) fn eval_guard_access_clause<'value, 'loc: 'value>(
                 )));
             }
         };
-        // Clause-level negation (a leading `not`/`!`, parser.rs:969) must be applied
+        // Clause-level negation (a leading `not`/`!`, read by `parser::clause_with_map`) must be applied
         // here. The unary path takes it as an argument, but this path previously
         // dropped it entirely, so `not <query> == <value>` evaluated as plain
         // `== <value>` -- the exact inverse of the author's intent -- while the
         // report still displayed the `not`.
         //
         // `comparator.1` is the operator's own not-flag (from `!=` / `not in`).
-        // The two negations compose by XOR, matching invert_closure in the
-        // superseded evaluator (evaluate.rs:293-307), which applies `clause_not`
+        // The two negations compose by XOR, matching `invert_closure` in the
+        // superseded evaluator, which applies `clause_not`
         // and `not` as independent flips.
         let comparator = (
             gac.access_clause.comparator.0,
@@ -1565,6 +3025,8 @@ pub(in crate::rules) fn eval_guard_access_clause<'value, 'loc: 'value>(
             gac.access_clause.custom_message.clone(),
             resolver,
             role,
+            &gac.access_clause.location,
+            all,
         )
     };
 
@@ -1630,7 +3092,10 @@ pub(in crate::rules) fn eval_guard_access_clause<'value, 'loc: 'value>(
                     // `some` the same emptiness already answers FAIL, and that answer is not changing,
                     // so warning there would train the reader to ignore the notice.
                     if compared_nothing && all {
-                        resolver.record_deprecation(vacuous_comparison_notice(&blk_context));
+                        resolver.record_deprecation(vacuous_comparison_notice(
+                            &blk_context,
+                            &gac.access_clause.location,
+                        ));
                     }
                     if all {
                         if fails > 0 {
@@ -1687,13 +3152,11 @@ pub(in crate::rules) fn eval_guard_access_clause<'value, 'loc: 'value>(
 
 /// Evaluates a reference to another rule by name.
 ///
-/// `role` distinguishes the two contexts this is reached from:
-///
-/// - [`ClauseRole::Assertion`] -- the reference is in a rule body, so a SKIPped
-///   dependent rule must not satisfy it in either polarity. Failing closed here is
-///   what stops `not <rule>` from reporting compliance for a check that never ran.
-/// - [`ClauseRole::Gate`] -- the reference is a `when` condition, where gating on a
-///   rule that did not apply is deliberate and covered by existing tests.
+/// A dependent rule that did not apply contributes nothing to the referencing rule's
+/// verdict: the reference answers SKIP and `eval_conjunction_clauses` absorbs it, which
+/// is what an inapplicable clause already does one level down. `role` changes that for
+/// exactly one shape -- a negated `when` condition -- and the `Status::SKIP` arm below
+/// says why.
 pub(in crate::rules) fn eval_guard_named_clause<'value, 'loc: 'value>(
     gnc: &'value GuardNamedRuleClause<'loc>,
     resolver: &mut dyn EvalContext<'value, 'loc>,
@@ -1713,53 +3176,58 @@ pub(in crate::rules) fn eval_guard_named_clause<'value, 'loc: 'value>(
                     }
                 }
 
-                // A dependent rule that SKIPped never ran, so it is not evidence in
-                // either direction. Where this reference is an assertion in a rule
-                // body, a negated reference to it must not report compliance on the
-                // strength of a check that was never performed: `not <rule>` used to
-                // fall into the `_` arm below and yield PASS, and because the
-                // enclosing rule then reported PASS rather than SKIP, nothing in the
-                // output hinted at the omission.
-                //
-                // In a `when` condition the same shape is deliberate and tested --
-                // `rule r when !other { ... }` is how a ruleset says "apply this
-                // when that other rule did not apply" (see
-                // cross_rule_clause_when_checks). Gating on a SKIP there is not a
-                // compliance claim, so it keeps the existing behavior.
-                Status::SKIP if role.is_strict() => Status::FAIL,
-
-                // A gate whose dependent rule did not apply stays SKIP rather than
-                // falling into the `_` arm below, which turns a non-negated reference
-                // into FAIL. `eval_conjunction_clauses` counts a FAIL and absorbs a
-                // SKIP, and answers FAIL before PASS, so one inapplicable gate
-                // condition returning FAIL outranks the sibling conditions that passed
-                // and drops a body those siblings would have enforced -- at exit 0,
-                // which is precisely what `ClauseRole::Gate` exists to prevent.
-                //
-                // `eval_parameterized_rule_call` already does this and its comment
-                // claims to mirror this function, but the two spellings of the same
-                // gate disagreed: `when skipper` plus a passing sibling condition
-                // reported SKIP for the whole file and enforced nothing, while
-                // `when skipper(...)` plus the same sibling reported FAIL and exited
-                // 19. Pinned by
-                // `a_named_rule_gate_on_a_skipped_rule_does_not_disarm_the_block`.
-                //
-                // Negated references keep falling through, and for a gate the PASS the `_` arm
-                // returns is the intended outcome, not an oversight: `rule r when not other { ... }`
-                // is how a ruleset says "apply this when that other rule did not apply", so the
-                // gate opens and the guarded body runs. Pinned by
-                // `negated_reference_to_skipped_rule_still_gates_a_when_condition`. A negated
-                // *assertion* never reaches that arm -- `role.is_strict()` above already failed it
-                // closed -- so failing the fallthrough closed would only break the gate idiom.
-                Status::SKIP if !gnc.negation => Status::SKIP,
-
-                _ => {
+                Status::FAIL => {
                     if gnc.negation {
                         Status::PASS
                     } else {
                         Status::FAIL
                     }
                 }
+
+                // A dependent rule that SKIPped never ran, so it is evidence in neither
+                // direction and the reference contributes nothing. That is the answer an
+                // inapplicable clause already gives one level down, and the answer that keeps
+                // "not applicable" the identity it is in a conjunction rather than something a
+                // rule can fail on.
+                //
+                // Both arms this replaces answered FAIL for an assertion, which manufactured a
+                // violation out of an absence. Decomposing a ruleset over disjoint resource types
+                // is the natural way to write one; each helper is guarded by a `when` on its own
+                // type, so on any real template most helpers do not apply -- and the aggregate
+                // failed once per inapplicable helper. `rule MAIN { H_A H_B }` against a clean
+                // IAM role and no DynamoDB table exited 19 reporting "dependent rule [H_B] did
+                // not PASS" for a template that violates nothing. Pinned by
+                // `an_inapplicable_dependent_rule_does_not_fail_the_reference`.
+                //
+                // Negation does not change it. `not R` asks whether R does not hold; if R never
+                // ran then "R holds" is neither true nor false, so neither is its negation. The
+                // arm this replaces failed a negated assertion closed, reasoning that `not R`
+                // must not report compliance for a check that never ran -- true, and a SKIP is
+                // not compliance: the referencing rule reports SKIP, so the omission is visible.
+                // FAIL went a step further and reported a violation instead, so
+                // `rule deny when Resources.*.Type exists { not inner }` failed on a template
+                // holding one S3 bucket and no KMS key. Same false positive, with a `not` in
+                // front of it. Pinned by
+                // `negated_reference_to_skipped_rule_does_not_pass_in_rule_body`.
+                //
+                // The single carve-out is a negated gate. `rule r when not other { ... }` is how
+                // a ruleset says "apply this when that other rule did not apply", so the gate has
+                // to open; answering SKIP there closes a gate that currently opens and silently
+                // disables the guarded rule. A gate is not making a compliance claim, so it may
+                // read "did not apply" as a condition that is met; an assertion is, so it may not.
+                // Pinned by `negated_reference_to_skipped_rule_still_gates_a_when_condition` and
+                // `cross_rule_clause_when_checks`.
+                //
+                // A non-negated gate takes the SKIP branch for its own reason:
+                // `eval_conjunction_clauses` counts a FAIL and absorbs a SKIP, and answers FAIL
+                // before PASS, so one inapplicable gate condition returning FAIL would outrank
+                // the sibling conditions that passed and drop a body those siblings would have
+                // enforced -- at exit 0, which is what `ClauseRole::Gate` exists to prevent.
+                // Pinned by `a_named_rule_gate_on_a_skipped_rule_does_not_disarm_the_block`.
+                Status::SKIP => match (role, gnc.negation) {
+                    (ClauseRole::Gate, true) => Status::PASS,
+                    _ => Status::SKIP,
+                },
             };
             match status {
                 Status::PASS => {
@@ -1787,6 +3255,10 @@ pub(in crate::rules) fn eval_guard_named_clause<'value, 'loc: 'value>(
                 // reads the message off it, so the rule-level SKIP it produces is
                 // explained rather than bare. A `DependentRule` record would have been
                 // reported as a failing clause -- that arm has no status guard.
+                //
+                // The wording says "referenced" rather than "a condition referenced": this arm is
+                // now reached from a rule body as well as from a `when`, and naming the wrong one
+                // is worse than naming neither.
                 Status::SKIP => {
                     resolver.end_record(
                         &context,
@@ -1794,7 +3266,7 @@ pub(in crate::rules) fn eval_guard_named_clause<'value, 'loc: 'value>(
                             status: Status::SKIP,
                             at_least_one_matches: false,
                             message: Some(format!(
-                                "the rule did not apply because a condition referenced rule [{}], which did not apply to this input",
+                                "the rule did not apply because it referenced rule [{}], which did not apply to this input",
                                 gnc.dependent_rule
                             )),
                         }),
@@ -1826,9 +3298,14 @@ pub(in crate::rules) fn eval_general_block_clause<'value, 'loc: 'value, T, E>(
 ) -> Result<Status>
 where
     E: Fn(&'value T, &mut dyn EvalContext<'value, 'loc>) -> Result<Status>,
+    T: CaptureNames<'value>,
 {
     let mut block_scope = block_scope(block, resolver.root(), resolver);
-    eval_conjunction_clauses(&block.conjunctions, &mut block_scope, eval_fn)
+    let status = eval_conjunction_clauses(&block.conjunctions, &mut block_scope, eval_fn);
+    // Captures are handed up whatever the block's verdict: a clause after the block reads them, and it
+    // reads them just the same when the block failed. See `merge_captures_into_parent`.
+    block_scope.merge_captures_into_parent()?;
+    status
 }
 
 /// `role` is inherited from the enclosing clause; a block clause is not itself a
@@ -1861,12 +3338,25 @@ pub(in crate::rules) fn eval_guard_block_clause<'value, 'loc: 'value>(
         } else {
             Status::SKIP
         };
+        // The reason is recorded here because here is where it is known: the branch condition *is*
+        // the reason. `find_skip_reason` has an arm for this record shape already, so nothing was
+        // missing but the message, and with `None` a block-form empty selection printed a bare
+        // `Status = SKIP` with no reason line even under `--show-summary all`.
+        //
+        // Attached to the SKIP only, and not because the FAIL has no consumer. The sentence opens
+        // "the rule did not apply", which is false of the `not_empty` FAIL -- there the rule did
+        // apply and the clause failed for want of a value. A `not_empty` failure wants its own
+        // wording, which is a separate change and not this one.
+        let message = match status {
+            Status::SKIP => Some(empty_selection_message(&block_clause.query.query)),
+            _ => None,
+        };
         resolver.end_record(
             &context,
             RecordType::BlockGuardCheck(BlockCheck {
                 status,
                 at_least_one_matches: !match_all,
-                message: None,
+                message,
             }),
         )?;
         return Ok(status);
@@ -2101,8 +3591,26 @@ struct ResolvedParameterContext<'eval, 'value, 'loc: 'value> {
 impl<'eval, 'value, 'loc: 'value> EvalContext<'value, 'loc>
     for ResolvedParameterContext<'eval, 'value, 'loc>
 {
+    /// Retrieved with this scope as the resolver rather than the parent's, or the arguments the call
+    /// site passed are invisible to the query.
+    ///
+    /// `RootScope::query` and `BlockScope::query` both pass themselves; this one delegated, which put
+    /// the parent in charge of resolving `%name` and the parent does not hold the parameters. It was
+    /// unreachable while a parameterized rule could not carry a `when`, because `eval_rule` is the only
+    /// caller that queries this scope directly -- for a rule's conditions -- and everything else it
+    /// does goes through `eval_general_block_clause`, which interposes a `BlockScope` that passes
+    /// itself and therefore reaches `resolve_variable` below. That is why a `%parameter` in the *body*
+    /// has always worked.
+    ///
+    /// Measured rather than argued: with a `panic!` in place of the delegation, 1495 tests and 318
+    /// rules files across this repository and the AWS rule registry reached it zero times.
+    ///
+    /// So the rule-level `when` is the one path that queries this scope, and
+    /// `rule r(t) when %t == "x" { ... }` reported `Could not resolve variable by name t across
+    /// scopes` until this stopped delegating.
     fn query(&mut self, query: &'value [QueryPart<'loc>]) -> Result<Vec<QueryResult>> {
-        self.parent.query(query)
+        let root = self.root();
+        query_retrieval(0, query, root, self)
     }
 
     fn find_parameterized_rule(
@@ -2127,12 +3635,39 @@ impl<'eval, 'value, 'loc: 'value> EvalContext<'value, 'loc>
         }
     }
 
+    /// An argument the call site passed is the same binding whichever depth of block reads it, so this
+    /// answers as `resolve_variable` does and only the onward deferral differs.
+    ///
+    /// Answering here is what makes the parameter half of the shadowing fix work: a block inside the
+    /// rule declaring a capture of the parameter's name used to end the lookup before it reached this
+    /// scope, so the argument the call site passed was unreadable for that whole block.
+    fn resolve_variable_from_nested_block(
+        &mut self,
+        variable_name: &'value str,
+        unbound: UnboundName,
+    ) -> Result<Vec<QueryResult>> {
+        match self.resolved_parameters.get(variable_name) {
+            Some(res) => Ok(res.clone()),
+            None => self
+                .parent
+                .resolve_variable_from_nested_block(variable_name, unbound),
+        }
+    }
+
     fn add_variable_capture_key(
         &mut self,
         variable_name: &'value str,
         key: Rc<PathAwareValue>,
     ) -> Result<()> {
         self.parent.add_variable_capture_key(variable_name, key)
+    }
+
+    fn add_merged_capture_key(
+        &mut self,
+        variable_name: &'value str,
+        key: Rc<PathAwareValue>,
+    ) -> Result<()> {
+        self.parent.add_merged_capture_key(variable_name, key)
     }
 }
 
@@ -2173,9 +3708,21 @@ pub(in crate::rules) fn eval_parameterized_rule_call<'value, 'loc: 'value>(
 ) -> Result<Status> {
     let param_rule = resolver.find_parameterized_rule(&call_rule.named_rule.dependent_rule)?;
 
+    // An invariant check rather than the diagnostic for the mistake. `rules_file` compares every call
+    // site against the definition it names and rejects the file at exit 5, so a parsed file cannot
+    // reach here with the counts unequal; the check stays because the indexing below would otherwise
+    // panic, and because a `RulesFile` assembled some other way has no parser to have checked it.
+    //
+    // Reaching this therefore means cfn-guard let through a file it said it had validated, and the
+    // message says so: `Err` from a command propagates to `main`, which exits -1, and -1 --
+    // `INTERNAL_FAILURE` in `guard/tests/utils.rs` -- is the right code for a broken invariant. It was
+    // the wrong code while this was the *only* check, because then it was reporting an ordinary
+    // authoring mistake, and an unknown rule name on this same code path exited 5.
     if param_rule.parameter_names.len() != call_rule.parameters.len() {
         return Err(Error::IncompatibleError(format!(
-            "Arity mismatch for called parameter rule {}, expected {}, got {}",
+            "Arity mismatch for called parameter rule {}, expected {}, got {}. The rules file was \
+             accepted with a call this malformed, which is a defect in cfn-guard rather than in the \
+             file.",
             call_rule.named_rule.dependent_rule,
             param_rule.parameter_names.len(),
             call_rule.parameters.len()
@@ -2221,17 +3768,10 @@ pub(in crate::rules) fn eval_parameterized_rule_call<'value, 'loc: 'value>(
     // invoked rule's status unchanged, so the `not` was silently discarded and
     // `not r(...)` behaved identically to `r(...)`.
     //
-    // Mirrors eval_guard_named_clause so both spellings agree: PASS inverts to FAIL
-    // under negation, a SKIPped rule fails closed wherever the reference is an
-    // assertion, and otherwise the negation flips the outcome.
-    //
-    // The fail-closed arm has no negation guard, so it covers both polarities, and for a
-    // plain `r(...)` that is a change in outcome rather than a fix to the negation: main
-    // returned the invoked rule's SKIP and exited 0, this returns FAIL and exits 19. That
-    // is deliberate -- a rule body asserting `r(...)` claims that `r` holds, and a rule
-    // that never ran is not evidence that it does -- but it is the arm to look at first if
-    // a ruleset starts failing on a rule it used to skip. Gate references are unaffected;
-    // they take the SKIP arm below.
+    // Mirrors eval_guard_named_clause arm for arm, and the mirroring is the property: the two
+    // spellings of one reference must not disagree, and they have already drifted apart once
+    // (see `a_named_rule_gate_on_a_skipped_rule_does_not_disarm_the_block`). Read the SKIP arm
+    // in that function for the reasoning; only the differences are noted here.
     Ok(match status {
         Status::PASS => {
             if call_rule.named_rule.negation {
@@ -2241,34 +3781,29 @@ pub(in crate::rules) fn eval_parameterized_rule_call<'value, 'loc: 'value>(
             }
         }
 
-        Status::SKIP if role.is_strict() => Status::FAIL,
-
-        // A gate whose invoked rule did not apply stays SKIP rather than falling into the
-        // `_` arm below, which would turn a non-negated call into FAIL.
-        //
-        // Both are non-PASS, so with a single condition the two are indistinguishable --
-        // `eval_rule` drops the guarded body either way. The difference shows up with more
-        // than one condition: `eval_conjunction_clauses` absorbs SKIP (`Status::SKIP => {}`)
-        // but counts a FAIL, so one inapplicable gate condition returning FAIL poisons the
-        // whole `when` and drops a body that the remaining conditions would have enforced.
-        //
-        // That is exactly what `ClauseRole::Gate` is documented to prevent -- "the block it
-        // guards is still decided by the remaining conditions" -- so returning FAIL here
-        // defeated the role propagation this branch added for parameterized calls.
-        //
-        // Negated calls keep falling through, and for a gate the PASS the `_` arm returns is the
-        // intended outcome: `when not r(...)` opens the gate when `r` did not apply. A negated
-        // assertion never reaches that arm, because the `role.is_strict()` arm above already failed
-        // it closed. Same reasoning, and the same arm order, as `eval_guard_named_clause`.
-        Status::SKIP if !call_rule.named_rule.negation => Status::SKIP,
-
-        _ => {
+        Status::FAIL => {
             if call_rule.named_rule.negation {
                 Status::PASS
             } else {
                 Status::FAIL
             }
         }
+
+        // An invoked rule that did not apply contributes nothing, in both polarities, except for
+        // a negated gate -- `when not r(...)` opens when `r` did not apply, same idiom as the
+        // unparameterized spelling.
+        //
+        // The arm this replaces failed an assertion call closed, and its comment said so
+        // deliberately: "main returned the invoked rule's SKIP and exited 0, this returns FAIL
+        // and exits 19". That was the same false positive the plain spelling had, reached through
+        // `r(...)`: `rule MAIN { H_A skipper(1) }` on a template with a clean IAM role and no
+        // DynamoDB table exited 19 with nothing violated. Pinned alongside the plain spelling by
+        // `an_inapplicable_dependent_rule_does_not_fail_the_reference`, which asserts both so a
+        // future change to one of them cannot pass on a single-spelling test.
+        Status::SKIP => match (role, call_rule.named_rule.negation) {
+            (ClauseRole::Gate, true) => Status::PASS,
+            _ => Status::SKIP,
+        },
     })
 }
 
@@ -2773,6 +4308,11 @@ pub(in crate::rules) fn eval_rule<'value, 'loc: 'value>(
                 RecordType::RuleCheck(NamedStatus {
                     status: Status::FAIL,
                     name: &rule.rule_name,
+                    // No message here on purpose. The clause that could not be evaluated records its
+                    // own explanation, and that is what both the console and the JSON view render --
+                    // naming the clause, which a rule-level restatement cannot. A message added here
+                    // reached the JSON only, beside the clause's, and
+                    // `every_recorded_explanation_has_a_rendering_path` is what caught it.
                     ..Default::default()
                 }),
             )?;
@@ -2797,7 +4337,12 @@ pub(crate) fn eval_rules_file<'value, 'loc: 'value>(
     resolver.start_record(&context)?;
     let mut fails = 0;
     let mut passes = 0;
+    let mut first_error = None;
     for each_rule in &rule.guard_rules {
+        // A capture is scoped to the rule that made it. A rule condition is evaluated against the
+        // enclosing scope, so without this a capture in one rule's `when` outlived it and the next
+        // rule using the same name saw the previous rule's keys.
+        resolver.reset_captures();
         // Top-level rule in a rules file: its clauses are assertions.
         match eval_rule(each_rule, resolver, ClauseRole::Assertion) {
             Ok(status) => match status {
@@ -2810,16 +4355,23 @@ pub(crate) fn eval_rules_file<'value, 'loc: 'value>(
                 Status::SKIP => {}
             },
 
+            // A rule that cannot be evaluated costs its own finding, not the file's.
+            //
+            // What was here closed the *file's* record with a rule-check payload -- `eval_rule` has
+            // already closed the rule's own record as a failure by the time this is reached -- and
+            // then returned, so the file's record was both mislabelled and truncated and every rule
+            // after this one went unevaluated. A file whose second rule read a variable that does not
+            // exist in it printed one error line and nothing else, discarding five real findings that
+            // its third rule had already produced.
+            //
+            // The error is still returned, after the loop rather than instead of it: a variable that
+            // resolves nowhere is a broken ruleset rather than a non-compliant template, and the exit
+            // code has to keep saying so. What changes is that there is a report to read alongside it.
             Err(e) => {
-                resolver.end_record(
-                    &context,
-                    RecordType::RuleCheck(NamedStatus {
-                        status: Status::FAIL,
-                        name: &each_rule.rule_name,
-                        ..Default::default()
-                    }),
-                )?;
-                return Err(e);
+                fails += 1;
+                if first_error.is_none() {
+                    first_error = Some(e);
+                }
             }
         }
     }
@@ -2841,7 +4393,10 @@ pub(crate) fn eval_rules_file<'value, 'loc: 'value>(
         }),
     )?;
 
-    Ok(overall)
+    match first_error {
+        Some(e) => Err(e),
+        None => Ok(overall),
+    }
 }
 
 /// The clause type a disjunction is over, spelled the same way by every compiler.
@@ -2880,6 +4435,9 @@ where
         let context = format!("{}#disjunction", disjunction_type_name::<T>());
         'conjunction: for conjunction in conjunctions {
             let mut num_of_disjunction_fails = 0;
+            // Held rather than returned. A disjunct with no answer must not stop a later disjunct
+            // that has one -- see the `Err` arm below and the check after the loop.
+            let mut undecided: Option<Error> = None;
             let multiple_ors_present = conjunction.len() > 1;
             if multiple_ors_present {
                 resolver.start_record(&context)?;
@@ -2907,23 +4465,45 @@ where
                         }
                     },
 
+                    // An `or` is decided by whichever disjunct can decide it. Returning here
+                    // instead meant the first disjunct with no answer ended the whole disjunction,
+                    // so `A or B` and `B or A` were not the same clause: with `A` undecidable and
+                    // `B` true, the second spelling opened its gate and evaluated the body, and the
+                    // first reported that the condition could not be evaluated and dropped the body.
+                    // Both exited 19 on a failing document -- the rule fails either way -- so the
+                    // exit code hid it, and only the reported reason differed.
+                    //
+                    // So the error waits until every disjunct has had its turn. If a later one
+                    // passes, the `continue 'conjunction` above leaves this behind, which is what
+                    // "undecidable or true is true" means. If none does, it is returned below and
+                    // the caller decides: an assertion fails closed, a gate keeps the error and
+                    // fails its own rule closed. Only the first is kept, because that is the one
+                    // whose path the reporter names, and reporting one reason is what the console
+                    // does for a clause anyway.
                     Err(e) => {
-                        if multiple_ors_present {
-                            resolver.end_record(
-                                &context,
-                                RecordType::Disjunction(BlockCheck {
-                                    message: Some(format!(
-                                        "Disjunction failed due to error {}, bailing",
-                                        e
-                                    )),
-                                    status: Status::FAIL,
-                                    at_least_one_matches: true,
-                                }),
-                            )?;
+                        if undecided.is_none() {
+                            undecided = Some(e);
                         }
-                        return Err(e);
                     }
                 }
+            }
+
+            if let Some(e) = undecided {
+                if multiple_ors_present {
+                    resolver.end_record(
+                        &context,
+                        RecordType::Disjunction(BlockCheck {
+                            message: Some(format!(
+                                "Disjunction could not be decided: no disjunct answered, and one \
+                                 could not be evaluated: {}",
+                                e
+                            )),
+                            status: Status::FAIL,
+                            at_least_one_matches: true,
+                        }),
+                    )?;
+                }
+                return Err(e);
             }
 
             if num_of_disjunction_fails > 0 {

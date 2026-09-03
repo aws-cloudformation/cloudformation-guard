@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::time::Instant;
 
 use crate::{
@@ -18,6 +19,10 @@ impl<'reporter> StructuredReporter for JunitReporter<'reporter> {
         let mut total_errors = 0;
         let mut total_failures = 0;
         let mut tests = 0;
+        // One set for the whole report, for the reason `CommonStructuredReporter` gives: this reporter
+        // also writes a single document covering every data file, so a notice repeated per file would
+        // be the same sentence N times with nothing to tell the copies apart.
+        let mut deprecations: BTreeSet<String> = BTreeSet::new();
 
         for each in &self.data {
             let file_report = FileReport {
@@ -28,10 +33,10 @@ impl<'reporter> StructuredReporter for JunitReporter<'reporter> {
             let mut failures = 0;
             let mut errors = 0;
 
-            let test_cases = self.rules.iter().try_fold(
+            let mut test_cases = self.rules.iter().try_fold(
                 vec![],
                 |mut test_cases, (rule, name)| -> rules::Result<Vec<TestCase<'_>>> {
-                    let tc = get_test_case(each, rule, name)?;
+                    let tc = get_test_case(each, rule, name, &mut deprecations)?;
 
                     if matches!(tc.status, TestCaseStatus::Fail(_)) {
                         failures += 1;
@@ -44,6 +49,28 @@ impl<'reporter> StructuredReporter for JunitReporter<'reporter> {
                     Ok(test_cases)
                 },
             )?;
+
+            // A rules file that could not be parsed gets a test case in the `Error` state, named
+            // after the file, so `errors` is non-zero and the suite reads as a problem rather than
+            // as a green zero-test run. Nothing new was needed for this: `TestCaseStatus::Error`
+            // already exists, the loop above already counts it, and that count already escalates
+            // the exit code. The variant simply had no way to be constructed on this path, because
+            // a file that would not parse never became a test case.
+            //
+            // One per data file, matching the granularity of the loop above -- a rules file that
+            // could not be read was applied to none of them.
+            for rule_file_error in self.rule_file_errors {
+                test_cases.push(TestCase {
+                    id: None,
+                    name: &rule_file_error.file_name,
+                    time: 0,
+                    status: TestCaseStatus::Error {
+                        error: rule_file_error.error.clone(),
+                    },
+                });
+                errors += 1;
+                tests += 1;
+            }
 
             let suite = TestSuite {
                 name: file_report.name.to_string(),
@@ -63,6 +90,13 @@ impl<'reporter> StructuredReporter for JunitReporter<'reporter> {
             self.update_exit_code(ERROR_STATUS_CODE)
         } else if total_failures > 0 {
             self.update_exit_code(FAILURE_STATUS_CODE)
+        }
+
+        // Before the XML and on stderr, matching the other three structured formats and the single-line
+        // path: stdout is the document a junit test reporter parses, and a notice about a future release
+        // is not one of this run's test results.
+        for notice in &deprecations {
+            self.writer.write_err(notice.clone())?;
         }
 
         let report = JunitReport {

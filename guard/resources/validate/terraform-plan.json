@@ -1,0 +1,12 @@
+{
+  "format_version": "1.0",
+  "terraform_version": "1.5.0",
+  "resource_changes": [
+    {
+      "address": "aws_s3_bucket.mybucket",
+      "type": "aws_s3_bucket",
+      "name": "mybucket",
+      "change": { "actions": ["create"], "after": { "acl": "public-read" } }
+    }
+  ]
+}

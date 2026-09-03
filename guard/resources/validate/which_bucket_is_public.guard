@@ -1,0 +1,5 @@
+# The capture must name C, the bucket that is actually public.
+rule which_bucket_is_public {
+    Resources[ nm | Properties.Public == true ] !empty
+    some %nm == "C"
+}

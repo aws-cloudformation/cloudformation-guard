@@ -1,0 +1,11 @@
+#
+# Reads one scalar, so that a test can pin which value a duplicated key resolves to. The rule
+# passes when the winning value is true and fails when it is false, which makes the direction
+# visible in the exit code rather than only in the output text.
+#
+# At the resources/validate root rather than in rules-dir/, because test_updated_summary_output
+# evaluates everything in rules-dir/ against everything in data-dir/ and compares to a golden file.
+#
+rule encrypted_is_true {
+    Resources.B.Properties.Encrypted == true
+}

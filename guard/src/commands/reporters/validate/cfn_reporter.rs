@@ -12,6 +12,7 @@ use crate::commands::reporters::validate::common::{
 use crate::commands::tracker::StatusContext;
 use crate::commands::validate::{OutputFormatType, Reporter};
 use crate::rules::errors::Error;
+use crate::rules::values::CmpOperator;
 
 use crate::rules::eval_context::EventRecord;
 use crate::rules::path_value::traversal::Traversal;
@@ -223,12 +224,42 @@ impl super::common::GenericReporter for SingleLineReporter {
                                msg=info.message.replace('\n', ";")
                     ))
                 },
+                // `verdict` rather than `{op_msg} match with`, for the reason `membership_verdict` in
+                // `generic_summary.rs` gives: a membership comparison that had no answer used to be
+                // rendered here as one that ran and answered. Same predicate, same two states, and a
+                // decided failure keeps its wording to the byte.
+                //
+                // NOTHING REACHES THIS RENDERER. `CfnReporter` above is `pub(crate)` and has no
+                // constructor anywhere in the crate; `validate.rs` wires `GenericSummary` and
+                // `cfn::CfnAware` instead. Measured rather than read: both arms below replaced with
+                // sentinel strings gives 3138 passed / 0 failed over 16 suites with tallies identical
+                // to the unmutated tree and zero sentinel occurrences in the output, and deleting the
+                // whole module still builds and still gives 3138 / 0 / 0. So this conditional is
+                // consistency with the live renderers, not coverage of a live path, and no test can
+                // exercise it -- `a_refused_membership_does_not_claim_a_match_happened` covers the two
+                // reachable ones only.
+                //
+                // Kept rather than deleted because the deletion cascades: this file is the only caller
+                // of `common::print_compliant_skipped_info`, so removing it fails
+                // `clippy --all-targets -- -D warnings` on newly dead code. `membership_verdict`'s doc
+                // carries the full reasoning. `a_finding_the_cfn_reporter_cannot_place_is_still_reported`
+                // in `guard/tests/validate.rs` names "the cfn reporter" but does not exercise this type
+                // -- its own comment names `GenericSummary` and `cfn::CfnAware` as the paths it tests.
                 |_, _, msg, info| {
-                    Ok(format!("Resource [{resource}] property [{property}] in template [{template}] is not compliant with [{rule}] because provided value [{provided}] {op_msg} match with expected value [{expected}]. Error message [{msg}]",
+                    let verdict = if info
+                        .comparison
+                        .as_ref()
+                        .is_some_and(|c| c.operator == CmpOperator::In)
+                        && !info.message.is_empty()
+                    {
+                        "could not be compared with".to_string()
+                    } else {
+                        format!("{msg} match with")
+                    };
+                    Ok(format!("Resource [{resource}] property [{property}] in template [{template}] is not compliant with [{rule}] because provided value [{provided}] {verdict} expected value [{expected}]. Error message [{msg}]",
                                resource=resource,
                                property=info.path,
                                provided=info.provided.as_ref().map_or(&serde_json::Value::Null, std::convert::identity),
-                               op_msg=msg,
                                expected=info.expected.as_ref().map_or(&serde_json::Value::Null, std::convert::identity),
                                template=data_file_name,
                                rule=info.rule,

@@ -1,0 +1,8 @@
+# Declares no rules at all, which is what this fixture is for. Byte-identical to its sibling under
+# `../second/`, so the only thing telling the two apart is how the run names the file.
+#
+# Comment-only, not `let x = 1`. That distinction is the whole fixture: an assignment parses to
+# `Ok(Some(RulesFile))` with one assignment and zero rules, which takes the arm that pushes a per-file
+# report entry -- so nothing is lost there. A comment-only file parses to `Ok(None)` and takes
+# `report_expectations_against_no_rules`, which pushes no `TestResult` at all. The structured document
+# is therefore `[]`, and the one stderr line is the entire record of two dropped expectations.

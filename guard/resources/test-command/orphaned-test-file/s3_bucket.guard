@@ -1,0 +1,3 @@
+rule bucket_must_be_encrypted {
+    Resources.One.Properties.Encrypted == true
+}

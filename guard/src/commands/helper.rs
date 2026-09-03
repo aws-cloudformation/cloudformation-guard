@@ -21,6 +21,27 @@ pub struct ValidateInput<'a> {
     pub file_name: &'a str,
 }
 
+/// # Known gap: this path drops every deprecation notice, and it is the most machine-only one
+///
+/// The scope below is built, evaluated and handed to `reset_recorder()` without `deprecations()` ever
+/// being read, so a notice this run produced goes nowhere. That is the same omission fixed in
+/// `CommonStructuredReporter`, `JunitReporter`, both test reporters and `validate`'s single-line path --
+/// this is the one caller left, and by the argument those fixes were made on it is the worst place for
+/// it: exported as `cfn_guard::run_checks` (`lib.rs:11`) and consumed by `cfn_guard_run_checks` in
+/// `guard-ffi/src/lib.rs:54` and the Lambda handler in `guard-lambda/src/main.rs:43`. An FFI caller and
+/// a Lambda have no terminal to print a warning to and no human reading one.
+///
+/// Not fixed here because it is not a one-line drain like the others were. This function returns
+/// `Result<String>`, and that `String` is the report itself -- there is no second channel for
+/// diagnostics, so a notice has nowhere to go that is not either inside the JSON document every FFI and
+/// Lambda consumer parses, or a `stderr` write from library code that has no writer and should not
+/// invent one. Both are API changes rather than a fix, and the callers are outside this crate.
+///
+/// What would resolve it: give the two `ValidateInput` entry points a return shape that carries
+/// diagnostics beside the report -- a struct with `report` and `notices`, or an out-parameter matching
+/// the one `get_test_case` uses -- and let `guard-ffi` and `guard-lambda` decide what to do with them.
+/// Until then a rule author using the FFI or the Lambda gets no warning that a clause's answer changes
+/// in a later release, which is exactly the audience the notice was written for.
 #[allow(dead_code)]
 pub fn validate_and_return_json(
     data: ValidateInput,

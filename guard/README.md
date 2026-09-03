@@ -66,6 +66,38 @@ We designed `cfn-guard` to be plugged into your build processes.
 If CloudFormation Guard validates the templates successfully, it gives you an exit status (`$?` in bash) of `0`. If CloudFormation Guard identifies a rule violation, it gives you a status report of the rules that failed.
 Use the verbose flag `-v` to see the detailed evaluation tree that shows how CloudFormation Guard evaluated each rule.
 
+## Exit codes
+
+`validate` and `parse-tree` use these:
+
+| Code | Meaning |
+|---|---|
+| `0` | Success. Everything evaluated, and nothing failed. |
+| `5` | The rules file cannot be used: it has a syntax error, or it names a variable, rule or parameterized rule that nothing declares. Your rules need fixing, not your template. |
+| `19` | The rules were evaluated and the data failed at least one of them. `validate` only. This is the code a policy gate should treat as a violation. |
+
+`test` reports in its own two codes, because "an expectation was not met" is not the same result as "a template was non-compliant":
+
+| Code | Meaning |
+|---|---|
+| `0` | Every expectation was met. |
+| `1` | An expectation could not be evaluated, or a rules or test file could not be read. |
+| `7` | An expectation was evaluated and not met. |
+
+Every subcommand answers a bad set of arguments with `2`:
+
+| Code | Meaning |
+|---|---|
+| `2` | The arguments cannot be honoured: a flag was passed twice over, two flags contradict each other, a required one is missing, or a value is not one this command accepts. Nothing was evaluated. Fix the command line. |
+
+This is the code the argument parser has always used for a conflict it detects itself, such as `--payload` beside `--rules`. Combinations rejected after parsing — `--show-summary all` beside a machine-readable `--output-format`, say — now report `2` as well, so one class of mistake has one code however it is caught.
+
+Any other code means CloudFormation Guard itself failed rather than reaching a verdict. `255` is the usual one, and it also covers a path that does not exist. Distinguish `5` from `255` in a build step: the first is your file, the second is a defect worth reporting.
+
+When several rules files are given, the most severe code wins, and `5` is more severe than `19` — a ruleset that could not be evaluated is a different answer from one that returned a verdict you can waive.
+
+`0` does not by itself mean anything was checked. A `--rules` argument that yields no rules file, a `--data` argument that yields no data file, and a `--payload` with an empty `rules` or `data` list all exit `0`, because nothing failed. Each writes a warning to stderr saying that nothing was checked; a build step that cares about the difference should read stderr or assert that findings were produced.
+
 ## Modes of Operation
 
 `cfn-guard` has five modes of operation:

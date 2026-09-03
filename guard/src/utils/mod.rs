@@ -3,10 +3,136 @@
 pub mod reader;
 pub mod writer;
 
+/// The width in bytes of the line break at `bytes[at]`, or `None` if no break begins there.
+///
+/// This mirrors the definition libyaml uses rather than a summary of it, because a summary is what put
+/// this function one line ending short twice over. The authority is
+/// `unsafe-libyaml-0.2.11/src/macros.rs`:
+///
+/// ```text
+/// macro_rules! IS_BREAK_AT {
+///     CHECK_AT!($string, b'\r', $offset)
+///         || CHECK_AT!($string, b'\n', $offset)
+///         || CHECK_AT!($string, b'\xC2', $offset) && CHECK_AT!($string, b'\x85', $offset + 1)
+///         || CHECK_AT!($string, b'\xE2', $offset) && ...b'\x80'... && ...b'\xA8'...
+///         || CHECK_AT!($string, b'\xE2', $offset) && ...b'\x80'... && ...b'\xA9'...
+/// }
+/// ```
+///
+/// Five breaks: CR, LF, NEL `U+0085`, LS `U+2028`, PS `U+2029`, with CRLF as the CR-then-LF case. The
+/// widths are `SKIP_LINE`'s, in `scanner.rs`: CRLF advances two bytes and counts one line, and every
+/// other break advances its own UTF-8 width and counts one line. So the width returned here is the
+/// number of bytes to step over, and each break is one line, which is what keeps this function's
+/// numbering the same as the loader's.
+///
+/// The continuation bytes are load-bearing rather than defensive. `\xC2` also leads `U+00A0` no-break
+/// space, and `\xE2\x80` leads `U+2026` ellipsis and twenty-odd other punctuation characters -- all
+/// ordinary text that must not end a line. Testing the lead byte alone would split a line in the middle
+/// of a character and hand `&buffer[start..at]` a boundary that is not a character boundary, which
+/// panics.
+///
+/// Scanning byte by byte is safe here even though the buffer is UTF-8 text: no continuation byte can be
+/// mistaken for the start of a break, because continuation bytes are `0x80..=0xBF` and every byte tested
+/// above is either ASCII or a lead byte above `0xBF`.
+///
+/// NUL is not here and must not be added. libyaml's `IS_BREAKZ!` is `IS_BREAK` *or* `IS_Z`, and `IS_Z` is
+/// `b'\0'` -- but `SKIP_LINE` tests `IS_CRLF` and `IS_BREAK`, never `IS_BREAKZ`, so a NUL does not
+/// increment libyaml's line counter. `IS_BREAKZ!` is the macro to reach for when asking "break or end of
+/// input", which is a different question, and taking it as the definition of a line break would make this
+/// function count lines the loader does not. Pinned by `a_nul_byte_is_not_a_line_break`.
+///
+/// This is the cursor, and it mirrors libyaml because it indexes text libyaml has already read. It is not
+/// the rules parser's line index. `LineIndex` in `rules/parser.rs` counts `\n` and bare `\r` only, and
+/// that is correct there and must stay: the guard grammar reads a NEL as ordinary text, because
+/// `multispace1` accepts `" \t\r\n"` and nothing wider. Teaching `LineIndex` these three breaks would
+/// desynchronize reported positions from what the parser actually treats as a line -- measured, a rules
+/// file using NEL as its line ending exits 5 at `line 1 column 11` in every spelling. Two different
+/// notions of "line" that must not be unified: this one follows the document loader, that one follows the
+/// grammar.
+fn break_width(bytes: &[u8], at: usize) -> Option<usize> {
+    match bytes[at] {
+        // CRLF is one ending, so step over both. Checked before the single-byte arm below.
+        b'\r' if bytes.get(at + 1) == Some(&b'\n') => Some(2),
+        b'\r' | b'\n' => Some(1),
+        // NEL, `U+0085`.
+        0xC2 if bytes.get(at + 1) == Some(&0x85) => Some(2),
+        // LS `U+2028` and PS `U+2029`, which differ only in the last byte.
+        0xE2 if bytes.get(at + 1) == Some(&0x80)
+            && matches!(bytes.get(at + 2), Some(&0xA8) | Some(&0xA9)) =>
+        {
+            Some(3)
+        }
+        _ => None,
+    }
+}
+
+/// The lines of `buffer`, ending at any of the five line breaks libyaml recognizes.
+///
+/// `str::lines` cannot be used here, and neither can a hand-written pair of `\r` and `\n` arms. Both
+/// count fewer line endings than the loader that read the same file before this ever sees it, and the
+/// two halves of one report then describe different files: `L:6` in the position and, beside it, an
+/// excerpt whose lines are numbered against a different idea of what a line is.
+///
+/// `str::lines` splits on `\n` and strips a `\r` only when one precedes that `\n`, so a bare-CR file came
+/// back as a single line. Fixing only that left three breaks still uncounted -- NEL, LS and PS -- and the
+/// LS case is the one to keep in mind, because a lone `U+2028` in an otherwise-LF file is a routine
+/// artifact of JavaScript tooling and its output looks plausible rather than broken. Measured on the
+/// six-line template in `the_loader_and_the_read_cursor_agree_on_the_line_count`, the loader reported
+/// `Encrypted[L:6,C:18]` while the excerpt labelled the same text `5.` and rendered two lines' worth of
+/// it merged, the separator invisible. A reader given `L:6` and a line numbered 5 has no way to tell
+/// which of the two is mistaken.
+///
+/// Everything `str::lines` gets right is kept: a terminator at the end of the file adds no empty line,
+/// and a blank line in the middle is a line. Collapsing either renumbers the rest of the excerpt.
+///
+/// `start` has to clear *every* byte of the terminator, and getting that wrong does not produce a wrong
+/// line number -- it panics. Recognize a three-byte LS but step one byte and `start` lands on `\x80`,
+/// mid-character, and the next `&buffer[start..at]` slices at a boundary that is not a character
+/// boundary. On the pinned toolchain that reads
+/// `byte index 4 is not a char boundary; it is inside '\u{2028}' (bytes 3..6) of ...`.
+///
+/// Measured on all four of `one<LS>two<LS>`, `one<LS>two`, `one<NEL>two<NEL>` and `one<NEL>two`, so it
+/// is not confined to a trailing separator -- a single multi-byte break anywhere in the file is enough,
+/// reaching the panic either at the in-loop push or at the final one. That is why the width comes from
+/// `break_width` rather than from a fixed step.
+///
+/// The wording above is 1.77.2's. An earlier version of this comment quoted it as `start byte index 4`,
+/// which is a later std's phrasing: the probe that produced it was built with a bare `rustc`, and a bare
+/// `rustc` ignores `rust-toolchain.toml` and resolved to 1.97.1. Quote std text from the pinned
+/// toolchain, via `rustup run 1.77.2 rustc` or `cargo`, or the quote describes a compiler this project
+/// does not use.
+///
+/// Eager rather than an iterator, because the result is a `Vec` of slices into a buffer that is already
+/// in memory, and `ReadCursor` caches every line it reads anyway.
+fn split_lines(buffer: &str) -> Vec<&str> {
+    let bytes = buffer.as_bytes();
+    let mut lines = Vec::new();
+    let mut start = 0;
+    let mut at = 0;
+
+    while at < bytes.len() {
+        match break_width(bytes, at) {
+            Some(width) => {
+                lines.push(&buffer[start..at]);
+                at += width;
+                start = at;
+            }
+            None => at += 1,
+        }
+    }
+
+    // Text after the last terminator is a line; a file ending in one has nothing after it.
+    if start < bytes.len() {
+        lines.push(&buffer[start..]);
+    }
+
+    lines
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct ReadCursor<'buffer> {
     line_num: usize,
-    line_buffer: std::str::Lines<'buffer>,
+    line_buffer: std::vec::IntoIter<&'buffer str>,
     previous_lines: Vec<(usize, &'buffer str)>,
 }
 
@@ -14,7 +140,7 @@ impl<'buffer> ReadCursor<'buffer> {
     pub(crate) fn new(buffer: &str) -> ReadCursor {
         ReadCursor {
             line_num: 0,
-            line_buffer: buffer.lines(),
+            line_buffer: split_lines(buffer).into_iter(),
             previous_lines: Default::default(),
         }
     }
@@ -170,5 +296,216 @@ mod tests {
             "a second violation five lines below the first asked for the line reading had just \
              stopped on, and got None -- which renders as an empty Code: block"
         );
+    }
+
+    /// The five line breaks libyaml recognizes, each with the bytes it is.
+    ///
+    /// The bytes are here so that `separator_bytes_are_what_they_claim` can hold every case below to
+    /// them. A fixture that means to hold `U+2028` and holds a plain space instead still produces a
+    /// mismatch against the loader, so a test that only compared line numbers would go green on a
+    /// document that never contained the character it names -- and would go on passing after the
+    /// separator it was written for stopped being handled.
+    const BREAKS: [(&str, &str, &[u8]); 6] = [
+        ("LF", "\n", &[0x0A]),
+        ("CRLF", "\r\n", &[0x0D, 0x0A]),
+        ("bare CR", "\r", &[0x0D]),
+        ("NEL U+0085", "\u{0085}", &[0xC2, 0x85]),
+        ("LS U+2028", "\u{2028}", &[0xE2, 0x80, 0xA8]),
+        ("PS U+2029", "\u{2029}", &[0xE2, 0x80, 0xA9]),
+    ];
+
+    /// The control for every case in this module: each separator is the bytes it claims to be.
+    ///
+    /// Without this, a mistyped fixture reads as a different defect. That is not hypothetical -- a
+    /// six-line template built to demonstrate the `U+2028` case was first written joining its lines with
+    /// a plain space, and it reported a line-number mismatch too, for an unrelated reason.
+    #[test]
+    fn separator_bytes_are_what_they_claim() {
+        for (spelling, separator, bytes) in BREAKS {
+            assert_eq!(
+                bytes,
+                separator.as_bytes(),
+                "{} is not the bytes it claims to be",
+                spelling
+            );
+        }
+    }
+
+    /// A line ends at any of the five breaks libyaml recognizes, which is what the loader beside this
+    /// already counts.
+    ///
+    /// This cursor fed `str::lines`, which splits on `\n` and strips a `\r` only when one precedes that
+    /// `\n`. So a data file whose lines end with a bare `\r` was **one line**. libyaml does not agree
+    /// with that -- a lone CR is a line break in YAML, and the loader counts it -- so the two halves of
+    /// one report described different files. Measured on a six-line template with `Encrypted: false` on
+    /// line 6, whose only difference from its LF twin was the line endings:
+    ///
+    /// ```text
+    /// LF        PropertyPath = /Resources/One/Properties/Encrypted[L:6,C:18]
+    ///           Code:      4.    Properties:
+    ///                      5.      Tags: []
+    ///                      6.      Encrypted: false
+    ///
+    /// bare CR   PropertyPath = /Resources/One/Properties/Encrypted[L:6,C:18]      <- still right
+    ///           Code:      1.Resources:\r  One:\r    Type: ...\r      Encrypted: false\r
+    /// ```
+    ///
+    /// The position was never wrong; the excerpt beside it was the whole file labelled line 1, control
+    /// characters included. A reader given `L:6` and one line of text has no way to tell which of the
+    /// two is mistaken.
+    ///
+    /// Repairing CR alone left three breaks still uncounted, and they fail the same way: with a uniform
+    /// NEL, LS or PS file the excerpt was the whole file labelled `1.`, and with a single one of them in
+    /// an otherwise-LF file the excerpt's last line was numbered `5.` against a reported `L:6`. The
+    /// three-byte pair is the worst case in practice, because a lone `U+2028` is a routine artifact of
+    /// JavaScript tooling and the output it produces looks plausible rather than broken.
+    ///
+    /// The mixed case is a judgement rather than a repair: a lone `\r` inside an otherwise-LF file now
+    /// ends a line, where `str::lines` would have kept `two\rthree` together. That is the judgement
+    /// libyaml makes when it counts those lines, and the one the rules parser makes, and this cursor
+    /// exists to index text libyaml has already read.
+    #[test]
+    fn read_cursor_ends_a_line_at_every_libyaml_line_break() {
+        // A function rather than a closure: a closure taking `&str` and returning slices of it cannot
+        // express that the two lifetimes are the same one, and rustc rejects it.
+        fn read_all(buffer: &str) -> Vec<(usize, &str)> {
+            let mut cursor = ReadCursor::new(buffer);
+            let mut read = Vec::new();
+            while let Some(line) = cursor.next() {
+                read.push(line);
+            }
+            read
+        }
+
+        for (spelling, separator, _) in BREAKS {
+            // Three lines, however the two separators between them are spelled.
+            let buffer = format!("one{sep}two{sep}three", sep = separator);
+            assert_eq!(
+                vec![(1, "one"), (2, "two"), (3, "three")],
+                read_all(&buffer),
+                "every spelling of a line ending has to give the same three lines, and this one is \
+                 {}: {:?}",
+                spelling,
+                buffer
+            );
+
+            // A terminator at the end of the file adds no empty line. A naive extension that
+            // recognizes a multi-byte separator but clears only its lead byte leaves `start` inside
+            // the separator, and the next slice panics on a boundary that is not a character
+            // boundary. It is not confined to this case -- see `split_lines` for the four shapes
+            // that were measured, of which two have no trailing separator at all.
+            let trailing = format!("one{sep}two{sep}three{sep}", sep = separator);
+            assert_eq!(
+                vec![(1, "one"), (2, "two"), (3, "three")],
+                read_all(&trailing),
+                "a final {} adds no fourth line: {:?}",
+                spelling,
+                trailing
+            );
+
+            // An empty line in the middle is a line, in every spelling. `str::lines` keeps it too, and
+            // a replacement that collapsed it would renumber every line after it in the excerpt.
+            let blank = format!("one{sep}{sep}three", sep = separator);
+            assert_eq!(
+                vec![(1, "one"), (2, ""), (3, "three")],
+                read_all(&blank),
+                "the blank line is line 2, separated by {}: {:?}",
+                spelling,
+                blank
+            );
+        }
+
+        // Mixed separators, which is what a botched conversion leaves. Every pair is exercised so that
+        // no ordering of two breaks is handled only by accident -- in particular CR before LF, which
+        // must stay one break rather than becoming two.
+        for (_, first, _) in BREAKS {
+            for (_, second, _) in BREAKS {
+                let buffer = format!("one{first}two{second}three");
+                assert_eq!(
+                    vec![(1, "one"), (2, "two"), (3, "three")],
+                    read_all(&buffer),
+                    "mixed separators still give three lines: {:?}",
+                    buffer
+                );
+            }
+        }
+
+        // No text, no lines -- `seek_line` on an empty file answers None rather than indexing into
+        // nothing.
+        let mut empty = ReadCursor::new("");
+        assert_eq!(None, empty.next());
+        assert_eq!(None, ReadCursor::new("").seek_line(1));
+    }
+
+    /// A lead byte without its continuation bytes is ordinary text, not a line break.
+    ///
+    /// `\xC2` leads `U+0085` NEL and also `U+00A0` no-break space; `\xE2\x80` leads `U+2028` and
+    /// `U+2029` and also `U+2026` ellipsis, `U+201C` quotation marks and twenty-odd other punctuation
+    /// characters that appear in ordinary template text. Matching on the lead byte alone would split a
+    /// line in the middle of a character, and slicing the buffer at a boundary that is not a character
+    /// boundary panics -- so this is the difference between a wrong line number and a crash.
+    #[test]
+    fn a_lead_byte_without_its_continuation_is_not_a_break() {
+        for (name, text) in [
+            ("U+00A0 no-break space", "one\u{00A0}two"),
+            ("U+00A1 inverted exclamation", "one\u{00A1}two"),
+            ("U+2026 ellipsis", "one\u{2026}two"),
+            ("U+201C left quotation mark", "one\u{201C}two"),
+            ("U+2027 hyphenation point, just below LS", "one\u{2027}two"),
+            ("U+202A embedding, just above PS", "one\u{202A}two"),
+        ] {
+            let mut cursor = ReadCursor::new(text);
+            let first = cursor.next();
+            assert_eq!(
+                Some((1, text)),
+                first,
+                "{} is text, so the whole buffer is one line",
+                name
+            );
+            assert_eq!(None, cursor.next(), "and there is no second line: {}", name);
+        }
+    }
+
+    /// A NUL byte is not a line break, because libyaml does not count one as a line.
+    ///
+    /// The trap is one macro away. `IS_BREAKZ!` is `IS_BREAK` *or* `IS_Z`, and `IS_Z` is `b'\0'`, so a
+    /// reader taking `IS_BREAKZ!` for the definition of a line break would add NUL to the five. But
+    /// `SKIP_LINE` -- the function that actually advances libyaml's line counter -- tests `IS_CRLF` and
+    /// `IS_BREAK`, and neither branch tests `IS_BREAKZ`. `IS_BREAKZ!` answers "break or end of input",
+    /// which is what a scanner wants at a boundary and not what a line counter wants.
+    ///
+    /// Getting this wrong splits one line into two and renumbers every line after it, which is the same
+    /// symptom as counting one break too few, in the other direction.
+    ///
+    /// No document that reaches this function can contain a NUL today: the loader refuses one outright,
+    /// exit 5 with a parse error naming the file, so nothing is excerpted and `ReadCursor` is never
+    /// constructed. Measured, not assumed. So this is a guard on `break_width` against a future edit
+    /// rather than coverage of a reachable input, and it is asserted at this level because that is the
+    /// level the mistake would be made at -- there is no end-to-end case that could catch it.
+    #[test]
+    fn a_nul_byte_is_not_a_line_break() {
+        for (name, text) in [
+            ("a NUL in the middle", "one\0two"),
+            ("a NUL at the end", "one\0"),
+            ("a NUL beside a real break", "one\0\ntwo"),
+        ] {
+            let mut cursor = ReadCursor::new(text);
+            let mut read = Vec::new();
+            while let Some(line) = cursor.next() {
+                read.push(line);
+            }
+            let expected: Vec<(usize, &str)> = match name {
+                // The `\n` is the only break, so the NUL stays inside line 1.
+                "a NUL beside a real break" => vec![(1, "one\0"), (2, "two")],
+                _ => vec![(1, text)],
+            };
+            assert_eq!(
+                expected,
+                read,
+                "{}: a NUL does not end a line, because libyaml's SKIP_LINE never tests IS_Z: {:?}",
+                name,
+                text.as_bytes()
+            );
+        }
     }
 }

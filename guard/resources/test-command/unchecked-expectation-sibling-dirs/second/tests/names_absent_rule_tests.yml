@@ -1,0 +1,17 @@
+###
+# Pairs with `../names_absent_rule.guard`, and is byte-identical to the suite under
+# `../../first/tests/` so the two runs differ only in how the rules file is named.
+#
+# One expectation, naming `absent_rule`, which the paired rules file does not declare. That is the whole
+# input: the expectation is never compared against anything, so the run must say so and exit non-zero.
+#
+# `present_rule` is deliberately *not* expected here. Leaving it out keeps the run's stdout to the one
+# "No Test expectation was set for Rule present_rule" line, so this fixture exercises exactly one
+# unchecked expectation per directory and the record count is unambiguous.
+###
+- name: names a rule the file does not define
+  input:
+    Region: us-east-1
+  expectations:
+    rules:
+      absent_rule: PASS

@@ -25,10 +25,10 @@
       ],
       "results": [
         {
-          "ruleId": "ADVANCED_REGEX_NEGATIVE_LOOKBEHIND_RULE",
+          "ruleId": "advanced_regex_negative_lookbehind_rule.guard/default",
           "level": "error",
           "message": {
-            "text": "Check was not compliant as property [NotAwsAccessKey] to compare from is missing. Value traversed to [Path=[L:4,C:0] Value={\"Resources\":{\"MyBucket\":{\"Type\":\"AWS::S3::Bucket\",\"Properties\":{\"BucketEncryption\":{\"ServerSideEncryptionConfiguration\":[{\"ServerSideEncryptionByDefault\":{\"SSEAlgorithm\":\"AES256\"}}]},\"VersioningConfiguration\":{\"Status\":\"Enabled\"}}}}}]. "
+            "text": "Check was not compliant as property [NotAwsAccessKey] to compare from is missing. Value traversed to [Path=[L:5,C:1] Value={\"Resources\":{\"MyBucket\":{\"Type\":\"AWS::S3::Bucket\",\"Properties\":{\"BucketEncryption\":{\"ServerSideEncryptionConfiguration\":[{\"ServerSideEncryptionByDefault\":{\"SSEAlgorithm\":\"AES256\"}}]},\"VersioningConfiguration\":{\"Status\":\"Enabled\"}}}}}]. "
           },
           "locations": [
             {
@@ -37,7 +37,7 @@
                   "uri": "some/path"
                 },
                 "region": {
-                  "startLine": 4,
+                  "startLine": 5,
                   "startColumn": 1
                 }
               }
@@ -45,10 +45,10 @@
           ]
         },
         {
-          "ruleId": "ADVANCED_REGEX_NEGATIVE_LOOKBEHIND_RULE",
+          "ruleId": "advanced_regex_negative_lookbehind_rule.guard/default",
           "level": "error",
           "message": {
-            "text": "Check was not compliant as property [NotSecretAccessKey] to compare from is missing. Value traversed to [Path=[L:4,C:0] Value={\"Resources\":{\"MyBucket\":{\"Type\":\"AWS::S3::Bucket\",\"Properties\":{\"BucketEncryption\":{\"ServerSideEncryptionConfiguration\":[{\"ServerSideEncryptionByDefault\":{\"SSEAlgorithm\":\"AES256\"}}]},\"VersioningConfiguration\":{\"Status\":\"Enabled\"}}}}}]. "
+            "text": "Check was not compliant as property [NotSecretAccessKey] to compare from is missing. Value traversed to [Path=[L:5,C:1] Value={\"Resources\":{\"MyBucket\":{\"Type\":\"AWS::S3::Bucket\",\"Properties\":{\"BucketEncryption\":{\"ServerSideEncryptionConfiguration\":[{\"ServerSideEncryptionByDefault\":{\"SSEAlgorithm\":\"AES256\"}}]},\"VersioningConfiguration\":{\"Status\":\"Enabled\"}}}}}]. "
           },
           "locations": [
             {
@@ -57,7 +57,7 @@
                   "uri": "some/path"
                 },
                 "region": {
-                  "startLine": 4,
+                  "startLine": 5,
                   "startColumn": 1
                 }
               }
@@ -68,7 +68,7 @@
           "ruleId": "S3_BUCKET_LOGGING_ENABLED",
           "level": "error",
           "message": {
-            "text": "Check was not compliant as property [LoggingConfiguration] is missing. Value traversed to [Path=/Resources/MyBucket/Properties[L:13,C:6] Value={\"BucketEncryption\":{\"ServerSideEncryptionConfiguration\":[{\"ServerSideEncryptionByDefault\":{\"SSEAlgorithm\":\"AES256\"}}]},\"VersioningConfiguration\":{\"Status\":\"Enabled\"}}]. \n    Violation: S3 Bucket Logging needs to be configured to enable logging.\n    Fix: Set the S3 Bucket property LoggingConfiguration to start logging into S3 bucket.\n  "
+            "text": "Check was not compliant as property [LoggingConfiguration] is missing. Value traversed to [Path=/Resources/MyBucket/Properties[L:14,C:7] Value={\"BucketEncryption\":{\"ServerSideEncryptionConfiguration\":[{\"ServerSideEncryptionByDefault\":{\"SSEAlgorithm\":\"AES256\"}}]},\"VersioningConfiguration\":{\"Status\":\"Enabled\"}}]. \n    Violation: S3 Bucket Logging needs to be configured to enable logging.\n    Fix: Set the S3 Bucket property LoggingConfiguration to start logging into S3 bucket.\n  "
           },
           "locations": [
             {
@@ -77,8 +77,8 @@
                   "uri": "some/path"
                 },
                 "region": {
-                  "startLine": 13,
-                  "startColumn": 6
+                  "startLine": 14,
+                  "startColumn": 7
                 }
               }
             }
@@ -88,7 +88,7 @@
           "ruleId": "S3_BUCKET_PUBLIC_READ_PROHIBITED",
           "level": "error",
           "message": {
-            "text": "Check was not compliant as property [PublicAccessBlockConfiguration] is missing. Value traversed to [Path=/Resources/MyBucket/Properties[L:13,C:6] Value={\"BucketEncryption\":{\"ServerSideEncryptionConfiguration\":[{\"ServerSideEncryptionByDefault\":{\"SSEAlgorithm\":\"AES256\"}}]},\"VersioningConfiguration\":{\"Status\":\"Enabled\"}}]. "
+            "text": "Check was not compliant as property [PublicAccessBlockConfiguration] is missing. Value traversed to [Path=/Resources/MyBucket/Properties[L:14,C:7] Value={\"BucketEncryption\":{\"ServerSideEncryptionConfiguration\":[{\"ServerSideEncryptionByDefault\":{\"SSEAlgorithm\":\"AES256\"}}]},\"VersioningConfiguration\":{\"Status\":\"Enabled\"}}]. "
           },
           "locations": [
             {
@@ -97,8 +97,8 @@
                   "uri": "some/path"
                 },
                 "region": {
-                  "startLine": 13,
-                  "startColumn": 6
+                  "startLine": 14,
+                  "startColumn": 7
                 }
               }
             }
@@ -108,7 +108,7 @@
           "ruleId": "S3_BUCKET_PUBLIC_READ_PROHIBITED",
           "level": "error",
           "message": {
-            "text": "Check was not compliant as property [PublicAccessBlockConfiguration.BlockPublicAcls] to compare from is missing. Value traversed to [Path=/Resources/MyBucket/Properties[L:13,C:6] Value={\"BucketEncryption\":{\"ServerSideEncryptionConfiguration\":[{\"ServerSideEncryptionByDefault\":{\"SSEAlgorithm\":\"AES256\"}}]},\"VersioningConfiguration\":{\"Status\":\"Enabled\"}}]. "
+            "text": "Check was not compliant as property [PublicAccessBlockConfiguration.BlockPublicAcls] to compare from is missing. Value traversed to [Path=/Resources/MyBucket/Properties[L:14,C:7] Value={\"BucketEncryption\":{\"ServerSideEncryptionConfiguration\":[{\"ServerSideEncryptionByDefault\":{\"SSEAlgorithm\":\"AES256\"}}]},\"VersioningConfiguration\":{\"Status\":\"Enabled\"}}]. "
           },
           "locations": [
             {
@@ -117,8 +117,8 @@
                   "uri": "some/path"
                 },
                 "region": {
-                  "startLine": 13,
-                  "startColumn": 6
+                  "startLine": 14,
+                  "startColumn": 7
                 }
               }
             }
@@ -128,7 +128,7 @@
           "ruleId": "S3_BUCKET_PUBLIC_READ_PROHIBITED",
           "level": "error",
           "message": {
-            "text": "Check was not compliant as property [PublicAccessBlockConfiguration.BlockPublicPolicy] to compare from is missing. Value traversed to [Path=/Resources/MyBucket/Properties[L:13,C:6] Value={\"BucketEncryption\":{\"ServerSideEncryptionConfiguration\":[{\"ServerSideEncryptionByDefault\":{\"SSEAlgorithm\":\"AES256\"}}]},\"VersioningConfiguration\":{\"Status\":\"Enabled\"}}]. "
+            "text": "Check was not compliant as property [PublicAccessBlockConfiguration.BlockPublicPolicy] to compare from is missing. Value traversed to [Path=/Resources/MyBucket/Properties[L:14,C:7] Value={\"BucketEncryption\":{\"ServerSideEncryptionConfiguration\":[{\"ServerSideEncryptionByDefault\":{\"SSEAlgorithm\":\"AES256\"}}]},\"VersioningConfiguration\":{\"Status\":\"Enabled\"}}]. "
           },
           "locations": [
             {
@@ -137,8 +137,8 @@
                   "uri": "some/path"
                 },
                 "region": {
-                  "startLine": 13,
-                  "startColumn": 6
+                  "startLine": 14,
+                  "startColumn": 7
                 }
               }
             }
@@ -148,7 +148,7 @@
           "ruleId": "S3_BUCKET_PUBLIC_READ_PROHIBITED",
           "level": "error",
           "message": {
-            "text": "Check was not compliant as property [PublicAccessBlockConfiguration.IgnorePublicAcls] to compare from is missing. Value traversed to [Path=/Resources/MyBucket/Properties[L:13,C:6] Value={\"BucketEncryption\":{\"ServerSideEncryptionConfiguration\":[{\"ServerSideEncryptionByDefault\":{\"SSEAlgorithm\":\"AES256\"}}]},\"VersioningConfiguration\":{\"Status\":\"Enabled\"}}]. "
+            "text": "Check was not compliant as property [PublicAccessBlockConfiguration.IgnorePublicAcls] to compare from is missing. Value traversed to [Path=/Resources/MyBucket/Properties[L:14,C:7] Value={\"BucketEncryption\":{\"ServerSideEncryptionConfiguration\":[{\"ServerSideEncryptionByDefault\":{\"SSEAlgorithm\":\"AES256\"}}]},\"VersioningConfiguration\":{\"Status\":\"Enabled\"}}]. "
           },
           "locations": [
             {
@@ -157,8 +157,8 @@
                   "uri": "some/path"
                 },
                 "region": {
-                  "startLine": 13,
-                  "startColumn": 6
+                  "startLine": 14,
+                  "startColumn": 7
                 }
               }
             }
@@ -168,7 +168,7 @@
           "ruleId": "S3_BUCKET_PUBLIC_READ_PROHIBITED",
           "level": "error",
           "message": {
-            "text": "Check was not compliant as property [PublicAccessBlockConfiguration.RestrictPublicBuckets] to compare from is missing. Value traversed to [Path=/Resources/MyBucket/Properties[L:13,C:6] Value={\"BucketEncryption\":{\"ServerSideEncryptionConfiguration\":[{\"ServerSideEncryptionByDefault\":{\"SSEAlgorithm\":\"AES256\"}}]},\"VersioningConfiguration\":{\"Status\":\"Enabled\"}}]. \n    Violation: S3 Bucket Public Write Access controls need to be restricted.\n    Fix: Set S3 Bucket PublicAccessBlockConfiguration properties for BlockPublicAcls, BlockPublicPolicy, IgnorePublicAcls, RestrictPublicBuckets parameters to true.\n  "
+            "text": "Check was not compliant as property [PublicAccessBlockConfiguration.RestrictPublicBuckets] to compare from is missing. Value traversed to [Path=/Resources/MyBucket/Properties[L:14,C:7] Value={\"BucketEncryption\":{\"ServerSideEncryptionConfiguration\":[{\"ServerSideEncryptionByDefault\":{\"SSEAlgorithm\":\"AES256\"}}]},\"VersioningConfiguration\":{\"Status\":\"Enabled\"}}]. \n    Violation: S3 Bucket Public Write Access controls need to be restricted.\n    Fix: Set S3 Bucket PublicAccessBlockConfiguration properties for BlockPublicAcls, BlockPublicPolicy, IgnorePublicAcls, RestrictPublicBuckets parameters to true.\n  "
           },
           "locations": [
             {
@@ -177,8 +177,8 @@
                   "uri": "some/path"
                 },
                 "region": {
-                  "startLine": 13,
-                  "startColumn": 6
+                  "startLine": 14,
+                  "startColumn": 7
                 }
               }
             }
