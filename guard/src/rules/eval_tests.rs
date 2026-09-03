@@ -11571,7 +11571,7 @@ fn the_notice_asks_about_the_pairs_the_operator_compared(
 /// Past tense as of `69628df7`, and the sentence here used to be present tense -- "the refusal is the
 /// shape pair `([], "abc")`, which is there whether or not anything flattens". That pairing is now skipped
 /// before `contained_in` is called, so the refusal does not exist and the cell has moved out of this
-/// block; the note above `an_empty_left_hand_list_against_a_queried_string` records the move and the notice
+/// block; the note above `an_empty_list_against_a_queried_string` records the move and the notice
 /// that replaced it.
 ///
 /// The verdict question that cell also sits in -- `Empty NOT IN Str` against `Empty NOT IN Strs[*]`, where
@@ -11591,7 +11591,7 @@ fn the_notice_asks_about_the_pairs_the_operator_compared(
 /// paragraph is why it is worth saying. It read "and each `false` cell answers the same either way",
 /// stated as a property of the method. It is a property of the tree the method was run against. A promoted
 /// build made from `b8d3901e` still routes an empty left-hand list against a string through
-/// `contained_in`, so it answers 19 for `an_empty_left_hand_list_against_a_queried_string` where this tree
+/// `contained_in`, so it answers 19 for `an_empty_list_against_a_queried_string` where this tree
 /// answers 0 -- read off that artifact the cell would be marked `true`. The `false` marking is right, for
 /// the reason recorded above the cell itself; what was wrong is the claim that the named oracle reaches
 /// it.
