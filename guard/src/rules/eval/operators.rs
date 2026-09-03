@@ -381,9 +381,54 @@ pub(crate) struct NotComparable {
 /// AND WHY NEITHER ROUTE IS AVAILABLE TO A DIAGNOSTIC FIX, which is a stronger statement than
 /// "deferred" and is measured rather than argued. `incomparable_membership` exists because the notice
 /// has to know that a pairing refused while the clause still passed, and the result the operator
-/// returns cannot say that: instrumented immediately after `cmp.compare`, every notice-emitting clause
-/// carries zero `NotComparable` results, literal-right-hand shapes included, which are what the
-/// registry's five are. Carrying it needs one of two things. Promoting the refusal is the route above:
+/// returns cannot say that, for 287 of the 291 notice-emitting clause evaluations in the suite.
+/// Instrumented immediately after `cmp.compare`: 287 carry zero `NotComparable` results and FOUR carry
+/// one or more. An earlier revision of this line claimed all of them did, "literal-right-hand shapes
+/// included", and that universal is false -- both exceptions are literal-right-hand shapes, which is the
+/// case it singled out as covered.
+///
+/// The four are two distinct clauses appearing once per build target, both `some`-quantified:
+/// `some Multi.*.V NOT IN [/(?!x)((a+)+)b/]` at `eval_tests.rs:12831` and
+/// `some WithNonString[*] NOT IN "abc"` at `eval_tests.rs:11463`. The second is the sharpest instance of
+/// the tree refuting its own comment: that case is spelled
+/// `#[case::a_refusing_element_under_a_literal_operand(.., true)]`, and the trailing `true` is the
+/// notice-expectation flag, so a committed test asserts the notice fires for a shape this paragraph said
+/// could not happen.
+///
+/// `some` is the whole mechanism, which is why it is exactly these. `eval.rs` reads the gate under the
+/// query's own `match_all` -- `clause_passed(&outcome, match_all)` -- because "did this clause pass" means
+/// one value for `some` and every value otherwise. Under `some`, one passing value carries the clause
+/// while a sibling value's comparison sits in `NotComparable`, so the predicate fires, the clause passes,
+/// the notice goes out, and the operator's result set still holds the refusal. Under `all` the refusing
+/// value sinks the clause, `clause_passed` is false, and nothing is emitted. That is the 287.
+///
+/// THE CONCLUSION GETS STRONGER, not weaker, which is why this is a repair rather than a deletion. A
+/// result-reading implementation would work for precisely the two `some` shapes and be blind for the
+/// other 287 -- a partial-coverage trap rather than a clean impossibility, and worse to ship, because it
+/// appears to work on whichever shapes someone happens to test. The `NOT THE BUILT PAIR SET ITSELF` note
+/// on `membership_stops_after` below depends on this, and 287 of 291 supports it better than a universal
+/// that does not hold. Cited by name rather than by line, because a line number in a comment is a
+/// citation that the next insertion silently invalidates.
+///
+/// The registry half stands as written: the pinned corpus is clean, 25 notice-emitting evaluations across
+/// its 5 clause sites, every one with zero `NotComparable`. It is the generalization beyond the registry
+/// that was wrong.
+///
+/// Provenance, because these figures are a corrected recount and the first pass was believable. It
+/// reported 58 notice-emitting evaluations and 2 candidates with `NotComparable` > 0, both undercounts:
+/// libtest writes `test <name> ... ` to stdout with no trailing newline, so under `2>&1` the first
+/// `eprintln!` of each test is glued onto that partial line and a `^INSTR_` line anchor misses it. The
+/// tell was arithmetic rather than semantic -- two probe sites with an identical guard on the identical
+/// `usize` reported 0 and 52, which cannot both be right. Unanchored, both read 52. The figures here are
+/// the unanchored recount.
+///
+/// The positive control is what makes "287 carry zero" a measurement rather than a dead counter: a variant
+/// printing for every clause found 712 of 11084 evaluations carrying `NotComparable` > 0, firing on the
+/// expected kind mismatches. That 712 came from the ANCHORED run, so it is a floor rather than an exact
+/// count and nothing should rest on its value; recording it without that caveat would reintroduce the
+/// class of error this paragraph is fixing.
+///
+/// Carrying it needs one of two things. Promoting the refusal is the route above:
 /// 19 verdicts, and it is the `docs/KNOWN_ISSUES.md` change gated on those registry rules. Carrying it
 /// WITHOUT changing a verdict needs a state meaning "no match, something refused, and do not fail
 /// closed" -- a fourth `Membership` variant threaded through `Compare`, `ComparisonResult`,
