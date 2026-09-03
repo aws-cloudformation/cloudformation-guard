@@ -1044,17 +1044,34 @@ impl Comparator for InOperation {
                             _ => {}
                         }
 
-                        // The same question for the pairing that produces no `ListIn` to read it out of.
+                        // The arm that was never written, for the pairing that produces no `ListIn` to
+                        // read a collision out of.
                         //
-                        // `contained_in` builds a `ListIn` only when both operands are lists; a
-                        // list-valued left-hand side against anything else reaches its incomparable
-                        // catch-all. So the arm above cannot see a collision when the right operand
+                        // `contained_in` dispatches on the LEFT value first, so a list-valued left-hand
+                        // side enters its `List` arm and a right-hand value that is not a list reaches
+                        // that arm's catch-all, which answers `NotComparable`. Only two lists build a
+                        // `ListIn`. So the arm above cannot see a collision when the right operand
                         // resolves to scalars, which is what `[*]` on the right does: with `Pair` of
                         // `[1, 2]` and `Deny13` of `[1, 3]`, `Pair NOT IN Deny13[*]` paired a list with
                         // `1` and then with `3`, recorded nothing either time, and exited 0 while
                         // `Pair NOT IN Deny13` exited 19. One denylist, one value, and whether the
                         // right-hand query was spelled with `[*]` decided whether the value it names was
                         // admitted.
+                        //
+                        // `NotComparable` is the right answer for what that arm is asked -- a list and a
+                        // scalar are not comparable -- so this is an addition rather than a correction to
+                        // it. The reading "a pair that cannot be compared is not a match" is stated
+                        // explicitly for a scalar left-hand side, by the `Err(_) => {}` in `contained_in`'s
+                        // `rest` arm and by `is_one_of`'s `unwrap_or(false)`. For a list left-hand side it
+                        // was implemented by the ABSENCE of an arm here, which is the same reading applied
+                        // to the whole list when the question is about its elements. What was missing is
+                        // the element question, and that is what this asks.
+                        //
+                        // Which is also why no experiment at that `Err(_) => {}` could ever have moved
+                        // this bypass, and why the unwrapped spelling was always right: both sit in the
+                        // `rest` arm, guarded by the left value NOT being a list, and `Pair` is a list.
+                        // The two sites are separable for the same reason -- different arms for different
+                        // operand shapes -- so a change to either cannot regress the other.
                         //
                         // Keyed on the operand shapes rather than on the verdict the pairing produced,
                         // because the verdict is what was unreadable: reading `NotComparable` here would

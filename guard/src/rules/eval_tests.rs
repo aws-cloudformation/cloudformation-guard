@@ -9176,18 +9176,24 @@ fn a_denylist_named_by_a_variable_denies_what_the_same_list_written_out_denies(
 /// `contained_in` calls not comparable, that `NOT IN` over an incomparable pairing passes, and that
 /// `right_expanded_denies_nothing_yet` was therefore the tracked `docs/KNOWN_ISSUES.md` defect the
 /// `incomparable_membership` notice is about -- so the cell pinned exit 0 and the fix was deferred to
-/// whenever that notice became an error. The first clause is true; the conclusion does not follow.
-/// Measured: promoting the `Err(_) => {}` suppression in `contained_in`'s scalar-left-hand loop, which
-/// is the only place in the code that reading could live, leaves `Pair NOT IN Deny13[*]` at exit 0,
-/// unchanged. The bypass is not in that loop.
+/// whenever that notice became an error. The first clause is true; the conclusion does not follow, and
+/// it is refutable by reading the arm boundary rather than only by measurement. `contained_in`
+/// dispatches on the left value first: a list-valued left-hand side enters its `List` arm, and the
+/// `Err(_) => {}` that implements "not comparable means not a member" sits in the `rest` arm below,
+/// guarded by the left value NOT being a list. `Pair` is `[1, 2]`. So that suppression is unreachable
+/// for this clause, no experiment on it could have moved the verdict, and the measurement that promoting
+/// it leaves exit 0 unchanged is a corollary of the boundary rather than independent evidence.
 ///
 /// Where it is, is the two-query arm's element-collision tracking. That arm reads a collision out of a
 /// `Fail(Compare::ListIn(..))`, `contained_in` returns that shape only when BOTH operands are lists, and
 /// a right operand expanded to scalars pairs a list with a scalar at every step -- which is the arm that
 /// answers not comparable. So no collision was ever recorded, `collides` stayed empty, and the negation
-/// wrapper read a left-hand list the denylist verbatim names as having matched nothing. Same defect as
-/// the unwrapped spelling had, one operand shape over, and the arm now asks the element question
-/// directly for that shape instead of hoping for a `ListIn` that cannot arrive.
+/// wrapper read a left-hand list the denylist verbatim names as having matched nothing.
+///
+/// Which makes the repair an addition rather than a correction. `NotComparable` is the right answer for
+/// what that arm is asked; "not comparable is not a match" is stated explicitly for a scalar left-hand
+/// side and was implemented for a list one by the absence of an arm -- the whole-list reading standing in
+/// for a question about elements. The element question is what was missing, and supplying it is the fix.
 ///
 /// One sibling is left open on purpose, and it is in this table rather than only in a comment.
 /// `Nest NOT IN DenyNestedNine[*]` -- a `Nest` of `[1, [9]]` against a denylist of `[[9]]` -- is still
