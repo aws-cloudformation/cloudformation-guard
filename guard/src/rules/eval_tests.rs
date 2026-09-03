@@ -10751,6 +10751,122 @@ fn every_string_spelling_warns_through_the_channel_that_is_true_of_it(
     Ok(())
 }
 
+/// A pairing the operator skipped does not earn a sibling value a membership notice.
+///
+/// Why this exists: the test above asserts the suppression correctly and only over left operands whose
+/// SOLE value is the empty list, so it holds on exactly the population where the stale condition in
+/// `incomparable_membership` was harmless. `incomparable_membership` ORs `refused` over the whole
+/// (value, element) cross product, so as soon as the empty list has a sibling the refusal it contributed
+/// rides out on whichever pairing decided the clause. With `Mix` of `[[], "q"]` and `Ustr` of `"abc"`,
+/// `Mix[*] NOT IN Ustr` exited 0 and printed "could not be compared with any element of the list" -- and
+/// the value that decided it is `"q"` against `"abc"`, String against String, comparable, decided false.
+/// The `[]` that produced the refusal was compared with nothing: at `69628df7` the operator's two-query
+/// arm skips an empty left-hand list against every right-hand kind, incrementing `uncompared_pairings`
+/// and continuing for a string and taking `continue 'each_lhs` otherwise, both before `contained_in` is
+/// called. The condition still named the string as the operator's exclusion, so the predicate answered
+/// `refused` for a pairing the operator never built.
+///
+/// Why the sibling has to be a plain string not present in the haystack, which is the whole reason this
+/// shape is narrow. The notice gate also requires the clause to have passed, so the sibling has to be
+/// compared, contribute no refusal of its own, and still let the clause pass. An int or a map sibling
+/// refuses on its own pairing and the clause fails closed -- `Mix[*] NOT IN Uint` is exit 19 -- and a
+/// sibling the haystack contains fails the clause on the match, so `MixHit[*] NOT IN Ustr` over
+/// `[[], "abc"]` is exit 19 too. Both are suppressed by the verdict gate whatever this predicate answers,
+/// which is why the family reached only through a sibling like `"q"`.
+///
+/// The `NoEmpty` cell is the discriminator and not decoration: it is the same clause with the empty list
+/// dropped from the left operand, and it was silent before the fix while `Mix[*]` was not. That is what
+/// attributes the notice to the skipped pairing rather than to anything about `"q"`.
+///
+/// The `expected = true` cells are the reason this cannot pass by the channel going quiet, and they cover
+/// two different ways of going quiet because one cell does not cover both. A cell asserting only absence
+/// is satisfied by a predicate that answers `false` for everything, so each of the three paths that can
+/// set `refused` needs a cell that depends on it:
+///
+/// - `NoEmpty[*] NOT IN Uint` reaches the `(left, right)` catch-all. Its value is `"q"`, not a list, so it
+///   never enters the arm this fix touches -- it is the cell that says the notice still exists at all.
+/// - `Mix NOT IN Uint` is the same denylist UNEXPANDED, so its single value is the non-empty list
+///   `[[], "q"]` and it enters this arm, but its refusal comes from the inner element loop via
+///   `pair_refused("q", 7)` rather than from the shape refusal. It is the cell for that loop.
+///
+/// Widening the condition to "the left list MENTIONS an empty list" rather than "the value being paired IS
+/// one" is NOT pinned here, and the reason is that it is not a distinguishable repair: measured across a
+/// 210-clause grid of the mixed-left shapes it moves nothing this fix does not, because a value that is an
+/// empty list is incomparable to any non-list right operand, so the inner loop refuses on it wherever the
+/// shape refusal would have. Recorded so nobody adds a cell for a difference that cannot be observed.
+/// - `Ints NOT IN Uint` over `[1, 2]` and `7` depends on the shape refusal itself and on nothing else.
+///   Every element pair is Int against Int, which `pair_refused` answers, so the inner loop contributes
+///   nothing and `refused` is true only because a non-empty list against a non-list is a shape
+///   `contained_in` declines. Measured: disabling just the `if both_queried && !vacuous_match` assignment
+///   leaves the other two cells green and reddens this one, so without it a blanket suppression of this
+///   arm would pass the whole cell.
+///
+/// It passes rather than failing closed because the right operand is queried: the `(None, None)` arm drops
+/// the `NotComparable` -- which is the reason this notice exists -- so the value joins the unmatched set
+/// and `NOT IN` succeeds on a comparison that was never decided. `Ints NOT IN 7` written out is exit 19 on
+/// the same two values.
+#[rstest::rstest]
+// THE DEFECT. An empty list beside a string sibling that decides the clause, in both element orders and
+// at two sibling counts.
+#[case::an_empty_list_beside_a_string_sibling("Mix[*] NOT IN Ustr", false)]
+#[case::a_string_sibling_written_first("MixRev[*] NOT IN Ustr", false)]
+#[case::an_empty_list_beside_two_string_siblings("MixTwoStr[*] NOT IN Ustr", false)]
+// THE DISCRIMINATOR. The same clause with the empty list dropped, silent before the fix and after it.
+#[case::the_same_clause_without_the_empty_list("NoEmpty[*] NOT IN Ustr", false)]
+// THE CHANNEL STILL WORKS. A genuine incomparability with no empty list in the operand at all.
+#[case::a_genuine_refusal_still_warns("NoEmpty[*] NOT IN Uint", true)]
+// And the same denylist unexpanded, whose one value is a NON-empty list, so the shape refusal is owed and
+// a fix keyed on "mentions an empty list" rather than "is one" reddens here.
+#[case::a_non_empty_list_holding_an_empty_one_still_warns("Mix NOT IN Uint", true)]
+// The cell that depends on the shape refusal and nothing else, so suppressing this arm wholesale cannot
+// pass the table. Every element pair here is comparable; only the shape is not.
+#[case::a_shape_refusal_with_no_refusing_element_still_warns("Ints NOT IN Uint", true)]
+fn a_skipped_pairing_does_not_earn_a_sibling_a_membership_notice(
+    #[case] clause: &str,
+    #[case] expected: bool,
+) -> Result<()> {
+    // `Mix` and `MixRev` differ only in element order, because the predicate walks the cross product and
+    // an order-sensitive version of it would answer by whichever pairing it reached first. `NoEmpty` is
+    // `Mix` minus the empty list, so the two differ in exactly the thing under test.
+    const INPUT: &str = r#"
+    {
+        Ustr: "abc",
+        Uint: 7,
+        Mix: [[], "q"],
+        MixRev: ["q", []],
+        MixTwoStr: [[], "q", "z"],
+        NoEmpty: ["q"],
+        Ints: [1, 2]
+    }
+    "#;
+
+    let (status, notices) = status_and_deprecations(clause, INPUT)?;
+
+    // Asserted, because the notice gate requires the clause to have passed: a FAIL here suppresses the
+    // notice whatever the predicate answered, and the absence cells would then hold for the wrong reason.
+    assert_eq!(
+        Status::PASS,
+        status,
+        "`{}` must pass for the notice gate to be reached at all; a FAIL makes this cell vacuous",
+        clause
+    );
+
+    let membership = notices
+        .iter()
+        .any(|notice| notice.contains("could not be compared with any element"));
+
+    assert_eq!(
+        expected,
+        membership,
+        "`{}` must {} the membership notice. Recorded {:?}",
+        clause,
+        if expected { "emit" } else { "not emit" },
+        notices
+    );
+
+    Ok(())
+}
+
 /// Which two string spellings are actually inseparable, asserted on the resolution.
 ///
 /// Why this exists: the string impossibility was written as "`Strs[*]` resolves to the same `"abc"` that

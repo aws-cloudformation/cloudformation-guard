@@ -407,12 +407,27 @@ fn empty_reference_message(negated: bool) -> String {
 /// list". The literal `Empty NOT IN "abc"` prints that same notice and always has, so the query spellings
 /// joined their literal rather than losing a diagnostic.
 ///
-/// This predicate has not been told. The shape arm below still excludes a string from its `vacuous_match`,
-/// so it still answers `refused` for `([], "abc")` -- instrumented at its own return, `Empty NOT IN Ustr`
-/// gives `refused=true`. Nothing reaches the author from it, and not because the predicate knows better:
-/// the verdict gate reads `clause_passed`, which is false for a clause that compared nothing, so the notice
-/// is suppressed one layer down. Latent rather than live, and named here so it is not rediscovered as a new
-/// defect.
+/// This predicate had not been told, and the shape arm below has been told now: its `vacuous_match` is
+/// `lhsl.is_empty()` alone, because the operator skips an empty left-hand list against every right-hand
+/// kind and the condition named only the string.
+///
+/// It was described here as latent rather than live, on the reasoning that the verdict gate reads
+/// `clause_passed` and a clause whose only pairing was skipped compared nothing. That reasoning is sound
+/// and its scope was not: it holds for a left operand whose SOLE value is the empty list, which is the
+/// population the sentence was checked against, and `refused` is ORed over the whole cross product. Give
+/// the empty list a sibling that IS compared and the skipped pairing's refusal rides out on it. With `Mix`
+/// of `[[], "q"]` against a `Ustr` of `"abc"`, `Mix[*] NOT IN Ustr` exited 0 and printed "could not be
+/// compared with any element of the list" -- decided by `"q"` against `"abc"`, String against String,
+/// while the `[]` that produced the refusal was compared with nothing. So it was live, and the sole-value
+/// population is what hid it.
+///
+/// The family is narrow because the sibling has to do three things at once: be compared, contribute no
+/// refusal of its own, and still let the clause pass. A non-string sibling refuses on its own pairing and
+/// the clause fails closed, and a sibling the haystack contains fails it on the match; either way the
+/// verdict gate suppresses whatever this answered. Measured over a 210-clause grid of the mixed-left
+/// shapes, three reach it -- `Mix[*]`, `MixRev[*]` and `MixTwoStr[*]` against a queried string -- and the
+/// fix moves exactly those three and no verdict anywhere.
+/// `a_skipped_pairing_does_not_earn_a_sibling_a_membership_notice` carries them.
 ///
 /// The wider grid a repair has to survive is not this one, because a before-and-after only covers the
 /// shapes it enumerates. 928 further shapes -- the `[0]`/`[*]` spellings the impossibility proofs turn on, a
@@ -609,33 +624,36 @@ fn incomparable_membership(lhs: &[QueryResult], rhs: &[QueryResult]) -> bool {
                     // the outer loop, so `contained_in` is never called and `Empty NOT IN D13[*]` fails
                     // on the match rather than passing on a refusal.
                     //
-                    // THE STRING EXCLUSION BELOW IS STALE, and it is left in place rather than corrected
-                    // because changing it moves what this predicate answers. It reads "a string is the
-                    // exclusion in the operator, so it is the exclusion here", and that stopped being
-                    // true at `69628df7`: a string right operand paired with an empty left-hand list now
-                    // takes a skip of its own in that arm before `contained_in` is called (the
-                    // `uncompared_pairings` skip under `elements.is_empty()`), so `Empty NOT IN Ustr` does
-                    // NOT reach the refusal. This
-                    // condition still says it does, so the line below answers `refused` for a pair the
-                    // operator never builds -- instrumented at this function's return, `Empty NOT IN Ustr`
-                    // gives `refused=true` at `69628df7`.
+                    // An empty left-hand list, whatever the right operand is, because the operator skips
+                    // the pairing for every right-hand kind and this condition used to name only one of
+                    // them.
                     //
-                    // No notice goes out on it, and the reason is one layer down rather than here: the gate
-                    // in `binary_operation` also requires `clause_passed`, which is false for a clause that
-                    // compared nothing, and a clause whose only pairing was skipped compared nothing.
-                    // Measured, both polarities: `Empty NOT IN Ustr` and `Empty IN Ustr` exit 0 printing
-                    // `vacuous_comparison_notice` and neither prints the membership wording.
-                    // `every_string_spelling_warns_through_the_channel_that_is_true_of_it` pins that across
-                    // the whole string family, and
-                    // `the_notice_asks_about_every_granularity_the_operator_decides_at` no longer carries
-                    // `Empty NOT IN Ustr` as its moved cell -- the note above that cell records the move.
+                    // It carried `&& !matches!(right, PathAwareValue::String(_))`, which read "a string is
+                    // the exclusion in the operator, so it is the exclusion here". That stopped being true
+                    // at `69628df7`, which gave the string pairing a skip of its own: an empty left-hand
+                    // list against a string increments `uncompared_pairings` and `continue`s, and against
+                    // anything else takes `continue 'each_lhs`. Both leave before `contained_in` is called,
+                    // so no right-hand kind reaches the refusal and the whole `lhsl.is_empty()` case is a
+                    // pairing the operator never builds.
                     //
-                    // So this is a false alarm held back by a condition that does not know about it. Aligning
-                    // it means dropping `!matches!(right, PathAwareValue::String(_))`, which is a change to
-                    // what the predicate answers and belongs with a re-run of the grid at the top of this
-                    // file rather than with a comment repair.
-                    let vacuous_match =
-                        lhsl.is_empty() && !matches!(right, PathAwareValue::String(_));
+                    // What the stale half cost, which is a live false notice rather than dead code. The
+                    // earlier note here said no notice goes out because the gate in `binary_operation` also
+                    // requires `clause_passed`, and a clause whose only pairing was skipped compared
+                    // nothing. That is true of a left operand whose ONLY value is the empty list, which is
+                    // the population it was checked against, and false as soon as the empty list has a
+                    // sibling: `refused` ORs over the whole cross product, so a skipped pairing's refusal
+                    // rides out on a sibling that was compared and decided the clause. With `Mix` of
+                    // `[[], "q"]` and `Ustr` of `"abc"`, `Mix[*] NOT IN Ustr` exits 0 and printed the
+                    // membership notice, whose subject is `"q"` against `"abc"` -- String against String,
+                    // comparable, decided false -- while the `[]` that produced the refusal was compared
+                    // with nothing. Dropping `[]` from the left operand drops the notice, which is what
+                    // attributes it to the skip.
+                    //
+                    // `a_skipped_pairing_does_not_earn_a_sibling_a_membership_notice` is that shape with the
+                    // `NoEmpty` control beside it, and
+                    // `every_string_spelling_warns_through_the_channel_that_is_true_of_it` is the
+                    // sole-value population this condition was right about.
+                    let vacuous_match = lhsl.is_empty();
                     if both_queried && !vacuous_match {
                         refused = true;
                     }
