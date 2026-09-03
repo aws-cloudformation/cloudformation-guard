@@ -1283,15 +1283,28 @@ impl Comparator for InOperation {
                 let mut diff = Vec::with_capacity(lhs_selected.len());
                 let mut collides = Vec::new();
                 let mut unanswerable: Vec<ValueEvalResult> = Vec::new();
+                // A fourth outcome for a left-hand value, beside matched, unmatched and unanswerable: no
+                // comparison was made of it at all. The written-out string arm has always had this one --
+                // `(None, Some)` decomposes a list left-hand side into one `string_in` per element, so an
+                // EMPTY list produces no results and the clause passes in both polarities -- and this arm
+                // had no way to say it. The count is what the aggregate below reads to stay silent.
+                let mut no_comparison = 0_usize;
                 'each_lhs: for eachl in &lhs_selected {
                     let mut unanswerable_against: Option<(Rc<PathAwareValue>, StringContainment)> =
                         None;
                     let mut unanswerable_membership: Option<(Rc<PathAwareValue>, Unanswered)> =
                         None;
                     let mut element_collision = false;
+                    let mut uncompared_pairings = 0_usize;
                     for eachr in &rhs_selected {
                         // The vacuous match, for a right operand that denotes a SET of candidate values.
                         // A string does not, which is the one exclusion below.
+                        //
+                        // THREE OUTCOMES, and the third one is what the exclusion routes to: a string
+                        // right operand paired with an empty left-hand list is not a match and not a miss
+                        // either, it is a pairing no comparison was made of. Excluding it from the match
+                        // was right and recording it as unmatched was not, and that second half is what
+                        // made `Empty IN Str` exit 19 where `Empty IN "abc"` exits 0.
                         //
                         // An empty left-hand list is vacuously a subset of a set, so it passes `IN` and
                         // fails `NOT IN`. `contained_in` supplies that from its list-against-list arm,
@@ -1335,17 +1348,35 @@ impl Comparator for InOperation {
                         //
                         // AND NO REPAIR HERE CAN SERVE BOTH STRING SPELLINGS, by the construction
                         // `27383c98` established for the arm further down. `Strs` of `["abc"]` has one
-                        // entry, so `Strs[*]` and `Strs[0]` resolve to the inner string -- the same value
-                        // `Str` resolves to -- and this loop receives one identical value either way,
-                        // while the oracle owes them opposite verdicts: `Str` IS the haystack and answers
-                        // as `"abc"` does, PASS; `Strs[*]` names the entry set and answers as `["abc"]`
-                        // does, FAIL. So at most one can be right, and the string is served rather than
-                        // the entry set for two reasons pointing the same way. `Str` at 19 is an
+                        // entry, so `Strs[0]` and `Strs[*]` both resolve to `String("abc")` at the same
+                        // path `/Strs/0` and this loop receives one identical `QueryResult` either way,
+                        // while the oracle owes them opposite verdicts: `Strs[0]` IS an operand whose
+                        // value is the haystack and answers as `"abc"` does, PASS; `Strs[*]` names the
+                        // entry set and answers as `["abc"]` does, FAIL. So at most one can be right, and
+                        // the haystack reading is served rather than the entry set for two reasons
+                        // pointing the same way.
+                        //
+                        // The `[0]`/`[*]` pair and NOT `Strs[*]` against `Str`, which is how this used to
+                        // be written. `Strs[*]` resolves at `/Strs/0` and `Str` at `/Str`, so a path
+                        // predicate separates those two and they are not forced to move together --
+                        // measured, and asserted by
+                        // `the_string_pair_that_cannot_be_separated_is_the_index_and_wildcard_spellings`.
+                        // `Str` at 19 is an
                         // over-denial, which the arm below already records as the worse direction for a
                         // policy tool, and `Str` at 0 is the answer `found_in_string` documents and the
                         // parent shipped. `Empty NOT IN Strs[*]` at PASS is the residual that leaves, and
                         // it sits in the table beside `Empty NOT IN Strs` at FAIL so the disagreement is
                         // visible without reading this.
+                        //
+                        // That impossibility is confined to `NOT IN`, and reading it as covering the pair
+                        // is what left eight cells over-denied for a release. The two candidate oracles
+                        // disagree only in that polarity -- `"abc"` is 0 and `["abc"]` is 19 -- and on `IN`
+                        // they AGREE at 0, so serving the string there costs the entry set nothing and
+                        // `Empty IN Strs[*]` owes PASS on either reading. It was 19, along with
+                        // `Empty IN Str`, `Strs[0]`, `Strs2[*]`, both `Resources.*.Properties.Name`
+                        // spellings and the mixed `Lists[*]`, because a skipped pairing still pushed the
+                        // value into `diff`. The skip below is what closes them, and it moves no `NOT IN`
+                        // cell at all, so the residual above is exactly as it was.
                         //
                         // Rejected: also gating on `rhs_selected.len() > 1`, which fixes a two-entry
                         // string denylist while leaving the one-entry spelling above. It buys one cell by
@@ -1377,21 +1408,51 @@ impl Comparator for InOperation {
                         // oracle owes them opposite verdicts -- `D1[0]` IS the operand and answers as `5`
                         // does, 19, and `D1[*]` names the entry set and answers as `[5]` does, 0.
                         //
-                        // The asymmetry with `NOT IN` is the whole reason that polarity was repairable:
-                        // `Empty NOT IN 5` and `Empty NOT IN [5]` are BOTH 19, one by `NotComparable`
-                        // failing closed and one by this match negated, so one answer serves both
-                        // spellings. On `IN` they are 19 and 0, so no answer does.
+                        // The asymmetry with `NOT IN` is why the non-string kinds were repairable in that
+                        // polarity: `Empty NOT IN 5` and `Empty NOT IN [5]` are BOTH 19, one by
+                        // `NotComparable` failing closed and one by this match negated, so one answer
+                        // serves both spellings. On `IN` they are 19 and 0, so no answer does.
+                        //
+                        // A CELL, NOT A POLARITY, and this comment used to say "the whole reason that
+                        // polarity was repairable" -- which the string kind inverts, eighty lines above
+                        // where it is already recorded. `Empty NOT IN "abc"` is 0 and
+                        // `Empty NOT IN ["abc"]` is 19, so the two oracles DISAGREE on `NOT IN` there,
+                        // while `Empty IN "abc"` and `Empty IN ["abc"]` are both 0 and AGREE. Measured
+                        // across all six literal kinds: every non-string kind gives IN 19 / NOT IN 19 bare
+                        // and IN 0 / NOT IN 19 wrapped, so the agreement is in `NOT IN`; the string gives
+                        // 0/0 bare and 0/19 wrapped, so it is in `IN`. What is fixable is the
+                        // (non-string, `NOT IN`) cell and the (string, `IN`) cell -- one per kind family,
+                        // in opposite polarities. Reading either as a whole polarity is what left the other
+                        // family's fixable cell sitting there.
+                        //
+                        // The pair above is also not enough for the residual it is cited for, because both
+                        // `D1[0]` and `D1[*]` resolve at `/D1/0` and so both paths end in an index. A
+                        // predicate keyed on that -- last path segment is a digit -- treats them alike and
+                        // escapes the pair, while moving `Empty IN Map`, `N`, `B`, `Flt` and `Nullv` (at
+                        // `/Map`, `/N`, `/B`, `/Flt`, `/Nullv`) to the 19 their literals owe and leaving
+                        // `D1[*]`, `D13[*]`, `Maps[*]` and `Strs` alone -- which is exactly the price this
+                        // comment quotes to reject the `unanswerable` repair. `OneKeyMap` of
+                        // `{"Inner": 5}` is what forecloses it: `OneKeyMap.Inner` and `OneKeyMap.*` resolve
+                        // to one identical `Int(5)` at one identical `/OneKeyMap/Inner`, `Location`
+                        // included and no digit in either, and owe opposite verdicts by the same
+                        // construction -- 19 as `5` and 0 as `[5]`. So a path-shaped repair for `Map`
+                        // breaks `OneKeyMap.*`.
+                        // `a_digit_free_query_pair_resolves_identically_and_forecloses_a_path_shaped_repair`
+                        // asserts the identity where it lives, on the `QueryResult`.
                         //
                         // Two repairs serving the other side were built and measured. Firing only for a
-                        // list-valued result moves 21 cells and is a revert: `[*]` over a scalar denylist
-                        // resolves to scalars, so the check becomes a no-op for the shape it exists for
-                        // and `Empty NOT IN D13[*]` returns to 0. Recording the pairing as unanswerable
-                        // is surgical -- every cell it moves is an `IN` cell, no `NOT IN` cell moves --
-                        // and brings seven to the 19 their literals owe while taking `Empty IN Strs`,
-                        // `D13[*]`, `D1[*]`, `Maps[*]` and `Mixed[*]` from 0 to 19. `Strs` is in that
-                        // list because this check fires for any non-string result, a list included, so an
-                        // unexpanded list denylist is answered here and never reaches `contained_in`'s
-                        // list arm. That is over-denial, which the collision arm below records as the
+                        // list-valued result reddens 27 rstest cells at `b8d3901e` and is a revert: `[*]`
+                        // over a scalar denylist resolves to scalars, so the check becomes a no-op for the
+                        // shape it exists for and `Empty NOT IN D13[*]` returns to 0. Recording the
+                        // pairing as unanswerable is surgical -- every cell it moves is an `IN` cell, no
+                        // `NOT IN` cell moves -- and brings seven to the 19 their literals owe while
+                        // taking THIRTEEN the other way, among them `Empty IN Strs`, `D13[*]`, `D1[*]`,
+                        // `Maps[*]` and `Mixed[*]` from 0 to 19. `Strs` is in that list because this check
+                        // fires for any non-string result, a list included, so an unexpanded list denylist
+                        // is answered here and never reaches `contained_in`'s list arm -- instrumented at
+                        // that call site, `Empty IN Strs` and `Empty NOT IN Strs` make zero calls to it
+                        // while `D13 NOT IN Strs` and `Strs2 NOT IN Strs` make one each. That is
+                        // over-denial, which the collision arm below records as the
                         // worse direction for a policy tool, and `SomeList IN Allowed[*]` is the ordinary
                         // allowlist spelling, so it would start reporting a violation whenever the list
                         // it checks is empty. It is also the answer the `Denies[0]` proof below already
@@ -1400,6 +1461,30 @@ impl Comparator for InOperation {
                         // PASS.
                         // `the_in_polarity_of_a_queried_scalar_right_operand_has_no_repair_in_this_arm`
                         // carries the pair and both measured prices.
+                        //
+                        // Seven for THIRTEEN, and this comment said seven for five. The five were the
+                        // losses visible in the two tables the author had open; seven more are `Empty IN`
+                        // cells pinned at PASS in
+                        // `an_empty_left_hand_list_is_vacuously_in_every_spelling_of_a_denylist` and
+                        // `a_list_denylist_holding_a_nested_list_denies_only_what_it_names`, and the
+                        // thirteenth had no cell anywhere -- `Empty IN MixedRev[*]` goes 0 to 19 while its
+                        // literal `[5, "abc"]` stays 0, and every one of `MixedRev`'s four occurrences was
+                        // a `NOT IN` cell. So the repair loses on count AND on direction rather than
+                        // winning narrowly on one. The conclusion is unchanged and now stronger.
+                        //
+                        // WHICH SHAPE OF FIGURE IS SAFE, because the wrong number came from the method
+                        // this comment recommends. A count over a hand-authored population of cells is not
+                        // a property of the code: it changes when someone writes another cell, and it is
+                        // silently short by however many nobody wrote. The predicate beside it -- every
+                        // moved cell is an `IN` cell -- survives, because enlarging the population cannot
+                        // falsify "all of them are". At this commit the same repair reddens 22 cells rather
+                        // than 19, eight gains and fourteen losses, because the `OneKeyMap` pair added one
+                        // of each and the `MixedRev[*]` cell made the thirteenth loss observable. The code
+                        // did not move between those figures; the population did.
+                        // Prefer a predicate over the moved set; failing that, a count
+                        // over a CLOSED population computed inside the test, the way `3fe2c62d` counts two
+                        // of 28 subset-times-quantifier-times-role combinations; failing that, a clause
+                        // sweep, which at least cannot miss a cell nobody authored.
                         //
                         // A match, not a collision. The collision arm below asks whether the denylist
                         // names one of the left-hand elements, and an empty list has none to name, so no
@@ -1419,11 +1504,20 @@ impl Comparator for InOperation {
                         // denylist names, and
                         // `the_vacuous_subset_reading_belongs_to_a_right_operand_that_denotes_a_set` pins
                         // the right-operand kinds with each kind's literal spelling beside it.
-                        if !matches!(&**eachr, PathAwareValue::String(_)) {
-                            if let PathAwareValue::List((_, elements)) = &**eachl {
-                                if elements.is_empty() {
-                                    continue 'each_lhs;
+                        //
+                        // `continue` and not `continue 'each_lhs` for the string: the pairing is skipped,
+                        // the value is not. A later right-hand result that is not a string still reaches
+                        // the vacuous match below, which is the "any right-hand value will do" reading this
+                        // loop applies everywhere else, and it is why `Empty NOT IN Mixed[*]` over
+                        // `["abc", 5]` still denies in either element order.
+                        if let PathAwareValue::List((_, elements)) = &**eachl {
+                            if elements.is_empty() {
+                                if matches!(&**eachr, PathAwareValue::String(_)) {
+                                    uncompared_pairings += 1;
+                                    continue;
                                 }
+
+                                continue 'each_lhs;
                             }
                         }
 
@@ -1758,6 +1852,33 @@ impl Comparator for InOperation {
                         }
                     }
 
+                    // Every pairing was skipped, so nothing was asked about this value and it is neither
+                    // matched nor unmatched. Recording it in `diff` is what made the query spelling of a
+                    // string right operand disagree with the written-out one in the `IN` polarity:
+                    // `Empty IN Str` exited 19 where `Empty IN "abc"` exits 0, and the same for
+                    // `Strs[0]`, `Strs[*]`, `Strs2[*]` and `Resources.*.Properties.Name`.
+                    //
+                    // A count rather than "is this an empty list", and the two are equivalent today: the
+                    // only skip above is the string pairing, and ANY non-string right-hand result takes an
+                    // empty list out through `continue 'each_lhs`, so reaching this line with one at all
+                    // means every pairing was skipped. Measured -- rewriting this as `uncompared_pairings
+                    // > 0` moves nothing across a 140-clause CLI grid of the string-and-vacuous shapes, in
+                    // both element orders. That grid's clause list is not committed either, so treat the
+                    // number as a note on what was run; the reproducible half of this claim is the argument
+                    // above it, which holds by inspection of the two `continue`s.
+                    // So this is defensive in the same way the `Unanswerable` arm below is:
+                    // it costs a counter, and it is what stops a second skip added here later from reading
+                    // "one pairing was not compared" as "none of them were", which is the whole defect this
+                    // repairs one polarity of.
+                    //
+                    // The `!is_empty` guard keeps a left-hand value with no right-hand results to compare
+                    // against on its existing path, which is the same reason the skip above sits inside
+                    // the loop rather than over it.
+                    if !rhs_selected.is_empty() && uncompared_pairings == rhs_selected.len() {
+                        no_comparison += 1;
+                        continue;
+                    }
+
                     if element_collision {
                         collides.push(Rc::clone(eachl));
                     }
@@ -1791,8 +1912,45 @@ impl Comparator for InOperation {
                 // asked, and the flag is true with one of the two values perfectly answerable.
                 let unanswerable_and_nothing_unmatched =
                     !unanswerable.is_empty() && diff.is_empty();
+
+                // Nothing was compared, so there is nothing to report -- which is a verdict of PASS in both
+                // polarities, and the reason this arm CAN reach PASS/PASS after all. The comment on
+                // `an_empty_list_is_in_a_string` said it could not, on the grounds that skipping the
+                // value gives PASS/FAIL and recording it gives FAIL/PASS. Both are true of those two moves;
+                // the third move is to emit no result at all, which is exactly what the `(None, Some)`
+                // string arm does with an empty list and what the sibling comment identified as the fix
+                // while placing it in another arm. `EvalResult::Result(vec![])` is already the shape that
+                // carries it -- `Empty IN "abc"` and `Empty NOT IN "abc"` are both exit 0 today and that arm
+                // pushes nothing.
+                //
+                // Every value, not any: with one left-hand value uncompared and another matched, the ones
+                // that WERE compared all matched and `Success` is the honest aggregate. That is the literal
+                // spelling's behavior too, since it unions per-value results and an empty list contributes
+                // none. This is the condition with a price attached, and it is measured rather than
+                // argued: with a `Lists` of `[[], ["abc"]]`, weakening this to `no_comparison > 0` takes
+                // `Lists[*] NOT IN Str` from 19 to 0 while `Lists[*] NOT IN "abc"` stays at 19 -- a
+                // denylist admitting a value one of its haystacks contains verbatim. `ListsRev` of
+                // `[["abc"], []]` moves with it, so the cell is not an artifact of which value the query
+                // reaches first. `an_uncompared_empty_list_does_not_silence_its_siblings` carries both.
+                //
+                // `!lhs_selected.is_empty()` because `0 == 0` otherwise, which would silence the aggregate
+                // for a left-hand query that resolved to nothing and change a verdict this fix is not about.
+                //
+                // WHY THE AGGREGATE NEEDS SUPPRESSING AT ALL, stated as the shape rather than as this
+                // instance, because the shape is worth recognising elsewhere. The `Success` above is decided
+                // by `diff.is_empty()`, and an empty `diff` has two causes that mean opposite things:
+                // everything that was asked matched, or nothing was asked. A predicate over the ABSENCE of
+                // recorded failures cannot separate those, so it reads "no comparison happened" as "every
+                // comparison succeeded" and answers PASS on `IN` with a match that examined nothing. That is
+                // the same conflation `compared_nothing` guards in `eval.rs`, one level up, where the notice
+                // fires precisely when a clause is about to pass on the strength of no per-value result at
+                // all. Any counter of failures used as a verdict has this hole; the fix is to track the
+                // third state rather than to infer it from the first two being empty.
+                let nothing_was_compared =
+                    !lhs_selected.is_empty() && no_comparison == lhs_selected.len();
+
                 results.extend(unanswerable);
-                if !unanswerable_and_nothing_unmatched {
+                if !unanswerable_and_nothing_unmatched && !nothing_was_compared {
                     results.push(if diff.is_empty() {
                         ValueEvalResult::ComparisonResult(ComparisonResult::Success(
                             Compare::QueryIn(QueryIn::new(diff, lhs_selected, rhs_selected)),

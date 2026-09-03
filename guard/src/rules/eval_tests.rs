@@ -9864,15 +9864,31 @@ fn an_empty_left_hand_list_is_vacuously_in_every_spelling_of_a_denylist(
 /// `the_in_polarity_of_a_queried_scalar_right_operand_has_no_repair_in_this_arm` carries the proof that
 /// it cannot be closed here rather than the assertion that it is fine.
 ///
+/// Two `IN` columns, and only one of them is unfixable. The non-string kinds are the unfixable one, for the
+/// reason that proof gives. The STRING kind's `IN` column was fixable all along and is fixed below: the two
+/// candidate oracles for a query that resolves to a string disagree only in the `NOT IN` polarity -- `"abc"`
+/// is 0 and `["abc"]` is 19 -- and agree at 0 on `IN`, so there is one answer to give and giving it costs
+/// the entry-set reading nothing. Reading the `27383c98` impossibility as covering both polarities is what
+/// left eight cells over-denied; the note on `an_empty_list_is_in_a_string` below has the mechanism.
+///
 /// AND NO REPAIR CONFINED TO THIS ARM CAN SERVE BOTH STRING SPELLINGS, which is the construction
 /// `27383c98` established and the reason `Strs[*]` sits in this table at PASS rather than being fixed
-/// too. `Strs` is `["abc"]`, one entry, so `Strs[*]` and `Strs[0]` resolve to the inner string `"abc"`
-/// -- the same value `Str` resolves to -- and `compare` receives one identical value either way. The
-/// oracle owes them opposite verdicts. `Str` IS the haystack, so its answer is the literal `"abc"`'s
-/// answer, PASS. `Strs[*]` names the entry set `{"abc"}`, so its answer is the literal `["abc"]`'s
-/// answer, FAIL. Anything written at that site moves both together, so at most one can be right, and
-/// the pair is in the table with `Empty NOT IN Strs` -- FAIL, from `contained_in`'s list arm, untouched
-/// -- so the disagreement is visible without reading a comment.
+/// too. `Strs` is `["abc"]`, one entry, so `Strs[0]` and `Strs[*]` both resolve to the inner string
+/// `String("abc")` at the same path `/Strs/0`, `Location` included, and `compare` receives one identical
+/// `QueryResult` either way. The oracle owes them opposite verdicts. `Strs[0]` IS a single operand whose
+/// value is the haystack, so its answer is the literal `"abc"`'s answer, PASS. `Strs[*]` names the entry
+/// set `{"abc"}`, so its answer is the literal `["abc"]`'s answer, FAIL. Anything written at that site
+/// moves both together, so at most one can be right, and the pair is in the table with
+/// `Empty NOT IN Strs` -- FAIL, from the vacuous match, untouched -- so the disagreement is visible
+/// without reading a comment.
+///
+/// `Strs[0]` versus `Strs[*]`, and this doc used to pair `Strs[*]` with `Str`. That pair does not carry
+/// the argument: `Strs[*]` resolves at `/Strs/0` and `Str` at `/Str`, so a predicate over the path
+/// separates them and nothing at the site has to move them together.
+/// `the_string_pair_that_cannot_be_separated_is_the_index_and_wildcard_spellings` asserts the identity on
+/// the `QueryResult` for the `[0]`/`[*]` pair and the difference for `Str`, which is where the claim
+/// lives. `Str` is still the spelling whose answer is SERVED, for the reason below; it is just not the
+/// spelling that makes the choice forced.
 ///
 /// Which one we serve, and why that is not a coin flip. `Str` at 19 is an OVER-denial: it denies a
 /// value nothing named and reports a match against a string no comparison examined. `Strs[*]` at 0 is
@@ -9887,13 +9903,25 @@ fn an_empty_left_hand_list_is_vacuously_in_every_spelling_of_a_denylist(
 /// fail against a two-entry one with nothing in the clause to explain it. `Strs2[*]` is here at PASS
 /// rather than FAIL to record that this is a residual and not an oversight.
 ///
-/// The `IN` polarity is here because the fix moves it too, and the cell that is still wrong is named
-/// rather than omitted. Restoring the parent's answer for a string right operand restores both halves
-/// of it: `Empty IN Str` goes back to FAIL, where `Empty IN "abc"` is PASS. That divergence predates
-/// this branch -- measured at `27383c98`, where `Empty IN Str` is exit 19 -- and closing it needs the
-/// `(None, Some)` string arm, which produces no comparison at all for an empty left-hand list and so
-/// passes both polarities. This arm cannot reach PASS/PASS: skipping the value gives PASS on `IN` and
-/// FAIL on `NOT IN`, and recording it gives the reverse. So the sibling is recorded, not fixed.
+/// The `IN` polarity is here because the fix moves it too, and it is now fixed rather than recorded.
+/// `Empty IN Str` was FAIL where `Empty IN "abc"` is PASS -- a divergence older than this branch,
+/// measured at `27383c98` at exit 19 -- along with `Strs[0]`, `Strs[*]`, `Strs2[*]`, both
+/// `Resources.*.Properties.Name` spellings and the mixed `Lists[*]`. Eight cells, every one an
+/// over-denial: a policy tool reporting a violation of a denylist that examined nothing.
+///
+/// THIS ARM CAN REACH PASS/PASS, and the claim that it could not is what left them. That claim priced two
+/// moves -- skipping the value gives PASS/FAIL, recording it gives FAIL/PASS -- and both are true. The
+/// third move is to emit no result for the value at all, which is exactly what the `(None, Some)` string
+/// arm does: it decomposes a list left-hand side into one `string_in` per element, so an EMPTY list
+/// produces none and `EvalResult::Result(vec![])` passes both polarities. That is the mechanism this doc
+/// already named as the fix while placing it in another arm; the two-query arm needed a fourth outcome for
+/// a left-hand value, not a different verdict for one.
+///
+/// What it does NOT reach is the `NOT IN` half of the `Strs[0]`-versus-`Strs[*]` impossibility above,
+/// because that one is real: those two spellings deliver one identical value and the two candidate oracles
+/// owe it opposite verdicts in that polarity. They agree on `IN`, both at PASS, which is why the pair
+/// blocks one polarity and not the other. `Empty NOT IN Strs[*]` is still the residual, still at PASS, and
+/// still sitting beside `Empty NOT IN Strs` at FAIL.
 #[rstest::rstest]
 // THE REGRESSION. A string right operand, in every spelling that reaches the two-query arm. All PASS,
 // which is what the written-out spelling below has always answered.
@@ -9912,9 +9940,24 @@ fn an_empty_left_hand_list_is_vacuously_in_every_spelling_of_a_denylist(
 )]
 // The spelling that was always right, and the one the four above are made to agree with.
 #[case::an_empty_list_is_not_vacuously_in_a_string_literal("Empty NOT IN \"abc\"", Status::PASS)]
-// THE PAIR, and the residual. `Strs` is a list, so this reaches `contained_in`'s list arm and denies
-// vacuously; `Strs[*]` resolves to the same `"abc"` that `Str` does and cannot be told apart from it, so
-// it keeps the string answer. One of the two is wrong and no predicate over the value can fix which.
+// THE PAIR, and the residual. `Strs` is a list, so the vacuous match at the top of the right-hand loop
+// answers it and denies; `Strs[*]` resolves to the entry `"abc"` and keeps the string answer. One of the
+// two is wrong and nothing at that site can fix which.
+//
+// Two corrections to what this comment used to say, both measured. It said `Strs` "reaches
+// `contained_in`'s list arm" -- it does not. Instrumenting that call site: `Empty NOT IN Strs` and
+// `Empty IN Strs` make ZERO calls to `contained_in`, while `D13 NOT IN Strs` and `Strs2 NOT IN Strs`
+// make one each, so the probe is shown to fire and the zero is a real absence rather than a dead
+// counter. The check fires for any non-string right-hand result, a list included, so the denial comes
+// from the vacuous match and never from `contained_in`. `operators.rs` said this all along and this
+// comment contradicted it.
+//
+// And it named the wrong pair. `Strs[*]` and `Str` are NOT indistinguishable -- `Strs[*]` resolves at
+// `/Strs/0` and `Str` at `/Str`, so a predicate over the path separates them. The pair that genuinely
+// cannot be separated is `Strs[0]` versus `Strs[*]`, both `String("abc")` at `/Strs/0`, which is the
+// same `[0]`-versus-`[*]` construction the `D1` and `OneKeyMap` proofs use.
+// `the_string_pair_that_cannot_be_separated_is_the_index_and_wildcard_spellings` asserts both halves.
+// The conclusion is unchanged; only the pair supporting it was wrong.
 #[case::an_empty_list_is_vacuously_in_an_unexpanded_string_denylist(
     "Empty NOT IN Strs",
     Status::FAIL
@@ -9941,11 +9984,17 @@ fn an_empty_left_hand_list_is_vacuously_in_every_spelling_of_a_denylist(
 #[case::an_empty_list_is_vacuously_in_an_int_literal("Empty NOT IN 5", Status::FAIL)]
 #[case::an_empty_list_is_vacuously_in_a_bool("Empty NOT IN B", Status::FAIL)]
 #[case::an_empty_list_is_vacuously_in_a_bool_literal("Empty NOT IN true", Status::FAIL)]
-// THE `IN` POLARITY. The string exclusion restores the parent in both directions, so `Str` is FAIL here
-// where its literal is PASS. That divergence is older than this branch and is recorded rather than
-// closed; see the note above for why this arm cannot reach PASS on both polarities at once.
-#[case::an_empty_list_is_not_in_a_string("Empty IN Str", Status::FAIL)]
-#[case::an_empty_list_is_not_in_a_right_expanded_string_entry("Empty IN Strs[*]", Status::FAIL)]
+// THE `IN` POLARITY. All four PASS, and the first two were FAIL: the string exclusion kept the empty list
+// out of the vacuous match, which is right, and then recorded it as UNMATCHED, which is what diverged from
+// the literal. A skipped pairing is now a skipped pairing -- no comparison, nothing reported, both
+// polarities pass -- so these agree with `Empty IN "abc"` beside them.
+//
+// `Strs[0]` is here as well, because it is the other half of the pair the `NOT IN` impossibility is built
+// on: both readings of it owe PASS on `IN`, so the impossibility does not reach this polarity and the cell
+// is fixable where its `NOT IN` sibling is not.
+#[case::an_empty_list_is_in_a_string("Empty IN Str", Status::PASS)]
+#[case::an_empty_list_is_in_a_right_expanded_string_entry("Empty IN Strs[*]", Status::PASS)]
+#[case::an_empty_list_is_in_a_single_indexed_string_entry("Empty IN Strs[0]", Status::PASS)]
 #[case::an_empty_list_is_in_a_string_literal("Empty IN \"abc\"", Status::PASS)]
 #[case::an_empty_list_is_in_an_unexpanded_string_denylist("Empty IN Strs", Status::PASS)]
 // The list control, so a change credited with the string cells has not moved the shape the vacuous
@@ -9964,6 +10013,13 @@ fn an_empty_left_hand_list_is_vacuously_in_every_spelling_of_a_denylist(
 // Pinned at the answer the code gives rather than the answer the literal owes, so that a repair which
 // moves them has to move them here and say so, and so that the two candidate repairs measured in that
 // test cannot land silently: both turn every PASS in this block FAIL.
+//
+// That guarantee was overstated until the `MixedRev[*]` cell below was added. It held of the cells present
+// and not in general: `MixedRev` appeared four times in this file and every occurrence was a `NOT IN`
+// cell, so `Empty IN MixedRev[*]` moved 0 to 19 under BOTH candidate repairs with nothing to observe it.
+// A block that pins every PASS it happens to contain still lets a repair land silently through the
+// spelling it does not contain, which is the same authored-population blind spot the count in that test
+// fell into. With the cell added the claim is true as written.
 #[case::an_empty_list_is_in_a_map("Empty IN Map", Status::PASS)]
 #[case::an_empty_list_is_not_in_a_map_literal("Empty IN {\"k\": 1}", Status::FAIL)]
 #[case::an_empty_list_is_in_a_right_expanded_map_entry("Empty IN Maps[*]", Status::PASS)]
@@ -10017,21 +10073,37 @@ fn an_empty_left_hand_list_is_vacuously_in_every_spelling_of_a_denylist(
     Status::FAIL
 )]
 #[case::an_empty_list_is_in_a_mixed_kind_entry_set("Empty IN Mixed[*]", Status::PASS)]
-// The all-string two-entry expansion in the `IN` polarity, which is FAIL where its literal is PASS --
-// the string column's own `IN` divergence, older than this branch and pinned rather than closed. See the
-// note on `an_empty_list_is_not_in_a_string` above for why closing it needs the `(None, Some)` arm.
-#[case::an_empty_list_is_not_in_a_two_entry_right_expanded_string_denylist(
+// The `IN` polarity of the reversed mixed order, which had no cell in this file at all. `MixedRev`
+// appeared four times and every one was `NOT IN`, so `Empty IN MixedRev[*]` was free to move: it goes 0 to
+// 19 under both candidate repairs measured in
+// `the_in_polarity_of_a_queried_scalar_right_operand_has_no_repair_in_this_arm` while its literal
+// `[5, "abc"]` stays 0, and it is one of the twelve losses that repair's price used to omit. Here so that
+// the block's "no repair lands silently" guarantee covers the spelling it was missing.
+#[case::an_empty_list_is_in_a_non_string_first_mixed_entry_set(
+    "Empty IN MixedRev[*]",
+    Status::PASS
+)]
+#[case::an_empty_list_is_in_a_non_string_first_mixed_list_literal(
+    "Empty IN [5, \"abc\"]",
+    Status::PASS
+)]
+// The all-string two-entry expansion in the `IN` polarity, PASS and agreeing with its literal. It was FAIL
+// -- the string column's own `IN` divergence -- and the note on `an_empty_list_is_in_a_string` above has
+// how giving this arm the `(None, Some)` arm's no-comparison outcome closed it.
+#[case::an_empty_list_is_in_a_two_entry_right_expanded_string_denylist(
     "Empty IN Strs2[*]",
-    Status::FAIL
+    Status::PASS
 )]
 fn the_vacuous_subset_reading_belongs_to_a_right_operand_that_denotes_a_set(
     #[case] clause: &str,
     #[case] expected: Status,
 ) -> Result<()> {
-    // `Strs` holds exactly one entry so that `Strs[0]` and `Strs[*]` deliver the value `Str` delivers,
-    // which is what makes the impossibility measurable rather than asserted. `Strs2` holds two so that
-    // the rejected arity-keyed repair has a cell it would move. `Maps` mirrors `Strs` for the map kind,
-    // where the literal spelling turns out to agree and no impossibility arises.
+    // `Strs` holds exactly one entry so that `Strs[0]` and `Strs[*]` deliver one identical `QueryResult`,
+    // which is what makes the impossibility measurable rather than asserted. Not `Str` against either of
+    // them: `Str` resolves at `/Str` and both bracketed spellings at `/Strs/0`, so that pairing is
+    // separable and would prove nothing. `Strs2` holds two so that the rejected arity-keyed repair has a
+    // cell it would move. `Maps` mirrors `Strs` for the map kind, where the literal spelling turns out to
+    // agree and no impossibility arises.
     //
     // `Flt` and `Nullv` are here because the `IN` cells below need every non-string scalar kind the
     // literal table lists, and a float and a null reach `NotComparable` by the same route an int and a
@@ -10105,7 +10177,8 @@ fn the_vacuous_subset_reading_belongs_to_a_right_operand_that_denotes_a_set(
 /// spelling of a non-list right operand answers `IN` with a match. Two repairs that serve the other side
 /// were built and measured, and both cost more than they buy.
 ///
-/// Firing only for a list-valued right-hand result moves 21 cells and is a revert rather than a repair.
+/// Firing only for a list-valued right-hand result reddens 27 rstest cells at `b8d3901e` -- measured, and
+/// this doc said 21 -- and is a revert rather than a repair.
 /// A `[*]` over a scalar denylist resolves to scalars, so the check becomes a no-op for exactly the shape
 /// it exists for: `Empty NOT IN D13[*]` returns to 0, re-opening the defect `9bcf2053` closed, and
 /// `Empty NOT IN Map`, `N` and `B` fall to 0 where their literals are 19. It does bring `Empty IN Map`,
@@ -10116,9 +10189,15 @@ fn the_vacuous_subset_reading_belongs_to_a_right_operand_that_denotes_a_set(
 /// the better of the two and is still wrong. It is surgical -- every cell it moves is an `IN` cell and no
 /// `NOT IN` cell moves at all, so the whole `NOT IN` column the previous repair delivered survives. It
 /// brings `Empty IN Map`, `Maps[0]`, `N`, `B`, `Flt`, `Nullv` and `D1[0]` to the 19 their literals owe,
-/// and takes `Empty IN Strs`, `D13[*]`, `D1[*]`, `Maps[*]` and `Mixed[*]` from 0 to 19 where their list
-/// literals are 0. Seven cells right for five wrong, so it wins narrowly on count and loses on
-/// direction: those five go from passing to failing, and the comment above the collision arm in
+/// and takes THIRTEEN the other way. Five are in the two tables this doc had in view -- `Empty IN Strs`,
+/// `D13[*]`, `D1[*]`, `Maps[*]` and `Mixed[*]`, from 0 to 19 where their list literals are 0. Seven more
+/// are `Empty IN` cells pinned at PASS elsewhere: cases 12, 13 and 14 of
+/// `an_empty_left_hand_list_is_vacuously_in_every_spelling_of_a_denylist` and cases 73 through 76 of
+/// `a_list_denylist_holding_a_nested_list_denies_only_what_it_names`. The thirteenth had no cell anywhere
+/// -- `Empty IN MixedRev[*]`, which is why the suite showed only 19 red cells at `b8d3901e` for a repair
+/// that moves 20 things. Seven right for thirteen wrong, so it
+/// loses on count AND on direction rather than winning narrowly on one, and the comment above the
+/// collision arm in
 /// `operators.rs` records over-denial as the worse direction for a policy tool. `SomeList IN Allowed[*]`
 /// is the ordinary allowlist spelling, so under that repair every allowlist rule starts reporting a
 /// violation whenever the list it checks is empty, while the cells it fixes are comparisons of a list
@@ -10128,9 +10207,30 @@ fn the_vacuous_subset_reading_belongs_to_a_right_operand_that_denotes_a_set(
 ///
 /// `Empty IN Strs` is in that loss list because this check fires for ANY non-string right-hand result,
 /// a list included, so an unexpanded list denylist is answered here and never reaches `contained_in`'s
-/// list arm at all. Counting it needs the test cells rather than a sweep of clause exit codes, which is
-/// how it was missed on the first pass: a 47-clause CLI sweep of the empty-left-hand shapes put the loss
-/// at four.
+/// list arm at all -- instrumented at that call site, `Empty IN Strs` and `Empty NOT IN Strs` make zero
+/// calls to `contained_in`, while `D13 NOT IN Strs` and `Strs2 NOT IN Strs` make one each, so the zero is
+/// a measured absence rather than a counter that never fired.
+///
+/// THE METHOD THIS PARAGRAPH USED TO RECOMMEND IS WHAT PRODUCED THE WRONG NUMBER, and that is the part
+/// worth keeping. It said counting the losses "needs the test cells rather than a sweep of clause exit
+/// codes", after a 47-clause CLI sweep had put the loss at four. Cells were then counted -- over the two
+/// tables in view, which gave five. The true figure is twelve. Cells exist only where somebody wrote one,
+/// so a count over them is short by however many nobody wrote, and `Empty IN MixedRev[*]` is the proof:
+/// it goes 0 to 19 under this repair while its literal `[5, "abc"]` stays 0, and all four of `MixedRev`'s
+/// occurrences in this file were `NOT IN` cells, so nothing could observe it. A clause sweep has the
+/// opposite blind spot -- it misses nothing unauthored -- and neither method alone is sound.
+///
+/// WHICH SHAPE OF FIGURE IS SAFE. A count over a hand-authored cell population is not a property of the
+/// code; it moves when someone writes another cell. A PREDICATE over the moved set is: "every cell it
+/// moves is an `IN` cell" cannot be falsified by enlarging the population, which is why that claim above
+/// survived this correction and both counts beside it did not. At this commit the same repair reddens 22
+/// cells rather than 19 -- eight gains and fourteen losses -- because the `OneKeyMap` pair added one of
+/// each and the `MixedRev[*]` cell made the previously invisible thirteenth loss observable. The code did
+/// not change between those two figures; only the population did. A count over a CLOSED population is safe, the
+/// way `3fe2c62d` counts two of 28: seven non-empty subsets of {undecided, decided-no, decided-yes} times
+/// two quantifiers times two roles, computed inside the test rather than authored one cell at a time. So
+/// the trap is not counting cells; it is counting over a hand-authored population while claiming a
+/// property of the code. Prefer a predicate, else a closed population, else a named clause sweep.
 ///
 /// It is additionally the answer `Pair NOT IN Denies[0]` already rules out for this arm: `unanswerable`
 /// is honest when the information is missing from the question and a dodge when it is missing from the
@@ -10141,6 +10241,21 @@ fn the_vacuous_subset_reading_belongs_to_a_right_operand_that_denotes_a_set(
 /// table above at the answer the code gives. What would close it is the same thing the `Denies[0]` proof
 /// asks for and no local change supplies: the access expression surviving into the comparator, so that a
 /// value reached by `[0]` can be told from the same value reached by `[*]`.
+///
+/// THE `D1` PAIR ALONE DOES NOT ESTABLISH THAT RESIDUAL, and the sentence above claimed it did. Both
+/// `D1[0]` and `D1[*]` resolve at `/D1/0`, so both paths end in a numeric index, and a predicate keyed on
+/// that -- "the last path segment is a digit" -- treats the pair alike and escapes it. Under that
+/// predicate the five cells this proof prices as the `unanswerable` repair's cost move on their own:
+/// `Empty IN Map`, `N`, `B`, `Flt` and `Nullv` resolve at `/Map`, `/N`, `/B`, `/Flt` and `/Nullv` and
+/// would reach the 19 their literals owe, while `D1[*]`, `D13[*]`, `Maps[*]` and `Strs` keep their PASS.
+/// So "every bare-field and `[0]` spelling like it" asserted coverage the pair does not provide.
+///
+/// `OneKeyMap` of `{"Inner": 5}` provides it, and the four cells below carry it. `OneKeyMap.Inner` and
+/// `OneKeyMap.*` resolve to one identical `Int(5)` at one identical `/OneKeyMap/Inner` -- no digit in
+/// either path -- and owe opposite verdicts by this proof's own construction: the named spelling IS the
+/// operand and answers as `5` does, 19; the expanded one names the entry set `{5}` and answers as `[5]`
+/// does, 0. `a_digit_free_query_pair_resolves_identically_and_forecloses_a_path_shaped_repair` asserts
+/// the identity on the `QueryResult` rather than on the verdicts, which is where the claim lives.
 #[rstest::rstest]
 // THE PAIR. Identical value, identical path, one `QueryResult`, opposite owed verdicts. `D1[0]` owes
 // FAIL and gets PASS; `D1[*]` owes PASS and gets it.
@@ -10171,6 +10286,28 @@ fn the_vacuous_subset_reading_belongs_to_a_right_operand_that_denotes_a_set(
     "Empty NOT IN [5]",
     Status::FAIL
 )]
+// THE DIGIT-FREE PAIR, which forecloses the path-shaped repair the `D1` pair leaves open. Same
+// construction, same owed verdicts, and neither path ends in an index: `OneKeyMap.Inner` owes FAIL and
+// gets PASS, `OneKeyMap.*` owes PASS and gets it. A repair that moved `Empty IN Map` by path shape moves
+// the second of these with it.
+#[case::a_named_map_entry_is_vacuously_matched_by_an_empty_list(
+    "Empty IN OneKeyMap.Inner",
+    Status::PASS
+)]
+#[case::a_wildcard_map_entry_is_vacuously_matched_by_an_empty_list(
+    "Empty IN OneKeyMap.*",
+    Status::PASS
+)]
+// The same two spellings in the polarity that agrees, so this pair carries the asymmetry the `D1` pair
+// does rather than only half of it.
+#[case::a_named_map_entry_vacuously_denies_an_empty_list(
+    "Empty NOT IN OneKeyMap.Inner",
+    Status::FAIL
+)]
+#[case::a_wildcard_map_entry_vacuously_denies_an_empty_list(
+    "Empty NOT IN OneKeyMap.*",
+    Status::FAIL
+)]
 fn the_in_polarity_of_a_queried_scalar_right_operand_has_no_repair_in_this_arm(
     #[case] clause: &str,
     #[case] expected: Status,
@@ -10178,10 +10315,15 @@ fn the_in_polarity_of_a_queried_scalar_right_operand_has_no_repair_in_this_arm(
     // One entry, so `D1[0]` and `D1[*]` deliver the same value at the same path and neither the value
     // nor the count nor the path can separate them. A two-entry denylist would let a repair discriminate
     // on cardinality and would prove nothing.
+    //
+    // `OneKeyMap` is the same construction with the numeric index removed from both paths, which is what
+    // the `D1` pair cannot supply: a map key reached by name and the same key reached by `*` resolve at
+    // `/OneKeyMap/Inner` either way. One key for the same reason `D1` holds one entry.
     const INPUT: &str = r#"
     {
         Empty: [],
-        D1: [5]
+        D1: [5],
+        OneKeyMap: {"Inner": 5}
     }
     "#;
 
@@ -10192,6 +10334,349 @@ fn the_in_polarity_of_a_queried_scalar_right_operand_has_no_repair_in_this_arm(
         rule_status_in(&rules, INPUT, "membership")?,
         "clause: {}",
         clause
+    );
+
+    Ok(())
+}
+
+/// An uncompared empty list does not silence the siblings that WERE compared.
+///
+/// Why this exists: the repair that makes `Empty IN Str` agree with `Empty IN "abc"` works by emitting no
+/// result for a left-hand value that no right-hand result was compared against. The aggregate `QueryIn`
+/// this arm folds every left-hand value into decides Success from `diff.is_empty()`, which cannot tell
+/// "everything matched" from "nothing was asked", so the aggregate has to be suppressed as well -- and the
+/// condition for suppressing it is the one thing in that repair with a price.
+///
+/// `no_comparison == lhs_selected.len()` is the condition, and `> 0` is the wrong version of it. `Lists` of
+/// `[[], ["abc"]]` separates them: the empty entry is uncompared and the `["abc"]` entry is contained in
+/// the haystack verbatim, so the clause has a real match to report and `NOT IN` must deny. Under `> 0` the
+/// whole aggregate disappears and the clause passes -- measured, `Lists[*] NOT IN Str` goes from 19 to 0
+/// while `Lists[*] NOT IN "abc"` stays at 19 beside it. That is a denylist admitting a value it names, the
+/// defect class this whole region exists to close, reintroduced by the repair for it.
+///
+/// Both orders, because `lhs_selected` is walked in query order and a condition that happened to be right
+/// only when the empty entry came first would pass a one-order table. `ListsRev` is `[["abc"], []]`.
+///
+/// The `IN` cells are here because they are what the repair is for and they must move together with
+/// nothing else: both spellings PASS, agreeing with their literals, where before the repair both were FAIL.
+#[rstest::rstest]
+// THE GUARD. One uncompared value, one matched sibling: the match is reported and `NOT IN` denies.
+#[case::a_matched_sibling_still_denies("Lists[*] NOT IN Str", Status::FAIL)]
+#[case::a_matched_sibling_still_denies_reversed("ListsRev[*] NOT IN Str", Status::FAIL)]
+// The literals the two above are made to agree with.
+#[case::a_matched_sibling_still_denies_written_out("Lists[*] NOT IN \"abc\"", Status::FAIL)]
+#[case::a_matched_sibling_still_denies_written_out_reversed(
+    "ListsRev[*] NOT IN \"abc\"",
+    Status::FAIL
+)]
+// THE REPAIR. The uncompared value no longer counts as unmatched, so `IN` passes as its literal does.
+#[case::an_uncompared_value_does_not_fail_in("Lists[*] IN Str", Status::PASS)]
+#[case::an_uncompared_value_does_not_fail_in_reversed("ListsRev[*] IN Str", Status::PASS)]
+#[case::an_uncompared_value_does_not_fail_in_written_out("Lists[*] IN \"abc\"", Status::PASS)]
+#[case::an_uncompared_value_does_not_fail_in_written_out_reversed(
+    "ListsRev[*] IN \"abc\"",
+    Status::PASS
+)]
+// The all-uncompared case, which is the one the suppression is FOR: every left-hand value is an empty list
+// against a string, so nothing was asked and both polarities pass exactly as the literal does.
+#[case::every_value_uncompared_passes_in("Empties[*] IN Str", Status::PASS)]
+#[case::every_value_uncompared_passes_not_in("Empties[*] NOT IN Str", Status::PASS)]
+#[case::every_value_uncompared_passes_in_written_out("Empties[*] IN \"abc\"", Status::PASS)]
+#[case::every_value_uncompared_passes_not_in_written_out("Empties[*] NOT IN \"abc\"", Status::PASS)]
+// The non-string control, so a change credited with these cells has not touched the vacuous match itself.
+// A non-string right operand still takes an empty list through the match, in both spellings.
+#[case::a_matched_sibling_against_an_int_denylist("Lists[*] NOT IN D13[*]", Status::FAIL)]
+#[case::every_value_uncompared_against_an_int_denylist("Empties[*] NOT IN D13[*]", Status::FAIL)]
+fn an_uncompared_empty_list_does_not_silence_its_siblings(
+    #[case] clause: &str,
+    #[case] expected: Status,
+) -> Result<()> {
+    // `Lists` and `ListsRev` are the same two entries in both orders. `Empties` is the all-uncompared
+    // shape, two empty lists, which is what distinguishes suppressing the aggregate from dropping it
+    // whenever anything was skipped.
+    const INPUT: &str = r#"
+    {
+        Lists: [[], ["abc"]],
+        ListsRev: [["abc"], []],
+        Empties: [[], []],
+        Str: "abc",
+        D13: [1, 3]
+    }
+    "#;
+
+    let rules = format!("rule membership {{ {clause} }}");
+
+    assert_eq!(
+        expected,
+        rule_status_in(&rules, INPUT, "membership")?,
+        "clause: {}",
+        clause
+    );
+
+    Ok(())
+}
+
+/// Every string spelling warns through the channel whose wording is true of it.
+///
+/// Why this exists: making the two-query arm skip a string pairing moved this family's deprecation notice
+/// from `incomparable_membership_notice` to `vacuous_comparison_notice`, and
+/// `an_empty_list_against_a_queried_string` in
+/// `the_notice_asks_about_every_granularity_the_operator_decides_at` was pinned on the first of those. A
+/// bare flip of that cell to `false` would assert only that one notice stopped, which is satisfied by the
+/// clause going silent -- the outcome that would actually be a regression. This asserts the notice that is
+/// emitted instead, across the whole family and in both polarities, so silence fails here.
+///
+/// Why the vacuous channel is the true one, and it is a statement about the mechanism rather than a
+/// preference between two strings. `vacuous_comparison_notice` fires on `compared_nothing && all` -- a
+/// comparison that produced no per-value result and answers PASS on the strength of it. That is precisely
+/// what the skip creates, and precisely why the literal `Empty NOT IN "abc"` has always emitted it: the
+/// `(None, Some)` string arm decomposes an empty list into no `string_in` calls. The membership wording,
+/// "could not be compared with any element of the list", names an element comparison that does not happen
+/// and a list that is never read -- there is no list on the right, only a haystack. It was accurate about
+/// the OLD path, where `contained_in` refused on the shape pair `([], "abc")` and the arm dropped the
+/// refusal. That path is gone, so the sentence describing it went with it.
+///
+/// Both polarities on every cell, because the notice gate gives `IN` and `NOT IN` different treatment
+/// elsewhere -- it is suppressed under `some`, per the gate's own comment -- and the `IN` half is newly
+/// PASSing here, so it is the half with no prior behavior to inherit. It gains a notice it never had: at
+/// the parent these clauses exited 19 with no notice at all, which is a false report with no warning
+/// attached rather than a true pass with one.
+///
+/// Every literal is here beside its query spellings, which is the same shape the verdict tables in this
+/// file use: the claim is agreement with the literal, so the literal has to be measured in the same run
+/// rather than trusted from a comment.
+#[rstest::rstest]
+// The bare field, and the spelling `the_notice_asks_about_every_granularity_the_operator_decides_at`
+// carries as its moved cell.
+#[case::a_queried_string_not_in("Empty NOT IN Ustr")]
+#[case::a_queried_string_in("Empty IN Ustr")]
+#[case::a_bare_string_field_not_in("Empty NOT IN Str")]
+#[case::a_bare_string_field_in("Empty IN Str")]
+// The two bracketed spellings, which resolve identically to each other.
+#[case::a_single_indexed_string_entry_not_in("Empty NOT IN Strs[0]")]
+#[case::a_single_indexed_string_entry_in("Empty IN Strs[0]")]
+#[case::a_right_expanded_string_entry_not_in("Empty NOT IN Strs[*]")]
+#[case::a_right_expanded_string_entry_in("Empty IN Strs[*]")]
+// The two-entry expansion, so the family is not covered only at arity one.
+#[case::a_two_entry_string_entry_set_not_in("Empty NOT IN Strs2[*]")]
+#[case::a_two_entry_string_entry_set_in("Empty IN Strs2[*]")]
+// The multi-candidate string query, which has no list anywhere in the operand.
+#[case::a_multi_resource_string_query_not_in("Empty NOT IN Resources.*.Properties.Name")]
+#[case::a_multi_resource_string_query_in("Empty IN Resources.*.Properties.Name")]
+#[case::a_single_resource_string_query_not_in("Empty NOT IN OneRes.*.Properties.Name")]
+#[case::a_single_resource_string_query_in("Empty IN OneRes.*.Properties.Name")]
+// THE LITERALS the fourteen above are made to agree with. These emitted the vacuous notice before this
+// branch and still do; they are the reference, not the thing under test.
+#[case::a_string_literal_not_in("Empty NOT IN \"abc\"")]
+#[case::a_string_literal_in("Empty IN \"abc\"")]
+fn every_string_spelling_warns_through_the_channel_that_is_true_of_it(
+    #[case] clause: &str,
+) -> Result<()> {
+    const INPUT: &str = r#"
+    {
+        Empty: [],
+        Str: "abc",
+        Ustr: "abc",
+        Strs: ["abc"],
+        Strs2: ["abc", "zzz"],
+        Resources: {
+            R1: { Properties: { Name: "abc" } },
+            R2: { Properties: { Name: "zzz" } }
+        },
+        OneRes: {
+            R1: { Properties: { Name: "abc" } }
+        }
+    }
+    "#;
+
+    let (status, notices) = status_and_deprecations(clause, INPUT)?;
+
+    assert_eq!(
+        Status::PASS,
+        status,
+        "`{}` must pass, as its literal does -- the notice claims are about a clause that PASSED without \
+         comparing anything, so a FAIL here would make the rest of this cell meaningless",
+        clause
+    );
+
+    assert!(
+        notices
+            .iter()
+            .any(|notice| notice.contains("passed without comparing anything")),
+        "`{}` must warn through the vacuous channel; silence is the regression this cell exists to \
+         catch. Recorded {:?}",
+        clause,
+        notices
+    );
+
+    assert!(
+        !notices
+            .iter()
+            .any(|notice| notice.contains("could not be compared with any element")),
+        "`{}` must not claim an element comparison it never made: there is no list on the right and no \
+         element was read. Recorded {:?}",
+        clause,
+        notices
+    );
+
+    Ok(())
+}
+
+/// Which two string spellings are actually inseparable, asserted on the resolution.
+///
+/// Why this exists: the string impossibility was written as "`Strs[*]` resolves to the same `"abc"` that
+/// `Str` does and cannot be told apart from it" for several commits, and that pair does not carry the
+/// argument. Same value, different path -- `/Strs/0` against `/Str` -- so a predicate over the path
+/// separates them and nothing at the comparison site is forced to move them together. The conclusion was
+/// right and its support was not, which is the same defect shape as the `D1` pair leaving a digit-keyed
+/// repair open.
+///
+/// The pair that is inseparable is `Strs[0]` versus `Strs[*]`: one entry, so both resolve to
+/// `String("abc")` at `/Strs/0` with the same `Location`, and the oracle owes them opposite verdicts on
+/// `NOT IN` -- `Strs[0]` is an operand whose value is the haystack, answering as `"abc"` does at PASS,
+/// while `Strs[*]` names the entry set, answering as `["abc"]` does at FAIL. That is the same
+/// `[0]`-versus-`[*]` construction the `D1` and `OneKeyMap` proofs use.
+///
+/// Both halves are asserted, the identity and the difference. Asserting only the identity would leave the
+/// wrong pair standing beside it, since a reader who checks the surviving `Str` sentence finds nothing
+/// contradicting it.
+#[test]
+fn the_string_pair_that_cannot_be_separated_is_the_index_and_wildcard_spellings() -> Result<()> {
+    let path_value = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(
+        r#"
+        Str: "abc"
+        Strs: ["abc"]
+        "#,
+    )?)?;
+
+    let mut eval = BasicQueryTesting {
+        root: Rc::new(path_value),
+        recorder: None,
+    };
+
+    // Each query bound before it is walked: `AccessQuery::try_from(..)?.query` is a temporary, and the
+    // results borrow from it.
+    let indexed_query = AccessQuery::try_from("Strs[0]")?;
+    let expanded_query = AccessQuery::try_from("Strs[*]")?;
+    let bare_query = AccessQuery::try_from("Str")?;
+
+    let mut resolved = Vec::new();
+    for (spelling, query) in [
+        ("Strs[0]", &indexed_query),
+        ("Strs[*]", &expanded_query),
+        ("Str", &bare_query),
+    ] {
+        let results = eval.query(&query.query)?;
+        assert_eq!(1, results.len(), "`{}` must deliver one result", spelling);
+        match &results[0] {
+            QueryResult::Resolved(value) => resolved.push(Rc::clone(value)),
+            other => panic!("`{}` must resolve; got {:?}", spelling, other),
+        }
+    }
+    let (indexed, expanded, bare) = (&resolved[0], &resolved[1], &resolved[2]);
+
+    assert_eq!(
+        indexed.self_path(),
+        expanded.self_path(),
+        "`Strs[0]` and `Strs[*]` must reach `compare` at one path, `Location` included -- that is what \
+         forces anything written at the site to move both together"
+    );
+    assert_eq!(
+        indexed, expanded,
+        "`Strs[0]` and `Strs[*]` must deliver one identical value"
+    );
+
+    assert_eq!(
+        indexed, bare,
+        "all three spellings do deliver the same string, which is why the wrong pair looked convincing"
+    );
+    assert_ne!(
+        bare.self_path(),
+        expanded.self_path(),
+        "`Str` must NOT share a path with `Strs[*]`, or the discarded pairing would have been a valid \
+         impossibility after all and this test would be asserting the opposite of its own doc"
+    );
+
+    Ok(())
+}
+
+/// The digit-free half of that pair, asserted on the resolution rather than on the verdict.
+///
+/// Why this exists: the impossibility above is carried by `D1[0]` and `D1[*]`, and BOTH of those paths
+/// end in a numeric index. That leaves a predicate available -- "the last path segment is a digit" --
+/// which treats the two members alike and so is not foreclosed by them, while separating them from the
+/// five cells the proof cites to reject the `unanswerable` repair: `Empty IN Map`, `N`, `B`, `Flt` and
+/// `Nullv` resolve at `/Map`, `/N`, `/B`, `/Flt` and `/Nullv`, no digit anywhere. So a repair keyed on
+/// that predicate would bring exactly those five to the 19 their literals owe and leave `D1[*]`,
+/// `D13[*]`, `Maps[*]` and `Strs` untouched, which is the whole cost the proof prices. The residual
+/// sentence claimed coverage of "every bare-field and `[0]` spelling like it"; the pair does not
+/// provide it.
+///
+/// `OneKeyMap` of `{"Inner": 5}` provides it. `OneKeyMap.Inner` and `OneKeyMap.*` resolve to one
+/// identical `Int(5)` at one identical `/OneKeyMap/Inner`, `Location` included, with no trailing digit
+/// for a path-shaped predicate to key on -- and the oracle owes them opposite verdicts by the same
+/// construction as `D1`: `OneKeyMap.Inner` IS the operand, so it answers as `5` does, 19, and
+/// `OneKeyMap.*` names the entry set `{5}`, so it answers as `[5]` does, 0. Any predicate over the
+/// value, the kind or the path moves both together, so a repair that fixes `Empty IN Map` by path shape
+/// breaks `Empty IN OneKeyMap.*`.
+///
+/// On the resolution and not only on the two verdicts, because the verdicts alone are satisfied by both
+/// spellings being wrong for unrelated reasons. What makes this a proof is that `compare` cannot tell
+/// the two calls apart, and that is a statement about the `QueryResult`, so it is asserted there.
+#[test]
+fn a_digit_free_query_pair_resolves_identically_and_forecloses_a_path_shaped_repair() -> Result<()>
+{
+    let path_value = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(
+        r#"
+        OneKeyMap:
+          Inner: 5
+        "#,
+    )?)?;
+
+    let mut eval = BasicQueryTesting {
+        root: Rc::new(path_value),
+        recorder: None,
+    };
+
+    let named_query = AccessQuery::try_from("OneKeyMap.Inner")?;
+    let expanded_query = AccessQuery::try_from("OneKeyMap.*")?;
+    let named = eval.query(&named_query.query)?;
+    let expanded = eval.query(&expanded_query.query)?;
+
+    assert_eq!(1, named.len(), "the named spelling must deliver one result");
+    assert_eq!(
+        1,
+        expanded.len(),
+        "the expanded spelling must deliver one result, or cardinality would separate the pair"
+    );
+
+    let (named, expanded) = match (&named[0], &expanded[0]) {
+        (QueryResult::Resolved(named), QueryResult::Resolved(expanded)) => (named, expanded),
+        pair => panic!("both spellings must resolve; got {:?}", pair),
+    };
+
+    assert_eq!(
+        named.self_path(),
+        expanded.self_path(),
+        "the two spellings must reach `compare` at one path, `Location` included, or a predicate over \
+         the path could separate them and the impossibility would not hold"
+    );
+    assert_eq!(
+        named, expanded,
+        "the two spellings must deliver one identical value"
+    );
+
+    let last_segment = named
+        .self_path()
+        .0
+        .rsplit('/')
+        .next()
+        .expect("a path always has a final segment");
+    assert!(
+        !last_segment.is_empty() && !last_segment.chars().all(|each| each.is_ascii_digit()),
+        "the point of this pair is that neither member's path ends in an index, so that the \
+         digit-keyed repair the `D1` pair leaves open is foreclosed too; the final segment is {:?}",
+        last_segment
     );
 
     Ok(())
@@ -10211,7 +10696,11 @@ fn the_in_polarity_of_a_queried_scalar_right_operand_has_no_repair_in_this_arm(
 /// from a `[0]` index, which yields exactly one, so the count looks like the provenance signal the
 /// `[0]`-versus-`[*]` collapse destroys. Measured, it does what it claims and nothing else in the
 /// two-query arm moves: `Empty NOT IN Strs2[*]` goes to 19 and `Empty IN Strs2[*]` to 0, both correct,
-/// with no other cell in a 94-clause sweep of the empty-left-hand shapes touched.
+/// with no other cell in a 94-clause sweep of the empty-left-hand shapes touched. That sweep is not
+/// reproducible from the tree -- its clause list was never committed, so the figure cannot be re-derived
+/// or falsified here. Treat it as a note on what was run rather than as a measurement, and if the question
+/// comes up again, commit the clause list. The 140-clause grid quoted on the string skip in `operators.rs`
+/// has the same limitation and is flagged there too.
 ///
 /// What refutes it is the shape below. `Resources.*.Properties.Name` over two resources delivers two
 /// strings, and each one is a haystack that `IN` asks substring containment of -- there is no list
@@ -10229,9 +10718,11 @@ fn the_in_polarity_of_a_queried_scalar_right_operand_has_no_repair_in_this_arm(
 ///
 /// The `IN` column here is the string kind's own divergence, unrelated to the arity question and older
 /// than this branch: both written-out spellings are PASS -- `Empty IN "abc"` and
-/// `Empty IN ["abc", "zzz"]` -- and every query spelling is FAIL. Closing that needs the `(None, Some)`
-/// string arm, which produces no comparison at all for an empty left-hand list; it is recorded on
-/// `an_empty_list_is_not_in_a_string` and is not what these cells are for.
+/// `Empty IN ["abc", "zzz"]` -- and every query spelling was FAIL. It is closed now, by giving the
+/// two-query arm the outcome the `(None, Some)` string arm already had -- no comparison at all for an
+/// empty left-hand list, and so no result to report in either polarity -- and the `IN` cells below are at
+/// PASS accordingly. It is recorded on `an_empty_list_is_not_vacuously_in_a_string` and is not what these
+/// cells are for; they are here so that a change to the arity question has to say it did not move them.
 #[rstest::rstest]
 // THE REFUTATION. Two resources, two string results, no list. PASS, and the arity-keyed repair turns it
 // FAIL.
@@ -10255,16 +10746,20 @@ fn the_in_polarity_of_a_queried_scalar_right_operand_has_no_repair_in_this_arm(
     Status::FAIL
 )]
 // The `IN` polarity of all three, so a change credited with either question has to say which cells it
-// moved. The two query spellings are FAIL where the list literal is PASS.
-#[case::an_empty_list_is_not_in_a_multi_resource_string_query(
+// moved. All three agree with the list literal below now. They were FAIL, which was the string kind's own
+// `IN` divergence and not the arity question these cells are for: an empty left-hand list against a string
+// is no comparison at all, so the clause has nothing to report and passes. The skip in the two-query arm
+// of `operators.rs` is what closes them, and it moves no `NOT IN` cell, so the arity refutation above is
+// untouched.
+#[case::an_empty_list_is_in_a_multi_resource_string_query(
     "Empty IN Resources.*.Properties.Name",
-    Status::FAIL
+    Status::PASS
 )]
-#[case::an_empty_list_is_not_in_a_single_resource_string_query(
+#[case::an_empty_list_is_in_a_single_resource_string_query(
     "Empty IN Resources.Alpha.Properties.Name",
-    Status::FAIL
+    Status::PASS
 )]
-#[case::an_empty_list_is_not_in_a_two_entry_string_entry_set("Empty IN Strs2[*]", Status::FAIL)]
+#[case::an_empty_list_is_in_a_two_entry_string_entry_set("Empty IN Strs2[*]", Status::PASS)]
 #[case::an_empty_list_is_in_a_two_entry_string_list_literal(
     "Empty IN [\"abc\", \"zzz\"]",
     Status::PASS
@@ -10766,11 +11261,28 @@ fn the_notice_asks_about_the_pairs_the_operator_compared(
 #[case::a_list_against_queried_scalars("Ports NOT IN D13[*]", Status::PASS, true)]
 #[case::a_list_against_a_queried_map("Maps NOT IN Umap", Status::PASS, true)]
 #[case::a_list_against_a_queried_scalar("Ports NOT IN Uint", Status::PASS, true)]
-#[case::an_empty_list_against_a_queried_string("Empty NOT IN Ustr", Status::PASS, true)]
-// Controls for it: three ways the refusal is not what the clause passed on.
+// Controls for it: four ways the refusal is not what the clause passed on.
 #[case::a_literal_scalar_already_fails_closed("Ports NOT IN 5", Status::FAIL, false)]
 #[case::a_literal_string_never_reaches_the_refusal("Empty NOT IN \"abc\"", Status::PASS, false)]
 #[case::a_vacuous_match_happens_before_the_refusal("Empty NOT IN D13[*]", Status::FAIL, false)]
+// `Empty NOT IN Ustr` MOVED from the refusal block to this one, and the cell that follows it in this
+// file is why. It was `true` here: the shape pair `([], "abc")` reached `contained_in`, refused on the
+// shapes, and the `(None, None)` arm dropped the refusal, so the clause passed on it and this notice was
+// owed. That is no longer the path. A string right operand paired with an empty left-hand list is now
+// skipped before `contained_in` is called at all, so there is no refusal for the clause to pass on --
+// which is exactly the condition the control two lines above describes for the literal spelling, and the
+// query spelling now reaches the comparison the same way the literal does.
+//
+// The clause still warns, through the channel whose wording is true of it. Measured, both polarities:
+// `Empty NOT IN Ustr` and `Empty IN Ustr` emit `vacuous_comparison_notice` -- "passed without comparing
+// anything, because the query selected an empty collection" -- which is what happened, where "could not
+// be compared with any element of the list" names an element comparison that no longer occurs and a list
+// that was never read. `Empty NOT IN "abc"` and `Empty IN "abc"` emit that same notice and always have,
+// so this is the query spelling joining its literal rather than losing its diagnostic.
+// `every_string_spelling_warns_through_the_channel_that_is_true_of_it` asserts the notice that IS emitted
+// across the whole family, so the coverage this cell gave up is replaced by a stronger claim than the
+// absence of one notice.
+#[case::an_empty_list_against_a_queried_string("Empty NOT IN Ustr", Status::PASS, false)]
 fn the_notice_asks_about_every_granularity_the_operator_decides_at(
     #[case] clause: &str,
     #[case] expected: Status,
