@@ -1198,6 +1198,11 @@ mod validate_tests {
     ///
     /// The assertion covers the verdict as well as the notices, because a deprecation notice that moves
     /// a verdict is not a notice.
+    ///
+    /// And it binds each notice to the clause it is about. Counting two notices and checking that both
+    /// texts appear somewhere among them is satisfied by the two bodies being swapped, which is a state
+    /// where every author reading either notice is told the wrong thing about their clause. Verified by
+    /// rotation rather than argued: with the two `eval.rs` notice bodies exchanged, this test passed.
     #[test]
     fn clauses_whose_answer_changes_later_warn_now() {
         let mut reader = Reader::default();
@@ -1228,19 +1233,47 @@ mod validate_tests {
             notices,
             stderr
         );
+        // Each notice is matched to the clause it is about, not merely counted among the two.
+        //
+        // Asserting that both texts appear *somewhere* was what this did, and it cannot fail for the
+        // property it looks like it checks: swap the two notice bodies in `eval.rs` and both substrings
+        // are still present, one per clause, just attached to the wrong one. Measured -- with the texts
+        // swapped, the whole suite reported 10 failures and not one of them was here.
+        //
+        // The clause context is in the line, which is what makes the binding cheap: the membership
+        // notice reads `Name not IN  [10,50,100] passed because ...` and the vacuous one
+        // `GuardAccessClause#block Sizes EQUALS  50 passed without comparing anything ...`. So each
+        // notice is found by its text and then required to name its own clause and not the other's.
+        // `Sizes` and `Name` are the two property names in the fixture and neither appears in the other
+        // clause, so the negative half is not satisfiable by accident.
+        let notice_for = |text: &str| -> String {
+            let matched: Vec<&&str> = notices.iter().filter(|n| n.contains(text)).collect();
+            assert_eq!(
+                1,
+                matched.len(),
+                "expected exactly one notice containing {:?}, got {:?} from {:?}",
+                text,
+                matched,
+                notices
+            );
+            matched[0].to_string()
+        };
+
+        let vacuous = notice_for("without comparing anything");
         assert!(
-            notices
-                .iter()
-                .any(|n| n.contains("without comparing anything")),
-            "the empty-collection clause should say it compared nothing, got {:?}",
-            notices
+            vacuous.contains("Sizes") && !vacuous.contains("Name"),
+            "the empty-collection notice must be about `Sizes`, the clause whose query selected \
+             nothing, and must not be the notice attached to `Name`; got {:?}",
+            vacuous
         );
+
+        let membership = notice_for("could not be compared with any element");
         assert!(
-            notices
-                .iter()
-                .any(|n| n.contains("could not be compared with any element")),
-            "the membership clause should say nothing in the list was comparable, got {:?}",
-            notices
+            membership.contains("Name") && !membership.contains("Sizes"),
+            "the incomparable-membership notice must be about `Name`, the clause whose value no \
+             element of the list could be compared with, and must not be the notice attached to \
+             `Sizes`; got {:?}",
+            membership
         );
     }
 

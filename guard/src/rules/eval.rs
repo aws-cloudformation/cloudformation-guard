@@ -252,6 +252,34 @@ fn empty_reference_message(negated: bool) -> String {
 /// asks about the whole left-hand value, while `contained_in` decides a list-valued left-hand side
 /// element by element, so a list the denylist plainly names answers `Some` here and then fails. See
 /// `binary_operation`, which emits only once the verdict is in.
+///
+/// # Do not align this with `is_one_of` yet
+///
+/// The divergence just described is real and looks like the root cause, so the obvious repair is to
+/// flatten the left-hand side here and ask the element-wise question `is_one_of` and `contained_in`
+/// ask. **Do not, while the `[*]` membership bypass is open.** Measured, on a tree with that change
+/// and nothing else: the full suite stays green at 2503 passed / 0 failed, all five
+/// aws-guard-rules-registry notices survive, both contradicting cells lose their notice as intended --
+/// and `Pair NOT IN Deny13[*]`, with `{"Pair":[1,2],"Deny13":[1,3]}`, goes from exit 0 *with* the
+/// notice to exit 0 **silent**.
+///
+/// That clause admits a value its denylist names. The alignment is what silences it, and for a
+/// structural reason rather than an oversight: element-wise, `1` and `1` are perfectly comparable, so
+/// the aligned predicate correctly reports that nothing was undecidable -- while the pass still comes
+/// from the suppressed error one layer down. Every clause in that class works the same way, which is
+/// the class the deprecation exists to announce. Aligning first converts a flagged bypass into a silent
+/// one, and no test in the suite fails when it happens.
+///
+/// So the order is: **close the bypass first, align second.** The bypass is not at the not-comparable
+/// suppression in `contained_in` -- closing that leaves `Pair NOT IN Deny13[*]` at exit 0, measured --
+/// it is in `InOperation::compare`'s two-query `(None, None)` arm, where the `element_collision`
+/// tracking around `operators.rs:1006` already fixed the unwrapped `Pair NOT IN Deny13` spelling and
+/// the `[*]` spelling still reaches exit 0. While that is open, the whole-value question asked here is
+/// the one that finds it.
+///
+/// Not established: that alignment becomes correct once the bypass closes. It is untested, because
+/// that fix does not exist yet. Re-measure `Pair NOT IN Deny13[*]` against whatever closes it rather
+/// than assuming this note expires.
 fn incomparable_membership(
     lhs: &[QueryResult],
     rhs: &[QueryResult],
