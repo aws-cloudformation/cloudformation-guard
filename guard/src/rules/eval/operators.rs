@@ -459,8 +459,9 @@ fn substring_or_contained_in(lhs: Rc<PathAwareValue>, rhs: Rc<PathAwareValue>) -
 /// miss, and negating a miss passes: `["s3","zzz"] NOT IN Haystack` reported compliance while the
 /// haystack verbatim contained `s3`, and its typed-out spelling failed.
 ///
-/// A scalar is found or it is not, so `Partial` names a list only. `HoldsANonString` names a list too;
-/// `NotAString` is its scalar sibling and exists for the same reason, which is recorded below.
+/// Only a list can be partly found, so `Partial` and `HoldsANonString` both name a list. `NotAString`
+/// is the sibling for everything this function does not decompose, and exists for the same reason as
+/// `HoldsANonString`, which is recorded below.
 ///
 /// `HoldsANonString` is separate from `Partial`, and the reason is a defect this function shipped with.
 /// Containment cannot be asked of an element that is not a string, and the literal arm says so: it hands
@@ -484,15 +485,16 @@ fn substring_or_contained_in(lhs: Rc<PathAwareValue>, rhs: Rc<PathAwareValue>) -
 /// another one. Empty is `NoneFound` rather than unanswerable because it keeps its existing answer --
 /// `NOT IN` over nothing passes -- and folding it in would change a cell this is not about.
 ///
-/// A non-string *scalar* used to be left out, and the reason given for leaving it out was checked
-/// against the wrong spelling. It read: `contained_in` already asks `compare_eq` for such a value and
-/// gets "not comparable", so `%int in Haystack` and `%int not in Haystack` both fail already. That is
-/// true, and it is true of the `(Some, None)` arm, which is where a literal needle goes:
+/// A non-string, non-list left-hand value used to be left out, and the reason given for leaving it out
+/// was checked against the wrong spelling. It read: `contained_in` already asks `compare_eq` for such a
+/// value and gets "not comparable", so `%int in Haystack` and `%int not in Haystack` both fail already.
+/// That is true, and it is true of the `(Some, None)` arm, which is where a literal needle goes:
 /// `substring_or_contained_in` there falls through to `contained_in` per result and the incomparable
 /// answer is the clause's answer. The `(None, None)` arm keeps one verdict for the whole left-hand
 /// operand set and only treats `contained_in`'s *Success* as a match, so an incomparable pairing was
 /// indistinguishable from a miss, joined the unmatched diff, and negated to a pass. With
-/// `Haystack: "aws:arn:s3::${s3}"`, every non-string scalar the document could hold denied nothing:
+/// `Haystack: "aws:arn:s3::${s3}"`, none of these denied anything, and the fourth is why the row above
+/// no longer calls them scalars:
 ///
 /// ```text
 /// Int    5        not in Haystack   PASS      not in "aws:arn:..."   FAIL
@@ -517,9 +519,18 @@ enum StringContainment {
     Partial,
     /// At least one element is not a string, so containment cannot be asked of it.
     HoldsANonString,
-    /// The left-hand value is a scalar that is not a string, so containment cannot be asked of it
-    /// either. Separate from `HoldsANonString` so the reason names what the value is: a scalar holds
-    /// nothing, and a message about its elements would describe a list it is not.
+    /// The left-hand value is neither a string nor a list, so containment cannot be asked of it as a
+    /// whole. Separate from `HoldsANonString` because the two complaints are about different things:
+    /// that one is about elements this function tested one at a time, and this one is about a value it
+    /// never decomposed, so a message naming elements would describe contents nothing looked at.
+    ///
+    /// The reason used to read "a scalar holds nothing", and a `Map` refutes it. Only `List` is
+    /// decomposed here, so `Map` arrives at the same arm as `Null`, `Bool`, `Int`, `Float`, `Char`,
+    /// `Regex` and the three range kinds, and `{"a": 1}` plainly holds something.
+    /// `denied_map_query_needle_query_haystack` in
+    /// `substring_in_answers_the_same_against_a_query_as_against_a_literal` is that cell. The message it
+    /// produces was accurate all along -- `Value={"a":1} is not a string, so it cannot be tested for
+    /// containment in ...`, at exit 19 -- and only the justification for it was wrong.
     NotAString,
     /// Every element is a string and none is contained, or the right-hand side is not a string at all.
     NoneFound,
@@ -559,7 +570,9 @@ fn found_in_string(lhs: &PathAwareValue, rhs: &PathAwareValue) -> StringContainm
             }
         }
 
-        scalar => match contained(scalar) {
+        // Bound as `not_a_list`, and it used to be bound as `scalar`: a `Map` arrives here, so the old
+        // name described a subset of what the arm receives.
+        not_a_list => match contained(not_a_list) {
             Some(true) => StringContainment::All,
             Some(false) => StringContainment::NoneFound,
             None => StringContainment::NotAString,
@@ -1009,9 +1022,11 @@ impl Comparator for InOperation {
                     // Three reasons, because they are three different complaints and a reader acts on
                     // them differently: a list whose elements are all strings but only some of them
                     // present, a list holding something containment cannot be asked of at all, and a
-                    // scalar that is not a string. The third says "is not a string" rather than "holds",
-                    // since a scalar holds nothing and the other message would describe a list it is
-                    // not.
+                    // value that is not a string and not a list either. The third says "is not a string"
+                    // rather than "holds", because `found_in_string` decomposes only a list, so nothing
+                    // examined the value's contents and a message about them would name what was never
+                    // tested. A `Map` reaches this reason and does hold something, which is why the
+                    // wording is about what was asked rather than about what the value contains.
                     if let Some((other, undecidable)) = unanswerable_against {
                         let reason = match undecidable {
                             StringContainment::HoldsANonString => format!(
