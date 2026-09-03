@@ -11037,6 +11037,104 @@ fn a_skipped_pairing_does_not_earn_a_sibling_a_membership_notice(
     Ok(())
 }
 
+/// The element loop of a list against a non-list decides a notice of its own.
+///
+/// Why this exists: `incomparable_membership`'s `(List, non-list)` arm has two contributors -- the
+/// element loop at its top and the shape refusal below it -- and only the second was measured. Both
+/// directions of a mutation on the loop left the suite at 3142 passed / 0 failed at `b49818b1`:
+/// replacing `refused |= pair_refused(left, right)` with a discard, and replacing it with
+/// `refused = true` for every element. So its answer was unobservable either way, which is a weaker
+/// state than untested -- no cell could tell whether the loop ran.
+///
+/// # Why the right operand has to be a rule literal
+///
+/// `both_queried` is computed once per clause, so it is constant across every pairing, and while it
+/// is true the arm cannot expose the loop at all. A non-empty `lhsl` reaches the shape refusal three
+/// lines later, which assigns `refused = true` whatever the loop found; an empty one never runs the
+/// loop body. Those are the only two cases, so this is a property of the code rather than of any
+/// fixture: no queried operand can cover the loop, and rewriting the queried cells cannot change
+/// that.
+///
+/// `every_string_spelling_warns_through_the_channel_that_is_true_of_it` sits in both blind spots at
+/// once and is named here because it reads as coverage. Fourteen of its sixteen cells query the right
+/// operand, so the shape refusal decides them; `a_string_literal_{not_,}in` supply the literal and
+/// pair it with an `Empty` of `[]`, so the loop body executes zero times. Neither position can see
+/// the loop, which is why the two mutations above pass its cells.
+///
+/// # Why `some`
+///
+/// The notice gate requires the clause to have PASSED. A literal scalar right operand decomposes a
+/// list-valued left value into one `string_in` per element, and `string_in`'s catch-all answers
+/// `NotComparable` for a pair that is not two strings -- so a left operand whose every value holds a
+/// non-string fails `NOT IN` closed and never reaches the notice. `some` is what lets one comparable
+/// value carry the clause to PASS while a sibling still contributes the refusal.
+///
+/// # Both halves, and why the verdict cannot stand in for either
+///
+/// They fail to opposite mutations. Discarding the loop's answer silences `WithNonString` and leaves
+/// `AllStrings` alone; forcing it true for every element makes `AllStrings` emit a notice it is not
+/// owed. A cell asserting only presence is satisfied by a loop that refuses everything, which is why
+/// the silence half is written out rather than left implied.
+///
+/// The status is asserted to keep both cells honest, not to detect the change: pristine, the
+/// discarded loop and the forced-true loop all answer PASS for both clauses, so a cell asserting
+/// only `Status` sees nothing move. The notice is the whole observable.
+///
+/// A queried-operand control was written and deliberately not landed. `some WithNonString[*] NOT IN
+/// Hay` over a queried `Hay` FAILs, so its notice is suppressed by the verdict gate rather than by
+/// the predicate: it would document the masking without measuring it, and a reader who took it for a
+/// measurement would conclude the masking is pinned when it is not. The measurement is the two
+/// mutations named above.
+#[rstest::rstest]
+// THE PRESENCE HALF. `[1]` is the only refusal in the clause and the loop is its only witness: the
+// right operand is a literal, so the shape refusal is suppressed, and `["q"]` is what carries the
+// clause to PASS so the gate is reached.
+#[case::a_refusing_element_under_a_literal_operand("some WithNonString[*] NOT IN \"abc\"", true)]
+// THE SILENCE HALF. Same arm, same literal operand, same `some`, but every element is a string the
+// comparator answers for, so the loop must contribute nothing and no notice is owed.
+#[case::every_element_answers_under_a_literal_operand("some AllStrings[*] NOT IN \"abc\"", false)]
+fn the_element_loop_of_a_list_against_a_non_list_decides_its_own_notice(
+    #[case] clause: &str,
+    #[case] expected: bool,
+) -> Result<()> {
+    // Both left operands are lists of lists, so `[*]` yields list-valued elements and each pairing
+    // reaches the `(List, non-list)` arm against the literal `"abc"`. They differ in one element:
+    // `WithNonString` holds `[1]`, whose `pair_refused(1, "abc")` is a kind refusal, and `AllStrings`
+    // holds `["z"]`, which answers. `["q"]` is common to both and is the value that passes.
+    const INPUT: &str = r#"
+    {
+        WithNonString: [["q"], [1]],
+        AllStrings: [["q"], ["z"]]
+    }
+    "#;
+
+    let (status, notices) = status_and_deprecations(clause, INPUT)?;
+
+    // Asserted because the notice gate turns on it: a FAIL suppresses the notice whatever the
+    // predicate answered, which would make the silence half hold for the wrong reason.
+    assert_eq!(
+        Status::PASS,
+        status,
+        "`{}` must pass for the notice gate to be reached at all; a FAIL makes this cell vacuous",
+        clause
+    );
+
+    let membership = notices
+        .iter()
+        .any(|notice| notice.contains("could not be compared with any element"));
+
+    assert_eq!(
+        expected,
+        membership,
+        "`{}` must {} the membership notice. Recorded {:?}",
+        clause,
+        if expected { "emit" } else { "not emit" },
+        notices
+    );
+
+    Ok(())
+}
+
 /// Which two string spellings are actually inseparable, asserted on the resolution.
 ///
 /// Why this exists: the string impossibility was written as "`Strs[*]` resolves to the same `"abc"` that
