@@ -634,23 +634,40 @@ fn fail(lhs: Rc<PathAwareValue>, rhs: Rc<PathAwareValue>) -> ValueEvalResult {
 /// kinds it has no arm for, and a denylist written beside values of another kind is ordinary rather than
 /// exotic.
 ///
-/// Measured, by replacing the `Err(_) => {}` arm below with a panic on `Err`: 58 tests redden, one
-/// recorded error each, all 58 `NotComparable` from that fall-through -- `int, array` 26,
-/// `String, array` 12, `map, array` 8, `int, String` 8, `array, int` 4. (`cargo test --all` counts them
-/// 116 times, because the lib target and the bin target each compile this module.) So this is not an
-/// unreachable arm kept for safety. The sibling scalar arm below swallows the same error through its own
+/// Measured at 9bcf2053 on rustc 1.77.2, by replacing the `Err(_) => {}` arm below with
+/// `Err(e) => panic!("{:?}", e)` and running `cargo test --lib`: 85 of the 1220 lib tests redden, one
+/// recorded error each, and all 85 are `NotComparable` from that fall-through. So this is not an
+/// unreachable arm kept for safety.
+///
+/// Read that figure as a census of the test corpus on a dated commit, because that is what it is. It read
+/// 58 when it was written, and 40 of today's 85 are cells of
+/// `a_list_denylist_holding_a_nested_list_denies_only_what_it_names` with 15 more from
+/// `which_spelling_of_a_queried_denylist_reaches_which_arm` -- both grown by later commits on the same
+/// branch that wrote the 58. A five-way breakdown by type pair used to sit here and is not reproduced,
+/// because nothing acts on it and every figure in it moved. What does not drift is the KIND: this arm
+/// receives `NotComparable` and nothing else, since the `RegexError` arm above it takes the only other
+/// error that can arrive. Re-run the probe rather than trusting the number. Over the whole suite it
+/// reports 170, the lib and bin targets each compiling this module and every reaching cell existing in
+/// both.
+///
+/// The sibling scalar arm below swallows the same error through its own
 /// `Err(_) => {}`, for the reason written out there: `NOT IN` against an operand of a kind it cannot be
 /// compared with currently passes, `docs/KNOWN_ISSUES.md` records that suppression as a tracked defect,
 /// and `incomparable_membership` in `eval.rs` warns rule authors before it changes. Two sites, one
 /// reading.
 ///
-/// Two probes, two questions, and the 58 answers only the first. A panic reddens every test that
-/// *reaches* the line, which is 58. Promoting to [`Membership::Unanswerable`] reddens only the tests
-/// whose *verdict or message moves*, which is 11 -- both counted as distinct tests, so 116 and 22 are
-/// the same two figures doubled across the lib and bin targets. So 58 execute this arm and 11 depend on
-/// what it returns, and the 47 in between run the line without caring: they find a match on another
-/// element, or their verdict is already decided. A reader who reaches for the promotion probe and gets
-/// 11 has measured the second question, not contradicted the first.
+/// Two probes, two questions, and the 85 above answers only the first: a panic reddens every test that
+/// *reaches* the line. Replacing the same arm with
+/// `Err(e) => { if unanswerable.is_none() { unanswerable = Some(unanswerable_reason(e)); } }` instead
+/// reddens only the tests whose *verdict or message moves*, which at 9bcf2053 is 16 under
+/// `cargo test --lib` and 32 over the whole suite. So 85 execute this arm, 16 depend on what it returns,
+/// and the 69 in between run the line without caring: they find a match on another element, or their
+/// verdict is already decided. A reader who reaches for the promotion probe and gets the smaller figure
+/// has measured the second question, not contradicted the first.
+///
+/// Both are censuses on a dated commit and both drift upward together -- they read 58 and 11 when this
+/// paragraph was written -- so the durable claim is the gap between them and not either figure. Restate
+/// them only from a fresh run of the two probes named above.
 ///
 /// The other two errors `compare_eq` can raise are not alike. A NaN against a numeric range cannot
 /// arrive, for the reason `compare_eq`'s own note gives -- it enumerates the four `Float` construction
@@ -780,21 +797,29 @@ fn contained_in(lhs_value: Rc<PathAwareValue>, rhs_value: Rc<PathAwareValue>) ->
                 // membership test asks `compare_eq` on the list itself for the same reason.
                 //
                 // The two swallow different populations, and the count from one says nothing about the
-                // other. Measured by panicking on `Err` at this site alone, with the `flat_subset`
-                // short circuit left in place: 18 lib tests reach it, 16 carrying `NotComparable` and 2
-                // carrying `RegexError`. The sibling inside `is_one_of` reaches 58, all
-                // `NotComparable`, so a reader carrying 58 across to this line would be describing a
-                // different set.
+                // other. Measured at 9bcf2053 on rustc 1.77.2 by replacing both `Err` arms below with
+                // `Err(e) => panic!("{:?}", e)`, leaving the `flat_subset` short circuit in place, and
+                // running `cargo test --lib`: 19 tests reach it, 17 carrying `NotComparable` and 2
+                // carrying `RegexError`. The sibling inside `is_one_of` reaches 85, all `NotComparable`,
+                // so a reader carrying that figure across to this line would be describing a different
+                // set.
+                //
+                // Both are censuses of the test corpus at a commit, and this one is the shorter-lived of
+                // the pair: it read 18 when it was written at 158932b6 and measured 19 two commits later.
+                // The arrival counts are what drift; the split by error kind is what the paragraphs below
+                // actually use, and the 2 are named there so they can be checked without a probe.
                 //
                 // This corrects the measurement 2631880 recorded here, which read "fires for none,
                 // anywhere in the lib suite". That was taken without distinguishing the two error
-                // kinds and is wrong about `NotComparable`: 16 tests drove one through this line before
-                // this branch was touched, which is why promoting `RegexError` alone moves no cell of
-                // theirs. What was true, and is the half worth keeping, is that the `RegexError` path
-                // here had no coverage. The 2 cells above are the first: they are
-                // `a_denylist_refuses_a_value_it_could_not_evaluate_in_either_spelling`'s two nested
-                // spellings, and before them nothing in the suite had ever driven a regex failure
-                // through this comparison.
+                // kinds and is wrong about `NotComparable`: the cells counted above drove one through this
+                // line before this branch was touched, which is why promoting `RegexError` alone moves no
+                // cell of theirs. Whether that population is 16 or 17 changes nothing in the argument, so
+                // no figure is repeated here. What was true, and is the half worth keeping, is that the
+                // `RegexError` path here had no coverage. The 2 cells above are the first, and naming them
+                // is what makes that figure checkable without re-running a probe:
+                // `a_denylist_refuses_a_value_it_could_not_evaluate_in_either_spelling`'s
+                // `case_5_list_in_a_nested_list` and `case_6_list_not_in_a_nested_list`. Before them
+                // nothing in the suite had ever driven a regex failure through this comparison.
                 //
                 // The subset test used to stay on `PartialEq`, to match the all-flat branch below. That
                 // matched the branch and left the same hole in it: a range beside a list-valued
@@ -883,8 +908,10 @@ fn contained_in(lhs_value: Rc<PathAwareValue>, rhs_value: Rc<PathAwareValue>) ->
                 // `if !flat_subset` is the short circuit the `flat_subset ||` expression this replaced
                 // had for free, and it is kept deliberately rather than by habit. Without it the
                 // membership comparison runs on every input that reaches this branch instead of only
-                // the ones that need it: measured with a panic at that arm, arrivals went from 18 lib
-                // tests to 39. No verdict moves either way, because a true `flat_subset` decides the
+                // the ones that need it: with the same panic probe named above, replacing this condition
+                // with `if true` takes arrivals from 19 to 46 at 9bcf2053 under `cargo test --lib` (they
+                // read 18 and 39 when this paragraph was written, and both endpoints drift with the
+                // corpus). No verdict moves either way, because a true `flat_subset` decides the
                 // clause before `unanswerable` is read, so the difference is work done and the
                 // population any future probe here measures. It also keeps the vacuous case cheap:
                 // with the `is_empty` guard gone, an empty left-hand list makes `flat_subset` true, so
