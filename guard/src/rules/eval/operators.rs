@@ -1551,6 +1551,88 @@ pub(super) fn whole_value_pairing_built(lhsl: &[PathAwareValue], rhsl: &[PathAwa
     !elements_not_matched(lhsl, rhsl).0.is_empty()
 }
 
+/// Whether the arm of [`InOperation::compare`] that will run pairs the ELEMENTS of a list-valued
+/// left-hand value against `rhs_value`, as opposed to comparing that value whole.
+///
+/// A different question from the two helpers above, and the difference is the point. Those answer how
+/// far a walk goes; this answers whether the walk exists. [`super::incomparable_membership`]'s
+/// `(List, right)` arm records a refusal per left-hand ELEMENT, and for most right-hand kinds
+/// [`contained_in`] never decomposes the left-hand list at all: it dispatches on the left value, so a
+/// list against a non-list reaches its `List` arm's catch-all and answers `NotComparable` carrying the
+/// two WHOLE values. There is no element-versus-right pairing there to refuse, so a per-element
+/// refusal counted against such a pair belongs to a comparison nobody performed.
+///
+/// Asked of [`is_literal`] rather than of a flag, because the answer is a property of the ARM and the
+/// four arms differ. `both_queried` names ONE of the four and collapses the other three, and two of the
+/// three it collapses do decompose, so a gate spelled that way is wrong for both of them. It is not the
+/// first condition here to have been keyed on that flag and been wrong: the whole-value gate one arm up
+/// carried `both_queried && lhsl.is_empty()` in an earlier revision, which its own note records as the
+/// inverse of the coverage needed.
+///
+/// * `(None, None)` decomposes. The arm asks `is_one_of(element, [eachr])` once per left-hand element.
+///   The shape refusal further down that same match arm already sets `refused` whenever the left-hand
+///   list is non-empty, and the loop body never runs when it is empty, so this arm of the answer is
+///   never what carries a notice -- it is here because it is true of the operator, not because the
+///   predicate needs it.
+/// * `(None, Some)` decomposes for a `String` right operand ONLY. That arm expands a list-valued
+///   left-hand value into one [`string_in`] per element, and `string_in` answers `not_comparable` for a
+///   non-`String` element -- a real per-element refusal, and the same partition the predicate makes.
+///   Every other right-hand kind reaches `contained_in` with the value whole.
+/// * `(Some, None)` decomposes unless some right-hand value is a list. With none, that arm builds an
+///   element-wise diff with `Vec::contains`, so an element incomparable to a right-hand value really
+///   is read as "not a member" -- which is exactly what the notice announces, so it is owed. With one,
+///   the arm calls [`substring_or_contained_in`] on the whole value instead and no element pairing
+///   exists.
+/// * `(Some, Some)` never decomposes. One [`substring_or_contained_in`] on the whole pair, and note
+///   that this differs from `(None, Some)` for the same two operand kinds: a `String` right operand
+///   gets the left-hand list expanded in one arm and not in the other.
+///
+/// `!any(is_list)` over [`selected`] rather than over a slice the caller assembled, so the predicate
+/// and the arm cannot disagree about which right-hand values exist. `selected` is the function the arm
+/// itself calls and it drops `UnResolved` the same way, which a hand-written filter at the call site
+/// would have to restate.
+///
+/// Asked once per PAIR, and the arm selection it repeats is per clause. Hoisting that half above the
+/// loop would be cheaper and is not done, for [`whole_value_pairing_built`]'s reason: the condition
+/// would then live in two places, one of which can be edited without the other. The cost is one
+/// discarded `Vec` per pair on the `(Some, None)` path only -- `is_literal` is two comparisons, and the
+/// other three arms allocate nothing.
+///
+/// A gate spelled `both_queried || matches!(right, String(_))` was measured and rejected. It is wrong
+/// in both directions at once, and only one of them is findable by reading a diff: it drops the
+/// `(Some, None)` element-wise diff above, which is silence where a notice is owed and leaves no
+/// artifact, and it keeps `(Some, Some)` against a `String`, which is a false alarm a reviewer can
+/// still trip over. Measured over a 30,132-clause grid by a probe computing both spellings and this one
+/// in a single run, so a difference the verdict gate hides is still counted: 6,750 clauses reach the
+/// arm, and against this condition that spelling drops 222 predicate answers it should keep and keeps
+/// 84 it should drop. The asymmetry between the two directions is the reason for the wording above. All
+/// 84 are false alarms and SIX of them are live notices -- `%lit NOT IN NestedThenStr[*]` and its
+/// siblings, exit 0 with the notice printed, where `contained_in` refused on `[1,2]` against `"abc"`
+/// whole. None of the 222 was observable in that grid: the `(Some, None)` list-valued path fails closed
+/// on `QueryIn`'s collided-set derivation, so the verdict gate suppresses every one. So the silent
+/// direction is latent HERE and repaired anyway, which is [`membership_stops_after`]'s own rule -- the
+/// suppression lives in `binary_operation` and not in this function, so nothing in this file would flag
+/// it going live.
+///
+/// `element_pairings_are_built_only_by_the_arms_that_decompose` below is the table over all four arms,
+/// and `an_element_pairing_the_arm_does_not_build_earns_no_refusal` in `eval_tests.rs` asserts the same
+/// partition through the predicate; each row of either fails under a different wrong spelling of this
+/// condition. Prefer them to a re-run of the grid.
+pub(super) fn element_pairings_built(
+    lhs: &[QueryResult],
+    rhs: &[QueryResult],
+    rhs_value: &PathAwareValue,
+) -> bool {
+    match (is_literal(lhs), is_literal(rhs)) {
+        (None, None) => true,
+        (None, Some(_)) => matches!(rhs_value, PathAwareValue::String(_)),
+        (Some(_), None) => !selected(rhs, |_| {}, Vec::push)
+            .iter()
+            .any(|value| value.is_list()),
+        (Some(_), Some(_)) => false,
+    }
+}
+
 impl Comparator for InOperation {
     fn compare<'value>(
         &self,

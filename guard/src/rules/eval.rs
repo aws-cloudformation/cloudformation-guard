@@ -760,8 +760,46 @@ fn incomparable_membership(lhs: &[QueryResult], rhs: &[QueryResult]) -> bool {
                 (PathAwareValue::List((_, lhsl)), right) => {
                     // The element question `contained_in` never asks, which the `(None, None)` arm asks
                     // for it with `is_one_of(element, [eachr])`.
-                    for left in lhsl {
-                        refused |= pair_refused(left, right);
+                    //
+                    // ONLY WHERE THE ARM ASKS IT, which was the missing condition rather than a missing
+                    // stop. A DIFFERENT CLASS from every repair above it in this function, and saying so
+                    // is the point rather than modesty about it: those were all a predicate walking
+                    // FURTHER than the operator -- a loop counting pairings a `break` had already
+                    // skipped -- and each was closed by asking the operator's own function how far its
+                    // walk went. `pair_refused` is correctly aligned here and this loop stops where it
+                    // should. What was absent is the question of whether any element-versus-right
+                    // pairing exists at all to be refused in: `contained_in` dispatches
+                    // on the left value, so a list against a non-list reaches its `List` arm's catch-all
+                    // and answers `NotComparable` carrying the two WHOLE values, never decomposing. Each
+                    // element then contributed a refusal for a comparison nobody made.
+                    //
+                    // Measured with `Mixed` of `[["a"], 7]`: `some Mixed[*] NOT IN 5` exits 0 and
+                    // printed the notice, which is false about that clause. `["a"]` is the only value
+                    // that could not be compared and it FAILED -- suspect alone exits 19 with
+                    // `Can not compare type ... Value=["a"], Value=5`, the whole values -- while `7`
+                    // passed on an ordinary `Ok(false)`. Nothing was read as "not a member", so there was
+                    // nothing to warn about. Sibling alone is silent, which attributes it.
+                    //
+                    // `operators::element_pairings_built` is the condition, and it is asked of
+                    // `operators::is_literal` for the reason the whole module gives: a condition written
+                    // out here can drift from the one the arm branches on, and a call cannot. It is not
+                    // `both_queried`. That flag names ONE of `InOperation::compare`'s four arms and
+                    // collapses the other three, and two of the three collapsed arms do decompose --
+                    // `(None, Some)` against a `String` expands the left-hand list into one `string_in`
+                    // per element, and `(Some, None)` with no list among the right-hand values builds an
+                    // element-wise `Vec::contains` diff. Both are refusals the operator really makes, so
+                    // both are notices owed, and a gate keyed on `both_queried` alone silences them.
+                    //
+                    // The shape refusal below is keyed on `both_queried` and is RIGHT to be, which is
+                    // why the two conditions differ rather than being shared. That one is about whether
+                    // the refusal `contained_in` returns for the whole pair survives into the results,
+                    // and only the `(None, None)` arm drops it. This one is about whether the arm builds
+                    // element pairings in the first place. Same match arm, two different questions, and
+                    // reading the lower one as settling the upper one is what left this ungated.
+                    if operators::element_pairings_built(lhs, rhs, right) {
+                        for left in lhsl {
+                            refused |= pair_refused(left, right);
+                        }
                     }
 
                     // The shape refusal itself, on the clauses that pass on it. Two conditions, and

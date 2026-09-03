@@ -16756,3 +16756,133 @@ fn a_subset_that_holds_earns_no_refusal_from_its_own_element_pairs() {
          failed and must not be counted for a clause that passed"
     );
 }
+
+/// An element pairing the arm never builds earns no refusal.
+///
+/// The fifth site of the over-counting class in `incomparable_membership`, and NOT the class the four
+/// before it closed. Those were the predicate walking FURTHER than the operator -- a loop counting
+/// pairings a `break` had already skipped -- and `pair_refused` is correctly aligned here. What was
+/// missing is the condition selecting which pairings exist at all. `contained_in` dispatches on the
+/// left value, so a list against a non-list reaches its `List` arm's catch-all and answers
+/// `NotComparable` carrying the two WHOLE values; it never decomposes, so there is no
+/// element-versus-right pairing for the loop to refuse in.
+///
+/// # Observable, and the notice it produced was false
+///
+/// With `Mixed` of `[["a"], 7]`, `some Mixed[*] NOT IN 5` exits 0 and prints the notice. `["a"]` is the
+/// only value that could not be compared and it FAILED -- `MixedOnly` of `[["a"]]` alone exits 19 with
+/// `Can not compare type ... Value=["a"], Value=5`, the whole values and not elements -- while `7`
+/// passed on an ordinary `Ok(false)`. `MixedSib` of `[7]` alone is silent, which attributes the notice
+/// to the suspect. Nothing in that clause was read as "not a member", so nothing was owed a warning.
+///
+/// # The cells
+///
+/// Each row fails under a different wrong spelling of the gate, which is the whole reason there are
+/// five of them:
+///
+/// * 1, 4 and 5 redden with the loop ungated, so they are what makes this a regression test.
+/// * 2 reddens under a bare `both_queried`. `(None, Some)` against a `String` expands the left-hand
+///   list into one `string_in` per element and `string_in` answers `not_comparable` for a non-`String`
+///   one, so that refusal is real and the notice is owed.
+/// * 3 reddens under `both_queried || matches!(right, String(_))`, the spelling that looks right and is
+///   the reason this test is a table. `(Some, None)` with no list among the right-hand values builds an
+///   element-wise diff with `Vec::contains`, `PartialEq` only, so the incomparability there genuinely
+///   IS read as "not a member" -- precisely what the notice announces. A gate that drops it is silence
+///   where a warning is owed, and silence leaves no artifact for a reviewer to find.
+/// * 4 reddens under a gate that keys on the `(Some, None)` arm without asking whether a list sits
+///   among the right-hand values, and 5 under one that keys on the right operand's kind. Cells 2 and 5
+///   are the same two operand KINDS reached through different arms and answer oppositely.
+///
+/// The `(None, None)` arm is deliberately absent. It is not separable here: the shape refusal further
+/// down the same match arm sets `refused` for every non-empty left-hand list under `both_queried`, and
+/// the loop body never runs for an empty one, so a cell asserting `true` would pass whether the gate
+/// admitted that arm or not. `element_pairings_are_built_only_by_the_arms_that_decompose` binds all
+/// four arms directly, where they are visible.
+#[test]
+fn an_element_pairing_the_arm_does_not_build_earns_no_refusal() {
+    use crate::rules::path_value::Path;
+
+    fn int(path: &str, value: i64) -> PathAwareValue {
+        PathAwareValue::Int((Path::new(path.to_string(), 0, 0), value))
+    }
+
+    fn string(path: &str, value: &str) -> PathAwareValue {
+        PathAwareValue::String((Path::new(path.to_string(), 0, 0), value.to_string()))
+    }
+
+    fn list(path: &str, elements: Vec<PathAwareValue>) -> PathAwareValue {
+        PathAwareValue::List((Path::new(path.to_string(), 0, 0), elements))
+    }
+
+    // `[["a"], 7]`. The sibling `7` is what holds the clause open: it compares int against int and
+    // decides false, so `some` passes on it while the list contributes the phantom refusal.
+    let mixed_lhs = vec![
+        QueryResult::Resolved(Rc::new(list("/Mixed/0", vec![string("/Mixed/0/0", "a")]))),
+        QueryResult::Resolved(Rc::new(int("/Mixed/1", 7))),
+    ];
+    // `[[7], "zz"]`. Same shape with the kinds swapped, so the element that refuses is the INT inside
+    // the list and the sibling string is comparable to the right operand.
+    let int_in_list_lhs = vec![
+        QueryResult::Resolved(Rc::new(list("/SL/0", vec![int("/SL/0/0", 7)]))),
+        QueryResult::Resolved(Rc::new(string("/SL/1", "zz"))),
+    ];
+
+    let whole_value_refusal =
+        incomparable_membership(&mixed_lhs, &[QueryResult::Literal(Rc::new(int("/lit", 5)))]);
+
+    let string_right_pairs_elements = incomparable_membership(
+        &int_in_list_lhs,
+        &[QueryResult::Literal(Rc::new(string("/lit", "abc")))],
+    );
+
+    let literal_lhs_against_a_flat_query = incomparable_membership(
+        &[QueryResult::Literal(Rc::new(list(
+            "/lit",
+            vec![int("/lit/0", 7), string("/lit/1", "a")],
+        )))],
+        &[QueryResult::Resolved(Rc::new(int("/Uint", 7)))],
+    );
+
+    // `[7]` against a query holding `[7]` and `"a"`. The nested `[7]` is a matched subset, so the
+    // list-against-list arm refuses nothing and its whole-value pairing is not built either; the only
+    // thing that could set the answer is the element loop against `"a"`.
+    let literal_lhs_against_a_nested_query = incomparable_membership(
+        &[QueryResult::Literal(Rc::new(list(
+            "/lit",
+            vec![int("/lit/0", 7)],
+        )))],
+        &[
+            QueryResult::Resolved(Rc::new(list("/D/0", vec![int("/D/0/0", 7)]))),
+            QueryResult::Resolved(Rc::new(string("/D/1", "a"))),
+        ],
+    );
+
+    let both_literal = incomparable_membership(
+        &[QueryResult::Literal(Rc::new(list(
+            "/lit",
+            vec![int("/lit/0", 7)],
+        )))],
+        &[QueryResult::Literal(Rc::new(string("/other", "abc")))],
+    );
+
+    assert_eq!(
+        (false, true, true, false, false),
+        (
+            whole_value_refusal,
+            string_right_pairs_elements,
+            literal_lhs_against_a_flat_query,
+            literal_lhs_against_a_nested_query,
+            both_literal
+        ),
+        "1 `contained_in` refuses `[\"a\"]` against `5` on the SHAPES and never compares \"a\" with \
+         anything, so the element refusal belongs to no comparison. 2 `(None, Some)` against a \
+         `String` runs `string_in` per element, which refuses the int inside `[7]`, so this one is \
+         owed -- a bare `both_queried` gate reddens here. 3 `(Some, None)` with no list among the \
+         right-hand values diffs element-wise with `Vec::contains`, so \"a\" against `7` really is \
+         read as \"not a member\" -- `both_queried || right is a String` reddens here, which is the \
+         spelling this table exists to reject. 4 the same arm WITH a list among them compares the \
+         whole value instead, and the matched subset `[7]` contributes nothing, so only the element \
+         loop could set this. 5 `(Some, Some)` never decomposes: same two operand kinds as cell 2, \
+         opposite answer"
+    );
+}

@@ -1631,3 +1631,116 @@ fn a_successful_list_containment_carries_an_empty_diff() -> crate::rules::Result
 
     Ok(())
 }
+
+/// Which arms of `InOperation::compare` decompose a list-valued left-hand operand into elements.
+///
+/// The condition `incomparable_membership`'s `(List, right)` element loop is gated on, asserted here
+/// rather than only through the predicate because one of the four arms is not separable there: under
+/// `(None, None)` the shape refusal further down that same match arm sets `refused` for every
+/// non-empty left-hand list, and the loop body never runs for an empty one, so a predicate-level cell
+/// asserting `true` for that arm is satisfied whether the gate admits it or not. Asked of the helper,
+/// all four arms are visible.
+///
+/// # The cells, and what each one rules out
+///
+/// Cells 2 and 3 are the same two operand KINDS -- a queried list-valued left-hand side, a `String`
+/// right-hand side -- reached through arms that disagree. `(None, Some)` expands the left-hand list
+/// into one `string_in` per element, so the elements are paired; `(Some, Some)` hands the whole pair
+/// to `substring_or_contained_in`, so they are not. A condition written in terms of the operand kinds
+/// alone cannot answer both, which is why this is asked of `is_literal` and not of the values.
+///
+/// Cells 4 and 5 split the `(Some, None)` arm on the branch it takes: with no list among the
+/// right-hand values it builds an element-wise `Vec::contains` diff, and with one it calls
+/// `substring_or_contained_in` on the whole value. Cell 5 carries a `String` right-hand value on
+/// purpose -- a gate spelled `both_queried || matches!(right, String(_))` answers `true` here and is
+/// wrong, and cell 4 is where that same gate answers `false` and is wrong the other way.
+#[test]
+fn element_pairings_are_built_only_by_the_arms_that_decompose() {
+    fn int(path: &str, value: i64) -> Rc<PathAwareValue> {
+        Rc::new(PathAwareValue::Int((
+            Path::new(path.to_string(), 0, 0),
+            value,
+        )))
+    }
+
+    fn string(path: &str, value: &str) -> Rc<PathAwareValue> {
+        Rc::new(PathAwareValue::String((
+            Path::new(path.to_string(), 0, 0),
+            value.to_string(),
+        )))
+    }
+
+    fn list(path: &str, elements: Vec<Rc<PathAwareValue>>) -> Rc<PathAwareValue> {
+        Rc::new(PathAwareValue::List((
+            Path::new(path.to_string(), 0, 0),
+            elements.into_iter().map(|e| (*e).clone()).collect(),
+        )))
+    }
+
+    let queried_lhs = vec![
+        QueryResult::Resolved(list("/L/0", vec![int("/L/0/0", 7)])),
+        QueryResult::Resolved(string("/L/1", "zz")),
+    ];
+    let literal_lhs = vec![QueryResult::Literal(list("/lit", vec![int("/lit/0", 7)]))];
+
+    let both_queried = element_pairings_built(
+        &queried_lhs,
+        &[QueryResult::Resolved(int("/D/0", 5))],
+        &PathAwareValue::Int((Path::new("/D/0".to_string(), 0, 0), 5)),
+    );
+
+    let literal_string_right = element_pairings_built(
+        &queried_lhs,
+        &[QueryResult::Literal(string("/lit", "abc"))],
+        &PathAwareValue::String((Path::new("/lit".to_string(), 0, 0), "abc".to_string())),
+    );
+
+    let literal_int_right = element_pairings_built(
+        &queried_lhs,
+        &[QueryResult::Literal(int("/lit", 5))],
+        &PathAwareValue::Int((Path::new("/lit".to_string(), 0, 0), 5)),
+    );
+
+    let literal_lhs_flat_rhs = element_pairings_built(
+        &literal_lhs,
+        &[QueryResult::Resolved(int("/D/0", 7))],
+        &PathAwareValue::Int((Path::new("/D/0".to_string(), 0, 0), 7)),
+    );
+
+    let literal_lhs_nested_rhs = element_pairings_built(
+        &literal_lhs,
+        &[
+            QueryResult::Resolved(list("/D/0", vec![int("/D/0/0", 7)])),
+            QueryResult::Resolved(string("/D/1", "a")),
+        ],
+        &PathAwareValue::String((Path::new("/D/1".to_string(), 0, 0), "a".to_string())),
+    );
+
+    let both_literal = element_pairings_built(
+        &literal_lhs,
+        &[QueryResult::Literal(string("/lit", "abc"))],
+        &PathAwareValue::String((Path::new("/lit".to_string(), 0, 0), "abc".to_string())),
+    );
+
+    assert_eq!(
+        (true, true, false, true, false, false),
+        (
+            both_queried,
+            literal_string_right,
+            literal_int_right,
+            literal_lhs_flat_rhs,
+            literal_lhs_nested_rhs,
+            both_literal
+        ),
+        "1 `(None, None)` asks `is_one_of` per left-hand element. 2 `(None, Some)` against a \
+         `String` expands the left-hand list into one `string_in` per element. 3 every other \
+         right-hand kind reaches `contained_in` with the value whole, which dispatches on the left \
+         value and answers `NotComparable` on the two WHOLE values -- no element pairing exists. \
+         4 `(Some, None)` with no list among the right-hand values builds an element-wise \
+         `Vec::contains` diff, so a refusal there IS read as \"not a member\". 5 the same arm with a \
+         list among them calls `substring_or_contained_in` on the whole value instead; this cell \
+         carries a `String` right-hand value, so a gate keyed on the right operand's kind reddens \
+         here. 6 `(Some, Some)` never decomposes -- same two operand kinds as cell 2, opposite \
+         answer, so the condition cannot be written in terms of the values"
+    );
+}
