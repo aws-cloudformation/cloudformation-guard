@@ -16151,3 +16151,52 @@ fn only_the_two_query_arm_truncates_the_denylist_walk() {
          these two, and passing a constant in its place makes them agree"
     );
 }
+
+/// A subset that holds earns no refusal from its own element pairs.
+///
+/// This is the most direct expression of what the exclusive endpoint in `rhs_values_paired_with` changed,
+/// and until now nothing asserted it. `the_membership_notice_stops_pairing_where_the_operator_stops` pins
+/// the PREFIX -- which right-hand values are walked -- and says nothing about what
+/// `incomparable_membership` answers for the pairing at the endpoint. So the behavior change had a cell
+/// for its mechanism and none for its consequence, which is the gap that lets a later change revert it
+/// while the suite stays green.
+///
+/// One left value `["x", 1]` against one right value `["x", 1]`, both `Resolved`. `contained_in` answers
+/// `Success`: the subset holds, every left element having found an equal. A value that matched FAILS
+/// `NOT IN`, so it cannot be the value a passing `NOT IN` clause passed on, and its refusals are not the
+/// clause's to report. But its element pairs do refuse -- `compare_eq("x", 1)` is `NotComparable` -- so
+/// under the inclusive `[..=at]` the predicate counted a refusal belonging to a value that failed.
+///
+/// Measured both ways rather than argued: with `Some(at) => &rhs_values[..=at]` this answers true, and
+/// with `[..at]` it answers false. That is the whole of the endpoint change, expressed as the predicate's
+/// own answer instead of as a slice.
+///
+/// It is also the case an earlier revision of `rhs_values_paired_with`'s doc named and deferred, on the
+/// reading that dropping the stopping pairing's accounting was "a separate question with its own
+/// measurement owed". The measurement is this cell.
+#[test]
+fn a_subset_that_holds_earns_no_refusal_from_its_own_element_pairs() {
+    use crate::rules::path_value::Path;
+
+    // Built by a closure rather than bound as an array literal, so the two operands are the same shape
+    // by construction and cannot drift apart under editing.
+    let pair_of = |tag: &str| {
+        Rc::new(PathAwareValue::List((
+            Path::new(format!("/{tag}/0"), 0, 0),
+            vec![
+                PathAwareValue::String((Path::new(format!("/{tag}/0/0"), 0, 0), "x".to_string())),
+                PathAwareValue::Int((Path::new(format!("/{tag}/0/1"), 0, 0), 1)),
+            ],
+        )))
+    };
+
+    assert!(
+        !incomparable_membership(
+            &[QueryResult::Resolved(pair_of("Left"))],
+            &[QueryResult::Resolved(pair_of("Right"))]
+        ),
+        "`contained_in` answers `Success` here because the subset holds, so the value MATCHED and fails \
+         `NOT IN`; the `compare_eq(\"x\", 1)` refusal among its element pairs belongs to a value that \
+         failed and must not be counted for a clause that passed"
+    );
+}
