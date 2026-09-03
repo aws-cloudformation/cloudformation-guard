@@ -13348,8 +13348,15 @@ fn the_liveness_control_is_still_called_from_every_place_that_owes_it() {
 /// That was an argument, not a measurement, and it is false for ten of the twelve. Measured on 2026-09-03 by
 /// deleting one cell from each and running the whole suite single-threaded: **ten stay green**. Deleting
 /// `"false"` from `for value in ["true", "false"]` halves that test's coverage while the suite stays green
-/// at 3159 passed, 0 failed -- the total at `b1ff3845`, where the deletions were run. This sentence read
-/// 3149 until it was corrected: that is `d8c2582d`'s total, four commits back, and the same stale baseline
+/// at 3159 passed, 0 failed -- the total at `a9ad44e8`, where the deletions were run. That name read
+/// `b1ff3845` until this correction, and it was impossible rather than merely stale: `b1ff3845` IS the
+/// commit that bound this table, so at it the spelling is `let flag_values: [_; 2] = ["true", "false"];`
+/// and removing an element gives `error[E0308]: expected an array with a fixed size of 2 elements, found
+/// one with 1 element`. A deletion that cannot compile cannot have been run, and cannot have left a suite
+/// green to report. The quoted `for value in ["true", "false"]` is the parent's own spelling, which is the
+/// tell that was sitting in the sentence all along, and 3159 is the total at both commits, so no figure
+/// moves with the name. This sentence read
+/// 3149 until an earlier correction: that is `d8c2582d`'s total, four commits back, and the same stale baseline
 /// the ledger at the head of this file records for `b1ff3845`'s own population figure. The measurement it
 /// reports is unaffected, because what makes a narrowing invisible is that the total does not move, not
 /// what the total is. The same holds for the bucket and let-value expectation pairs, the five rejected
