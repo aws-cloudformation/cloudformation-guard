@@ -7725,6 +7725,74 @@ fn a_map_literal_with_a_repeated_key_is_refused(#[case] rules: &str) {
     );
 }
 
+/// The refusal points at the map literal, not past the end of it.
+///
+/// `parse_map` shadowed `input` at each step, the ordinary shape in this file, so the span it reported with
+/// was the one left after `followed_by('}')` -- the text *after* the map. `let m = { "a": 1, "a": 2 }` is
+/// 26 characters and reported line 1 column 27: one past the closing brace, which on a one-line file is a
+/// column the line does not have. A reader given column 27 of a 26-column line cannot act on it.
+///
+/// Two paths, because only these two show it. On a clause right-hand side a context wrapper supplies its
+/// own span and reports the column just before the literal, so the position looked near enough there to
+/// survive a reading -- which is why the message test above, whose cases are all clause-RHS but one, did
+/// not catch this.
+///
+/// Asserted as an exact column rather than as a range, and with the wrong answer named, because a test
+/// that only checked "some position" would have passed before the fix. The column is derived in the
+/// assertion message so a future reader can re-derive it rather than trust the number.
+#[rstest::rstest]
+#[case::in_a_let_assignment(
+    "let m = { \"a\": 1, \"a\": 2 }\nrule r { Resources.One.Type == \"x\" }\n",
+    1,
+    9,
+    27
+)]
+#[case::in_a_parameterized_call(
+    "rule inner(v) { Resources.One.Type == %v }\nrule outer { inner({ \"a\": 1, \"a\": 2 }) }\n",
+    2,
+    20,
+    38
+)]
+fn the_repeated_map_key_refusal_points_at_the_literal(
+    #[case] rules: &str,
+    #[case] line: usize,
+    #[case] open_brace_column: usize,
+    #[case] past_the_close: usize,
+) {
+    // The fixture says where the `{` is; check it rather than trust it, so a reworded case cannot leave
+    // the expected column pointing at the wrong character. Searched as `{ "a"` and not as `{`, because
+    // the parameterized-call case opens a rule body first and the bare brace finds that one -- which this
+    // assertion caught when it was written the short way.
+    let text = rules.lines().nth(line - 1).expect("the case has that line");
+    assert_eq!(
+        Some(open_brace_column - 1),
+        text.find("{ \"a\""),
+        "the case says the map literal opens at column {} of {:?}",
+        open_brace_column,
+        text
+    );
+
+    let rendered = format!(
+        "{}",
+        rules_file(from_str2(rules)).expect_err("a repeated map key must not parse")
+    );
+
+    let wanted = format!("at line {} at column {}", line, open_brace_column);
+    assert!(
+        rendered.contains(&wanted),
+        "the refusal should report {:?}, the column of the opening brace: {}",
+        wanted,
+        rendered
+    );
+    let wrong = format!("at line {} at column {}", line, past_the_close);
+    assert!(
+        !rendered.contains(&wrong),
+        "and not {:?}, which is one past the closing brace: {}",
+        wrong,
+        rendered
+    );
+}
+
 /// The control, so the check above cannot pass by rejecting every literal.
 ///
 /// The list case is the reason this is a control rather than a formality. A repeated *value* in a list is

@@ -1187,10 +1187,21 @@ fn key_value(input: Span) -> IResult<Span, (String, Value)> {
 /// candidates and a repeat there means nothing -- so a check written over values rather than over keys would
 /// reject working files.
 fn parse_map(input: Span) -> IResult<Span, Value> {
-    let (input, _open) = char('{')(input)?;
-    let _nesting = NestingGuard::enter(input, "map")?;
-    let (input, pairs) = separated_list0(separated_by(','), key_value)(input)?;
-    let (input, _close) = followed_by('}')(input)?;
+    // `input` is left pointing at the opening `{` and the advanced spans get their own names, which is
+    // what `parameter_names` does and what the refusal below needs. Shadowing `input` per step is the
+    // ordinary shape in this file, and here it put the reported position *past the closing brace*: the
+    // span in hand after `followed_by('}')` is the text after the map, so `let m = { "a": 1, "a": 2 }`
+    // -- 26 characters -- reported line 1 column 27, one past the end of the line, and
+    // `inner({ "a": 1, "a": 2 })` reported the column of the `)`. Both point at something that is not
+    // the construct and, in the `let` case, at a column the line does not have.
+    //
+    // Only the `let` and parameterized-call paths showed it. On a clause right-hand side a context
+    // wrapper supplies its own span and reports the column just before the literal, so the position
+    // looked near enough there to pass a reading.
+    let (after_open, _open) = char('{')(input)?;
+    let _nesting = NestingGuard::enter(after_open, "map")?;
+    let (after_pairs, pairs) = separated_list0(separated_by(','), key_value)(after_open)?;
+    let (after_close, _close) = followed_by('}')(after_pairs)?;
 
     let mut map = IndexMap::with_capacity(pairs.len());
     for (key, value) in pairs {
@@ -1208,7 +1219,7 @@ fn parse_map(input: Span) -> IResult<Span, Value> {
         }
     }
 
-    Ok((input, Value::Map(map)))
+    Ok((after_close, Value::Map(map)))
 }
 
 /// `null`, `NULL` and `Null`. See `parse_bool` for why the missing spelling mattered.
