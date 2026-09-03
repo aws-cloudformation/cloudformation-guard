@@ -15903,6 +15903,22 @@ fn an_unanswerable_containment_records_one_verdict_not_two(
 /// that arm's own exclusion. Against anything else it takes `continue 'each_lhs`, which does stop, so a
 /// denylist holding no string yields an empty prefix and the `(List, List)` arm is never entered for
 /// such a value at all.
+///
+/// CELL 5 ILLUSTRATES RATHER THAN BINDS, which is worth saying because four binding cells and one
+/// decorative one look identical in the source. Its conditions are a strict subset of cell 4's: both
+/// walk an empty left-hand list with `both_queried` true, and cell 4's denylist holds the Int that cell
+/// 5's holds alone. Any mutation that moves cell 5 moves cell 4, so no mutation isolates it and it earns
+/// no protection of its own. It stays because "a denylist holding no string yields an empty prefix" is
+/// the endpoint of the argument the paragraph above makes, and a reader checking that argument wants to
+/// see it asserted rather than inferred from cell 4.
+///
+/// Answered into ONE comparison rather than five `assert_eq!`s, so a run reports every cell instead of
+/// stopping at the first. That matters most for exactly the reason above: with the sequential form, a
+/// cell 1 failure hid cells 4 and 5 entirely, so the question of whether cell 5 was masked by the form
+/// or subsumed by cell 4 could not be answered by running the test. The same convention is documented
+/// on `an_empty_left_hand_list_earns_no_whole_value_refusal_the_operator_never_built` below, which was
+/// already written this way -- the note sat on that test while this one, the one it describes, was the
+/// sequential holdout.
 #[test]
 fn the_membership_notice_stops_pairing_where_the_operator_stops() {
     use crate::rules::path_value::Path;
@@ -15926,60 +15942,36 @@ fn the_membership_notice_stops_pairing_where_the_operator_stops() {
     }
 
     let haystack_then_int = vec![string_at("/HayInt/0", "xxabxx"), int_at("/HayInt/1", 5)];
-
     let contained = string_at("/MatchStr/0", "ab");
-    assert_eq!(
-        Vec::<String>::new(),
-        paths(rhs_values_paired_with(
-            &contained,
-            &haystack_then_int,
-            true
-        )),
-        "`\"ab\"` is contained in `\"xxabxx\"`, so the operator stops there and never pairs it with \
-         `5` -- and the stopping pairing goes too, because a value that stopped MATCHED and a matched \
-         value cannot be the one a passing `NOT IN` clause passed on"
-    );
-
     let missing = string_at("/Miss/0", "qq");
-    assert_eq!(
-        vec!["/HayInt/0".to_string(), "/HayInt/1".to_string()],
-        paths(rhs_values_paired_with(&missing, &haystack_then_int, true)),
-        "`\"qq\"` matches neither, so the operator builds both pairings and so must this"
-    );
-
-    assert_eq!(
-        vec!["/HayInt/0".to_string(), "/HayInt/1".to_string()],
-        paths(rhs_values_paired_with(
-            &contained,
-            &haystack_then_int,
-            false
-        )),
-        "the short-circuit belongs to the two-query arm; a literal right-hand side is walked whole"
-    );
-
     let empty = Rc::new(PathAwareValue::List((
         Path::new("/Empty/0".to_string(), 0, 0),
         vec![],
     )));
 
-    assert_eq!(
-        vec!["/HayInt/0".to_string()],
-        paths(rhs_values_paired_with(&empty, &haystack_then_int, true)),
-        "the empty-left skip against the STRING is a plain `continue` that keeps the value, so it is no \
-         stop and that pairing survives the prefix -- which is why the `(List, right)` arm still needs \
-         its own `vacuous_match` exclusion -- while the `5` after it does stop the walk"
-    );
+    let none: Vec<String> = Vec::new();
+    let hay0 = vec!["/HayInt/0".to_string()];
+    let both = vec!["/HayInt/0".to_string(), "/HayInt/1".to_string()];
 
     assert_eq!(
-        Vec::<String>::new(),
-        paths(rhs_values_paired_with(
-            &empty,
-            &[int_at("/Ints/0", 5)],
-            true
-        )),
-        "a denylist holding no string leaves an empty prefix for an empty left-hand list, so \
-         `incomparable_membership` enters no arm for it and cannot count a pairing the operator \
-         never built"
+        (&none, &both, &both, &hay0, &none),
+        (
+            &paths(rhs_values_paired_with(&contained, &haystack_then_int, true)),
+            &paths(rhs_values_paired_with(&missing, &haystack_then_int, true)),
+            &paths(rhs_values_paired_with(
+                &contained,
+                &haystack_then_int,
+                false
+            )),
+            &paths(rhs_values_paired_with(&empty, &haystack_then_int, true)),
+            &paths(rhs_values_paired_with(
+                &empty,
+                &[int_at("/Ints/0", 5)],
+                true
+            )),
+        ),
+        "cells in order: contained/queried, miss/queried, contained/literal, empty vs \
+         [String, Int], empty vs [Int]"
     );
 }
 
@@ -15990,21 +15982,35 @@ fn the_membership_notice_stops_pairing_where_the_operator_stops() {
 /// the element loops iterate zero times, so `compare_eq([], entry)` was the arm's entire contribution:
 /// `NotComparable` against an int entry, and `refused` went true on a pairing the operator never built.
 ///
-/// The operator never builds it because it gates that loop twice. `operators.rs:1031` is the
-/// `any(is_list)` condition the predicate copied; `operators.rs:1054` is `if !flat_subset`, and an empty
-/// `lhsl` leaves nothing unmatched, so `flat_subset` holds and the loop is skipped. Measurable from
-/// outside the module, which is how it was checked here: `Empty IN [[9], 5]` exits 0, meaning
-/// `contained_in` answered `Success`.
+/// The operator never builds it because it gates that loop twice: the `any(is_list)` condition on
+/// `contained_in`'s list-against-list arm, which the predicate copied, and `if !flat_subset` inside it,
+/// which it did not. An empty `lhsl` leaves nothing unmatched, so `flat_subset` holds and the loop is
+/// skipped. Both are cited by construct because the line numbers that used to be here had moved.
+/// Measurable from outside the module, which is how it was checked here: `Empty IN [[9], 5]` exits 0,
+/// meaning `contained_in` answered `Success`.
 ///
-/// TWO PATHS, closed by two different things, which is the point of the third cell. The exclusive
-/// endpoint in `rhs_values_paired_with` covers the queried path on its own -- every non-String element is
-/// a stop for an empty left-hand list, so the prefix drops it and this arm is never entered. It cannot
-/// cover the literal path, because that function returns the whole slice at `eval.rs:732-734` before the
-/// endpoint is consulted. So the first cell holds by the prefix and the third by the guard in the arm,
-/// and a reader changing either needs to know which cell belongs to which.
+/// TWO PATHS, and the third cell is the one that binds. The exclusive endpoint in
+/// `rhs_values_paired_with` covers the queried path -- every non-String element is a stop for an empty
+/// left-hand list, so the prefix drops it and this arm is never entered. It cannot cover the literal
+/// path, because that function returns the whole slice from its `!both_queried` early return before the
+/// endpoint is consulted. So the third cell is the guard's, and reverting the guard reddens this test.
+///
+/// THE FIRST CELL IS OVER-DETERMINED, and this paragraph used to claim it "holds by the prefix". It does
+/// not hold by the prefix alone. Measured by reverting the endpoint to the inclusive `[..=at]`: this test
+/// stays GREEN, because with the pairing restored the gate in the arm answers false for an empty `lhsl`
+/// anyway -- its diff is empty either way. Cell 1 therefore flips only when BOTH are reverted, so no
+/// mutation isolates it and it pins neither change on its own.
+///
+/// What binds the prefix is two other tests, which the same measurement names:
+/// `a_subset_that_holds_earns_no_refusal_from_its_own_element_pairs` and
+/// `the_membership_notice_stops_pairing_where_the_operator_stops` are the two that redden under
+/// `[..=at]`, and neither is here. So both changes ARE bound -- across tests rather than within this
+/// one -- and a reader changing the endpoint should expect those two to move and this one not to. The
+/// earlier claim was the more comfortable arrangement, one test covering both paths, and it was never
+/// measured.
 ///
 /// The third cell is written as `false`, and an earlier revision of this test asserted `true` there on
-/// the reading that `operators.rs:1340` hands `contained_in` the whole left-hand value with no skip above
+/// the reading that the literal arm hands `contained_in` the whole left-hand value with no skip above
 /// it, so the pairing must exist. That reading is wrong: it stops at the call and never asks what
 /// `contained_in` does with an empty `lhsl`, which is to skip its membership loop and answer `Success`.
 /// A cell asserting `true` there would have pinned the defect as intended behavior and blocked the fix,
@@ -16197,9 +16203,33 @@ fn a_matched_subset_earns_no_whole_value_refusal_the_operator_never_built(
 /// `the_membership_notice_stops_pairing_where_the_operator_stops` hands
 /// `rhs_values_paired_with` its `both_queried` argument as a literal `true` or `false`, so it pins what
 /// the helper does with each answer and cannot see which answer the caller supplies. Mutation testing at
-/// the call site separates the two: replacing `both_queried` with `true` leaves the whole lib suite
-/// green, and so does deleting the call and walking `&rhs_values` directly. Only the endpoint mutation
-/// was caught by anything.
+/// the call site separates the two.
+///
+/// HISTORICAL, and read as current for one commit. This paragraph used to say that replacing
+/// `both_queried` with `true` leaves the whole lib suite green, that deleting the call and walking
+/// `&rhs_values` directly does too, and that only the endpoint mutation was caught by anything. All three
+/// described the tree BEFORE this test existed, which is the tree its own commit changed. The cells below
+/// are what catch those mutations, so the sentence was falsified by the commit that shipped it.
+///
+/// Re-measured at this commit, lib target, single-threaded, nothing failing unmutated:
+///
+/// ```text
+/// mutation                          invocation                              result
+/// both_queried -> true              cargo test -p cfn-guard --lib           1 red: this test
+/// call deleted, walk &rhs_values    cargo test -p cfn-guard --lib           2 red: this test and
+///                                                                          a_subset_that_holds_..
+/// call deleted, walk &rhs_values    cargo test --workspace                  same 2 red, plus 3
+///                                                                          dead-code diagnostics
+/// call deleted, walk &rhs_values    cargo clippy --all-targets -D warnings  exit 101, 0 tests run
+/// ```
+///
+/// The invocation is named on every row because it is the whole content of the second claim. "The suite"
+/// is not one thing here: under `cargo test -p cfn-guard --lib` the helper is called by the test module,
+/// so it is not dead and no diagnostic fires -- the two reds are assertions. Under `--workspace` the
+/// plain lib target also builds as a dependency of `guard-ffi` and `guard-lambda`, without `cfg(test)`,
+/// where the helper is genuinely unused and the dead-code diagnostics appear beside the same two reds.
+/// Under the gate's clippy invocation those diagnostics are errors and nothing gets as far as running a
+/// test. So the deletion is caught three different ways and only one of them is an assertion.
 ///
 /// One value triple, two cells differing ONLY in `Literal` versus `Resolved` on the left, which is what
 /// isolates the argument from everything else. The needle `"ab"` is contained in `"xxabxx"`, so
