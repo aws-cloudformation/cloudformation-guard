@@ -254,18 +254,33 @@ pub(crate) struct NotComparable {
 /// stronger premise than its conclusion needed: reachability is what makes `EqOperation` irrelevant, and
 /// uniqueness got assumed on the way there. Three code-level `Err(_) => {}` arms sit on this path, each
 /// directly below an `Err(err @ Error::RegexError(_))` arm and therefore receiving `NotComparable` and
-/// nothing else -- `is_one_of`'s at `:810`, `contained_in`'s whole-list loop at `:1071`, and
-/// `contained_in`'s scalar arm at `:1182`. Counting the `(None, None)` arm's dropped result, which is not
-/// an `Err(_) => {}`, there are four suppressions, which is what `eval.rs:327-329` and
-/// `eval_tests.rs:12199-12200` have said all along. The sibling comment at `:761-765` in this file says
-/// "Two sites, one reading" about two of them, so this file already contradicted itself one screen down.
+/// nothing else -- `is_one_of`'s, `contained_in`'s whole-list loop's, and `contained_in`'s scalar arm's.
+/// Counting the `(None, None)` arm's dropped result, which is not an `Err(_) => {}`, there are four
+/// suppressions, which is what the oracle paragraph on `incomparable_membership` in `eval.rs` and
+/// `the_notice_asks_about_every_granularity_the_operator_decides_at`'s own comment have said all along.
+/// `is_one_of`'s own comment says "Two sites, one reading" about two of them, so this file already
+/// contradicted itself one screen down.
+///
+/// Every citation in this comment names a construct rather than a line, and that is not a style
+/// preference. The ten line numbers that used to be here were all stale: this file grew by insertions
+/// above each of them, and a comment that cites `:810` for an arm now at `:973` sends a reader to
+/// whatever happens to sit there. Correcting the numbers only restarts the clock.
 ///
 /// Measured at `1ba4648d` by promoting `is_one_of`'s arm and nothing else: the pinned
 /// aws-guard-rules-registry corpus comes back byte-identical, 576794 bytes of stdout, all five
 /// DEPRECATION lines present and 0 failed rules. Re-confirmed at `1b81431c` with that arm promoted and
 /// the release binary rebuilt -- stdout byte-identical at 576794, stderr byte-identical at 4597, five
-/// DEPRECATION lines, corpus rc=0 -- so the result transfers, nothing between the two commits touching
-/// the comparison path. Said explicitly because the two figures were measured at different commits and a
+/// DEPRECATION lines, and `check-registry-corpus.sh` exiting 0 -- so the result transfers, nothing
+/// between the two commits touching the comparison path.
+///
+/// THE 0 IS THE SCRIPT'S, NOT THE GUARD RUN'S, and the other three figures here are the guard run's, so
+/// listing all four together reads as one exit status for all of them. `cfn-guard test -d` over the
+/// pinned corpus exits 1, and that is the pinned known state rather than a regression: the script's own
+/// header explains it, 30 expectations name rules their `.guard` file never declares, an expectation
+/// that got no verdict makes the error code sticky, and the same run reports 0 failed rules. The script
+/// asserts that whole state and answers 0 when it holds. A reader who checks "corpus rc=0" by running
+/// the binary directly gets 1 and concludes the corpus moved. Said explicitly because the two figures
+/// were measured at different commits and a
 /// reader would otherwise assume one run. The membership promotion is registry-free, and a reader who
 /// takes the 143 as covering it will believe the opposite.
 ///
@@ -286,28 +301,40 @@ pub(crate) struct NotComparable {
 ///
 /// WHAT EACH SITE COSTS, SEPARATELY, because a sequencing plan needs per-site prices and nothing in the
 /// tree carried them. Distinct lib-target tests whose verdict or message moves when each site is
-/// promoted -- the three `Err(_) => {}` arms to the form `:768-769` documents, the fourth through the
-/// channel named below, baseline 1414 passed:
+/// promoted -- the three `Err(_) => {}` arms to the form `is_one_of`'s own comment documents, the fourth
+/// through the channel named below, with no test failing unmutated:
 ///
 /// ```text
 /// promoted                              tests moved
-/// is_one_of (:810)                               27
-/// whole-list loop (:1071)                         8
-/// scalar loop (:1182)                             3
-/// (None, None) dropped result (:1691)            18
+/// is_one_of                                      27
+/// whole-list loop                                 8
+/// scalar loop                                     3
+/// (None, None) dropped result                    18
 /// ```
+///
+/// The baseline is stated as "nothing fails unmutated" rather than as a lib total on purpose. It read
+/// "baseline 1414 passed", which is neither this commit's lib count nor the one at the commit the figures
+/// were taken at, and a lib absolute re-breaks on the next test added anywhere in the crate. What the
+/// prices actually rest on is that the unmutated run is green, which stays true as the total moves.
 ///
 /// THESE PRICES MAY NOT BE SUMMED. That sentence is the one that matters here, because summing them is
 /// the mistake this paragraph was written to correct. Measured combinations against what the individual
 /// sets predict:
 ///
+/// The predicted column is the UNION of the single-site sets, not their sum, and it has to say so:
+/// summing instead of unioning is the arithmetic this whole paragraph exists to warn against, and two of
+/// the five rows are numerically identical either way. `dropped result + whole-list` predicts 26 and
+/// 18 + 8 is also 26; `dropped result + scalar` predicts 21 and 18 + 3 is also 21. A reader checking the
+/// column against the first table by adding would find those two agree and conclude the column is sums,
+/// then read the other three as arithmetic errors rather than as overlaps.
+///
 /// ```text
-/// combination                    predicted   actual   interaction
-/// the three Err(_) sites                33       33             0
-/// dropped result + whole-list            26       29            +3
-/// dropped result + is_one_of             43       59           +16
-/// dropped result + scalar                21       67           +46
-/// all four                               49      111   +65, less 3 masked
+/// combination                    union of singles   actual   interaction
+/// the three Err(_) sites                       33       33             0
+/// dropped result + whole-list                  26       29            +3
+/// dropped result + is_one_of                   43       59           +16
+/// dropped result + scalar                      21       67           +46
+/// all four                                     49      111   +65, less 3 masked
 /// ```
 ///
 /// The union of the four single-site sets is 49; the all-four run is 111, and `49 + 65 - 3 = 111` closes
@@ -316,14 +343,14 @@ pub(crate) struct NotComparable {
 /// overlaps of 5, 0 and 0. That part is reproducible: a second promotion harness produced a byte-identical
 /// three-site failing set.
 ///
-/// WHY IT BREAKS, which is `:1182` and `:1691` being in SERIES rather than parallel. `contained_in`'s
-/// scalar arm ends at `:1186-1203` with `match (found, unanswerable)`: `(true, _)` gives
+/// WHY IT BREAKS, which is the scalar arm and the dropped result being in SERIES rather than parallel.
+/// `contained_in`'s scalar arm ends with `match (found, unanswerable)`: `(true, _)` gives
 /// `Success(ValueIn)`, `(false, Some(reason))` gives `not_comparable_because(..)`, and `(false, None)`
-/// gives `Fail(Compare::ValueIn)`. Promoting `:1182` sets `unanswerable`, which flips `(false, None)` into
-/// `(false, Some(reason))` -- a pairing that returned `Fail(ValueIn)` now returns a `NotComparable`. In the
-/// `(None, None)` arm's `match contained_in(..)`, `Fail(ValueIn)` and `NotComparable` both fell into
-/// `_ => {}`; with `:1691` promoted the second is recorded. So `:1182` MANUFACTURES the inputs `:1691` acts
-/// on, and that is the whole of the +46.
+/// gives `Fail(Compare::ValueIn)`. Promoting the scalar arm's `Err(_) => {}` sets `unanswerable`, which
+/// flips `(false, None)` into `(false, Some(reason))` -- a pairing that returned `Fail(ValueIn)` now
+/// returns a `NotComparable`. In the `(None, None)` arm's `match contained_in(..)`, `Fail(ValueIn)` and
+/// `NotComparable` both fell into `_ => {}`; with that `_ => {}` promoted the second is recorded. So the
+/// scalar arm MANUFACTURES the inputs the dropped result acts on, and that is the whole of the +46.
 ///
 /// THE RULE, stated because a bare "these are additive" invites extension to a site where it fails, which
 /// is exactly how the wrong figure got here: disjoint individual effects do not imply independence.
@@ -333,8 +360,8 @@ pub(crate) struct NotComparable {
 ///
 /// The fourth site is `_ => {}` and not an `Err(_) => {}`, so it is not reachable by the promotion form
 /// the other three take. It was promoted through the channel the arm already uses for `is_one_of`'s
-/// `Membership::Unanswerable` at `:1861-1866`, carrying the refusal's own `reason` and `cause` rather than
-/// re-deriving either.
+/// `Membership::Unanswerable` -- the `unanswerable_membership` binding in the `(None, None)` arm --
+/// carrying the refusal's own `reason` and `cause` rather than re-deriving either.
 ///
 /// Three tests move under a single promotion and are GREEN under all four, which is the signature of a
 /// verdict moved one way by one promotion and back by another:
@@ -376,7 +403,8 @@ pub(crate) struct NotComparable {
 ///
 /// Neither that sweep's clause list nor the 54 cited below is committed, so treat both numbers as notes
 /// on what was run; the reproducible half of each claim is the argument beside it. That is the convention
-/// `:1987-1989` already applies to the 140-clause grid, and it holds here for the same reason.
+/// the `uncompared_pairings` comment in the `(None, None)` arm already applies to its own 140-clause
+/// grid, and it holds here for the same reason.
 ///
 /// AND WHY NEITHER ROUTE IS AVAILABLE TO A DIAGNOSTIC FIX, which is a stronger statement than
 /// "deferred" and is measured rather than argued. `incomparable_membership` exists because the notice
@@ -388,8 +416,11 @@ pub(crate) struct NotComparable {
 /// case it singled out as covered.
 ///
 /// The four are two distinct clauses appearing once per build target, both `some`-quantified:
-/// `some Multi.*.V NOT IN [/(?!x)((a+)+)b/]` at `eval_tests.rs:12831` and
-/// `some WithNonString[*] NOT IN "abc"` at `eval_tests.rs:11463`. The second is the sharpest instance of
+/// `some Multi.*.V NOT IN [/(?!x)((a+)+)b/]`, a cell of
+/// `a_spent_budget_on_one_value_does_not_silence_another_values_notice`, and
+/// `some WithNonString[*] NOT IN "abc"`, the `a_refusing_element_under_a_literal_operand` cell of
+/// `the_element_loop_of_a_list_against_a_non_list_decides_its_own_notice`. The second is the sharpest
+/// instance of
 /// the tree refuting its own comment: that case is spelled
 /// `#[case::a_refusing_element_under_a_literal_operand(.., true)]`, and the trailing `true` is the
 /// notice-expectation flag, so a committed test asserts the notice fires for a shape this paragraph said
@@ -423,10 +454,13 @@ pub(crate) struct NotComparable {
 /// the unanchored recount.
 ///
 /// The positive control is what makes "287 carry zero" a measurement rather than a dead counter: a variant
-/// printing for every clause found 712 of 11084 evaluations carrying `NotComparable` > 0, firing on the
-/// expected kind mismatches. That 712 came from the ANCHORED run, so it is a floor rather than an exact
-/// count and nothing should rest on its value; recording it without that caveat would reintroduce the
-/// class of error this paragraph is fixing.
+/// printing for every clause found 712 of at least 11084 evaluations carrying `NotComparable` > 0, firing
+/// on the expected kind mismatches. BOTH figures came from the ANCHORED run, so both are floors and
+/// neither is an exact count. The caveat used to sit on the numerator alone, which is the same undercount
+/// in a narrower place: the anchor that lost notice-emitting lines lost them from the denominator's tally
+/// too, so a ratio computed from 712 over an exact-looking 11084 is wrong in the direction that makes the
+/// control look weaker than it is. Nothing should rest on either value; recording either without the
+/// caveat would reintroduce the class of error this paragraph is fixing.
 ///
 /// Carrying it needs one of two things. Promoting the refusal is the route above:
 /// 19 verdicts, and it is the `docs/KNOWN_ISSUES.md` change gated on those registry rules. Carrying it
