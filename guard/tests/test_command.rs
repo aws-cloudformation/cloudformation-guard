@@ -1379,6 +1379,202 @@ mod test_command_tests {
         );
     }
 
+    /// The directory this cell and the structured one below walk.
+    ///
+    /// Two subdirectories holding a byte-identical `incomparable_membership.guard`, each with its own
+    /// paired `tests/` suite, so the walk evaluates both and the only thing telling the two notices
+    /// apart is what the locator names the file.
+    const SAME_BASENAME_DIR: &str = "resources/test-command/same-basename-rules-dirs";
+
+    /// The rules file both subdirectories hold, so the two locators differ only by their parent.
+    const SAME_BASENAME_FILE: &str = "incomparable_membership.guard";
+
+    /// Two rules files reached by walking one directory get two different locators.
+    ///
+    /// `test -d` located a rules file by `GuardFile::prefix`, the file name with `.guard` or `.ruleset`
+    /// stripped, which was the coarsest of the three names this repository gave a rules file: it drops
+    /// the directory *and* the extension, so `first/x.guard` and `second/x.guard` both parsed as `x`,
+    /// and so did `x.guard` and `x.ruleset` in one directory -- a pair the test-file pairing code
+    /// explicitly calls out as real. Walking a directory is the invocation aws-guard-rules-registry CI
+    /// uses, so the collision landed on the corpus most likely to hit it.
+    ///
+    /// The count is not the symptom on this path. `handle_plaintext_directory` builds a
+    /// `GenericReporter` per rules file and each one writes its own diagnostics set, so two notices are
+    /// written either way; what was lost is that they were the same bytes, leaving the reader unable to
+    /// locate either clause. So this counts *distinct* lines, and then requires each locator to name
+    /// the directory that tells the two files apart -- an inequality assertion on its own would be
+    /// satisfied by two lines differing for any incidental reason.
+    ///
+    /// `single-line-summary` only, deliberately. The structured formats reach
+    /// `handle_structured_directory_report`, which is separate code with its own locator call and its
+    /// own cell below, so this one is red for one reason.
+    ///
+    /// `two_rules_files_sharing_a_basename_get_distinct_locators` in `validate.rs` is the same property
+    /// for `validate -r a -r b`, which named a rules file by a third route. The fixture cannot be
+    /// shared: this walk requires a `tests/` directory beside each rules file, and the validate-side
+    /// pair must not have one.
+    #[test]
+    fn a_directory_walk_gives_two_rules_files_sharing_a_basename_distinct_locators() {
+        let mut reader = Reader::default();
+        let mut writer =
+            Writer::new_with_err(WBVec(vec![]), WBVec(vec![])).expect("Failed to create writer.");
+
+        let status_code = TestCommandTestRunner::default()
+            .directory(Option::from(SAME_BASENAME_DIR))
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(
+            StatusCode::SUCCESS,
+            status_code,
+            "naming a file is not a verdict; both suites still pass in this release"
+        );
+
+        let stderr = writer.err_to_stripped().expect("failed to read stderr");
+        let notices: Vec<&str> = stderr
+            .lines()
+            .filter(|l| l.contains("DEPRECATION"))
+            .collect();
+
+        assert_eq!(
+            notices.len(),
+            2,
+            "one notice per rules file, since this path builds a reporter and a diagnostics set per \
+             file; got {:?} from stderr {:?}",
+            notices,
+            stderr
+        );
+
+        let distinct: std::collections::BTreeSet<&&str> = notices.iter().collect();
+        assert_eq!(
+            distinct.len(),
+            2,
+            "the two notices must differ; identical lines mean the locator dropped the only thing \
+             that tells these two files apart, got {:?}",
+            notices
+        );
+
+        for parent in ["first", "second"] {
+            let located = reported_path(SAME_BASENAME_DIR, &[parent, SAME_BASENAME_FILE]);
+            let matched: Vec<&&str> = notices.iter().filter(|n| n.contains(&located)).collect();
+
+            assert_eq!(
+                1,
+                matched.len(),
+                "expected exactly one notice locating the clause at `{}`, got {:?} from {:?}",
+                located,
+                matched,
+                notices
+            );
+        }
+    }
+
+    /// The structured directory walk reports one notice per rules file, not one per directory.
+    ///
+    /// `handle_structured_directory_report` accumulates into a single `Diagnostics` set for the whole
+    /// walk, and that is deliberate: it writes one document covering every rules file, so a notice two
+    /// files both produce belongs in it once. What that made is a path where the *count* is a symptom,
+    /// unlike the plaintext walk above. While a rules file was located by `GuardFile::prefix`, two
+    /// files named `x.guard` in different subdirectories produced byte-identical notices, the set
+    /// collapsed them, and `-o json`, `-o yaml` and `-o junit` each reported a single notice for two
+    /// separate defective clauses.
+    ///
+    /// So this asserts the count first, which is what reddens if the locator regresses, and then the
+    /// same distinctness and per-directory checks the plaintext cell makes -- a count of two reached by
+    /// two identical lines is not what is wanted here either.
+    ///
+    /// All three structured formats. The count is decided in `handle_structured_directory_report`
+    /// before the format is chosen, so covering only json would leave two formats asserting nothing
+    /// about a defect they shared. There is no sarif case: `test` rejects `-o sarif` outright.
+    ///
+    /// Both streams, for the reason `a_deprecation_notice_reaches_the_test_command` gives: stdout is
+    /// the document a junit or json consumer parses. The non-empty check on stdout is what stops this
+    /// cell from passing over a run that produced no report at all.
+    #[rstest]
+    #[case("json")]
+    #[case("yaml")]
+    #[case("junit")]
+    fn a_structured_directory_walk_reports_one_notice_per_rules_file(#[case] output: &str) {
+        // `stripped` and `err_to_stripped` each consume the writer, so one run answers for one stream.
+        // The command is deterministic over these files, so two runs read the same output twice.
+        let run = || {
+            let mut reader = Reader::default();
+            let mut writer = Writer::new_with_err(WBVec(vec![]), WBVec(vec![]))
+                .expect("Failed to create writer.");
+
+            let status_code = TestCommandTestRunner::default()
+                .directory(Option::from(SAME_BASENAME_DIR))
+                .output_format(output)
+                .run(&mut writer, &mut reader);
+
+            (status_code, writer)
+        };
+
+        let (status_code, out_writer) = run();
+        let (_, err_writer) = run();
+
+        assert_eq!(
+            StatusCode::SUCCESS,
+            status_code,
+            "naming a file is not a verdict; both suites still pass in this release"
+        );
+
+        let stdout = out_writer.stripped().expect("failed to read stdout");
+        assert!(
+            !stdout.contains("DEPRECATION"),
+            "a notice on stdout would land inside the report that consumers parse, got {:?}",
+            stdout
+        );
+        assert!(
+            !stdout.is_empty(),
+            "the report must still be written; an empty stdout means this cell is measuring a run \
+             that produced nothing, not a notice per rules file"
+        );
+
+        if output == "json" {
+            serde_json::from_str::<serde_json::Value>(&stdout)
+                .expect("the report on stdout must still parse with the notices on stderr");
+        }
+
+        let stderr = err_writer.err_to_stripped().expect("failed to read stderr");
+        let notices: Vec<&str> = stderr
+            .lines()
+            .filter(|l| l.contains("DEPRECATION"))
+            .collect();
+
+        assert_eq!(
+            notices.len(),
+            2,
+            "two defective clauses in two rules files, so two notices; one means the walk's single \
+             diagnostics set collapsed them because both files reported the same name. Got {:?} \
+             from stderr {:?}",
+            notices,
+            stderr
+        );
+
+        let distinct: std::collections::BTreeSet<&&str> = notices.iter().collect();
+        assert_eq!(
+            distinct.len(),
+            2,
+            "the two notices must differ; two identical lines reaching a set would not have counted \
+             two, so this also pins that the count above was not met by a duplicate, got {:?}",
+            notices
+        );
+
+        for parent in ["first", "second"] {
+            let located = reported_path(SAME_BASENAME_DIR, &[parent, SAME_BASENAME_FILE]);
+            let matched: Vec<&&str> = notices.iter().filter(|n| n.contains(&located)).collect();
+
+            assert_eq!(
+                1,
+                matched.len(),
+                "expected exactly one notice locating the clause at `{}`, got {:?} from {:?}",
+                located,
+                matched,
+                notices
+            );
+        }
+    }
+
     /// Two runs of the same command over the same files must produce the same report.
     ///
     /// They did not. Both test reporters iterate the map built by `get_by_rules`, which was a

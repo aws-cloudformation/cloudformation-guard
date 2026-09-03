@@ -1660,6 +1660,96 @@ mod validate_tests {
         }
     }
 
+    /// A notice recorded before the rules file failed still leaves through the junit reporter.
+    ///
+    /// `-o junit` is the one structured format whose deprecation set lives inside `get_test_case`, and
+    /// that function returns early when `eval_rules_file` hands back an error. `eval_rules_file`
+    /// evaluates every rule before returning, so a clause that reached a notice has already recorded
+    /// it -- and the early return dropped the scope without reading it, losing the notice for the one
+    /// input where the author most needs everything the run had to say.
+    ///
+    /// The `Ok` arm a few lines further down does the same read, and
+    /// `a_deprecation_notice_reaches_the_structured_reporters` covers that one over a fixture where
+    /// nothing errors. This cell is about the other arm, which is why the fixture has to fail and why
+    /// `status="error"` on stdout is asserted: without it the cell would be satisfied by the `Ok` arm
+    /// and would say nothing about the early return. The resolver error is asserted too, so the reason
+    /// the arm was taken is pinned rather than assumed from the status alone.
+    ///
+    /// One notice, not two. `notice_then_error.guard` has one clause that warns, so a count is exact
+    /// here rather than a floor -- the run either carried the notice past the early return or it did
+    /// not.
+    ///
+    /// The exit code is `PARSING_ERROR`: a reference no `let` declares is the rules author's mistake,
+    /// not cfn-guard falling over. Asserted because a notice that moved the verdict is not a notice.
+    #[test]
+    fn a_notice_recorded_before_an_error_reaches_the_junit_report() {
+        // `stripped` and `err_to_stripped` each consume the writer, so one run answers for one stream.
+        // The command is deterministic over these inputs.
+        let run = || {
+            let mut reader = Reader::default();
+            let mut writer = Writer::new_with_err(WBVec(vec![]), WBVec(vec![]))
+                .expect("Failed to create writer.");
+
+            let status_code = ValidateTestRunner::default()
+                .data(vec!["vacuous-and-incomparable-template.yaml"])
+                .rules(vec!["notice_then_error.guard"])
+                .structured()
+                .output_format(Some("junit"))
+                .run(&mut writer, &mut reader);
+
+            (status_code, writer)
+        };
+
+        let (status_code, out_writer) = run();
+        let (_, err_writer) = run();
+
+        assert_eq!(
+            StatusCode::PARSING_ERROR,
+            status_code,
+            "an undeclared reference is the rules author's mistake, and the notice must not move it"
+        );
+
+        let stdout = out_writer.stripped().expect("failed to read stdout");
+        assert!(
+            stdout.contains(r#"status="error""#),
+            "this cell is about the arm `eval_rules_file` errors out of; a test case in any other \
+             state means the run left through the `Ok` arm and the assertion below proves nothing \
+             about the early return. Got {:?}",
+            stdout
+        );
+        assert!(
+            stdout.contains("Could not resolve variable by name undeclared_reference"),
+            "and the error must be the unresolved reference, so the arm was taken for the reason \
+             this fixture is built on. Got {:?}",
+            stdout
+        );
+        assert!(
+            !stdout.contains("DEPRECATION"),
+            "a notice on stdout would land inside the document a junit reporter parses, got {:?}",
+            stdout
+        );
+
+        let stderr = err_writer.err_to_stripped().expect("failed to read stderr");
+        let notices: Vec<&str> = stderr
+            .lines()
+            .filter(|l| l.contains("DEPRECATION"))
+            .collect();
+
+        assert_eq!(
+            notices.len(),
+            1,
+            "the file has one warning clause, and it was evaluated before the rule that failed, so \
+             the notice must survive the early return; got {:?} from stderr {:?}",
+            notices,
+            stderr
+        );
+        assert!(
+            notices[0].contains("could not be compared with any element"),
+            "and it must be the membership notice the warning clause produces, got {:?}",
+            notices
+        );
+    }
+
     /// The counterpart: clauses that are not changing stay silent.
     ///
     /// A deprecation notice is only useful if it is rare. The cases here are the ones most likely to be
