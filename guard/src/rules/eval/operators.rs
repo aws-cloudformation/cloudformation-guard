@@ -1562,6 +1562,29 @@ pub(super) fn whole_value_pairing_built(lhsl: &[PathAwareValue], rhsl: &[PathAwa
 /// two WHOLE values. There is no element-versus-right pairing there to refuse, so a per-element
 /// refusal counted against such a pair belongs to a comparison nobody performed.
 ///
+/// # PRECONDITION: `rhs_value` is not a list
+///
+/// Asserted with a `debug_assert!` rather than left to the reader, because the rows below are stated
+/// per arm and for a LIST `rhs_value` the arm stops mattering. `contained_in`'s `(List, List)` arm
+/// reaches [`elements_not_matched`], which asks [`is_one_of`] per left-hand element, and every arm of
+/// [`InOperation::compare`] can land there -- so for a list right-hand value the honest answer is
+/// "always yes" and three of the four rows below would be wrong.
+///
+/// Measured at `42151848`, with counters at the only two sites that pair a list's elements against a
+/// right-hand value, one right-hand value per case so the count is attributable. For a list
+/// `rhs_value`: `(Some, Some)`, `(None, Some)` and `(Some, None)` each predict `false` and each builds
+/// 2 element pairings through `elements_not_matched` -- three disagreements. `(None, None)` predicts
+/// `true` and observes 2, so it agrees, but NOT for the reason the row gives: its own element loop is
+/// skipped by the `if !eachr.is_list()` guard, and `contained_in` builds the pairings instead. A
+/// reading that credits the row's own loop is wrong even where the answer is right.
+///
+/// The caller satisfies this today by match-arm ordering alone: the sole caller is
+/// [`super::incomparable_membership`]'s `(List, right)` arm, and a `(List, List)` pair is consumed by
+/// the arm above it, so `right` is never a list there. That is a real guarantee and an invisible one --
+/// nothing at either end says so, in a helper whose entire reason for existing is that a condition
+/// restated away from the dispatch can drift from it. One reordering turns three latent wrong answers
+/// live, which is why the assertion is executable rather than narrative.
+///
 /// Asked of [`is_literal`] rather than of a flag, because the answer is a property of the ARM and the
 /// four arms differ. `both_queried` names ONE of the four and collapses the other three, and two of the
 /// three it collapses do decompose, so a gate spelled that way is wrong for both of them. It is not the
@@ -1569,23 +1592,42 @@ pub(super) fn whole_value_pairing_built(lhsl: &[PathAwareValue], rhsl: &[PathAwa
 /// carried `both_queried && lhsl.is_empty()` in an earlier revision, which its own note records as the
 /// inverse of the coverage needed.
 ///
-/// * `(None, None)` decomposes. The arm asks `is_one_of(element, [eachr])` once per left-hand element.
-///   The shape refusal further down that same match arm already sets `refused` whenever the left-hand
-///   list is non-empty, and the loop body never runs when it is empty, so this arm of the answer is
-///   never what carries a notice -- it is here because it is true of the operator, not because the
-///   predicate needs it.
+/// Every row below holds under the precondition above and NOT in general.
+///
+/// * `(None, None)` decomposes. The arm asks `is_one_of(element, [eachr])` once per left-hand element,
+///   under a `!eachr.is_list()` guard which the precondition makes vacuous. The shape refusal further
+///   down that same match arm already sets `refused` whenever the left-hand list is non-empty, and the
+///   loop body never runs when it is empty, so this arm of the answer is never what carries a notice --
+///   it is here because it is true of the operator, not because the predicate needs it.
 /// * `(None, Some)` decomposes for a `String` right operand ONLY. That arm expands a list-valued
-///   left-hand value into one [`string_in`] per element, and `string_in` answers `not_comparable` for a
-///   non-`String` element -- a real per-element refusal, and the same partition the predicate makes.
-///   Every other right-hand kind reaches `contained_in` with the value whole.
+///   left-hand value into one [`string_in`] per element, which is a per-element pairing, and that fact
+///   alone is what this function reports. Every other right-hand kind reaches `contained_in` with the
+///   value whole.
+///
+///   NOT because `string_in`'s refusal matches [`super::pair_refused`]'s. An earlier revision said the
+///   two make "the same partition", and that is false: `string_in` answers `not_comparable` for
+///   `(Regex, String)`, `(String, Regex)` and `(Regex, Regex)` while `compare_eq` answers `Ok(true)` for
+///   all three, so `pair_refused` would refuse none of them -- measured, three disagreements out of four
+///   probed pairs, with only `(Int, String)` agreeing. The claim is also unnecessary: what the gate needs
+///   is that element pairings EXIST here, not that the two functions classify them alike. It is
+///   unreachable rather than merely wrong -- a `PathAwareValue::Regex` is built only by the rules parser,
+///   and a rule literal on the left makes `is_literal(lhs)` `Some`, which is a different arm -- but an
+///   unreachable justification is still the wrong justification to leave standing.
 /// * `(Some, None)` decomposes unless some right-hand value is a list. With none, that arm builds an
 ///   element-wise diff with `Vec::contains`, so an element incomparable to a right-hand value really
 ///   is read as "not a member" -- which is exactly what the notice announces, so it is owed. With one,
 ///   the arm calls [`substring_or_contained_in`] on the whole value instead and no element pairing
-///   exists.
-/// * `(Some, Some)` never decomposes. One [`substring_or_contained_in`] on the whole pair, and note
-///   that this differs from `(None, Some)` for the same two operand kinds: a `String` right operand
-///   gets the left-hand list expanded in one arm and not in the other.
+///   exists for the non-list values it then walks.
+/// * `(Some, Some)` never decomposes -- for a non-list `rhs_value`. One [`substring_or_contained_in`]
+///   on the whole pair, which reaches `contained_in`'s catch-all. Note this differs from `(None, Some)`
+///   for the same two operand kinds: a `String` right operand gets the left-hand list expanded in one
+///   arm and not in the other.
+///
+///   For a LIST `rhs_value` this row is false, and the route is worth naming because a reader tracing
+///   it will otherwise find the doc contradicting the code: `substring_or_contained_in` falls through
+///   to `contained_in`, into its `(List, List)` arm, into `elements_not_matched`, which asks `is_one_of`
+///   per element. Measured, 2 pairings where this row predicts none. The precondition is what keeps the
+///   row true, not the arm.
 ///
 /// `!any(is_list)` over [`selected`] rather than over a slice the caller assembled, so the predicate
 /// and the arm cannot disagree about which right-hand values exist. `selected` is the function the arm
@@ -1623,6 +1665,15 @@ pub(super) fn element_pairings_built(
     rhs: &[QueryResult],
     rhs_value: &PathAwareValue,
 ) -> bool {
+    // The rows in this function's doc are stated per ARM, and for a list `rhs_value` the arm stops
+    // deciding: `contained_in`'s `(List, List)` walk pairs elements no matter which arm reached it, so
+    // three of the four rows would be wrong. Enforced by match-arm ordering at the sole caller and by
+    // nothing else, hence executable here.
+    debug_assert!(
+        !rhs_value.is_list(),
+        "element_pairings_built is answered per arm and is only valid for a non-list rhs_value; \
+         `contained_in`'s (List, List) arm pairs elements regardless of arm"
+    );
     match (is_literal(lhs), is_literal(rhs)) {
         (None, None) => true,
         (None, Some(_)) => matches!(rhs_value, PathAwareValue::String(_)),
