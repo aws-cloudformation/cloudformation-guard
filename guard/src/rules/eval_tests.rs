@@ -8969,9 +8969,17 @@ fn a_nested_list_on_the_right_of_in_is_found_in_any_position(
 #[case::in_every_element_found_whatever_its_depth("Nest", r#"IN [1, [9]]"#, Status::PASS)]
 #[case::denied_by_every_element_whatever_its_depth("Nest", r#"NOT IN [1, [9]]"#, Status::FAIL)]
 #[case::in_empty_over_a_flat_list("Empty", r#"IN [1,2,3]"#, Status::PASS)]
-#[case::in_empty_over_a_nested_list("Empty", r#"IN [[9]]"#, Status::FAIL)]
+#[case::in_empty_over_a_nested_list("Empty", r#"IN [[9]]"#, Status::PASS)]
+#[case::in_empty_over_a_mixed_denylist("Empty", r#"IN [1, 2, [9]]"#, Status::PASS)]
+#[case::in_empty_over_a_denylist_holding_an_empty_list("Empty", r#"IN [1, 2, []]"#, Status::PASS)]
 #[case::denied_empty_over_a_flat_list("Empty", r#"NOT IN [1,2,3]"#, Status::FAIL)]
-#[case::undenied_empty_over_a_nested_list("Empty", r#"NOT IN [[9]]"#, Status::PASS)]
+#[case::denied_empty_over_a_nested_list("Empty", r#"NOT IN [[9]]"#, Status::FAIL)]
+#[case::denied_empty_over_a_mixed_denylist("Empty", r#"NOT IN [1, 2, [9]]"#, Status::FAIL)]
+#[case::denied_empty_over_a_denylist_holding_an_empty_list(
+    "Empty",
+    r#"NOT IN [1, 2, []]"#,
+    Status::FAIL
+)]
 #[case::undenied_nested_pair_via_query("Pair", "NOT IN DenyNestedPair", Status::PASS)]
 #[case::undenied_nested_singleton_via_query("Pair", "NOT IN DenyNestedSeven", Status::PASS)]
 #[case::undenied_nested_strings_via_query("Pair", "NOT IN DenyWrappedStrs", Status::PASS)]
@@ -9049,9 +9057,25 @@ fn a_nested_list_on_the_right_of_in_is_found_in_any_position(
     Status::FAIL
 )]
 #[case::in_empty_over_a_flat_list_via_query("Empty", "IN DenyOneTwoThree", Status::PASS)]
-#[case::in_empty_over_a_nested_list_via_query("Empty", "IN DenyNestedNine", Status::FAIL)]
+#[case::in_empty_over_a_nested_list_via_query("Empty", "IN DenyNestedNine", Status::PASS)]
+#[case::in_empty_over_a_mixed_denylist_via_query("Empty", "IN DenyOneTwoAndNine", Status::PASS)]
+#[case::in_empty_over_a_denylist_holding_an_empty_list_via_query(
+    "Empty",
+    "IN DenyOneTwoAndEmpty",
+    Status::PASS
+)]
 #[case::denied_empty_over_a_flat_list_via_query("Empty", "NOT IN DenyOneTwoThree", Status::FAIL)]
-#[case::undenied_empty_over_a_nested_list_via_query("Empty", "NOT IN DenyNestedNine", Status::PASS)]
+#[case::denied_empty_over_a_nested_list_via_query("Empty", "NOT IN DenyNestedNine", Status::FAIL)]
+#[case::denied_empty_over_a_mixed_denylist_via_query(
+    "Empty",
+    "NOT IN DenyOneTwoAndNine",
+    Status::FAIL
+)]
+#[case::denied_empty_over_a_denylist_holding_an_empty_list_via_query(
+    "Empty",
+    "NOT IN DenyOneTwoAndEmpty",
+    Status::FAIL
+)]
 fn a_list_denylist_holding_a_nested_list_denies_only_what_it_names(
     #[case] property: &str,
     #[case] comparison: &str,
@@ -9084,7 +9108,8 @@ fn a_list_denylist_holding_a_nested_list_denies_only_what_it_names(
         DenyNestedNine: [[9]],
         DenyNestedWrappedA: [["a"]],
         DenyOneAndNine: [1, [9]],
-        DenyOneTwoThree: [1,2,3]
+        DenyOneTwoThree: [1,2,3],
+        DenyOneTwoAndEmpty: [1, 2, []]
     }
     "#;
 
