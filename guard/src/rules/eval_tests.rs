@@ -10627,6 +10627,77 @@ fn the_notice_fires_exactly_where_fail_closed_moves_the_answer(
     Ok(())
 }
 
+/// Two different clauses that render the same text get two notices, not one.
+///
+/// Both deprecation notices are built from a context that is the clause's own `Display`, and both land in
+/// `RootScope::deprecations`, which is a `BTreeSet`. A `Display` carries no rule name, no file and no
+/// position, so two clauses that differ in something the rendering drops produce the same string and the
+/// set keeps one of them. A variable is the cheapest way to reach that -- `%v NOT IN [1]` renders
+/// identically however `v` is bound -- but it is not a special case: the collapse is available to any two
+/// clauses whose text matches, in one rules file or across several.
+///
+/// Which is a correctness problem rather than untidy output. The notice exists to be worked through
+/// before an upgrade, and an author who fixes the clause the surviving line appears to name has fixed one
+/// of two clauses and has been told nothing about the other. The count is what misleads: two defective
+/// clauses report as one.
+///
+/// So each notice names the source position of the clause it is about. That also has to leave dedup doing
+/// its job, which is why `a_deprecation_notice_reaches_the_test_command` is the other half of this: it
+/// asserts two notices from three test cases rather than six, and it holds because a position is fixed at
+/// parse time and so is the same on every evaluation of the same clause. A qualifier that varied per
+/// emission -- a counter, or the value that triggered it -- would satisfy this test and break that one.
+///
+/// Asserted as a set and not a count. Two notices whose texts are equal would pass a length check after a
+/// change that made the set two entries wide for some other reason, and equal texts are the defect.
+#[rstest::rstest]
+#[case::the_incomparable_membership_notice(
+    "rule a {\n  let v = L1\n  %v NOT IN [1]\n}\nrule b {\n  let v = L2\n  %v NOT IN [1]\n}",
+    "could not be compared with any element"
+)]
+#[case::the_vacuous_comparison_notice(
+    "rule a {\n  let v = E1\n  %v == 50\n}\nrule b {\n  let v = E2\n  %v == 50\n}",
+    "without comparing anything"
+)]
+fn each_deprecation_notice_identifies_the_clause_it_is_about(
+    #[case] rules: &str,
+    #[case] marker: &str,
+) -> Result<()> {
+    // `L1`/`L2` are string lists against an integer denylist, so both membership clauses pass on the
+    // incomparability. `E1`/`E2` are empty, so both vacuous clauses compare nothing and pass.
+    const INPUT: &str = r#"
+    {
+        L1: ["a", "b"],
+        L2: ["c", "d"],
+        E1: [],
+        E2: []
+    }
+    "#;
+
+    let (status, notices) = deprecations_for_rules(rules, INPUT)?;
+
+    assert_eq!(
+        Status::PASS,
+        status,
+        "both clauses pass in this release; a notice must not have moved that"
+    );
+
+    let matched: Vec<&String> = notices.iter().filter(|n| n.contains(marker)).collect();
+    assert_eq!(
+        2,
+        matched.len(),
+        "two clauses reached this notice, so two lines are owed; got {:?}",
+        matched
+    );
+    assert_ne!(
+        matched[0], matched[1],
+        "the two lines are byte-identical, so they would have collapsed in the set the notices are \
+         collected in and the second clause would go unreported; got {:?}",
+        matched
+    );
+
+    Ok(())
+}
+
 /// `or` is decided by whichever disjunct can decide it, in either order.
 ///
 /// `eval_conjunction_clauses` returned on the first disjunct that raised, so the rest of the

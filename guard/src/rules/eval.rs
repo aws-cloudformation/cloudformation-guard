@@ -410,12 +410,17 @@ fn incomparable_membership(lhs: &[QueryResult], rhs: &[QueryResult]) -> bool {
 /// which makes it the odd one out rather than a design choice. It is not changed in this release
 /// because the change turns a passing run into a failing one, and a rule author deserves to hear about
 /// that before a pipeline does.
-fn vacuous_comparison_notice(context: &str) -> String {
+///
+/// Carries the clause's source position for the reason given on [`incomparable_membership_notice`]: the
+/// context is a `Display` that names no rule and no file, so two clauses rendering alike collapse in the
+/// set these are collected in.
+fn vacuous_comparison_notice(context: &str, location: &FileLocation<'_>) -> String {
     format!(
         "DEPRECATION: {} passed without comparing anything, because the query selected an empty \
          collection. From the next release this reports a failure, matching a missing key and an empty \
-         map. Guard the clause with `when <query> !empty {{ ... }}` if an empty collection is expected.",
-        context
+         map. Guard the clause with `when <query> !empty {{ ... }}` if an empty collection is expected. \
+         The clause is at {}.",
+        context, location
     )
 }
 
@@ -429,12 +434,26 @@ fn vacuous_comparison_notice(context: &str) -> String {
 /// aws-guard-rules-registry use `NOT IN` inside a filter predicate to catch a `!Ref`-shaped value, and
 /// failing closed makes the filter select fewer resources, which turns a reported violation into a
 /// pass. Those rules have to change first.
-fn incomparable_membership_notice(context: &str) -> String {
+///
+/// Ends with the clause's source position, which is what makes the notice identify its own subject.
+/// `context` is the clause's `Display` and carries no rule name, no file and no position, so two clauses
+/// that differ only in something the rendering drops -- most easily a variable, since `%v NOT IN [1]`
+/// renders alike however `v` is bound -- produced the same string, and `RootScope::deprecations` is a
+/// `BTreeSet`. Two clauses then reported as one line, and an author who fixed the clause that line
+/// appears to name was told nothing about the other.
+///
+/// A position rather than a counter or the offending value, because the set still has collapsing to do:
+/// a rules file is evaluated once per test case, and `a_deprecation_notice_reaches_the_test_command`
+/// requires two notices from three cases rather than six. A position is fixed at parse time, so it is
+/// the same on every evaluation of one clause and different between two;  anything that varied per
+/// emission would separate the duplicates as well as the distinct clauses.
+fn incomparable_membership_notice(context: &str, location: &FileLocation<'_>) -> String {
     format!(
         "DEPRECATION: {} passed because the value could not be compared with any element of the list, \
          which is currently read as \"not a member\". A future release fails closed here, as `!=` \
-         already does. Compare against values of the same kind, or use `!=` if that is the intent.",
-        context
+         already does. Compare against values of the same kind, or use `!=` if that is the intent. The \
+         clause is at {}.",
+        context, location
     )
 }
 
@@ -1220,6 +1239,19 @@ where
 /// `role` decides what a positive comparison against an empty reference reports: it
 /// is unsatisfiable, so it fails as an [`ClauseRole::Assertion`] but must stay a SKIP
 /// as a [`ClauseRole::Gate`]. See [`ClauseRole`] for why failing a gate is unsafe.
+// Eight arguments, one over the lint's limit, and the eighth is `location`. Two ways to get back under it
+// were considered and both cost more than the lint does.
+//
+// Folding the position into `context` is the obvious one and it is not a refactor, it is a behaviour
+// change: `context` is what every record in this function is filed under and what the reporters print, so
+// widening it moves report text and the golden files with it. This change is diagnostics only.
+//
+// Taking `&AccessClause` in place of `lhs_query`, `custom_message` and `location` -- all three are its
+// fields, and the one call site has it -- would reach six. That is a better signature and it rewrites the
+// interior of a four-hundred-line function to reach a lint limit, with no behavioural gain and a real
+// chance of a transcription error in the arms that clone `custom_message`. Worth doing on its own, next to
+// nothing else.
+#[allow(clippy::too_many_arguments)]
 fn binary_operation<'value, 'loc: 'value>(
     lhs_query: &'value [QueryPart<'loc>],
     rhs: &[QueryResult],
@@ -1228,6 +1260,8 @@ fn binary_operation<'value, 'loc: 'value>(
     custom_message: Option<String>,
     eval_context: &mut dyn EvalContext<'value, 'loc>,
     role: ClauseRole,
+    // Where the clause is written, for the notice below and nothing else.
+    location: &FileLocation<'loc>,
 ) -> Result<EvaluationResult> {
     let lhs = eval_context.query(lhs_query)?;
     // Computed here and emitted at the bottom, because neither end of the comparison has both halves
@@ -1621,7 +1655,7 @@ fn binary_operation<'value, 'loc: 'value>(
     // Reading the verdict as any-value-passed would therefore add notices to the false-alarm class and to
     // nothing else.
     if membership_is_incomparable && clause_passed(&outcome) {
-        eval_context.record_deprecation(incomparable_membership_notice(&context));
+        eval_context.record_deprecation(incomparable_membership_notice(&context, location));
     }
 
     Ok(outcome)
@@ -1877,6 +1911,7 @@ pub(in crate::rules) fn eval_guard_access_clause<'value, 'loc: 'value>(
             gac.access_clause.custom_message.clone(),
             resolver,
             role,
+            &gac.access_clause.location,
         )
     };
 
@@ -1942,7 +1977,10 @@ pub(in crate::rules) fn eval_guard_access_clause<'value, 'loc: 'value>(
                     // `some` the same emptiness already answers FAIL, and that answer is not changing,
                     // so warning there would train the reader to ignore the notice.
                     if compared_nothing && all {
-                        resolver.record_deprecation(vacuous_comparison_notice(&blk_context));
+                        resolver.record_deprecation(vacuous_comparison_notice(
+                            &blk_context,
+                            &gac.access_clause.location,
+                        ));
                     }
                     if all {
                         if fails > 0 {
