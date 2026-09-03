@@ -699,6 +699,14 @@ fn contained_in(lhs_value: Rc<PathAwareValue>, rhs_value: Rc<PathAwareValue>) ->
                 // range or a regex reaches the function that knows about them, and the whole-list
                 // membership test asks `compare_eq` on the list itself for the same reason.
                 //
+                // The two are not both exercised, and it is the membership one that is not. Measured by
+                // replacing each `unwrap_or(false)` with a panic on `Err` in the same build: the one
+                // inside `is_one_of` fires for 58 tests, and this one -- `compare_eq(&lhs_value, elem)`
+                // just below -- fires for none, anywhere in the lib suite. So its error path has no
+                // coverage at all, and a reader reasoning about what this branch swallows should not
+                // assume the sibling's 58 arrivals say anything about this line. `is_one_of`'s own
+                // comment carries the kinds that do arrive there.
+                //
                 // The subset test used to stay on `PartialEq`, to match the all-flat branch below. That
                 // matched the branch and left the same hole in it: a range beside a list-valued
                 // left-hand side matched no element, so `Ports NOT IN [r[80,90]]` admitted a `Ports` of
