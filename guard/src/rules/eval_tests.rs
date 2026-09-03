@@ -9619,6 +9619,119 @@ fn which_spelling_of_a_queried_denylist_reaches_which_arm(
     Ok(())
 }
 
+/// An empty left-hand list answers the same way whatever spelling names the denylist.
+///
+/// Why this exists: `4609b60e` made a denylist that grew keep denying an empty list, and it could not
+/// reach the spellings where the right-hand query is expanded. `Empty NOT IN [1, 3]` and
+/// `Empty NOT IN D13` both exit 19, and `Empty NOT IN D13[*]` exits 0 -- the same two values, and the
+/// `[*]` deciding whether the denial happens. That is the same class of defect
+/// `which_spelling_of_a_queried_denylist_reaches_which_arm` above is about, in the vacuous case.
+///
+/// The convention these cells encode is the one that table and
+/// `a_list_denylist_holding_a_nested_list_denies_only_what_it_names` already state: an empty left-hand
+/// list is vacuously a subset of anything, so it passes `IN` and fails `NOT IN`, and `denied_empty_over_a_flat_list`
+/// is where that is pinned for the written-out spelling. `vacuous_comparison_notice` in `eval.rs` is
+/// separately deprecating the behavior. This test is not an argument for the convention; it is the claim
+/// that the convention should not depend on how the right-hand operand was spelled.
+///
+/// Why this one is fixable where the right-expanded nested entry is not. That defect is impossible to
+/// repair inside `InOperation::compare` because `Denies[0]` and `Denies[*]`, over a `Denies` of
+/// `[[1, 3]]`, hand `compare` one identical `QueryResult` while the oracle owes them opposite verdicts,
+/// so anything written there moves both together. Apply the same test here and the pair agrees: the
+/// three `Denies` cells below are all FAIL, and they are FAIL because an empty left-hand list is
+/// vacuously a subset of the entry set `{[1, 3]}` and of the member set `{1, 3}` alike. The verdict does
+/// not depend on which reading of a list-shaped right-hand result is taken, so the ambiguity that blocks
+/// the other defect does not arise, and the repair is available. `a_single_indexed_entry_denies_by_its_members`
+/// is the contrasting pair to read beside these.
+///
+/// Where the answer was lost: `contained_in` supplies the vacuous match from its list-against-list arm,
+/// where an empty left-hand list produces an empty diff and so a Success. A right-hand operand expanded
+/// to scalars never reaches that arm -- a list against a scalar is `contained_in`'s incomparable
+/// catch-all -- so the match was never found. The `Dn9[*]` cells are the control that separates the two:
+/// `Dn9` is `[[9]]`, so `Dn9[*]` resolves to the inner list `[9]` and the pairing is list-against-list,
+/// which always worked. A fix credited with those cells has not touched the defect.
+///
+/// The mirror, and it is the failure this fix could plausibly cause. A vacuous match must be available
+/// to an empty LIST and to nothing else. `EmptyStr` and `EmptyMap` are the two values that look empty and
+/// are not lists, and both must stay PASS in both spellings: `""` is not a member of `{1, 3}` and neither
+/// is `{}`, and no subset reading applies to either, so the correct answer is the one they already give.
+/// The `Pair` cells are the other half of the mirror: a non-empty list must keep answering by what the
+/// denylist names, PASS for a disjoint one and FAIL for one that names an element, so a fix that made
+/// every list-valued left-hand side match vacuously would redden them.
+#[rstest::rstest]
+// The defect, in the three spellings that lose the denial. `D13` and `D34` hold scalars, so `[*]` and
+// `[0]` both resolve the right operand to a scalar, which is the shape where the vacuous match was lost.
+// `D34` is disjoint from anything and still owes FAIL, which is the whole point of the convention: the
+// empty case does not consult the denylist.
+#[case::empty_denied_right_expanded("Empty NOT IN D13[*]", Status::FAIL)]
+#[case::empty_denied_single_indexed("Empty NOT IN D13[0]", Status::FAIL)]
+#[case::empty_denied_by_a_disjoint_denylist_right_expanded("Empty NOT IN D34[*]", Status::FAIL)]
+// The two spellings that were already right, so the fix is visibly closing a gap rather than inventing a
+// rule.
+#[case::empty_denied_written_out("Empty NOT IN [1, 3]", Status::FAIL)]
+#[case::empty_denied_unexpanded("Empty NOT IN D13", Status::FAIL)]
+// The list-against-list control. `Dn9[*]` resolves to the inner list `[9]`, so this pairing reaches
+// `contained_in`'s list arm and has always produced the vacuous match. Here so that a repair aimed at the
+// scalar shape cannot be credited with it.
+#[case::empty_denied_by_a_nested_entry_unexpanded("Empty NOT IN Dn9", Status::FAIL)]
+#[case::empty_denied_by_a_nested_entry_right_expanded("Empty NOT IN Dn9[*]", Status::FAIL)]
+// The contrasting pair: the exact operand shapes that make the right-expanded nested entry unrepairable
+// in that arm. `Denies` is `[[1, 3]]`, so `Denies[0]` and `Denies[*]` deliver one identical value to
+// `compare`. For a non-empty left-hand side those two owe opposite verdicts, which is the proof recorded
+// in `which_spelling_of_a_queried_denylist_reaches_which_arm`. For an empty one they owe the same verdict,
+// and that is why this defect has a repair and that one does not.
+#[case::empty_denied_by_a_one_entry_denylist_unexpanded("Empty NOT IN Denies", Status::FAIL)]
+#[case::empty_denied_by_a_one_entry_denylist_right_expanded("Empty NOT IN Denies[*]", Status::FAIL)]
+#[case::empty_denied_by_a_one_entry_denylist_single_indexed("Empty NOT IN Denies[0]", Status::FAIL)]
+// `IN` for the same spellings. The convention passes an empty left-hand side, three spellings already do,
+// and the expanded one is the outlier that moves with the fix. If these disagree after a change, the
+// vacuous match is being applied in one polarity only.
+#[case::empty_in_written_out("Empty IN [1, 3]", Status::PASS)]
+#[case::empty_in_unexpanded("Empty IN D13", Status::PASS)]
+#[case::empty_in_right_expanded("Empty IN D13[*]", Status::PASS)]
+#[case::empty_in_a_nested_entry_right_expanded("Empty IN Dn9[*]", Status::PASS)]
+// THE MIRROR. Empty and not a list, so no vacuous subset reading applies and PASS is correct. A fix that
+// keyed on "looks empty" rather than on "is an empty list" reddens these.
+#[case::an_empty_string_is_not_vacuously_denied("EmptyStr NOT IN D13[*]", Status::PASS)]
+#[case::an_empty_string_is_not_vacuously_denied_unexpanded("EmptyStr NOT IN D13", Status::PASS)]
+#[case::an_empty_map_is_not_vacuously_denied("EmptyMap NOT IN D13[*]", Status::PASS)]
+#[case::an_empty_map_is_not_vacuously_denied_unexpanded("EmptyMap NOT IN D13", Status::PASS)]
+// The other half of the mirror: a non-empty list still answers by what the denylist names.
+#[case::a_non_empty_list_is_undenied_by_a_disjoint_denylist("Pair NOT IN D34[*]", Status::PASS)]
+#[case::a_non_empty_list_is_denied_by_a_named_element("Pair NOT IN D13[*]", Status::FAIL)]
+fn an_empty_left_hand_list_is_vacuously_in_every_spelling_of_a_denylist(
+    #[case] clause: &str,
+    #[case] expected: Status,
+) -> Result<()> {
+    // `EmptyStr` and `EmptyMap` are the mirror values, not decoration: they are what separates "is an
+    // empty list" from "looks empty". `Denies` holds exactly one entry so that `Denies[0]` and
+    // `Denies[*]` deliver the same value, which is what makes the contrast with the unrepairable defect
+    // measurable rather than asserted.
+    const INPUT: &str = r#"
+    {
+        Empty: [],
+        EmptyStr: "",
+        EmptyMap: {},
+        Pair: [1, 2],
+        D13: [1, 3],
+        D34: [3, 4],
+        Dn9: [[9]],
+        Denies: [[1, 3]]
+    }
+    "#;
+
+    let rules = format!("rule membership {{ {clause} }}");
+
+    assert_eq!(
+        expected,
+        rule_status_in(&rules, INPUT, "membership")?,
+        "clause: {}",
+        clause
+    );
+
+    Ok(())
+}
+
 /// A range inside a list literal is a range for a list-valued left-hand side too.
 ///
 /// `d7f01ec` made a range nested in a list literal behave like a range, and it did so in

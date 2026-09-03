@@ -1180,6 +1180,53 @@ impl Comparator for InOperation {
                     let mut unanswerable_membership: Option<(Rc<PathAwareValue>, String)> = None;
                     let mut element_collision = false;
                     for eachr in &rhs_selected {
+                        // The vacuous match, asked before the right operand is examined because the
+                        // answer does not depend on it.
+                        //
+                        // An empty left-hand list is vacuously a subset of anything, so it passes `IN`
+                        // and fails `NOT IN`. `contained_in` supplies that from its list-against-list
+                        // arm, where an empty left-hand list yields an empty diff and so a Success, and
+                        // `4609b60e` made it survive a denylist holding a nested list. It cannot arrive
+                        // when the right operand resolves to scalars, which is what `[*]` and `[0]` do to
+                        // a denylist of scalars: a list against a scalar is `contained_in`'s incomparable
+                        // catch-all, no Success is returned, and the empty list joined the unmatched set.
+                        // So `Empty NOT IN [1, 3]` and `Empty NOT IN D13` exited 19 while
+                        // `Empty NOT IN D13[*]` exited 0 -- the same two values, and the `[*]` deciding
+                        // whether the denial happened.
+                        //
+                        // Unlike the bypass further down, this one is repairable here, and the test that
+                        // separates them is the pair that makes that one impossible. `Denies[0]` and
+                        // `Denies[*]`, over a `Denies` of `[[1, 3]]`, hand this arm one identical value
+                        // while owing opposite verdicts for a non-empty left-hand side. For an empty one
+                        // they owe the SAME verdict, because a vacuous subset is a subset of the entry
+                        // set `{[1, 3]}` and of the member set `{1, 3}` alike. That independence is why
+                        // the question is asked here rather than keyed on `eachr`'s shape: there is no
+                        // reading of the right operand for this case to get wrong.
+                        //
+                        // A match, not a collision. The collision arm below asks whether the denylist
+                        // names one of the left-hand elements, and an empty list has none to name, so no
+                        // loop over `elements` can ever record one. What the convention says is that the
+                        // empty list matched, so a match is what this reports, and `NOT IN` derives the
+                        // denial by negation exactly as it does for the unexpanded spelling. It also
+                        // means this cannot over-deny: it adds a match for one left-hand value and reads
+                        // nothing about the denylist.
+                        //
+                        // Inside the loop rather than above it, so a left-hand value with no right-hand
+                        // results to compare against is untouched, which is how the list-against-list
+                        // path already behaves.
+                        //
+                        // An empty list, not a value that looks empty: an empty string and an empty map
+                        // are not lists, no subset reading applies to either, and both already pass
+                        // `NOT IN` correctly.
+                        // `an_empty_left_hand_list_is_vacuously_in_every_spelling_of_a_denylist` pins
+                        // those as the mirror, with a non-empty list that must keep answering by what the
+                        // denylist names.
+                        if let PathAwareValue::List((_, elements)) = &**eachl {
+                            if elements.is_empty() {
+                                continue 'each_lhs;
+                            }
+                        }
+
                         // Containment first, membership second, which is the order the two arms above
                         // apply when the right-hand side is written out. This arm asked `contained_in`
                         // alone, and two scalars there fall through to `compare_eq`, so
