@@ -10114,6 +10114,30 @@ const THIRTY_AS: &str = r#"
 /// unwraps a one-element list, it does not widen `==` to membership. The two `IN` cells are the
 /// reference rather than a guard -- membership already agreed across both spellings, which is what
 /// `==` had to be brought up to.
+///
+/// The `lit_` cells are the same defect in the arms the first fix did not reach, and the count came out
+/// of running them rather than out of reading the code. A one-element list can arrive as a document
+/// property, as a variable bound to a query, or as a rule literal, and against a scalar arriving the
+/// same three ways that is six orderings. Five of them were wrong and are named here:
+///
+///     %lit_name    == Val            (Some, None)   list on the left, refused
+///     %lit_other   != Val            (Some, None)   list on the left, refused
+///     %lit_name    == %scalar_name   (Some, Some)   list on the left, refused
+///     %scalar_name == %lit_name      (Some, Some)   list on the right, refused
+///     %lit_other   != %scalar_name   (Some, Some)   list on the left, refused
+///
+/// `%lit_other != Val` is the expensive one, the same shape as `variable_rhs_differs` above: two values
+/// that visibly differ, and the clause asserting they differ exited 19 with "PathAwareValues are not
+/// comparable array, String".
+///
+/// `query_list_lhs_matches` and `literal_scalar_lhs_matches` are the two orderings that were already
+/// right, and they are here because they are right for a different reason. Those arms walk the list and
+/// compare element by element rather than unwrapping, which agrees with the unwrap for a list of one
+/// and would keep agreeing if the unwrap were removed. Without them, the fix looks like it is what makes
+/// those two cells pass.
+///
+/// The four `lit_two` cells extend the narrowness control to the literal spellings. A list of two
+/// against a scalar must stay incomparable however the two operands were written.
 #[rstest::rstest]
 #[case::literal_rhs_matches(r#"Val == ["Name"]"#, Status::PASS)]
 #[case::variable_rhs_matches("Val == %onekey", Status::PASS)]
@@ -10130,6 +10154,23 @@ const THIRTY_AS: &str = r#"
 #[case::negated_two_element_variable("Val != %twokeys", Status::FAIL)]
 #[case::in_spelling_already_agrees_literal(r#"Val IN ["Name"]"#, Status::PASS)]
 #[case::in_spelling_already_agrees_variable("Val IN %onekey", Status::PASS)]
+#[case::literal_list_lhs_matches("%lit_name == Val", Status::PASS)]
+#[case::literal_list_lhs_differs("%lit_other == Val", Status::FAIL)]
+#[case::negated_literal_list_lhs_matches("%lit_name != Val", Status::FAIL)]
+#[case::negated_literal_list_lhs_differs("%lit_other != Val", Status::PASS)]
+#[case::both_literal_list_lhs_matches("%lit_name == %scalar_name", Status::PASS)]
+#[case::both_literal_list_rhs_matches("%scalar_name == %lit_name", Status::PASS)]
+#[case::both_literal_list_lhs_differs("%lit_other == %scalar_name", Status::FAIL)]
+#[case::negated_both_literal_list_lhs_matches("%lit_name != %scalar_name", Status::FAIL)]
+#[case::negated_both_literal_list_lhs_differs("%lit_other != %scalar_name", Status::PASS)]
+#[case::query_list_lhs_matches("OneKey == %scalar_name", Status::PASS)]
+#[case::negated_query_list_lhs_differs("OtherKey != %scalar_name", Status::PASS)]
+#[case::literal_scalar_lhs_matches("%scalar_name == OneKey", Status::PASS)]
+#[case::negated_literal_scalar_lhs_differs("%scalar_name != OtherKey", Status::PASS)]
+#[case::two_element_literal_list_lhs("%lit_two == Val", Status::FAIL)]
+#[case::negated_two_element_literal_list_lhs("%lit_two != Val", Status::FAIL)]
+#[case::two_element_both_literal("%lit_two == %scalar_name", Status::FAIL)]
+#[case::negated_two_element_both_literal("%lit_two != %scalar_name", Status::FAIL)]
 fn a_one_element_list_compares_the_same_typed_as_resolved(
     #[case] clause: &str,
     #[case] expected: Status,
@@ -10144,7 +10185,10 @@ fn a_one_element_list_compares_the_same_typed_as_resolved(
     "#;
 
     let rules = format!(
-        "let onekey = OneKey\nlet otherkey = OtherKey\nlet twokeys = TwoKeys\nrule r {{ {clause} }}"
+        "let onekey = OneKey\nlet otherkey = OtherKey\nlet twokeys = TwoKeys\n\
+         let lit_name = [\"Name\"]\nlet lit_other = [\"Other\"]\n\
+         let lit_two = [\"Name\", \"Other\"]\nlet scalar_name = \"Name\"\n\
+         rule r {{ {clause} }}"
     );
 
     assert_eq!(

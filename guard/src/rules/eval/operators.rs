@@ -322,9 +322,22 @@ fn is_literal(query_results: &[QueryResult]) -> Option<Rc<PathAwareValue>> {
 /// `compare_eq_symmetric` has no scalar-against-list arm and refused: `Val == %onekey` exited 19 on the
 /// pair its typed-out spelling passed.
 ///
-/// Symmetric because the arm that calls it is. That arm reads `==` as equality of two operand sets and
-/// folds in both directions so an extra value on either side is seen, so a one-sided unwrap would leave
-/// the reverse pass unmatched and the clause still failing.
+/// Symmetric because the arm that first called it is. That arm reads `==` as equality of two operand
+/// sets and folds in both directions so an extra value on either side is seen, so a one-sided unwrap
+/// would leave the reverse pass unmatched and the clause still failing.
+///
+/// Every arm of `EqOperation::compare` asks this now, and originally two of them did not. A rule
+/// literal that is a one-element list reaches `(Some, None)` or `(Some, Some)`, both of which compared
+/// the list against the scalar whole and refused the pair: `%lit_other != Val` for a `Val` of `Name` and
+/// a `lit_other` of `["Other"]` exited 19 reading "PathAwareValues are not comparable array, String",
+/// two values that visibly differ, while `Val != %otherkey` -- the same question with the list arriving
+/// from a query -- passed. Being asked from every arm is the point: this relates one pair of shapes, and
+/// an arm that does not ask disagrees with the ones that do.
+///
+/// Two arms reach the same verdict without it, and asking anyway is harmless there. A literal scalar
+/// against a query list, and a query list against a literal scalar, walk the list and compare element by
+/// element, so a one-element list already answers as its element does. By the time this is called on
+/// those paths both operands are scalars and it falls straight through.
 ///
 /// One element only, and only against a scalar. Widening further would make `==` mean membership, which
 /// is `IN`'s reading and already available; two lists, or a scalar against a list of two, keep the
@@ -934,18 +947,35 @@ impl Comparator for EqOperation {
         rhs: &[QueryResult],
     ) -> crate::rules::Result<EvalResult> {
         let mut results = Vec::with_capacity(lhs.len());
-        // `compare_eq_symmetric` throughout, not `compare_eq`. `compare_eq`'s five range arms are
-        // written scalar-on-the-left because every other caller has a subject and a pattern, and `==`
-        // does not -- so with a range on the left of `==` the pair reached the incomparable catch-all
-        // and `%l == Port` refused where `Port == r[80,90]` passed. The wrapper puts the scalar on the
-        // left for this operator only, which is why `IN` and the map key filters, for which
-        // one-directional is correct, keep asking `compare_eq` directly.
+        // `compare_eq_unwrapping_a_one_element_list` throughout, not `compare_eq`. `compare_eq`'s five
+        // range arms are written scalar-on-the-left because every other caller has a subject and a
+        // pattern, and `==` does not -- so with a range on the left of `==` the pair reached the
+        // incomparable catch-all and `%l == Port` refused where `Port == r[80,90]` passed.
+        // `compare_eq_symmetric`, which that wrapper is, puts the scalar on the left for this operator
+        // only, which is why `IN` and the map key filters, for which one-directional is correct, keep
+        // asking `compare_eq` directly.
+        //
+        // Throughout means every arm, and it did not. The unwrap that relates a scalar to a
+        // one-element list was reached by the `(None, None)` arm, which asks the comparator per pair,
+        // and by the `(None, Some)` list arm, which unwraps inline at `rhsl[0]`. Two arms asked
+        // `compare_eq_symmetric` for a pair one of them would have unwrapped, and refused it: with
+        // `Val: "Name"` and `let lit_other = ["Other"]`, `%lit_other != Val` exited 19 reading
+        // "PathAwareValues are not comparable array, String" -- two values that visibly differ,
+        // rejected rather than answered, where `Val != %otherkey` passed. `(Some, Some)` did the same
+        // in both orientations.
+        //
+        // The two arms that expand rather than unwrap need no change and get none: with a literal
+        // scalar against a query list, or a query list against a literal scalar, the list is walked
+        // element by element and each element compared, which reaches the same verdict for a
+        // one-element list by a different route. Asking the unwrapping comparator there costs nothing,
+        // since by then both operands are scalars, and it means no arm of this operator can disagree
+        // about the unwrap again -- which is the property that was missing, not any one arm.
         match (is_literal(lhs), is_literal(rhs)) {
             (Some(ref l), Some(ref r)) => {
                 results.push(match_value(
                     Rc::clone(l),
                     Rc::clone(r),
-                    compare_eq_symmetric,
+                    compare_eq_unwrapping_a_one_element_list,
                 ));
             }
 
@@ -963,7 +993,11 @@ impl Comparator for EqOperation {
                 match &*l {
                     PathAwareValue::List(_) => {
                         for each in rhs {
-                            results.push(match_value(Rc::clone(&l), each, compare_eq_symmetric));
+                            results.push(match_value(
+                                Rc::clone(&l),
+                                each,
+                                compare_eq_unwrapping_a_one_element_list,
+                            ));
                         }
                     }
 
@@ -975,7 +1009,7 @@ impl Comparator for EqOperation {
                                         results.push(match_value(
                                             Rc::new(single_value.clone()),
                                             Rc::new(each_rhs.clone()),
-                                            compare_eq_symmetric,
+                                            compare_eq_unwrapping_a_one_element_list,
                                         ));
                                     }
                                 }
@@ -984,7 +1018,7 @@ impl Comparator for EqOperation {
                                     results.push(match_value(
                                         Rc::new(single_value.clone()),
                                         Rc::new(rest_rhs.clone()),
-                                        compare_eq_symmetric,
+                                        compare_eq_unwrapping_a_one_element_list,
                                     ));
                                 }
                             }
@@ -1006,13 +1040,13 @@ impl Comparator for EqOperation {
                                 results.push(match_value(
                                     each,
                                     Rc::new(rhsl[0].clone()),
-                                    compare_eq_symmetric,
+                                    compare_eq_unwrapping_a_one_element_list,
                                 ))
                             } else {
                                 results.push(match_value(
                                     each,
                                     Rc::clone(&r),
-                                    compare_eq_symmetric,
+                                    compare_eq_unwrapping_a_one_element_list,
                                 ));
                             }
                         }
@@ -1025,14 +1059,14 @@ impl Comparator for EqOperation {
                                     results.push(match_value(
                                         Rc::new(each_lhs.clone()),
                                         Rc::new(single_value.clone()),
-                                        compare_eq_symmetric,
+                                        compare_eq_unwrapping_a_one_element_list,
                                     ));
                                 }
                             } else {
                                 results.push(match_value(
                                     each.clone(),
                                     Rc::clone(&r.clone()),
-                                    compare_eq_symmetric,
+                                    compare_eq_unwrapping_a_one_element_list,
                                 ));
                             }
                         }
