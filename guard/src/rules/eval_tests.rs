@@ -10497,6 +10497,111 @@ fn recorded_clause_check_kinds(record: &EventRecord<'_>, out: &mut Vec<String>) 
     }
 }
 
+/// Which of the three unanswerable-containment reasons a value gets, asserted on the message text.
+///
+/// `substring_in_answers_the_same_against_a_query_as_against_a_literal` covers the same five kinds and
+/// asserts `Status` only, for all twenty of its cells. That is why nothing caught a prose claim about
+/// these reasons being false for one of them: the verdict is FAIL for every kind and stays FAIL whichever
+/// reason is attached, so a status-only grid cannot tell the reasons apart. These cells read the recorded
+/// message.
+///
+/// The distinction they pin is which operand a reason is about. `found_in_string` destructures only
+/// `PathAwareValue::List`, so `HoldsANonString` is the complaint about elements it tested one at a time,
+/// and `NotAString` is the complaint about a value it never decomposed. A `Map` gets the second one, and
+/// that is right: nothing looked inside it, so a message naming its elements would describe contents no
+/// comparison examined.
+///
+/// `map_is_not_a_string` is the cell the wording was wrong about. The variant's doc justified the split
+/// by asserting "a scalar holds nothing", and `{"a": 1}` holds something -- and the crate agrees, because
+/// `PathAwareValue::is_scalar` is `!self.is_list() && !self.is_map()`, so a `Map` is not a scalar by the
+/// definition three files over. The message itself was accurate the whole time; only the reason given
+/// for it was not, and the negative assertion here is the half that matters: a `Map` must NOT be told it
+/// holds a value that is not a string, because the reason for that message is about elements.
+///
+/// `int_is_not_a_string` is beside it so the cell pair shows the two kinds sharing one reason rather than
+/// a `Map` having its own. Giving `Map` a separate variant was considered and rejected: behaviour and
+/// message are already right for every input that reaches the arm, so it would add a variant without
+/// changing anything a rule author sees.
+///
+/// The forbidden fragment is doing the work on the first two cells, and it has to, because the two
+/// messages are not independent strings: the element-level one reads "X holds a value that is not a
+/// string, so it cannot be tested for containment", which CONTAINS the value-level one as a substring.
+/// So a positive-only assertion on "is not a string, so it cannot be tested for containment" is
+/// satisfied by either reason and discriminates nothing. The first draft of this test made the mirror
+/// mistake and failed on `a_list_holding_a_non_string_is_about_its_elements`, where the forbidden
+/// fragment matched inside that cell's own expected text.
+///
+/// The two list cells forbid each other's reason instead, and that is load-bearing rather than
+/// symmetry-for-its-own-sake. `MixedList` used to reach `Partial` and report "Some but not all of",
+/// which is what `found_in_string` testing for a non-string BEFORE counting hits exists to prevent, so
+/// forbidding that string on `MixedList` pins the ordering. `BadList` is all strings, so the
+/// element-kind reason must not appear for it.
+#[rstest::rstest]
+#[case::map_is_not_a_string(
+    "Map not in Haystack",
+    "is not a string, so it cannot be tested for containment",
+    "holds a value that is not a string"
+)]
+#[case::int_is_not_a_string(
+    "Int not in Haystack",
+    "is not a string, so it cannot be tested for containment",
+    "holds a value that is not a string"
+)]
+#[case::a_list_holding_a_non_string_is_about_its_elements(
+    "MixedList not in Haystack",
+    "holds a value that is not a string, so it cannot be tested for containment",
+    "Some but not all of"
+)]
+#[case::a_partly_contained_list_is_about_how_much(
+    "BadList not in Haystack",
+    "Some but not all of",
+    "holds a value that is not a string"
+)]
+fn the_reason_a_containment_cannot_be_asked_names_the_right_operand(
+    #[case] clause: &str,
+    #[case] expected_fragment: &str,
+    #[case] forbidden_fragment: &str,
+) -> Result<()> {
+    const INPUT: &str = r#"
+    {
+        Haystack: "aws:arn:s3::${s3}",
+        Map: { "a": 1 },
+        Int: 5,
+        MixedList: ["s3", 5],
+        BadList: ["s3", "zzz"]
+    }
+    "#;
+
+    let (status, messages) = status_and_messages(clause, INPUT)?;
+
+    assert_eq!(
+        Status::FAIL,
+        status,
+        "`{}` must fail closed; the message is only meaningful with the verdict",
+        clause
+    );
+
+    let joined = messages.join("\n");
+
+    assert!(
+        joined.contains(expected_fragment),
+        "`{}` must record a reason containing `{}`; recorded: {:?}",
+        clause,
+        expected_fragment,
+        messages
+    );
+
+    assert!(
+        !joined.contains(forbidden_fragment),
+        "`{}` must NOT be given the reason for the other kind, containing `{}`; recorded: {:?}",
+        clause,
+        forbidden_fragment,
+        messages
+    );
+
+    Ok(())
+}
+
 /// Runs one clause and returns the rule's status together with the comparison messages recorded.
 fn status_and_messages(clause: &str, input: &str) -> Result<(Status, Vec<String>)> {
     let rules = format!("rule r {{\n  {clause}\n}}");
