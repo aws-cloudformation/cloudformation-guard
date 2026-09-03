@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::rc::Rc;
 
 use crate::commands::reporters::validate::sarif::SarifReport;
@@ -121,6 +122,15 @@ impl<'reporter> StructuredReporter for CommonStructuredReporter<'reporter> {
     fn report(&mut self) -> rules::Result<i32> {
         let mut records = vec![];
         let mut first_error = None;
+        // Collected across the whole run and written once, below.
+        //
+        // One set for the document rather than one per data file, which is where this differs from the
+        // single-line path deliberately. That path writes a separate report per data file, so a notice
+        // repeated beside each of them lines up with the reports it annotates. This path writes one
+        // document for every data file, so the same notice per file would be N copies of one sentence
+        // attached to nothing that distinguishes them, and a warning printed N times is a warning
+        // trained to be skipped.
+        let mut deprecations: BTreeSet<String> = BTreeSet::new();
         for each in &self.data {
             let mut file_report: FileReport = FileReport {
                 name: &each.name,
@@ -148,12 +158,29 @@ impl<'reporter> StructuredReporter for CommonStructuredReporter<'reporter> {
                     }
                 }
 
+                // Read before `reset_recorder` consumes the scope, which is the only window there is.
+                //
+                // This line was missing, and its absence had no signal: the scope was built, evaluated
+                // and discarded, so every deprecation notice this run produced went nowhere. Exit code
+                // and document were both correct, stderr was empty, and an empty stderr is also what a
+                // run with nothing to warn about leaves -- so the mode a pipeline runs was the one mode
+                // that never carried the warning written for the pipeline's author.
+                deprecations.extend(root_scope.deprecations().cloned());
+
                 let root_record = root_scope.reset_recorder().extract();
                 let report = simplified_json_from_root(&root_record)?;
                 file_report.combine(report);
             }
 
             records.push(file_report);
+        }
+
+        // Before the document and on stderr, both for the reason `validate`'s single-line path gives:
+        // stdout is what pipelines parse, and a notice about a future release is not part of this run's
+        // result. Writing it into the report would change the document for every consumer in order to
+        // announce something that has not happened yet.
+        for notice in &deprecations {
+            self.writer.write_err(notice.clone())?;
         }
 
         match self.output {

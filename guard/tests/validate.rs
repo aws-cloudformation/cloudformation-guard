@@ -1479,6 +1479,105 @@ mod validate_tests {
         );
     }
 
+    /// The notices reach `--structured` too, which is the mode a pipeline actually runs.
+    ///
+    /// `clauses_whose_answer_changes_later_warn_now` covers the single-line path, and that was the only
+    /// path covered. The structured evaluator builds its own `RootScope` per rules file and went from
+    /// `eval_rules_file` straight to `reset_recorder` without ever reading `deprecations()`, so every
+    /// notice was discarded -- silently, since a discarded notice leaves no trace anywhere. The run
+    /// exited 0 with an empty stderr and a report saying the template complied, which is also what a
+    /// template with nothing to warn about produces.
+    ///
+    /// That voided the whole warn-a-release-ahead approach for the audience it was built for. The notice
+    /// exists to tell a rule author that a later release fails closed where this one passes; `--structured`
+    /// is the machine-readable mode CI runs, so the pipeline that will break was the one place the warning
+    /// never appeared.
+    ///
+    /// All four structured formats, not just json. `-o junit` reaches a different reporter --
+    /// `JunitReporter`, whose scope lives inside `get_test_case` -- and dropped the notices by its own
+    /// route rather than by the one the other three share. Covering only json would have left the defect
+    /// in place for a junit test reporter, which is the most CI-shaped consumer of the four.
+    ///
+    /// Both streams are asserted, for the reason the single-line test gives: the notice belongs on stderr
+    /// because stdout is parsed, and the json case is parsed here to prove the document survived.
+    #[rstest::rstest]
+    #[case("json")]
+    #[case("yaml")]
+    #[case("sarif")]
+    #[case("junit")]
+    fn a_deprecation_notice_reaches_the_structured_reporters(#[case] output: &str) {
+        // `stripped` and `err_to_stripped` each consume the writer, so one run answers for one stream.
+        // The command is deterministic over these inputs, so two runs read the same output twice.
+        let run = || {
+            let mut reader = Reader::default();
+            let mut writer = Writer::new_with_err(WBVec(vec![]), WBVec(vec![]))
+                .expect("Failed to create writer.");
+
+            let status_code = ValidateTestRunner::default()
+                .data(vec!["vacuous-and-incomparable-template.yaml"])
+                .rules(vec!["vacuous_and_incomparable_clauses.guard"])
+                .structured()
+                .output_format(Some(output))
+                .run(&mut writer, &mut reader);
+
+            (status_code, writer)
+        };
+
+        let (status_code, out_writer) = run();
+        let (_, err_writer) = run();
+
+        assert_eq!(
+            StatusCode::SUCCESS,
+            status_code,
+            "the notices must not change the verdict; both clauses still pass in this release"
+        );
+
+        let stdout = out_writer.stripped().expect("failed to read stdout");
+        assert!(
+            !stdout.contains("DEPRECATION"),
+            "a notice on stdout would land inside the document consumers parse, got {:?}",
+            stdout
+        );
+        assert!(
+            !stdout.is_empty(),
+            "the structured document must still be written; an empty stdout means this cell is \
+             measuring a run that produced no report at all, not a notice reaching stderr"
+        );
+
+        if output == "json" || output == "sarif" {
+            serde_json::from_str::<serde_json::Value>(&stdout)
+                .expect("the document on stdout must still parse with a notice on stderr");
+        }
+
+        let stderr = err_writer.err_to_stripped().expect("failed to read stderr");
+        let notices: Vec<&str> = stderr
+            .lines()
+            .filter(|l| l.contains("DEPRECATION"))
+            .collect();
+
+        assert_eq!(
+            notices.len(),
+            2,
+            "expected one notice per clause, got {:?} from stderr {:?}",
+            notices,
+            stderr
+        );
+        assert!(
+            notices
+                .iter()
+                .any(|n| n.contains("without comparing anything")),
+            "the empty-collection clause must say it compared nothing, got {:?}",
+            notices
+        );
+        assert!(
+            notices
+                .iter()
+                .any(|n| n.contains("could not be compared with any element")),
+            "the membership clause must say nothing in the list was comparable, got {:?}",
+            notices
+        );
+    }
+
     /// The counterpart: clauses that are not changing stay silent.
     ///
     /// A deprecation notice is only useful if it is rare. The cases here are the ones most likely to be

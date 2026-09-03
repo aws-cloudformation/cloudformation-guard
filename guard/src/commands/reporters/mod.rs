@@ -1,7 +1,7 @@
 pub mod test;
 pub mod validate;
 
-use std::{fmt::Display, rc::Rc, time::Instant};
+use std::{collections::BTreeSet, fmt::Display, rc::Rc, time::Instant};
 
 use quick_xml::{
     events::{BytesDecl, BytesEnd, BytesStart, BytesText, Event},
@@ -107,10 +107,22 @@ impl<'reporter> JunitReporter<'reporter> {
     }
 }
 
+/// Builds one junit test case, and hands back the deprecation notices the evaluation produced.
+///
+/// The notices are an out-parameter rather than part of the return value because the early return
+/// below has to carry them too: a rule that could not be evaluated may still have produced a notice
+/// from a clause that was evaluated before the error, and returning `TestCase` alone gave that arm
+/// nowhere to put it.
+///
+/// They leave through this function at all because the scope they live on is created and consumed
+/// here. `-o junit` therefore lost every notice by a route of its own, separate from the one the other
+/// three structured formats shared, and it is the format most likely to be the only thing a CI job
+/// reads.
 fn get_test_case<'rule>(
     data: &DataFile,
     rule: &RulesFile<'_>,
     name: &'rule str,
+    deprecations: &mut BTreeSet<String>,
 ) -> crate::rules::Result<TestCase<'rule>> {
     let now = Instant::now();
     let mut root_scope = root_scope(rule, Rc::new(data.path_value.clone()));
@@ -128,6 +140,12 @@ fn get_test_case<'rule>(
     let status = match eval_rules_file(rule, &mut root_scope, Some(&data.name)) {
         Ok(status) => status,
         Err(error) => {
+            // Drained on this arm as well as the one below. `eval_rules_file` evaluates every rule
+            // before returning an error, so a clause that reached a notice already recorded it, and
+            // returning here without reading the scope would drop it for the one input where the
+            // author most needs everything the run had to say.
+            deprecations.extend(root_scope.deprecations().cloned());
+
             return Ok(TestCase {
                 id: None,
                 name,
@@ -135,9 +153,13 @@ fn get_test_case<'rule>(
                 status: TestCaseStatus::Error {
                     error: error.to_string(),
                 },
-            })
+            });
         }
     };
+
+    // Read before `reset_recorder` consumes the scope, which is the only window there is.
+    deprecations.extend(root_scope.deprecations().cloned());
+
     let root_record = root_scope.reset_recorder().extract();
     let time = now.elapsed().as_millis();
 
