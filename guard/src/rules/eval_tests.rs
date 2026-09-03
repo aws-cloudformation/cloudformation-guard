@@ -11143,6 +11143,120 @@ fn an_ordinary_regex_comparison_is_unchanged(#[case] comparison: &str, #[case] e
     assert_eq!(expected, status, "clause: {}", clause);
 }
 
+/// A list-valued property must not be admitted by a denylist that could not evaluate it.
+///
+/// `contained_in` decides a scalar left-hand side and a list-valued one in different arms, and only
+/// one of them read the error. The scalar arm walks the right-hand list itself, keeps the first
+/// `RegexError` it meets and reports it when nothing matched, which is what
+/// `a_regex_in_a_list_literal_fails_the_clause_instead_of_aborting` pinned. The list arm asked
+/// `is_one_of`, which returns `bool` and reached `compare_eq(..).unwrap_or(false)`, so a pattern that
+/// could not be evaluated read as "this element is not a member".
+///
+/// For `NOT IN` that is the whole defect: no element matched, so every element landed in the diff,
+/// the negation wrapper turned the failure into a success, and the run exited 0. Measured on the
+/// thirty `a`s below, `Size NOT IN [/(?!x)((a+)+)b/]` exits 19 in the scalar spelling and 0 in the
+/// list spelling. A denylist admitting a value it could not evaluate is the shape
+/// `docs/KNOWN_ISSUES.md` records, and it is also why the direction of the fix is not a coin flip:
+/// the scalar arm's answer is the documented one, so the list arm moves onto it rather than the
+/// reverse.
+///
+/// `IN` is here because its status was already FAIL and its reason was not. It reported "was not
+/// present in", a claim about the value that nothing established, since the comparison that would
+/// have established it never completed. So the message assertion is what makes these cells
+/// discriminate at all: on status alone, two of the four were already green and the defect would
+/// have looked half its size.
+///
+/// The nested spellings are a second site rather than a second case of the first. `[[/re/]]` puts a
+/// list in the denylist, which sends the clause through the `rhsl.iter().any(is_list)` branch, and
+/// there the element-wise diff never sees the regex at all -- `compare_eq(String, List)` refuses
+/// before any pattern runs. The whole-list reading beside it is what raises, through
+/// `compare_eq(List, List)` recursing onto the inner pair, and it swallowed the error at its own
+/// call site. Repairing `is_one_of` alone leaves `Size NOT IN [[/re/]]` at exit 0.
+///
+/// `backtracking` is asserted as well as the reason, for the purpose it serves in
+/// `a_regex_that_exceeds_the_backtrack_limit_fails_the_clause_instead_of_aborting`: `RegexError`'s
+/// own text claims a parse error, which is false of a pattern that compiled and then ran out of
+/// budget, so the assertion pins fancy_regex's message rather than the wrapper's.
+#[rstest::rstest]
+#[case::scalar_in(THIRTY_AS, "IN [/(?!x)((a+)+)b/]")]
+#[case::scalar_not_in(THIRTY_AS, "NOT IN [/(?!x)((a+)+)b/]")]
+#[case::list_in(THIRTY_AS_IN_A_LIST, "IN [/(?!x)((a+)+)b/]")]
+#[case::list_not_in(THIRTY_AS_IN_A_LIST, "NOT IN [/(?!x)((a+)+)b/]")]
+#[case::list_in_a_nested_list(THIRTY_AS_IN_A_LIST, "IN [[/(?!x)((a+)+)b/]]")]
+#[case::list_not_in_a_nested_list(THIRTY_AS_IN_A_LIST, "NOT IN [[/(?!x)((a+)+)b/]]")]
+fn a_denylist_refuses_a_value_it_could_not_evaluate_in_either_spelling(
+    #[case] template: &str,
+    #[case] rhs: &str,
+) {
+    let clause = format!("Resources.*[ Type == 'AWS::EC2::Volume' ].Properties.Size {rhs}");
+    let (status, messages) = status_and_messages(clause.as_str(), template).unwrap();
+
+    assert_eq!(
+        Status::FAIL,
+        status,
+        "`{}` must fail the clause: the comparison has no answer, so neither polarity gets to claim \
+         one, and a denylist that admits the value it could not evaluate is the outcome this cell \
+         exists to prevent",
+        clause
+    );
+    assert!(
+        messages
+            .iter()
+            .any(|m| m.contains("regular expression could not be evaluated")),
+        "`{}` should say the regex could not be evaluated rather than claim the value was absent; \
+         recorded {:?}",
+        clause,
+        messages
+    );
+    assert!(
+        messages.iter().any(|m| m.contains("backtracking")),
+        "`{}` should carry fancy_regex's own reason rather than the `RegexError` wrapper's text, \
+         which claims a parse error for a pattern that parsed; recorded {:?}",
+        clause,
+        messages
+    );
+}
+
+/// An element that matches still decides, beside one that could not be evaluated.
+///
+/// The precedence the repair above has to keep, and the reason it is not "any `RegexError` refuses
+/// the clause". When some element of the right-hand list matches the value, the answer never
+/// depended on the element that failed, so the clause is decided rather than unanswerable. That is
+/// how the scalar arm has always read it, and `in_a_mixed_list` covers the same precedence one arm
+/// over.
+///
+/// Both polarities, because a repair that refused too eagerly moves them in opposite directions.
+/// `NOT IN` would go from FAIL to FAIL for a different reason and hide behind its own exit code,
+/// which is what the negative message assertion is here to catch. `IN` would go from PASS to FAIL
+/// and turn a compliant template into a reported violation.
+#[rstest::rstest]
+#[case::denied_by_the_element_that_matched(
+    "NOT IN [/(?!x)((a+)+)b/, 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa']",
+    Status::FAIL
+)]
+#[case::admitted_by_the_element_that_matched(
+    "IN [/(?!x)((a+)+)b/, 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa']",
+    Status::PASS
+)]
+fn an_element_that_matches_decides_membership_beside_an_unevaluatable_regex(
+    #[case] rhs: &str,
+    #[case] expected: Status,
+) {
+    let clause = format!("Resources.*[ Type == 'AWS::EC2::Volume' ].Properties.Size {rhs}");
+    let (status, messages) = status_and_messages(clause.as_str(), THIRTY_AS_IN_A_LIST).unwrap();
+
+    assert_eq!(expected, status, "clause: {}", clause);
+    assert!(
+        !messages
+            .iter()
+            .any(|m| m.contains("regular expression could not be evaluated")),
+        "`{}` was decided by the element that matched, so it must not report the element that could \
+         not be evaluated; recorded {:?}",
+        clause,
+        messages
+    );
+}
+
 /// Every comparison message recorded anywhere in the evaluation tree.
 fn recorded_comparison_messages(record: &EventRecord<'_>, out: &mut Vec<String>) {
     if let Some(RecordType::ClauseValueCheck(ClauseCheck::Comparison(check))) = &record.container {
@@ -11333,6 +11447,20 @@ const THIRTY_AS: &str = r#"
 {
     Resources: {
         V: { Type: 'AWS::EC2::Volume', Properties: { Size: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' } }
+    }
+}
+"#;
+
+/// The same thirty characters, held in a one-element list rather than as a scalar.
+///
+/// Two brackets of difference in the template, and they decide which arm of `contained_in` answers:
+/// a scalar reaches the `rest =>` arm and a list reaches the `List` arm. Nothing about the regex or
+/// the clause changes, which is what makes the pair a measurement of the arms rather than of the
+/// pattern.
+const THIRTY_AS_IN_A_LIST: &str = r#"
+{
+    Resources: {
+        V: { Type: 'AWS::EC2::Volume', Properties: { Size: ['aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'] } }
     }
 }
 "#;
