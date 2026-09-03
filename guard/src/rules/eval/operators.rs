@@ -793,6 +793,24 @@ fn contained_in(lhs_value: Rc<PathAwareValue>, rhs_value: Rc<PathAwareValue>) ->
                         .cloned()
                         .map(Rc::new)
                         .collect::<Vec<_>>();
+                    // An open question is deliberately NOT answered here. `IN` for a list has two
+                    // readings, and which one an empty left-hand side should get is unresolved
+                    // upstream: under the subset reading every element of `[]` is in the denylist
+                    // vacuously, so `NOT IN` fails, and under the membership reading `[]` is not one
+                    // of the denylist's elements, so `NOT IN` passes. This tree has answered FAIL
+                    // since before the nested-list work, and that answer is untouched by this line.
+                    //
+                    // What this line changed is only that the answer no longer depends on the shape
+                    // of the denylist. Deciding the convention itself is a user-visible change to
+                    // long-standing evaluation semantics in a policy tool, so it belongs to the
+                    // maintainers and to its own change, not bundled into a regression fix.
+                    //
+                    // A change that does decide it PASSes has two cells to move, both in
+                    // `a_list_denylist_holding_a_nested_list_denies_only_what_it_names`:
+                    // `denied_empty_over_a_flat_list` from FAIL, and `in_empty_over_a_flat_list`
+                    // from PASS, each with its `_via_query` twin. Those four are the convention and
+                    // the rest of the empty-left-hand cells follow from it. An allowlist spelled
+                    // `x IN <list>` is what the second one protects.
                     let flat_subset = diff.is_empty();
                     if flat_subset
                         || rhsl.iter().any(|elem| {
