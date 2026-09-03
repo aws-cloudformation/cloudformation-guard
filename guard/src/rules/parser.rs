@@ -3394,12 +3394,18 @@ pub(crate) fn rules_file(input: Span) -> Result<Option<RulesFile>, Error> {
     // One site outside this function still counts `\n` alone, named so that it is not read as covered:
     // the single-line reporters flatten a message with `replace('\n', ";")`, which leaves the `\r` of a
     // CRLF message body in the output. That is the reporting side rather than the parser, and that one
-    // flattening cannot change a verdict. Read it as a claim about that site and not as one about
-    // reporters in general, which it is not.
+    // flattening cannot change a verdict.
     //
-    // `ReadCursor` in `utils/mod.rs` was a second such site and no longer is. It now recognizes all five
-    // breaks libyaml does -- CR, LF, NEL, LS and PS -- so a data file spelled with any of them renders a
-    // `Code:` excerpt whose line numbers match the `L:` reported beside it.
+    // Read that as a claim about that one site. An earlier version of this note made it about the
+    // reporting side generally, and the generalisation was false by 82 exit codes: `emit_messages` in
+    // `reporters/validate/common.rs` panicked on a whitespace-only `<< >>` message, so a clause that
+    // should have reported a violation at exit 19 aborted at 101 instead. A reporter defect can
+    // absolutely change what a caller sees, and a reader who trusted the wider claim would not have
+    // looked there. Fixed, and pinned by `emit_messages_tests`.
+    //
+    // `ReadCursor` in `utils/mod.rs` was a second site that counted `\n` alone and no longer is. It now
+    // recognizes all five breaks libyaml does -- CR, LF, NEL, LS and PS -- so a data file spelled with
+    // any of them renders a `Code:` excerpt whose line numbers match the `L:` reported beside it.
     let _source = SourceScope::enter(&input);
 
     let input = match zero_or_more_ws_or_comment(input) {

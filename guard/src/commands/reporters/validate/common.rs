@@ -1313,6 +1313,31 @@ pub(super) fn populate_hierarchy_path_trees<'report, 'value: 'report>(
     }
 }
 
+/// The `Message` and `Error` lines of a clause's report.
+///
+/// The guard here used to be `!message.is_empty()` on the raw string while the emptiness that decided
+/// the rest was `trim`-based, and the two disagreed on exactly one input: a message that holds
+/// something but nothing that survives trimming. `<<  >>` is such a message, and so is `<<;>>`. The
+/// split produced pieces, the filter dropped all of them, and `message[0]` on the empty vector panicked
+/// -- turning a clause failure that should report at exit 19 into an abort at exit 101. A policy tool
+/// that crashes where it should record a violation is worse than one that reports nothing, because a
+/// caller reading only the status sees a broken run rather than a failed check.
+///
+/// Fixed by deciding on the filtered pieces rather than on the raw string, and by matching on them
+/// instead of indexing, so the empty case is one the compiler makes us handle rather than one a future
+/// reader has to remember. A guard added next to the index would have left the two notions of emptiness
+/// still disagreeing.
+///
+/// A whitespace-only message renders as absent, which is the answer the two neighbouring sites already
+/// give: `non_empty_message` filters on `!text.trim().is_empty()`, and `one_line` collapses such a
+/// message to nothing so that "`non_empty_message` and this function agree about what counts as a
+/// message". `-o json` and `-o yaml` already exited 19 and emitted no message for this input, so
+/// treating it as absent is what makes the default output agree with them rather than a new judgement.
+/// Preserving it verbatim was the alternative and is rejected for the reason `non_empty_message`'s own
+/// comment gives: a blank reason reads as a rendering fault rather than as a message nobody wrote.
+///
+/// The error half is no longer unreachable behind a panicking message. A clause carrying a
+/// whitespace-only custom message and a real evaluator error used to lose the error too.
 fn emit_messages(
     writer: &mut dyn Write,
     prefix: &str,
@@ -1320,21 +1345,33 @@ fn emit_messages(
     error: &str,
     width: usize,
 ) -> crate::rules::Result<()> {
-    if !message.is_empty() {
-        let message: Vec<&str> = if message.contains(';') {
-            message.split(';').collect()
-        } else if message.contains('\n') {
-            message.split('\n').collect()
-        } else {
-            vec![message]
-        };
-        let message: Vec<&str> = message
-            .iter()
-            .map(|s| s.trim_start().trim_end())
-            .filter(|s| !s.is_empty())
-            .collect();
+    let pieces: Vec<&str> = if message.contains(';') {
+        message.split(';').collect()
+    } else if message.contains('\n') {
+        message.split('\n').collect()
+    } else {
+        vec![message]
+    };
+    let pieces: Vec<&str> = pieces
+        .iter()
+        .map(|s| s.trim_start().trim_end())
+        .filter(|s| !s.is_empty())
+        .collect();
 
-        if message.len() > 1 {
+    match pieces.as_slice() {
+        // No message. Nothing an author wrote survived, so nothing is written.
+        [] => {}
+        [only] => {
+            writeln!(
+                writer,
+                "{prefix}{mh:<width$} = {message}",
+                prefix = prefix,
+                message = only,
+                mh = "Message",
+                width = width
+            )?;
+        }
+        many => {
             writeln!(
                 writer,
                 "{prefix}{mh:<width$} {{",
@@ -1342,7 +1379,7 @@ fn emit_messages(
                 mh = "Message",
                 width = width
             )?;
-            for each in message {
+            for each in many {
                 writeln!(
                     writer,
                     "{prefix}  {message}",
@@ -1351,15 +1388,6 @@ fn emit_messages(
                 )?;
             }
             writeln!(writer, "{prefix}}}", prefix = prefix,)?;
-        } else {
-            writeln!(
-                writer,
-                "{prefix}{mh:<width$} = {message}",
-                prefix = prefix,
-                message = message[0],
-                mh = "Message",
-                width = width
-            )?;
         }
     }
 
@@ -1749,6 +1777,109 @@ pub(super) fn pprint_clauses<'report, 'value: 'report>(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod emit_messages_tests {
+    use super::emit_messages;
+
+    fn emit(message: &str, error: &str) -> String {
+        let mut written: Vec<u8> = Vec::new();
+        emit_messages(&mut written, "", message, error, 0).expect("writing to a Vec cannot fail");
+        String::from_utf8(written).expect("the output is UTF-8")
+    }
+
+    /// A message that holds something but nothing that survives trimming writes no message.
+    ///
+    /// This is the panic, in the shape a rule author writes it. `rule one { ... <<  >> }` against a
+    /// template the clause fails aborted at exit 101 -- `index out of bounds` in `emit_messages` -- where
+    /// the same run with a real message, or with `-o json`, exits 19. A policy tool that crashes where it
+    /// should record a violation reports a broken run rather than a failed check, and a caller reading
+    /// only the status cannot tell those apart.
+    ///
+    /// This test is red before the fix by panicking rather than by comparing wrong output: the harness
+    /// catches the panic and marks the cell failed, so no `#[should_panic]` and no out-of-process run is
+    /// needed to see it.
+    ///
+    /// Every case below is a real input. The whitespace ones are `char::is_whitespace`, which is what
+    /// `trim` uses -- U+00A0, U+0085, U+2028 and U+3000 are all `White_Space=yes`. The separators are
+    /// included because splitting happens before filtering, so a lone `;` yields two empty pieces and
+    /// reaches the same index.
+    #[test]
+    fn a_message_that_trims_to_nothing_writes_no_message() {
+        for (name, message) in [
+            ("two spaces, as `<<  >>` gives", "  "),
+            ("a tab", "\t"),
+            ("a lone semicolon, which splits into two empty pieces", ";"),
+            ("semicolons and spaces", " ; ; "),
+            ("a newline", "\n"),
+            ("U+00A0 no-break space", "\u{00A0}"),
+            ("U+0085 next line", "\u{0085}"),
+            ("U+2028 line separator", "\u{2028}"),
+            ("U+3000 ideographic space", "\u{3000}"),
+            ("the empty string, which was always handled", ""),
+        ] {
+            assert_eq!(
+                "",
+                emit(message, ""),
+                "{} is not a message, so nothing is written for it",
+                name
+            );
+        }
+    }
+
+    /// U+FEFF is not whitespace, so it is a message and is written.
+    ///
+    /// `char::is_whitespace` follows `White_Space`, and the zero-width no-break space is not in it. The
+    /// distinction is worth pinning: it is the nearest input to the panicking ones that must still
+    /// produce a line, so a fix that reached for "looks blank to me" instead of `trim` would fail here.
+    #[test]
+    fn a_zero_width_no_break_space_is_still_a_message() {
+        assert_eq!("Message = \u{FEFF}\n", emit("\u{FEFF}", ""));
+    }
+
+    /// The error is written even when the message is not, which it was not before.
+    ///
+    /// `emit_messages` panicked on the message half and never reached the error half, so a clause
+    /// carrying a whitespace-only custom message and a real evaluator account lost the account as well.
+    #[test]
+    fn an_error_survives_a_message_that_trims_to_nothing() {
+        assert_eq!(
+            "Error = Check was not compliant.\n",
+            emit("  ", "Check was not compliant.")
+        );
+    }
+
+    /// The ordinary shapes are untouched: one piece is a line, more than one is a brace block.
+    ///
+    /// Here because the fix moved the guard and rewrote the branch, and the only behaviour that was
+    /// meant to change is the empty case. A trailing separator still leaves one piece rather than
+    /// promoting the message to a block.
+    #[test]
+    fn the_ordinary_shapes_are_unchanged() {
+        assert_eq!(
+            "Message = Encryption is required.\n",
+            emit("Encryption is required.", "")
+        );
+        assert_eq!(
+            "Message = Encryption is required.\n",
+            emit("Encryption is required.;", ""),
+            "a trailing separator leaves one piece, not two"
+        );
+        assert_eq!(
+            "Message {\n  Violation: no.\n  Fix: yes.\n}\n",
+            emit("Violation: no.;Fix: yes.", "")
+        );
+        assert_eq!(
+            "Message {\n  Violation: no.\n  Fix: yes.\n}\n",
+            emit("Violation: no.\nFix: yes.", ""),
+            "and a newline splits the same way a semicolon does"
+        );
+        assert_eq!(
+            "Message = Encryption is required.\nError = Check was not compliant.\n",
+            emit("Encryption is required.", "Check was not compliant.")
+        );
+    }
 }
 
 #[cfg(test)]
