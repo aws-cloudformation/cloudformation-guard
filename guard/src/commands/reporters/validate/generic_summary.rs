@@ -218,14 +218,13 @@ fn binary_error_message(
 ) -> crate::rules::Result<String> {
     Ok(format!(
         "Property [{path}] in data [{data}] is not compliant with [{rule}] because \
-     provided value [{provided}] {op_msg} {cmp_msg} [{expected}]. Error \
+     provided value [{provided}] {verdict} [{expected}]. Error \
      Message [{msg}]",
         path = info.path,
         provided = info
             .provided
             .as_ref()
             .map_or(&serde_json::Value::Null, std::convert::identity),
-        op_msg = op_msg,
         data = data_file,
         rule = info.rule,
         msg = info.message.replace('\n', ";"),
@@ -233,14 +232,44 @@ fn binary_error_message(
             .expected
             .as_ref()
             .map_or(&serde_json::Value::Null, |v| v),
-        cmp_msg = info.comparison.as_ref().map_or("", |c| {
-            if c.operator == CmpOperator::In {
-                "match expected value in"
-            } else {
-                "match expected value"
-            }
-        })
+        verdict = membership_verdict(op_msg, info)
     ))
+}
+
+/// The clause of a binary failure that says what the comparison found.
+///
+/// Two states, and the second one exists because `IN` and `NOT IN` used to claim an answer they did
+/// not have. `NOT IN` rendered "did match expected value in" and `IN` rendered "did not match" --
+/// both assertions that the comparison ran -- and a membership comparison the regex engine abandoned
+/// reached exactly those sentences. The reason was blank, so nothing contradicted them.
+///
+/// A reason being present is the discriminator, and it is only usable because the record now carries
+/// one: before that, the code could not tell a refusal from a decided mismatch here. So this is
+/// deliberately NOT a rewording of membership failures. A decided `NOT IN` failure means the value
+/// really did match something the denylist names, and "did match expected value in" is the correct
+/// sentence for it -- replacing that to fix the refused minority would have made the common case
+/// worse and churned every golden file for nothing.
+///
+/// Scoped to [`CmpOperator::In`], which covers `IN` and `NOT IN` alike since the negation is a
+/// separate flag. `==` and `!=` are left exactly as they were: their undecided map-key spelling
+/// renders through `retrieval_error` rather than here, so this population is the one that is wrong.
+fn membership_verdict(op_msg: &str, info: &NameInfo<'_>) -> String {
+    let is_membership = info
+        .comparison
+        .as_ref()
+        .is_some_and(|c| c.operator == CmpOperator::In);
+
+    // `NameInfo` carries no separate custom-message field, and the `InComparison` arm of
+    // `extract_name_info` fills `message` from the record's own explanation alone. So for a
+    // membership failure a non-empty `message` is a refusal and nothing else.
+    if is_membership && !info.message.is_empty() {
+        return "could not be compared with expected value in".to_string();
+    }
+
+    match is_membership {
+        true => format!("{op_msg} match expected value in"),
+        false => format!("{op_msg} match expected value"),
+    }
 }
 
 fn print_rules_output(

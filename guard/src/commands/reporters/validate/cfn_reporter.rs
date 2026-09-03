@@ -12,6 +12,7 @@ use crate::commands::reporters::validate::common::{
 use crate::commands::tracker::StatusContext;
 use crate::commands::validate::{OutputFormatType, Reporter};
 use crate::rules::errors::Error;
+use crate::rules::values::CmpOperator;
 
 use crate::rules::eval_context::EventRecord;
 use crate::rules::path_value::traversal::Traversal;
@@ -223,12 +224,25 @@ impl super::common::GenericReporter for SingleLineReporter {
                                msg=info.message.replace('\n', ";")
                     ))
                 },
+                // `verdict` rather than `{op_msg} match with`, for the reason `membership_verdict` in
+                // `generic_summary.rs` gives: a membership comparison that had no answer used to be
+                // rendered here as one that ran and answered. Same predicate, same two states, and a
+                // decided failure keeps its wording to the byte.
                 |_, _, msg, info| {
-                    Ok(format!("Resource [{resource}] property [{property}] in template [{template}] is not compliant with [{rule}] because provided value [{provided}] {op_msg} match with expected value [{expected}]. Error message [{msg}]",
+                    let verdict = if info
+                        .comparison
+                        .as_ref()
+                        .is_some_and(|c| c.operator == CmpOperator::In)
+                        && !info.message.is_empty()
+                    {
+                        "could not be compared with".to_string()
+                    } else {
+                        format!("{msg} match with")
+                    };
+                    Ok(format!("Resource [{resource}] property [{property}] in template [{template}] is not compliant with [{rule}] because provided value [{provided}] {verdict} expected value [{expected}]. Error message [{msg}]",
                                resource=resource,
                                property=info.path,
                                provided=info.provided.as_ref().map_or(&serde_json::Value::Null, std::convert::identity),
-                               op_msg=msg,
                                expected=info.expected.as_ref().map_or(&serde_json::Value::Null, std::convert::identity),
                                template=data_file_name,
                                rule=info.rule,

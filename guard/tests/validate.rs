@@ -1321,6 +1321,69 @@ mod validate_tests {
         );
     }
 
+    /// A refused membership does not claim a match happened; a decided one keeps saying it did.
+    ///
+    /// `report_by_lhs` carries the refusal reason now, so the reporters can tell the two apart, and the
+    /// lead sentence is conditional on it. Before that they could not: every membership failure read
+    /// "provided value [...] did match expected value in [...]", which is an assertion that the
+    /// comparison ran and answered.
+    ///
+    /// Both rules in the fixture fail, and the pair is the point. For `k_decided` the sentence is
+    /// CORRECT -- the denylist names both keys, so the value really did match -- and a blanket rewording
+    /// would have replaced a true sentence for the common case in order to fix the refused one. So this
+    /// asserts the new wording on one rule and the old wording on the other, in the same report. A
+    /// change that reworded membership failures unconditionally passes the first half and fails the
+    /// second.
+    #[test]
+    fn a_refused_membership_does_not_claim_a_match_happened() {
+        let mut reader = Reader::default();
+        let mut writer = Writer::new(WBVec(vec![])).expect("Failed to create writer.");
+
+        let status_code = ValidateTestRunner::default()
+            .data(vec!["undecided-map-key-template.json"])
+            .rules(vec!["membership_lead_sentence.guard"])
+            .show_summary(vec!["all"])
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(
+            StatusCode::VALIDATION_ERROR,
+            status_code,
+            "both rules fail before and after; this is about the sentence, not the verdict"
+        );
+
+        let output = writer.stripped().expect("failed to read the writer");
+        let refused = output
+            .lines()
+            .find(|l| l.contains("k_refused") && l.contains("expected value in"))
+            .unwrap_or_else(|| panic!("no membership rendering for k_refused:\n{}", output));
+        let decided = output
+            .lines()
+            .find(|l| l.contains("k_decided") && l.contains("expected value in"))
+            .unwrap_or_else(|| panic!("no membership rendering for k_decided:\n{}", output));
+
+        assert!(
+            refused.contains("could not be compared with expected value in"),
+            "a comparison that never ran must not be reported as one that did: {}",
+            refused
+        );
+        assert!(
+            !refused.contains("did match") && !refused.contains("did not match"),
+            "the refused rendering must not assert a match either way: {}",
+            refused
+        );
+
+        assert!(
+            decided.contains("did match expected value in"),
+            "a decided membership failure must keep saying the value matched, because it did: {}",
+            decided
+        );
+        assert!(
+            !decided.contains("could not be compared"),
+            "a comparison that was answered must not borrow the refused wording: {}",
+            decided
+        );
+    }
+
     /// Two keys spelled the same way in one template must compare equal, and must not compare
     /// unequal.
     ///

@@ -1,0 +1,21 @@
+#
+# One refused membership failure beside one decided membership failure, so the two lead sentences can be
+# compared in a single report.
+#
+# `k_refused` names a pattern that compiles and then exhausts `fancy-regex`'s backtracking budget on the
+# eighteen-character key, so nothing was compared. `k_decided` names both keys literally, so every key
+# really is in the denylist and the comparison genuinely answered.
+#
+# Both fail, and before the lead sentence became conditional both read "did match expected value in" --
+# an assertion of success that is true of one of them and false of the other. That is why this file holds
+# the pair rather than the refused rule alone: a test with only the refused rule cannot tell a
+# conditional sentence from a blanket rewording, and a blanket rewording would replace a correct sentence
+# for the decided majority.
+#
+rule k_refused {
+    Cfg[ keys not in [/(?!x)((a+)+)b/] ] !empty
+}
+
+rule k_decided {
+    Cfg[ keys not in ["aaaaaaaaaaaaaaaaaa", "other"] ] !empty
+}

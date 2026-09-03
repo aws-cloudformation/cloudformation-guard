@@ -3568,14 +3568,24 @@ fn report_all_failed_clauses_for_rules<'value>(
                     comparison,
                     message,
                 }) => {
-                    let error_message = format!(
-                        "Check was not compliant as property [{}] was not present in [{}]{err}",
-                        from.resolved().unwrap().self_path(),
-                        SliceDisplay(to),
-                        err = message
-                            .as_ref()
-                            .map_or("".to_string(), |s| format!(". Error = [{}]", s))
-                    );
+                    // Two sentences, on the same predicate the console reporters use. "was not present
+                    // in" asserts that the membership question was answered, which is right for a
+                    // decided failure and false for one the comparison never reached. A reason being
+                    // present is what tells them apart, and only because the record now carries one.
+                    // A decided failure keeps its wording to the byte.
+                    let error_message = match message {
+                        Some(reason) => format!(
+                            "Check was not compliant as property [{}] could not be compared with [{}]. Error = [{}]",
+                            from.resolved().unwrap().self_path(),
+                            SliceDisplay(to),
+                            reason
+                        ),
+                        None => format!(
+                            "Check was not compliant as property [{}] was not present in [{}]",
+                            from.resolved().unwrap().self_path(),
+                            SliceDisplay(to)
+                        ),
+                    };
                     clauses.push(ClauseReport::Clause(GuardClauseReport::Binary(
                         BinaryReport {
                             context: current.context.to_string(),
