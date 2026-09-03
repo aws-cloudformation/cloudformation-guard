@@ -1213,8 +1213,39 @@ fn key_value(input: Span) -> IResult<Span, (String, Value)> {
 /// that used to parse is a breaking change, and it is the same breaking change those three already made.
 ///
 /// The document side is deliberately not this: a repeated key in a *template* warns and evaluates the last
-/// value, in `validate`, because a template is often not the reader's to edit. Nothing here reaches that path
-/// -- documents are loaded through `libyaml` and `serde`, never through this grammar.
+/// value, because a template is often not the reader's to edit. That is still true, and it is what every
+/// user-reachable path does -- measured rather than reasoned, on a template holding `Encrypted` twice:
+///
+/// ```text
+/// validate -d <template>          exit 19   Warning: duplicate key /Resources/One/Properties/Encrypted,
+///                                           first at L:5,C:7 and again at L:6,C:7. The last value is
+///                                           the one evaluated.
+/// validate -i <parameters>        exit 0    the same warning, for the input-parameters file
+/// test -d <suite>                 exit 0    last value wins, silently -- the warning is only on the
+///                                           marked libyaml path that `validate -d` uses
+/// rules file with `{ a: 1, a: 2 }` exit 5   refused, which is this function
+/// ```
+///
+/// What this comment used to say -- "documents are loaded through `libyaml` and `serde`, never through this
+/// grammar" -- is false as an absolute and was the wrong reason for a right conclusion. A document *can* be
+/// read by this grammar: `TryFrom<&str> for PathAwareValue` in `path_value.rs` routes through
+/// `Value::try_from` to `parse_value` and so to here. `f55c97fd`, which added this refusal, says as much in
+/// its own message, having had to edit a template fixture in `eval_tests.rs` that reached this grammar and
+/// spelled one key twice.
+///
+/// The conclusion survives on a narrower fact: that constructor is `pub(crate)`, `path_value` is a
+/// `pub(crate) mod`, and every caller of it is an in-crate test. Every production caller takes one of the
+/// other three routes -- `try_from_marked` for `validate -d`, `TryFrom<serde_json::Value>` and
+/// `TryFrom<serde_yaml::Value>` for `validate_and_return_json` and the `test` command's `input:`. So no
+/// document a user can supply is refused here, and the authored-file argument above is not being stretched
+/// to cover templates. Widening that constructor's visibility, or calling it on document text from
+/// production code, would stretch it -- and would turn a warning into a refusal for a file the reader may
+/// not be able to edit, which is a materially worse breaking change than refusing a rules file.
+///
+/// The warning half is pinned by `a_duplicate_name_resolves_last_wins_and_warns_wherever_it_arrived_from`
+/// in `libyaml/loader_tests.rs`, which asserts last-wins and the reported duplicate through
+/// `try_from_marked`. The visibility half is not pinned by a test and cannot usefully be: it is the
+/// `pub(crate)` on `path_value`, and the thing to re-check before widening it is this paragraph.
 ///
 /// Lists are left alone. A repeated value in a list literal is legitimate -- `in [1, 1, 2]` is a set of
 /// candidates and a repeat there means nothing -- so a check written over values rather than over keys would

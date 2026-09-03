@@ -7696,7 +7696,11 @@ fn the_message_scan_treats_a_bare_carriage_return_as_a_line_ending() {
 /// is a mistake to report, not an input to accommodate.
 ///
 /// The document side is deliberately different and is not changed here: a duplicated key in a *template*
-/// warns and evaluates the last value, because the template is often not the reader's to edit.
+/// warns and evaluates the last value, because the template is often not the reader's to edit. Confirmed by
+/// measurement on every user-reachable path -- `validate -d`, `validate -i` and `test -d` all take the last
+/// value and none of them refuses -- and the reason is narrower than `parse_map`'s comment first claimed.
+/// A document can be read by this grammar, through `TryFrom<&str> for PathAwareValue`; that constructor is
+/// just `pub(crate)` and reached only from in-crate tests. See `parse_map` for the routes and the numbers.
 #[rstest::rstest]
 #[case::quoted_keys(
     "rule r { Resources.One.Properties == { \"Encrypted\": true, \"Encrypted\": false } }\n"
