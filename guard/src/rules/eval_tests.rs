@@ -11039,21 +11039,35 @@ fn a_skipped_pairing_does_not_earn_a_sibling_a_membership_notice(
 
 /// The element loop of a list against a non-list decides a notice of its own.
 ///
-/// Why this exists: `incomparable_membership`'s `(List, non-list)` arm has two contributors -- the
-/// element loop at its top and the shape refusal below it -- and only the second was measured. Both
-/// directions of a mutation on the loop left the suite at 3142 passed / 0 failed at `b49818b1`:
-/// replacing `refused |= pair_refused(left, right)` with a discard, and replacing it with
-/// `refused = true` for every element. So its answer was unobservable either way, which is a weaker
-/// state than untested -- no cell could tell whether the loop ran.
+/// # Which loop, cited so it resolves to one place
+///
+/// `incomparable_membership`'s `(PathAwareValue::List((_, lhsl)), right)` arm, the element loop under
+/// the comment "The element question `contained_in` never asks". Both of those strings are unique in
+/// the file; neither of the obvious shorter citations is. `pair_refused` has five call sites, and the
+/// loop body `refused |= pair_refused(left, right);` appears verbatim at three of them, so a reader
+/// grepping either lands on a family rather than on this loop. A line number is worse still: the
+/// citation this replaced read `eval.rs:621-623`, which survived to here only because every hunk that
+/// landed in between happened to fall below it.
+///
+/// The arm's second contributor is its `if both_queried && !vacuous_match` block, also unique. Those
+/// two are what the rest of this comment means by the loop and the shape refusal.
+///
+/// # Why this exists
+///
+/// The arm has two contributors and only the shape refusal was measured. Both directions of a
+/// mutation on the loop left the suite at its full count with nothing failing -- replacing the loop
+/// body with a discard, and replacing it with `refused = true` for every element. Measured at
+/// `b49818b1` and again at `e083cd99`, three commits later, so the hole was not a transient of one
+/// base. The loop's answer was unobservable either way, which is a weaker state than untested: no
+/// cell could tell whether it ran.
 ///
 /// # Why the right operand has to be a rule literal
 ///
 /// `both_queried` is computed once per clause, so it is constant across every pairing, and while it
-/// is true the arm cannot expose the loop at all. A non-empty `lhsl` reaches the shape refusal three
-/// lines later, which assigns `refused = true` whatever the loop found; an empty one never runs the
-/// loop body. Those are the only two cases, so this is a property of the code rather than of any
-/// fixture: no queried operand can cover the loop, and rewriting the queried cells cannot change
-/// that.
+/// is true the arm cannot expose the loop at all. A non-empty `lhsl` reaches the shape refusal below,
+/// which assigns `refused = true` whatever the loop found; an empty one never runs the loop body.
+/// Those are the only two cases, so this is a property of the code rather than of any fixture: no
+/// queried operand can cover the loop, and rewriting the queried cells cannot change that.
 ///
 /// `every_string_spelling_warns_through_the_channel_that_is_true_of_it` sits in both blind spots at
 /// once and is named here because it reads as coverage. Fourteen of its sixteen cells query the right
@@ -11098,9 +11112,10 @@ fn the_element_loop_of_a_list_against_a_non_list_decides_its_own_notice(
     #[case] expected: bool,
 ) -> Result<()> {
     // Both left operands are lists of lists, so `[*]` yields list-valued elements and each pairing
-    // reaches the `(List, non-list)` arm against the literal `"abc"`. They differ in one element:
-    // `WithNonString` holds `[1]`, whose `pair_refused(1, "abc")` is a kind refusal, and `AllStrings`
-    // holds `["z"]`, which answers. `["q"]` is common to both and is the value that passes.
+    // reaches the `(PathAwareValue::List((_, lhsl)), right)` arm against the literal `"abc"`. They
+    // differ in one element: `WithNonString` holds `[1]`, whose `pair_refused(1, "abc")` is a kind
+    // refusal, and `AllStrings` holds `["z"]`, which answers. `["q"]` is common to both and is the
+    // value that passes.
     const INPUT: &str = r#"
     {
         WithNonString: [["q"], [1]],
