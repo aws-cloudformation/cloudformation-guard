@@ -171,4 +171,84 @@ mod tests {
              stopped on, and got None -- which renders as an empty Code: block"
         );
     }
+
+    /// A line ends at `\n`, at `\r\n`, or at a bare `\r`, which is what the loader beside this already
+    /// says.
+    ///
+    /// This cursor fed `str::lines`, which splits on `\n` and strips a `\r` only when one precedes that
+    /// `\n`. So a data file whose lines end with a bare `\r` was **one line**. libyaml does not agree
+    /// with that -- a lone CR is a line break in YAML, and the loader counts it -- so the two halves of
+    /// one report described different files. Measured on a six-line template with `Encrypted: false` on
+    /// line 6, whose only difference from its LF twin was the line endings:
+    ///
+    /// ```text
+    /// LF        PropertyPath = /Resources/One/Properties/Encrypted[L:6,C:18]
+    ///           Code:      4.    Properties:
+    ///                      5.      Tags: []
+    ///                      6.      Encrypted: false
+    ///
+    /// bare CR   PropertyPath = /Resources/One/Properties/Encrypted[L:6,C:18]      <- still right
+    ///           Code:      1.Resources:\r  One:\r    Type: ...\r      Encrypted: false\r
+    /// ```
+    ///
+    /// The position was never wrong; the excerpt beside it was the whole file labelled line 1, control
+    /// characters included. A reader given `L:6` and one line of text has no way to tell which of the
+    /// two is mistaken.
+    ///
+    /// The mixed case is a judgement rather than a repair: a lone `\r` inside an otherwise-LF file now
+    /// ends a line, where `str::lines` would have kept `two\rthree` together. That is the judgement
+    /// libyaml makes when it counts those lines, and the one the rules parser makes, and this cursor
+    /// exists to index text libyaml has already read.
+    #[test]
+    fn read_cursor_ends_a_line_at_a_bare_carriage_return() {
+        for (spelling, buffer) in [
+            ("LF", "one\ntwo\nthree"),
+            ("CRLF", "one\r\ntwo\r\nthree"),
+            ("bare CR", "one\rtwo\rthree"),
+            (
+                "a final terminator, which adds no empty line",
+                "one\ntwo\nthree\n",
+            ),
+            (
+                "mixed, which is what a botched conversion leaves",
+                "one\r\ntwo\rthree\n",
+            ),
+        ] {
+            let mut cursor = ReadCursor::new(buffer);
+            let mut read = Vec::new();
+            while let Some(line) = cursor.next() {
+                read.push(line);
+            }
+            assert_eq!(
+                vec![(1, "one"), (2, "two"), (3, "three")],
+                read,
+                "every spelling of a line ending has to give the same three lines, and this one is \
+                 {}: {:?}",
+                spelling,
+                buffer
+            );
+        }
+
+        // An empty line in the middle is a line, in every spelling. `str::lines` keeps it too, and a
+        // replacement that collapsed it would renumber every line after it in the excerpt.
+        for buffer in ["one\n\nthree", "one\r\n\r\nthree", "one\r\rthree"] {
+            let mut cursor = ReadCursor::new(buffer);
+            let mut read = Vec::new();
+            while let Some(line) = cursor.next() {
+                read.push(line);
+            }
+            assert_eq!(
+                vec![(1, "one"), (2, ""), (3, "three")],
+                read,
+                "the blank line is line 2: {:?}",
+                buffer
+            );
+        }
+
+        // No text, no lines -- `seek_line` on an empty file answers None rather than indexing into
+        // nothing.
+        let mut empty = ReadCursor::new("");
+        assert_eq!(None, empty.next());
+        assert_eq!(None, ReadCursor::new("").seek_line(1));
+    }
 }
