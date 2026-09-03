@@ -253,6 +253,34 @@ fn binary_error_message(
 /// Scoped to [`CmpOperator::In`], which covers `IN` and `NOT IN` alike since the negation is a
 /// separate flag. `==` and `!=` are left exactly as they were: their undecided map-key spelling
 /// renders through `retrieval_error` rather than here, so this population is the one that is wrong.
+///
+/// TWO live renderers carry this sentence, not three. 56c95a51's message says "Three renderers,
+/// because three build this sentence independently" and that count is wrong. The live two are this
+/// function, reached from `print_name_info` for the console, and `eval_context.rs`'s
+/// `ClauseCheck::InComparison` arm, which serves `-o json`, `--structured`, the FFI and the Lambda.
+/// The third, `SingleLineReporter` in `cfn_reporter.rs`, is unreachable: nothing constructs
+/// `CfnReporter`, so its edit is consistency rather than coverage.
+///
+/// Established by mutation rather than by reading, because grepping for constructors cannot rule out
+/// macro-generated or reflective construction and a sentinel run can. Both arms of that renderer's
+/// conditional were replaced with sentinel strings and the suite run: 3138 passed / 0 failed /
+/// 0 ignored over 16 suites, tallies identical to the unmutated tree, and zero occurrences of either
+/// sentinel anywhere in the output. Deleting the module outright is the stronger form of the same
+/// measurement -- the crate still builds and the suite is still 3138 / 0 / 0 with identical counts.
+///
+/// So `a_refused_membership_does_not_claim_a_match_happened` covers the two reachable renderers and
+/// structurally cannot cover the third. Any test would have the same problem, which is the reason
+/// this is written down instead of a cell being added.
+///
+/// The unreachable renderer is left in place, and that is a choice with a measured reason rather than
+/// a preference. `CfnReporter` is `pub(crate)`, so no external consumer can name it and removing it
+/// would break no published surface -- but the removal does not stand alone. It was the only caller of
+/// `common::print_compliant_skipped_info`, so deleting it makes that function dead too and
+/// `cargo clippy --all-targets -- -D warnings` exits 101 on the result. Landing the deletion means a
+/// dead-code sweep of unknown depth, which is a different change from repairing a sentence. Keeping
+/// the edit means that if the type is ever wired up it carries this conditional rather than
+/// reintroducing the claim that a comparison ran when it did not. Its own `{msg} match with`
+/// template was untested before this branch and remains so, for the same reason.
 fn membership_verdict(op_msg: &str, info: &NameInfo<'_>) -> String {
     let is_membership = info
         .comparison
