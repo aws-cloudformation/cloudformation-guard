@@ -338,6 +338,13 @@ fn empty_reference_message(negated: bool) -> String {
 /// both granularities and the shape        370              0                   0                 0        710
 /// ```
 ///
+/// That grid was measured at `c67f8774` and is not re-measured here, which is the one thing to carry out of
+/// it. `69628df7` removed the mechanism behind part of the third row: an empty left-hand list paired with a
+/// string right operand no longer reaches `contained_in`, so the cells of that class no longer refuse on the
+/// shape and are no longer owed anything. The paragraph on `EmptyList NOT IN Str` below says which cells and
+/// what replaced their notice. Every figure from here to the end of this table's discussion therefore reads
+/// as of `c67f8774`; treat a bare one as stale until the grid is re-run.
+///
 /// So the alignment removed 29 notices: the 16 false alarms, which is the win, and 13 that were owed. The
 /// 13 are what "wrong by twelve" counts. The 15 false negatives are the 13 plus two that were never emitted
 /// in either release -- `EmptyOuter NOT IN [[2], [7, 8]]` and `Nest NOT IN [[2], [7, 8]]`, whose whole-value
@@ -352,20 +359,42 @@ fn empty_reference_message(negated: bool) -> String {
 /// where the element pairs are int against int and the operator never compared them: it paired the whole
 /// list with a scalar and refused on the kinds.
 ///
-/// `EmptyList NOT IN Str` is one of the 13 and not a residual. It is a shape refusal, `([], "abc")`, which
-/// is there whether or not anything flattens; the old paragraph reached "not repairable" from the element
-/// pairs, of which there are indeed none, and stated it of the clause. The VERDICT question that cell also
-/// sits in is a different one and is untouched: `Empty NOT IN Str` against `Empty NOT IN Strs[*]` owe
-/// opposite answers from operands no predicate can tell apart, which `27383c98` proves and which nothing
-/// here moves. A notice is not a verdict, and the impossibility is about the verdict.
+/// `EmptyList NOT IN Str` WAS one of the 13, and this paragraph used to say it "is a shape refusal,
+/// `([], "abc")`, which is there whether or not anything flattens". That was true at `c67f8774` and is false
+/// now. `69628df7` gave the `(None, None)` arm its own skip for a string right operand paired with an empty
+/// left-hand list -- the `uncompared_pairings` skip under `elements.is_empty()` in `contained_in`, above the
+/// only `contained_in` call that arm makes -- so the
+/// pair is never built and there is no refusal for the clause to pass on. The half of the old paragraph that
+/// still holds is the diagnosis of the error it was correcting: reaching "not repairable" from the element
+/// pairs, of which there are indeed none, and stating it of the clause.
 ///
-/// And the empty-left-hand family owes TWO notices, not one, which is the same paragraph's other error.
-/// `Empty NOT IN Ustr` is the documented one. `Empty NOT IN Strs[*]` is the second and is easy to read past
-/// because it looks like a different shape: the right operand is a query that EXPANDS to strings rather than
-/// a string, so it reaches the same `(None, None)` arm with the same `([], "a")` shape pair, and it is not a
-/// `Str`. Both emitted at `e8a03dda` and both went silent at `b8d3901e`. Swept over 30 right-operand kinds
-/// in both polarities for a `[]` and a `[[]]`, 120 cells, so the pair is the whole family rather than the
-/// two that happened to be looked at.
+/// The VERDICT question that cell also sits in is a different one and is untouched: `Empty NOT IN Str`
+/// against `Empty NOT IN Strs[*]` owe opposite answers from operands no predicate can tell apart, which
+/// `27383c98` proves and which nothing here moves. A notice is not a verdict, and the impossibility is
+/// about the verdict.
+///
+/// And the empty-left-hand family OWED two notices here rather than one, which was the same paragraph's
+/// other error. This paragraph said "owes", present tense, and at `69628df7` the family owes neither.
+/// `Empty NOT IN Ustr` was the documented one; `Empty NOT IN Strs[*]` was the second, easy to read past
+/// because it looks like a different shape -- the right operand is a query that EXPANDS to strings rather
+/// than a string, so it reached the same `(None, None)` arm with the same `([], "a")` shape pair, and it is
+/// not a `Str`. Both emitted at `e8a03dda` and both went silent at `b8d3901e`, which is unchanged history.
+/// The 120-cell sweep behind "the pair is the whole family" -- 30 right-operand kinds in both polarities for
+/// a `[]` and a `[[]]` -- established the family, and the family is what the skip above took out in one go.
+///
+/// What they get instead, measured with the release binary at `69628df7` over
+/// `{Empty: [], Str: "abc", Ustr: "abc", Strs: ["abc"]}`: `Empty NOT IN Ustr`, `Empty NOT IN Str`,
+/// `Empty NOT IN Strs[*]` and `Empty IN Ustr` each exit 0 printing `vacuous_comparison_notice` -- "passed
+/// without comparing anything" -- and none of the four prints "could not be compared with any element of the
+/// list". The literal `Empty NOT IN "abc"` prints that same notice and always has, so the query spellings
+/// joined their literal rather than losing a diagnostic.
+///
+/// This predicate has not been told. The shape arm below still excludes a string from its `vacuous_match`,
+/// so it still answers `refused` for `([], "abc")` -- instrumented at its own return, `Empty NOT IN Ustr`
+/// gives `refused=true`. Nothing reaches the author from it, and not because the predicate knows better:
+/// the verdict gate reads `clause_passed`, which is false for a clause that compared nothing, so the notice
+/// is suppressed one layer down. Latent rather than live, and named here so it is not rediscovered as a new
+/// defect.
 ///
 /// The wider grid a repair has to survive is not this one, because a before-and-after only covers the
 /// shapes it enumerates. 928 further shapes -- the `[0]`/`[*]` spellings the impossibility proofs turn on, a
@@ -560,11 +589,33 @@ fn incomparable_membership(lhs: &[QueryResult], rhs: &[QueryResult]) -> bool {
                     // The vacuous match, because it happens first. The `(None, None)` arm reads an empty
                     // left-hand list as vacuously present in anything that denotes a set and continues
                     // the outer loop, so `contained_in` is never called and `Empty NOT IN D13[*]` fails
-                    // on the match rather than passing on a refusal. A string is the exclusion there and
-                    // so it is the exclusion here: `Empty NOT IN Ustr` does reach the refusal, and it is
-                    // the notice the alignment took away rather than corrected --
-                    // `the_notice_asks_about_every_granularity_the_operator_decides_at` carries it with
-                    // both controls beside it.
+                    // on the match rather than passing on a refusal.
+                    //
+                    // THE STRING EXCLUSION BELOW IS STALE, and it is left in place rather than corrected
+                    // because changing it moves what this predicate answers. It reads "a string is the
+                    // exclusion in the operator, so it is the exclusion here", and that stopped being
+                    // true at `69628df7`: a string right operand paired with an empty left-hand list now
+                    // takes a skip of its own in that arm before `contained_in` is called (the
+                    // `uncompared_pairings` skip under `elements.is_empty()`), so `Empty NOT IN Ustr` does
+                    // NOT reach the refusal. This
+                    // condition still says it does, so the line below answers `refused` for a pair the
+                    // operator never builds -- instrumented at this function's return, `Empty NOT IN Ustr`
+                    // gives `refused=true` at `69628df7`.
+                    //
+                    // No notice goes out on it, and the reason is one layer down rather than here: the gate
+                    // in `binary_operation` also requires `clause_passed`, which is false for a clause that
+                    // compared nothing, and a clause whose only pairing was skipped compared nothing.
+                    // Measured, both polarities: `Empty NOT IN Ustr` and `Empty IN Ustr` exit 0 printing
+                    // `vacuous_comparison_notice` and neither prints the membership wording.
+                    // `every_string_spelling_warns_through_the_channel_that_is_true_of_it` pins that across
+                    // the whole string family, and
+                    // `the_notice_asks_about_every_granularity_the_operator_decides_at` no longer carries
+                    // `Empty NOT IN Ustr` as its moved cell -- the note above that cell records the move.
+                    //
+                    // So this is a false alarm held back by a condition that does not know about it. Aligning
+                    // it means dropping `!matches!(right, PathAwareValue::String(_))`, which is a change to
+                    // what the predicate answers and belongs with a re-run of the grid at the top of this
+                    // file rather than with a comment repair.
                     let vacuous_match =
                         lhsl.is_empty() && !matches!(right, PathAwareValue::String(_));
                     if both_queried && !vacuous_match {
@@ -2349,8 +2400,20 @@ pub(super) fn real_binary_operation<'value, 'loc: 'value>(
     // pattern decidedly matches BESIDE an undecided key reports a failure, where three-valued logic
     // would answer yes on the strength of the matching key. Telling those apart needs the enclosing
     // operator, which this function is not given -- non-emptiness is decided there while membership is
-    // not, and only the caller knows which of the two it asked about. Nothing regresses: measured at
-    // `b8d3901e` that shape exited 255, so there is no correct behaviour here to preserve.
+    // not, and only the caller knows which of the two it asked about.
+    //
+    // The cost is the whole QUERY and not the one map, which is wider than this paragraph used to say.
+    // `Err` here leaves `real_binary_operation` for every value the query selected, so a sibling map with
+    // no undecided key in it is lost too. Measured with the release binary at `69628df7` on
+    // `rule d { Resources.*.Cfg[ keys == /(?!x)((a+)+)b/ ] !empty }`, where `R1.Cfg` is `{<18 a's>: 1}` and
+    // `R2.Cfg` is `{aaab: 2}`: exit 19 naming only `/Resources/R1/Cfg`, with `R2` absent from the report
+    // entirely -- and `R2` alone over the same rule exits 0. So a PASS that the document contains does not
+    // appear anywhere in the run. Same result with 30 a's, so it is not a threshold artifact.
+    //
+    // Nothing regresses even so, and that is measured rather than assumed for the wider shape as well:
+    // at `b8d3901e` the two-resource document exited 255 with "Error executing regex: Max limit for
+    // backtracking count exceeded" and named neither map, so `R2`'s PASS was not available there either.
+    // 255 to 19 with one map named is strictly more than that run gave.
     match undecided {
         Some(reason) => Err(Error::UndecidableComparison(reason)),
         None => Ok(EvaluationResult::QueryValueResult(statues)),

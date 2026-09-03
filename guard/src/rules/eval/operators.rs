@@ -1479,9 +1479,15 @@ impl Comparator for InOperation {
                         // `an_empty_left_hand_list_is_vacuously_in_every_spelling_of_a_denylist` and
                         // `a_list_denylist_holding_a_nested_list_denies_only_what_it_names`, and the
                         // thirteenth had no cell anywhere -- `Empty IN MixedRev[*]` goes 0 to 19 while its
-                        // literal `[5, "abc"]` stays 0, and every one of `MixedRev`'s four occurrences was
-                        // a `NOT IN` cell. So the repair loses on count AND on direction rather than
-                        // winning narrowly on one. The conclusion is unchanged and now stronger.
+                        // literal `[5, "abc"]` stays 0, and at `b8d3901e` `eval_tests.rs` held exactly one
+                        // `MixedRev` cell and it was `NOT IN`. So the repair loses on count AND on direction
+                        // rather than winning narrowly on one. The conclusion is unchanged and now stronger.
+                        //
+                        // This said "every one of `MixedRev`'s four occurrences was a `NOT IN` cell", which
+                        // counted grep hits as cells. Four hits is right; one is a cell, and the other three
+                        // are a table row, a prose sentence and the data-document field. Fixed here as well
+                        // as at the three sites in `eval_tests.rs`, since a wrong count inside the paragraph
+                        // warning against wrong counts is the one place it cannot be left standing.
                         //
                         // WHICH SHAPE OF FIGURE IS SAFE, because the wrong number came from the method
                         // this comment recommends. A count over a hand-authored population of cells is not

@@ -10160,8 +10160,15 @@ fn an_empty_left_hand_list_is_vacuously_in_every_spelling_of_a_denylist(
 // test cannot land silently: both turn every PASS in this block FAIL.
 //
 // That guarantee was overstated until the `MixedRev[*]` cell below was added. It held of the cells present
-// and not in general: `MixedRev` appeared four times in this file and every occurrence was a `NOT IN`
-// cell, so `Empty IN MixedRev[*]` moved 0 to 19 under BOTH candidate repairs with nothing to observe it.
+// and not in general: at `b8d3901e` this file held no `IN` cell for `MixedRev` in any spelling, so
+// `Empty IN MixedRev[*]` moved 0 to 19 under BOTH candidate repairs with nothing to observe it.
+//
+// The evidence used to be stated as "`MixedRev` appeared four times in this file and every occurrence was a
+// `NOT IN` cell", and that conflated grep hits with cells. Four occurrences is right; one of them is a cell.
+// At `b8d3901e` they are line 9999, a row in a prose table; 10012, the cell `"Empty NOT IN MixedRev[*]"`;
+// 10040, a prose sentence; and 10058, the data-document field `MixedRev: [5, "abc"],`. The conclusion is
+// unaffected and is in fact stronger than the evidence it was resting on -- one `NOT IN` cell and no `IN`
+// cell is a wider gap than four `NOT IN` cells would have been.
 // A block that pins every PASS it happens to contain still lets a repair land silently through the
 // spelling it does not contain, which is the same authored-population blind spot the count in that test
 // fell into. With the cell added the claim is true as written.
@@ -10218,8 +10225,11 @@ fn an_empty_left_hand_list_is_vacuously_in_every_spelling_of_a_denylist(
     Status::FAIL
 )]
 #[case::an_empty_list_is_in_a_mixed_kind_entry_set("Empty IN Mixed[*]", Status::PASS)]
-// The `IN` polarity of the reversed mixed order, which had no cell in this file at all. `MixedRev`
-// appeared four times and every one was `NOT IN`, so `Empty IN MixedRev[*]` was free to move: it goes 0 to
+// The `IN` polarity of the reversed mixed order, which had no cell in this file at all. At `b8d3901e` the
+// only `MixedRev` cell anywhere was
+// `an_empty_list_is_vacuously_in_a_non_string_first_mixed_entry_set` -- the claim here used to be "appeared
+// four times and every one was `NOT IN`", which counted grep hits rather than cells; three of the four are
+// prose and data. So `Empty IN MixedRev[*]` was free to move: it goes 0 to
 // 19 under both candidate repairs measured in
 // `the_in_polarity_of_a_queried_scalar_right_operand_has_no_repair_in_this_arm` while its literal
 // `[5, "abc"]` stays 0, and it is one of the twelve losses that repair's price used to omit. Here so that
@@ -10361,9 +10371,16 @@ fn the_vacuous_subset_reading_belongs_to_a_right_operand_that_denotes_a_set(
 /// codes", after a 47-clause CLI sweep had put the loss at four. Cells were then counted -- over the two
 /// tables in view, which gave five. The true figure is twelve. Cells exist only where somebody wrote one,
 /// so a count over them is short by however many nobody wrote, and `Empty IN MixedRev[*]` is the proof:
-/// it goes 0 to 19 under this repair while its literal `[5, "abc"]` stays 0, and all four of `MixedRev`'s
-/// occurrences in this file were `NOT IN` cells, so nothing could observe it. A clause sweep has the
+/// it goes 0 to 19 under this repair while its literal `[5, "abc"]` stays 0, and at `b8d3901e` this file
+/// held exactly one `MixedRev` cell and it was `NOT IN`, so nothing could observe it. A clause sweep has the
 /// opposite blind spot -- it misses nothing unauthored -- and neither method alone is sound.
+///
+/// That last count was itself an instance of the trap, which is worth naming inside the paragraph that
+/// names the trap. It read "all four of `MixedRev`'s occurrences in this file were `NOT IN` cells". Four is
+/// the number of grep hits, not of cells: at `b8d3901e` one hit is the cell, and the other three are a row
+/// in a prose table, a prose sentence, and the data-document field the cells query. Counting matches for an
+/// identifier and reporting the total as a population of cells is the same substitution of a convenient
+/// population for the real one that this paragraph is about.
 ///
 /// WHICH SHAPE OF FIGURE IS SAFE. A count over a hand-authored cell population is not a property of the
 /// code; it moves when someone writes another cell. A PREDICATE over the moved set is: "every cell it

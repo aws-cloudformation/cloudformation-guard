@@ -1870,10 +1870,19 @@ mod validate_tests {
     /// the arm was taken is pinned rather than assumed from the status alone.
     ///
     /// Junit only, and the other three structured formats would be actively misleading here. They go
-    /// through `CommonStructuredReporter`, which does not return early on an eval error -- it stashes it
-    /// in `first_error` and carries on to its own drain (`structured.rs:154`). So a json, yaml or sarif
-    /// case over this same fixture reaches the `Ok`-arm equivalent, passes with the junit drain removed,
-    /// and would eventually go red for something else entirely.
+    /// through `CommonStructuredReporter`, which does not return early on an eval error -- its
+    /// `eval_rules_file` match has an `Err(e)` arm that stashes into `first_error`, and the
+    /// `deprecations.extend(root_scope.deprecations()...)` line below it runs regardless, with the
+    /// `for notice in &deprecations` loop writing them after the document. All three are in
+    /// `CommonStructuredReporter::report` in `validate/structured.rs`. So a json, yaml or sarif case over
+    /// this same fixture reaches the `Ok`-arm equivalent, passes with the junit drain removed, and would
+    /// eventually go red for something else entirely.
+    ///
+    /// Named by symbol rather than by line because the line was wrong twice. This cited
+    /// `structured.rs:154`, which is a comment; the stash, the drain read and the write sat at 179, 191 and
+    /// 205 when that was noticed. It was never right in this range -- at `b8d3901e` line 154 held the
+    /// `Err(e) => {` itself with the extend at 168, and `c6ccc574` inserted a comment block that pushed the
+    /// extend to 191. A citation that a comment insertion can invalidate will be invalidated.
     ///
     /// One notice, not two. `notice_then_error.guard` has one clause that warns, so a count is exact
     /// here rather than a floor -- the run either carried the notice past the early return or it did
