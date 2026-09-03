@@ -9147,6 +9147,106 @@ fn a_denylist_named_by_a_variable_denies_what_the_same_list_written_out_denies(
     Ok(())
 }
 
+/// Which spelling of a queried denylist reaches the element-wise reading, and which does not.
+///
+/// The element-collision defect lives in one arm of `InOperation::compare`, the `(None, None)` one, and
+/// it needs a particular shape to be visible: a left operand that resolves to a single list-valued
+/// result against a right operand that resolves the same way. That is narrow enough that three nearby
+/// spellings of the same question were never wrong, and a fix has to not be credited with them. The
+/// `_expanded` cells are those spellings, measured at `0d2694f` before the repair and unchanged by it.
+///
+/// `Pair[*]` splits the left operand into one scalar result per element, so each element asks scalar
+/// membership on its own and the whole-list granularity that lost the collision never arises. Expanding
+/// both sides does the same. Expanding only the RIGHT side is the one that still admits a named value,
+/// and it is deliberately left alone: a list against a scalar is what `contained_in` calls not
+/// comparable, `NOT IN` over an incomparable pairing currently passes, and that is the tracked defect
+/// `docs/KNOWN_ISSUES.md` records and `incomparable_membership` in `eval.rs` prints a deprecation notice
+/// for. `right_expanded_denies_nothing_yet` fires that notice today. Failing it here would land the
+/// deprecation without its notice and move cells of
+/// `every_operator_and_operand_shape_agrees_with_a_stated_oracle`, so the cell pins the current answer
+/// and this comment is where to look when that notice becomes an error.
+///
+/// The nested cells exist because reading them wrong nearly buried the defect. Moving the same two
+/// values under `Resources.R.Properties` and keeping the clause as `Pair NOT IN Deny13` makes every
+/// polarity exit 19, which reads as "the defect does not reproduce when nested". It is not: the
+/// unqualified name resolves to nothing there, and the finding says so --
+/// "property [Pair] to compare from is missing" -- so both polarities fail for a reason that has nothing
+/// to do with membership. `nested_unqualified_undenied` is that cell, and it is FAIL for a disjoint
+/// denylist, which is the tell. Written so the query actually selects the values, the nested document
+/// reproduces the bypass exactly as the flat one does: `nested_qualified_denied` was exit 0 at `0d2694f`.
+///
+/// So the document's shape does not change which arm reads the clause. Only the query's shape does.
+#[rstest::rstest]
+#[case::flat_denied("flat", "Pair NOT IN Deny13", Status::FAIL)]
+#[case::flat_undenied("flat", "Pair NOT IN Deny34", Status::PASS)]
+#[case::left_expanded_denied("flat", "Pair[*] NOT IN Deny13", Status::FAIL)]
+#[case::left_expanded_undenied("flat", "Pair[*] NOT IN Deny34", Status::PASS)]
+#[case::both_expanded_denied("flat", "Pair[*] NOT IN Deny13[*]", Status::FAIL)]
+#[case::both_expanded_undenied("flat", "Pair[*] NOT IN Deny34[*]", Status::PASS)]
+#[case::right_expanded_denies_nothing_yet("flat", "Pair NOT IN Deny13[*]", Status::PASS)]
+#[case::right_expanded_undenied("flat", "Pair NOT IN Deny34[*]", Status::PASS)]
+#[case::flat_in_one_element("flat", "Pair IN Deny13", Status::FAIL)]
+#[case::flat_in_disjoint("flat", "Pair IN Deny34", Status::FAIL)]
+#[case::nested_qualified_denied(
+    "nested",
+    "Resources.R.Properties.Pair NOT IN Resources.R.Properties.Deny13",
+    Status::FAIL
+)]
+#[case::nested_qualified_undenied(
+    "nested",
+    "Resources.R.Properties.Pair NOT IN Resources.R.Properties.Deny34",
+    Status::PASS
+)]
+#[case::nested_unqualified_denied("nested", "Pair NOT IN Deny13", Status::FAIL)]
+#[case::nested_unqualified_undenied("nested", "Pair NOT IN Deny34", Status::FAIL)]
+fn which_spelling_of_a_queried_denylist_reaches_which_arm(
+    #[case] document: &str,
+    #[case] clause: &str,
+    #[case] expected: Status,
+) -> Result<()> {
+    // Verbatim the fixture the defect was reproduced against, plus one disjoint denylist for the
+    // undenied polarity. `Pair` holds `1`, which `Deny13` names and `Deny34` does not.
+    const FLAT: &str = r#"
+    {
+        Pair: [1, 2],
+        Deny13: [1, 3],
+        Deny34: [3, 4]
+    }
+    "#;
+
+    const NESTED: &str = r#"
+    {
+        Resources: {
+            R: {
+                Properties: {
+                    Pair: [1, 2],
+                    Deny13: [1, 3],
+                    Deny34: [3, 4]
+                }
+            }
+        }
+    }
+    "#;
+
+    let input = match document {
+        "flat" => FLAT,
+        "nested" => NESTED,
+        other => panic!("unknown document `{}`", other),
+    };
+
+    let rules = format!("rule membership {{ {clause} }}");
+
+    assert_eq!(
+        expected,
+        rule_status_in(&rules, input, "membership")?,
+        "{} document, clause: {}",
+        document,
+        clause
+    );
+
+    Ok(())
+}
+
 /// A range inside a list literal is a range for a list-valued left-hand side too.
 ///
 /// `d7f01ec` made a range nested in a list literal behave like a range, and it did so in
