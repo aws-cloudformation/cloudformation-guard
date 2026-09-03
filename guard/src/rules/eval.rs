@@ -842,6 +842,50 @@ fn empty_lhs_message() -> String {
         .to_string()
 }
 
+/// Why a rule did not apply when its query selected nothing, for the two sites that know it.
+///
+/// `find_skip_reason` surfaces *refusals* -- a comparison that could not be decided -- and an empty
+/// selection is not one. So this is a different sentence rather than a reuse of the refusal wording,
+/// and it says what the two call sites actually branched on: the query ran, and it matched nothing.
+///
+/// [`empty_lhs_message`] is the neighbouring helper and is deliberately not reused. It is about the
+/// left-hand *variable* of a comparison resolving to no values, so it tells the reader to look at
+/// what binds the variable and says the clause fails. Neither half holds here: these are ordinary
+/// queries with no variable to bind -- `Resources[ keys == /Z9/ ]` is the measured case -- and the
+/// outcome is a SKIP, not a failure. Pointing a reader at a `let` they never wrote is the same class
+/// of mistake as naming a condition a rule does not contain.
+///
+/// The query is named because it is the one thing that makes the line actionable, and no cause is
+/// named at all -- which is a correction, not caution. The first draft said an empty selection is
+/// what "a path the data does not have, an empty collection, and a filter that excluded every value
+/// all produce alike", and two of those three are false here. Measured on this input:
+///
+/// ```text
+/// Resources[ keys == /Z9/ ] { ... }      exit 0  SKIP   reaches here
+/// Resources.*[ Type == "nope" ] { ... }  exit 0  SKIP   reaches here
+/// Resources.Absent.Type == "x"           exit 19 FAIL   does not
+/// Resources.One.Properties.Tags[*] { }   exit 19 FAIL   does not, over `Tags: []`
+/// Resources.*.Type == "x"                exit 19 FAIL   does not, over `Resources: {}`
+/// ```
+///
+/// A missing path and an empty collection fail closed somewhere else rather than arriving as an
+/// empty selection, so a filter that excluded every value is the only producer measured. That is
+/// still not put in the sentence: one sampled producer is not proof of the only producer, and
+/// telling an author to check filters on a query that has none would be the same mistake as naming
+/// a condition the rule does not contain. The query is printed and the author reads their own query.
+///
+/// Rendered through [`SliceDisplay`], which is what every other query-naming message in this file
+/// uses, so a filter prints as the parser's own name for it -- `Resources. (map-key-filter-clauses)`
+/// rather than `Resources[ keys == /Z9/ ]`. Ugly and not wrong; changing it would move every one of
+/// those messages and belongs on its own.
+fn empty_selection_message(query: &[QueryPart<'_>]) -> String {
+    format!(
+        "the rule did not apply because the query {} selected no values from this input. Nothing \
+         was refused -- the query ran and matched nothing.",
+        SliceDisplay(query)
+    )
+}
+
 /// Why a clause is being evaluated, which decides what an unevaluatable clause
 /// should report.
 ///
@@ -1791,7 +1835,15 @@ fn binary_operation<'value, 'loc: 'value>(
                     },
                     Some(empty_lhs_message()),
                 ),
-                false => EvaluationResult::EmptyQueryResult(Status::SKIP, None),
+                // Carries the reason for the same purpose the arm above carries one. This branch is
+                // reached with the query in hand and `is_empty()` already decided, so the fact is
+                // known here and was simply not written down: `find_skip_reason` reads this message
+                // off the `GuardClauseBlockCheck` the caller builds from it, and a `None` made a
+                // clause-form empty selection report a SKIP with no reason at all.
+                false => EvaluationResult::EmptyQueryResult(
+                    Status::SKIP,
+                    Some(empty_selection_message(lhs_query)),
+                ),
             })
         }
 
@@ -2955,12 +3007,25 @@ pub(in crate::rules) fn eval_guard_block_clause<'value, 'loc: 'value>(
         } else {
             Status::SKIP
         };
+        // The reason is recorded here because here is where it is known: the branch condition *is*
+        // the reason. `find_skip_reason` has an arm for this record shape already, so nothing was
+        // missing but the message, and with `None` a block-form empty selection printed a bare
+        // `Status = SKIP` with no reason line even under `--show-summary all`.
+        //
+        // Attached to the SKIP only, and not because the FAIL has no consumer. The sentence opens
+        // "the rule did not apply", which is false of the `not_empty` FAIL -- there the rule did
+        // apply and the clause failed for want of a value. A `not_empty` failure wants its own
+        // wording, which is a separate change and not this one.
+        let message = match status {
+            Status::SKIP => Some(empty_selection_message(&block_clause.query.query)),
+            _ => None,
+        };
         resolver.end_record(
             &context,
             RecordType::BlockGuardCheck(BlockCheck {
                 status,
                 at_least_one_matches: !match_all,
-                message: None,
+                message,
             }),
         )?;
         return Ok(status);

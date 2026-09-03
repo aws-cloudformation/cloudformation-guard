@@ -7945,9 +7945,19 @@ fn a_type_block_skip_names_the_cause_it_can_support() -> Result<()> {
                 }
             }
             "###,
-            "no clause in the type block applied",
-            // Tighter than "was exempted": a block with no `when` of its own must not mention one
-            // at all, which is the mistake this case exists to catch.
+            // This expectation moved when the clause that selected nothing started recording why.
+            // It was "no clause in the type block applied", matching the type block's own roll-up,
+            // which reads in full: "no AWS::EC2::Volume in the input was checked: no clause in the
+            // type block applied to any of them". The walk searches children before a record's own
+            // message because the deeper message is the more specific one, and here that premise
+            // holds in substance rather than being merely satisfied: naming the query that matched
+            // nothing tells the reader which of the block's clauses did not apply, which the roll-up
+            // cannot. The roll-up is still pinned by the inner-`when` cell below, so this is one cell
+            // moving rather than a sentence losing its coverage.
+            "selected no values from this input",
+            // Unchanged, and deliberately so. Tighter than "was exempted": a block with no `when` of
+            // its own must not mention one at all, which is the mistake this case exists to catch,
+            // and the new sentence must not reintroduce it either.
             "`when` condition",
         ),
         (
@@ -8196,6 +8206,138 @@ fn a_comparison_skip_reason_names_the_gate_it_was_reached_through() -> Result<()
             "{}: the reason claimed {:?}, which this rule cannot support: {:?}",
             label,
             forbidden,
+            reason
+        );
+    }
+
+    Ok(())
+}
+
+/// A rule that skipped because its query selected nothing says so, in both spellings of the query.
+///
+/// `Resources[ keys == /Z9/ ]` exited 0 with `Status = SKIP` and **zero** reason lines, even under
+/// `--show-summary all`. The two candidate explanations for that wanted opposite fixes -- nothing was
+/// recorded at all, or something was recorded in a shape `own_skip_reason` has no arm for -- and
+/// neither was true. Walking the record tree, the block form files
+/// `Rule > BlockGuardCheck(SKIP) > ClauseValueCheck::Comparison(FAIL)` and the clause form files
+/// `Rule > GuardClauseBlockCheck(SKIP) > ...`; `own_skip_reason` has an arm for each of those
+/// container shapes already. Both arms answered `None` because both records carried `message: None`,
+/// set unconditionally at the two sites that had just branched on the emptiness. The messages were
+/// never written down.
+///
+/// So the sentence is a new one rather than the refusal wording reused. `find_skip_reason` exists to
+/// surface a comparison that could not be decided, and an empty selection is not that: the query ran
+/// and answered. Asserted both ways round below -- the empty-selection sentence must be present and
+/// the refusal sentence must be absent -- because a fix that reached for the nearest existing string
+/// would satisfy a contains-only check while telling the reader a comparison was refused when none
+/// was.
+///
+/// Two spellings and two filter kinds, because the two spellings are two different call sites in
+/// `eval.rs` and a fix to one leaves the other silent. That is not hypothetical: the block form's
+/// site is in `eval_guard_block_clause` and the clause form's is in `binary_operation`, and a probe
+/// that filled only the first left `Resources[ keys == /Z9/ ].Type == "x"` reporting nothing.
+///
+/// The query is asserted per cell, not just the sentence. Naming the query is the actionable half --
+/// a rule with several block clauses skips for one of them -- and a fix that emitted the sentence
+/// without it would pass a check on the prose alone.
+///
+/// Before the fix this test reddens by panicking on the missing reason rather than by comparing
+/// wrong text, so no `#[should_panic]` and no out-of-process run is needed to watch it fail.
+#[test]
+fn an_empty_selection_skip_says_which_query_matched_nothing() -> Result<()> {
+    // `Resources.One` exists and is an ordinary bucket, so every query below resolves and only the
+    // filter selects nothing. A query that fails to resolve is a different outcome that does not
+    // reach these arms: `Resources.Absent.Type == "x"` exits 19 FAIL, and so does `Tags[*]` over
+    // `Tags: []`. Measured, and the reason the message names no cause.
+    const ONE_PLAIN_BUCKET: &str = r#"{
+        "Resources": {
+            "One": {
+                "Type": "AWS::S3::Bucket",
+                "Properties": { "Encrypted": false }
+            }
+        }
+    }"#;
+
+    // (label, rules, the query the reason must name)
+    //
+    // Length pinned in the type so a deleted cell is a compile error rather than a quieter run.
+    let cases: [_; 4] = [
+        (
+            "a map-key filter, block form",
+            r###"
+            rule g {
+                Resources[ keys == /Z9/ ] {
+                    Type == "AWS::S3::Bucket"
+                }
+            }
+            "###,
+            "Resources. (map-key-filter-clauses)",
+        ),
+        (
+            "a map-key filter, clause form",
+            r###"
+            rule g {
+                Resources[ keys == /Z9/ ].Type == "AWS::S3::Bucket"
+            }
+            "###,
+            "Resources. (map-key-filter-clauses).Type",
+        ),
+        (
+            "a value filter, block form",
+            r###"
+            rule g {
+                Resources.*[ Type == "nope" ] {
+                    Properties.Encrypted == true
+                }
+            }
+            "###,
+            "Resources.*. (filter-clauses)",
+        ),
+        (
+            "a value filter, clause form",
+            r###"
+            rule g {
+                Resources.*[ Type == "nope" ].Properties.Encrypted == true
+            }
+            "###,
+            "Resources.*. (filter-clauses).Properties.Encrypted",
+        ),
+    ];
+
+    for (label, rules, named_query) in cases {
+        let rules_file = RulesFile::try_from(rules)?;
+        let value = PathAwareValue::try_from(ONE_PLAIN_BUCKET)?;
+        let mut root = root_scope(&rules_file, Rc::new(value));
+        assert_eq!(
+            eval_rules_file(&rules_file, &mut root, None)?,
+            Status::SKIP,
+            "{label}: the rule does not apply on this input"
+        );
+        let top = root.reset_recorder().extract();
+        // Arguments spelled out rather than captured inline, for the edition-2018 reason given on the
+        // sibling tests above.
+        let reason = crate::rules::eval_context::find_skip_reason(&top)
+            .unwrap_or_else(|| panic!("{}: no skip reason was recorded at all", label));
+
+        assert!(
+            reason.contains("selected no values from this input"),
+            "{}: wanted the empty-selection sentence, got {:?}",
+            label,
+            reason
+        );
+        assert!(
+            reason.contains(named_query),
+            "{}: the reason has to name the query {:?}, got {:?}",
+            label,
+            named_query,
+            reason
+        );
+        // The other half of the property: this is not a refusal, so it must not borrow the refusal's
+        // wording. `not comparable` is what a genuinely undecidable comparison reports.
+        assert!(
+            !reason.contains("not comparable"),
+            "{}: nothing was refused here, so the reason must not claim a comparison was: {:?}",
+            label,
             reason
         );
     }
