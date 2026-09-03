@@ -1277,6 +1277,94 @@ mod validate_tests {
         );
     }
 
+    /// The notice survives where the file says nothing: a `when` condition that fails.
+    ///
+    /// The notice above goes out on a clause that passed, and until this it went out only there. The
+    /// suppression was justified with "a clause with a failing value already exits the file 19, so the
+    /// author is already looking at it", and that is false of a condition. A failing condition is not a
+    /// failing file: `eval_conjunction_clauses` counts the FAIL, `eval_rule` maps every non-PASS
+    /// condition to SKIP, and the rule it guards is dropped. So the run this fixture makes exits 0 with
+    /// an empty report while the body it dropped -- `Encrypted == true` against `Encrypted: false` --
+    /// would have failed. That is the silent green the notice exists to announce, and it was the one
+    /// place the notice did not reach.
+    ///
+    /// An integration test rather than only a unit one, because the unit helper reads
+    /// `RootScope::deprecations` directly and cannot see either half of what makes this a defect: the
+    /// exit code, and an empty report beside a notice on stderr.
+    ///
+    /// The wording is asserted, not just the presence. The notice for a clause that passed says
+    /// "passed because ..."; on this clause that sentence is false, and printing it here would
+    /// reinstate the contradiction the gate was added to remove.
+    #[test]
+    fn a_notice_survives_the_failure_a_when_condition_absorbs() {
+        // The same run twice, because `Writer::stripped` and `Writer::err_to_stripped` each consume the
+        // writer, so one run answers for one stream. Both halves are the defect: an empty report, and a
+        // notice on stderr that is the only thing standing in for it.
+        let mut reader = Reader::default();
+        let mut writer =
+            Writer::new_with_err(WBVec(vec![]), WBVec(vec![])).expect("Failed to create writer.");
+
+        let status_code = ValidateTestRunner::default()
+            .data(vec!["absorbed-incomparable-template.yaml"])
+            .rules(vec!["absorbed_incomparable_condition.guard"])
+            .show_summary(vec!["none"])
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(
+            StatusCode::SUCCESS,
+            status_code,
+            "the notice must not change the verdict; a failing condition still skips its rule"
+        );
+
+        let output = writer.stripped().expect("failed to read the writer");
+        assert!(
+            !output.contains("ports_not_denied") && !output.contains("Encrypted"),
+            "the report must stay silent -- that silence is what the notice compensates for; got {:?}",
+            output
+        );
+
+        let mut reader = Reader::default();
+        let mut writer =
+            Writer::new_with_err(WBVec(vec![]), WBVec(vec![])).expect("Failed to create writer.");
+
+        let status_code = ValidateTestRunner::default()
+            .data(vec!["absorbed-incomparable-template.yaml"])
+            .rules(vec!["absorbed_incomparable_condition.guard"])
+            .show_summary(vec!["none"])
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(
+            StatusCode::SUCCESS,
+            status_code,
+            "both runs are the same run; a differing exit code means the fixture is not deterministic"
+        );
+
+        let stderr = writer.err_to_stripped().expect("failed to read stderr");
+        let notices: Vec<&str> = stderr
+            .lines()
+            .filter(|l| l.contains("DEPRECATION"))
+            .collect();
+        assert_eq!(
+            1,
+            notices.len(),
+            "expected the one notice for the condition, got {:?} from stderr {:?}",
+            notices,
+            stderr
+        );
+        assert!(
+            notices[0].contains("could not be compared with any element")
+                && notices[0].contains("Ports"),
+            "the notice must be the incomparable-membership one and must name the condition's \
+             property; got {:?}",
+            notices[0]
+        );
+        assert!(
+            notices[0].contains("did not pass") && !notices[0].contains("passed because"),
+            "this clause did not pass, so the notice must not be the one that says it did; got {:?}",
+            notices[0]
+        );
+    }
+
     /// The counterpart: clauses that are not changing stay silent.
     ///
     /// A deprecation notice is only useful if it is rare. The cases here are the ones most likely to be

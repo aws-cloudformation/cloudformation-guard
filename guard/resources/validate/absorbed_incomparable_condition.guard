@@ -1,0 +1,13 @@
+#
+# A `NOT IN` clause whose value cannot be compared with any element of the list, in the one place its
+# failure costs this run nothing it reports: a `when` condition.
+#
+# The condition fails -- element-wise `1` is in `[1, 3]` -- and a failing condition is not a failing
+# file. `eval_conjunction_clauses` counts the FAIL, `eval_rule` maps every non-PASS condition to SKIP,
+# and the body is dropped. So `Encrypted == true`, which this template violates, never runs, and the
+# file exits 0 with an empty report. The deprecation notice on stderr is the author's only sight of the
+# clause, which is why it must not be suppressed here.
+#
+rule ports_not_denied when Resources.A.Properties.Ports NOT IN [1, 3] {
+    Resources.A.Properties.Encrypted == true
+}
