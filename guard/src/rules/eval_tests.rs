@@ -16257,8 +16257,14 @@ fn a_matched_subset_earns_no_whole_value_refusal_the_operator_never_built(
 /// `compare_eq([1], "a")`, a refusal on kinds.
 ///
 /// Cell 2 stops one step later, at `compare_eq` answering `Ok(true)` for operands that are not
-/// `PartialEq`-equal: `[[1.0], [2.0]]`, which zips to `1` against `1.0` and matches through the
-/// `(Int, Float)` arm.
+/// `PartialEq`-equal: `[r[1,1], r[2,2]]`, single-point ranges that `compare_eq` relates to `1` and
+/// `2` while `PartialEq` does not.
+///
+/// A `Float` entry does NOT work here and an earlier draft used one. `PartialEq` has no
+/// `(Int, Float)` arm, so `1` against `1.0` falls through to `compare_eq` from BOTH cells and
+/// distinguishes nothing -- measured, by mutating the walk's `Ok(true) => return Matched` arm and
+/// finding the `Float` version of this cell still green. Ranges are the asymmetry that works,
+/// because `PartialEq` covers `(RangeInt, RangeInt)` and nothing relating a range to a scalar.
 ///
 /// Cell 3 is the discriminator and must stay `true`. `[["x","y"], ["a","b"]]` matches neither entry,
 /// so the operator's walk runs to completion and both of its kind refusals are owed. A fix that
@@ -16275,8 +16281,22 @@ fn the_whole_value_pairing_stops_where_the_operator_stops() {
         PathAwareValue::Int((Path::new(path.to_string(), 0, 0), value))
     }
 
-    fn float(path: &str, value: f64) -> PathAwareValue {
-        PathAwareValue::Float((Path::new(path.to_string(), 0, 0), value))
+    // A single-point inclusive int range. `compare_eq` relates an `Int` to a range containing it;
+    // `PartialEq` does not, because its arms cover `(RangeInt, RangeInt)` and there is no
+    // `(Int, RangeInt)`. That asymmetry is what lets cell 2 reach the walk's SECOND early return
+    // without tripping its first, and an `Int`/`Float` pair cannot do it -- `PartialEq` has no
+    // `(Int, Float)` arm either, so `1` against `1.0` reaches `compare_eq` from both cells and
+    // distinguishes nothing.
+    fn range(path: &str, at: i64) -> PathAwareValue {
+        use crate::rules::values::{RangeType, LOWER_INCLUSIVE, UPPER_INCLUSIVE};
+        PathAwareValue::RangeInt((
+            Path::new(path.to_string(), 0, 0),
+            RangeType {
+                lower: at,
+                upper: at,
+                inclusive: LOWER_INCLUSIVE | UPPER_INCLUSIVE,
+            },
+        ))
     }
 
     fn string(path: &str, value: &str) -> PathAwareValue {
@@ -16341,8 +16361,8 @@ fn the_whole_value_pairing_stops_where_the_operator_stops() {
                 list(
                     "/Cmp/0/0",
                     vec![
-                        list("/Cmp/0/0/0", vec![float("/Cmp/0/0/0/0", 1.0)]),
-                        list("/Cmp/0/0/1", vec![float("/Cmp/0/0/1/0", 2.0)]),
+                        list("/Cmp/0/0/0", vec![range("/Cmp/0/0/0/0", 1)]),
+                        list("/Cmp/0/0/1", vec![range("/Cmp/0/0/1/0", 2)]),
                     ],
                 ),
                 strs("Cmp"),
