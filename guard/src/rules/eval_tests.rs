@@ -15936,3 +15936,98 @@ fn the_membership_notice_stops_pairing_where_the_operator_stops() {
          never built"
     );
 }
+
+/// An empty left-hand list earns no whole-value refusal, on either path to this arm.
+///
+/// `incomparable_membership`'s `(List, List)` arm decides at two granularities, and the second -- the
+/// whole left-hand list against each right-hand entry -- had no empty-left exclusion. For such a value
+/// the element loops iterate zero times, so `compare_eq([], entry)` was the arm's entire contribution:
+/// `NotComparable` against an int entry, and `refused` went true on a pairing the operator never built.
+///
+/// The operator never builds it because it gates that loop twice. `operators.rs:1031` is the
+/// `any(is_list)` condition the predicate copied; `operators.rs:1054` is `if !flat_subset`, and an empty
+/// `lhsl` leaves nothing unmatched, so `flat_subset` holds and the loop is skipped. Measurable from
+/// outside the module, which is how it was checked here: `Empty IN [[9], 5]` exits 0, meaning
+/// `contained_in` answered `Success`.
+///
+/// TWO PATHS, closed by two different things, which is the point of the third cell. The exclusive
+/// endpoint in `rhs_values_paired_with` covers the queried path on its own -- every non-String element is
+/// a stop for an empty left-hand list, so the prefix drops it and this arm is never entered. It cannot
+/// cover the literal path, because that function returns the whole slice at `eval.rs:732-734` before the
+/// endpoint is consulted. So the first cell holds by the prefix and the third by the guard in the arm,
+/// and a reader changing either needs to know which cell belongs to which.
+///
+/// The third cell is written as `false`, and an earlier revision of this test asserted `true` there on
+/// the reading that `operators.rs:1340` hands `contained_in` the whole left-hand value with no skip above
+/// it, so the pairing must exist. That reading is wrong: it stops at the call and never asks what
+/// `contained_in` does with an empty `lhsl`, which is to skip its membership loop and answer `Success`.
+/// A cell asserting `true` there would have pinned the defect as intended behavior and blocked the fix,
+/// which is worse than having no cell at all.
+///
+/// Answered into one comparison rather than three `assert!`s, so a run reports all three cells instead of
+/// stopping at the first. The middle cell has to hold both before and after, and a short-circuiting
+/// assertion on an earlier cell would hide whether it was ever exercised.
+#[test]
+fn an_empty_left_hand_list_earns_no_whole_value_refusal_the_operator_never_built() {
+    use crate::rules::path_value::Path;
+
+    fn int(path: &str, value: i64) -> PathAwareValue {
+        PathAwareValue::Int((Path::new(path.to_string(), 0, 0), value))
+    }
+
+    fn list(path: &str, elements: Vec<PathAwareValue>) -> PathAwareValue {
+        PathAwareValue::List((Path::new(path.to_string(), 0, 0), elements))
+    }
+
+    fn resolved(value: PathAwareValue) -> Vec<QueryResult> {
+        vec![QueryResult::Resolved(Rc::new(value))]
+    }
+
+    // `[[1], 2]`. The list entry opens the whole-value loop and the int entry is what `compare_eq`
+    // refuses an empty list against; two lists compare by length, so a denylist of lists alone would
+    // leave nothing for this arm to get wrong.
+    let nested_then_int = || {
+        list(
+            "/Nested/0",
+            vec![
+                list("/Nested/0/0", vec![int("/Nested/0/0/0", 1)]),
+                int("/Nested/0/1", 2),
+            ],
+        )
+    };
+
+    let queried_rhs = incomparable_membership(
+        &resolved(list("/Empty/0", vec![])),
+        &resolved(nested_then_int()),
+    );
+
+    let non_empty_left_still_counts = incomparable_membership(
+        &resolved(list(
+            "/Deep/0",
+            vec![list("/Deep/0/0", vec![int("/Deep/0/0/0", 9)])],
+        )),
+        &resolved(list(
+            "/Lists/0",
+            vec![
+                list("/Lists/0/0", vec![int("/Lists/0/0/0", 1)]),
+                list("/Lists/0/1", vec![int("/Lists/0/1/0", 2)]),
+            ],
+        )),
+    );
+
+    let literal_rhs = incomparable_membership(
+        &resolved(list("/Empty/0", vec![])),
+        &[QueryResult::Literal(Rc::new(nested_then_int()))],
+    );
+
+    assert_eq!(
+        (false, true, false),
+        (queried_rhs, non_empty_left_still_counts, literal_rhs),
+        "first: on the queried path the exclusive endpoint drops the stopping element, so this arm is \
+         never entered for an empty left-hand list. second: a NON-empty left-hand list still earns the \
+         whole-value refusal, and every element pair in that cell is two comparable lists, so its `true` \
+         can only have come from the whole-value loop. third: on the literal path the prefix returns the \
+         whole slice, so the guard in the arm is what answers -- and it must answer false, because \
+         `contained_in` skips its membership loop for an empty `lhsl` and builds no pairing to refuse"
+    );
+}

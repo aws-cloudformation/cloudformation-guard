@@ -596,7 +596,43 @@ fn incomparable_membership(lhs: &[QueryResult], rhs: &[QueryResult]) -> bool {
                     // pairing rather than carrying the value on to later right-hand values --
                     // `rhs_values_paired_with` is what stops it, and before it did the verdict gate in
                     // `binary_operation` was the only thing between this loop and a false notice.
-                    if rhsl.iter().any(|right| right.is_list()) {
+                    // The operator gates this loop TWICE and the predicate mirrored only the first.
+                    // `operators.rs:1031` is `rhsl.iter().any(|elem| elem.is_list())`, which is the
+                    // condition below. `operators.rs:1054` is `if !flat_subset`, where `flat_subset` is
+                    // `elements_not_matched(lhsl, rhsl)`'s diff being empty. An empty `lhsl` has nothing
+                    // to leave unmatched, so its diff is empty, `flat_subset` holds, and the operator
+                    // skips its whole-list loop -- it builds no whole-value pairing for such a value at
+                    // all. `operators.rs:1029-1030` says so outright, and it is measurable from outside:
+                    // `Empty IN [[9], 5]` exits 0, which is `contained_in` answering `Success`.
+                    //
+                    // So `lhsl.is_empty()` restores the missing half of a two-part gate rather than
+                    // carving out a special case, and that is a claim about the operator's structure a
+                    // reader can check. Without it the element loops above iterate zero times for such a
+                    // value, leaving `compare_eq([], entry)` as the arm's entire contribution --
+                    // `NotComparable` against an int entry -- so `refused` went true on a pairing nothing
+                    // built.
+                    //
+                    // UNGATED, and an earlier revision of this fix wrote `both_queried && lhsl.is_empty()`,
+                    // which is the inverse of the coverage needed. The QUERIED path needs no guard here:
+                    // `membership_stops_after(empty, X)` is true for every non-String X, so any list
+                    // element is a stop and the exclusive prefix drops it, leaving only Strings inside
+                    // `[0..at)` -- and a String is not a list, so this arm is unreachable. The LITERAL
+                    // path is the one that reaches it, because `rhs_values_paired_with` returns at
+                    // `eval.rs:732-734` before the endpoint is consulted, so the prefix cannot help there.
+                    // Gating on `both_queried` skipped the loop exactly where the prefix already covers it
+                    // and left it running on the only path that needed it.
+                    //
+                    // A RESIDUAL of the same class is left open on purpose. `flat_subset` is also true
+                    // when `lhsl` is non-empty and every element matched; the operator skips the loop
+                    // there too, and this still walks it. `lhsl.is_empty()` does not cover that, and
+                    // closing it needs the operator's `diff` at the predicate, which
+                    // `Comparator::compare` does not carry out -- the same shape as the `own_skip_reason`
+                    // gap. It is latent by the argument this arm rests on: every element matching means
+                    // `contained_in` returns `Success`, which is a match, which fails `NOT IN`, so the
+                    // verdict gate shuts. Re-deriving `elements_not_matched` here is NOT the fix.
+                    // Re-deriving what the operator already computed is the defect class this round has
+                    // been retiring, and it is how the divergence being repaired arose.
+                    if !lhsl.is_empty() && rhsl.iter().any(|right| right.is_list()) {
                         for right in rhsl {
                             refused |= pair_refused(value, right);
                         }
