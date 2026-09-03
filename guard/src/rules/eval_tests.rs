@@ -8866,14 +8866,16 @@ fn a_nested_list_on_the_right_of_in_is_found_in_any_position(
 ///
 /// The rule these cells state, for a NON-EMPTY left-hand list: `NOT IN` fails if and only if the whole
 /// left-hand list is a member of the right-hand list, OR any left-hand element is. The qualifier is
-/// load-bearing and used to be missing -- `denied_empty_over_a_flat_list` below contradicts the
-/// unqualified reading outright, and the paragraph on the `empty` cells says why the cell is right and
-/// the rule still holds everywhere else. It is not `not(IN)`. `IN` over a list-valued left-hand
-/// side means whole-list membership or a complete subset, so a left-hand list only *partly* present is
-/// outside `IN` and inside `NOT IN`, and both polarities fail -- `Nest`, which is `[1, [9]]`, against a
-/// denylist of `[[9]]` is exactly that. Fail-closed on a partial collision is the same reading
-/// `found_in_string`'s `Partial` applies to substring `IN`, and it is the safe direction: a denylist
-/// that cannot decide must not report compliance.
+/// load-bearing and used to be missing -- `denied_empty_over_a_flat_list` below and its `_via_query`
+/// twin are the two cells that contradict the unqualified reading outright, and the paragraph on the
+/// `empty` cells says why both are right and the rule still holds everywhere else.
+///
+/// It is not `not(IN)`. `IN` over a list-valued left-hand side means whole-list membership or a complete
+/// subset, so a left-hand list only *partly* present is outside `IN` and inside `NOT IN`, and both
+/// polarities fail -- `Nest`, which is `[1, [9]]`, against a denylist of `[[9]]` is exactly that.
+/// Fail-closed on a partial collision is the same reading `found_in_string`'s `Partial` applies to
+/// substring `IN`, and it is the safe direction: a denylist that cannot decide must not report
+/// compliance.
 ///
 /// A verdict-negating fix was built and rejected. It marked the membership branch's failures with a
 /// field mirroring `QueryIn::diff_from` and had the wrapper flip the verdict for them instead of
@@ -8918,13 +8920,14 @@ fn a_nested_list_on_the_right_of_in_is_found_in_any_position(
 ///
 /// The four `empty` cells pin an inconsistency rather than fixing one, it is deliberate, and it is why
 /// the rule above is stated for a non-empty left-hand list. An empty left-hand list is vacuously a
-/// subset, so it passes `IN` over a flat denylist and fails over one holding a nested list, where
-/// `contained_in`'s `is_empty` guard keeps it out of the subset reading. `NOT IN` inherits both answers
-/// by negation, and the flat one is where the unqualified rule breaks:
-/// `denied_empty_over_a_flat_list` is FAIL, and the rule gives PASS for it -- `[]` is not a member of
-/// `[1,2,3]` and has no element that `[1,2,3]` names, so neither disjunct holds. Both are right about
-/// different things. The cell is right about what Guard does, and the rule is right about every value
-/// that has an element to be named; what sits between them is the vacuous reading, which
+/// subset, so it passes `IN` over a flat denylist and fails over one holding a nested list, where the
+/// `is_empty` guard in `contained_in` (`eval/operators.rs`) keeps it out of the subset reading, for the
+/// reason its own comment gives there. `NOT IN` inherits both answers by negation, and the flat one is
+/// where the unqualified rule breaks: `denied_empty_over_a_flat_list` and
+/// `denied_empty_over_a_flat_list_via_query` are FAIL, and the rule gives PASS for both -- `[]` is not a
+/// member of `[1,2,3]` and has no element that `[1,2,3]` names, so neither disjunct holds. Both are
+/// right about different things. The cells are right about what Guard does, and the rule is right about
+/// every value that has an element to be named; what sits between them is the vacuous reading, which
 /// `vacuous_comparison_notice` in `eval.rs` is separately deprecating. Making the empty case obey the
 /// rule here would add a second vacuous pass rather than remove the first, so it stays, and these four
 /// cells are here so that a change which moves them says so out loud.
@@ -9282,7 +9285,8 @@ fn which_spelling_of_a_queried_denylist_reaches_which_arm(
 /// `a_list_denylist_holding_a_nested_list_denies_only_what_it_names` including its qualifier: for a
 /// non-empty left-hand list, `NOT IN` fails if and only if the whole left-hand list is a member of the
 /// right-hand list, or any left-hand element is. No property here is an empty list, so nothing below
-/// exercises the vacuous case that qualifier is about. A range
+/// exercises the vacuous case that qualifier is about -- the two cells that do are
+/// `denied_empty_over_a_flat_list` and its `_via_query` twin, in the oracle named above. A range
 /// covering an element makes that element a member. It is not `not(IN)`, and `Partly` -- `[85, 99]`,
 /// one element inside `r[80,90]` and one outside -- is the cell where that matters: it is not a subset,
 /// so `IN` fails, and `85` is named, so `NOT IN` fails as well. Both polarities failing on a partial
