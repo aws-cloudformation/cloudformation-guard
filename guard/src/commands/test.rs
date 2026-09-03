@@ -27,7 +27,7 @@ use crate::commands::files::{
     alphabetical, get_files_with_filter, iterate_over, last_modified, read_file_content,
     regular_ordering,
 };
-use crate::commands::validate::{file_name_of, OutputFormatType, OUTPUT_FORMAT_HELP};
+use crate::commands::validate::{OutputFormatType, OUTPUT_FORMAT_HELP};
 use crate::commands::{
     validate, ALPHABETICAL, DIRECTORY, DIRECTORY_ONLY, LAST_MODIFIED, RULES_AND_TEST_FILE,
     RULES_FILE, TEST_DATA,
@@ -342,9 +342,26 @@ fn handle_plaintext_directory(
             };
             // The path, not `each_rule_file.prefix`. `prefix` is the file name with `.guard` or
             // `.ruleset` stripped and no directory at all, so it was the coarsest of the three names
-            // this repository gave a rules file: `a/x.guard` and `b/x.guard` both parsed as `x`, and so
-            // did `x.guard` and `x.ruleset` in one directory -- a pair the pairing code two hundred
-            // lines down explicitly calls out as real.
+            // this repository gave a rules file: `a/x.guard` and `b/x.guard` both parsed as `x`.
+            //
+            // Dropping the extension as well as the directory is what made `prefix` strictly worse than
+            // a basename, and the pair that shows it is `ra/x.guard` beside `rb/x.ruleset` -- two files
+            // whose names differ, which any basename keeps apart and which `prefix` does not. Measured
+            // over exactly that tree, one `tests/x_tests.yml` apiece:
+            //
+            //     prefix     single-line  2 notices, 1 distinct, both `Location[file:x`
+            //                -o json      1 notice
+            //     path       single-line  2 notices, 2 distinct
+            //                -o json      2 notices, 2 distinct
+            //
+            // Across directories, not within one. This comment used to cite `x.guard` and `x.ruleset`
+            // "in one directory" and point at the pairing code below as calling that pair real. The
+            // pairing code says the opposite once its tie-break is read: `min_by_key` over
+            // `Reverse(prefix.len())` returns the first of equal keys, so in one directory the single
+            // `x_tests.yml` goes to `x.guard` and `x.ruleset` is left with no test files at all --
+            // whereupon both walks skip it before it is ever parsed. Measured: that tree reports one
+            // notice and one `rule_file`, with or without this fix. The same-directory collision was
+            // unreachable and the example was untestable; the cross-directory one is neither.
             //
             // The name reaches the reader through the source position a deprecation notice ends with,
             // and the walk over a directory is the invocation the aws-guard-rules-registry CI uses, so
@@ -475,12 +492,30 @@ fn get_rule_content(path: &Path) -> Result<String> {
 ///
 /// Returns false when the test files hold no expectations at all, which is not this defect: nothing
 /// was asked, so nothing was dropped, and the caller leaves the exit code alone.
+///
+/// The path as given, not `file_name_of`. This is the one arm of the four whose message is the *whole*
+/// record of what was dropped: `Ok(None)` pushes no `TestResult`, so the structured document is `[]`
+/// and there is no `rule_file` field anywhere in it to recover the name from. Combine that with the
+/// single `Diagnostics` set `handle_structured_directory_report` keeps across the walk, and two files
+/// named alike collapsed into one line that named neither of them. Measured over two directories each
+/// holding a comment-only `declares_nothing.guard` with one expectation apiece:
+///
+/// ```text
+/// test -d <dir> -o json    1 line, stdout [] -- two dropped expectations, one record
+/// test -d <dir>            2 lines, byte-identical
+/// ```
+///
+/// So the structured walk lost a whole file's record and the plaintext walk kept both while making
+/// neither locatable. Both are repaired by naming the file the way `a12ff5fd` named it everywhere else.
+///
+/// `unchecked_expectation_message`, the sibling sentence for an expectation naming a rule the file does
+/// not declare, has the same 2-to-1 collapse and is deliberately left alone; see the note on it.
 fn report_expectations_against_no_rules(
     rules_file: &Path,
     data_test_files: &[PathBuf],
     diagnostics: &mut Diagnostics,
 ) -> bool {
-    let name = file_name_of(rules_file);
+    let name = rules_file.display().to_string();
     let mut dropped = false;
 
     for specs in iterate_over(data_test_files, |content, path| {

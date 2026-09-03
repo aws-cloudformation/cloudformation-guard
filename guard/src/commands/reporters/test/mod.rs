@@ -78,6 +78,36 @@ pub(crate) fn unmatched_expectation_names(
 /// record as a failure before the error leaves `eval_rules_file`, so it has a verdict and its
 /// expectation is checked against it. Measured, because keying on what ran would otherwise report a
 /// rule that is plainly in the file as missing from it.
+///
+/// # Known gap: this sentence names no file, so a directory walk collapses it
+///
+/// "this file" is whichever file the reader was already looking at, and the sentence carries nothing to
+/// say which. `handle_structured_directory_report` keeps one `Diagnostics` set across the whole walk, so
+/// two rules files that both fail to declare the same expected rule produce one line between them.
+/// Measured over two directories each holding a `y.guard` and a suite expecting an `absent_rule`:
+///
+/// ```text
+/// test -d <dir> -o json    1 line
+/// test -d <dir>            2 lines, byte-identical
+/// ```
+///
+/// The same 2-to-1 collapse `no_rules_declared_message` had, and it is deliberately left in place. The
+/// difference is what the report carries. That sentence's arm pushes no `TestResult` at all, so the line
+/// was the only record and losing it lost the fact; this one appears as the `reason` of an entry inside
+/// a report whose `rule_file` field names the file, so nothing is unrecoverable -- the stdout document
+/// already answers the question the stderr line cannot.
+///
+/// Not fixed because naming the file here costs more than it buys. This function is the single source of
+/// the sentence, on purpose and as the note above says, so the file name would land in the report's
+/// `reason` as well as on stderr: four golden files carry it verbatim
+/// (`unchecked_expectation_{json,yaml,junit}.out` and
+/// `no_expectation_beside_unchecked_expectation_json.out`), and every consumer parsing those documents
+/// would see the text change in order to be told something the enclosing entry already says. Naming it
+/// on stderr only would re-split a sentence that was consolidated here precisely to stop the two copies
+/// drifting.
+///
+/// What would change the answer: a `Diagnostics` entry that carried its file as a field rather than
+/// inside the string, so the set could key on both and the rendering could stay one sentence.
 pub(crate) fn unchecked_expectation_message(rules: &RulesFile<'_>, name: &str) -> String {
     if rules
         .parameterized_rules
@@ -102,14 +132,28 @@ pub(crate) fn unchecked_expectation_message(rules: &RulesFile<'_>, name: &str) -
 /// other two exit `TEST_ERROR_STATUS_CODE` and name the rule. A suite asserting `MAIN: PASS` against
 /// a rules file with no `MAIN` in it read as success.
 ///
-/// Names the rules file by its final component only, not the path as given.
+/// Names the rules file by the path it was given, which `report_expectations_against_no_rules` now
+/// passes in.
 ///
-/// The reason recorded here was that the test-side path reducer normalized `.yaml`, `.yml` and `.json`
-/// and not `.guard`, so a full path would have made any expected-output fixture hold only for the
-/// checkout that produced it. That is no longer true -- the reducer covers `.guard` and `.ruleset` now
-/// -- so this is a plain choice rather than a constraint, and it is left alone because this sentence is
-/// about a file that declares no rules at all. There is no clause to locate in it, so the directory
-/// adds nothing a reader would use. `parse_tree` records the same stale reason on the same footing.
+/// It used to be the final component only, on two reasons that were both wrong by the time they were
+/// load-bearing.
+///
+/// The first was that the test-side path reducer normalized `.yaml`, `.yml` and `.json` and not
+/// `.guard`, so a full path would have pinned an expected-output fixture to the checkout that produced
+/// it. The reducer covers `.guard` and `.ruleset` now, so that constraint is gone.
+///
+/// The second was that a file declaring no rules has no clause to locate, so a directory "adds nothing
+/// a reader would use". That reads as a judgment about legibility and it is really a claim about
+/// identity, which is false here: this arm pushes no `TestResult`, so the structured document is `[]`
+/// and carries no `rule_file` field. The sentence is the only record that exists, and the walk keeps one
+/// `Diagnostics` set, so two files named alike produced one line naming neither -- one dropped
+/// expectation reported, one lost outright.
+///
+/// `parse_tree` keeps its basename and is *not* the same footing, which is the third thing recorded
+/// here wrongly. Its `rules` field is `Option<String>` where `validate`'s is `Vec<String>`, and
+/// `parse-tree -r <dir>` is refused outright -- measured, exit 5, "a directory is not a rules file". So
+/// parse-tree can never hold two rules files in one run and its basename cannot collide with anything.
+/// This sentence reaches a directory walk, where it can and did.
 pub(crate) fn no_rules_declared_message(rules_file: &str, expectation: &str) -> String {
     format!("{rules_file} declares no rules, so the expectation for {expectation} was not checked")
 }

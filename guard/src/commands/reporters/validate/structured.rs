@@ -130,6 +130,29 @@ impl<'reporter> StructuredReporter for CommonStructuredReporter<'reporter> {
         // document for every data file, so the same notice per file would be N copies of one sentence
         // attached to nothing that distinguishes them, and a warning printed N times is a warning
         // trained to be skipped.
+        //
+        // The set spans rules files too, not only data files, and that is what makes a notice count a
+        // real signal on this path. `a12ff5fd` recorded the opposite as a general fact -- "each rules
+        // file gets its own `RootScope` and so its own `BTreeSet`, so two notices are written either
+        // way" -- and a commit message cannot be amended, so the correction is here.
+        //
+        // It holds for the single-line path, which writes each scope's notices straight to stderr as it
+        // finishes the file (`validate.rs:981`) and so has no set to collapse anything. It does not hold
+        // for any of the four structured formats: json, yaml and sarif share this set, and junit has one
+        // of its own on the same footing in `xml.rs`. Two byte-identical notices dedupe in all four.
+        //
+        // Measured with only the validate-side locator returned to a basename, so that two rules files
+        // sharing a name produce byte-identical notices:
+        //
+        //     single-line   2 notices, 1 distinct locator
+        //     -o json       1 notice
+        //     -o yaml       1 notice
+        //     -o sarif      1 notice
+        //     -o junit      1 notice
+        //
+        // against 2 notices and 2 distinct locators in all five once the locator is the path. So for
+        // these four formats the count *was* a symptom, and the drain fixed one commit earlier was
+        // silently dropping one of two files' notices until the locator followed it.
         let mut deprecations: BTreeSet<String> = BTreeSet::new();
         for each in &self.data {
             let mut file_report: FileReport = FileReport {
