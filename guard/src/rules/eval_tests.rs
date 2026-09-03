@@ -10673,6 +10673,31 @@ const THIRTY_AS: &str = r#"
 ///
 /// The four `lit_two` cells extend the narrowness control to the literal spellings. A list of two
 /// against a scalar must stay incomparable however the two operands were written.
+///
+/// The `one_element_range_` and `one_element_regex_` cells cover the kinds the unwrap moved but the
+/// grid did not. Every cell above is a string against a string, in six orderings, so the whole table
+/// held even though `compare_eq_unwrapping_a_one_element_list` sits in front of `compare_eq`'s range
+/// arms and its regex arm too -- and those are the two kinds where the unwrap is doing something a
+/// plain element-wise walk would not. `[r[80,90]]` against a `Port` of `85` and `[/Nam/]` against a
+/// `Val` of `Name` are that question, both orderings each, because being asked from every arm is this
+/// function's whole point. The `_unwrapped_reference` cells are the answers the bracketed spellings
+/// have to agree with: a clause that answers differently depending on whether the range or the regex
+/// was bracketed is its own defect, which is what the string cells above were written to say.
+///
+/// `two_element_range_list_stays_incomparable` is the narrowness control for those kinds, matching what
+/// the `lit_two` cells do for strings. Both polarities, because a list of two against a scalar has no
+/// right answer either way and must not acquire one by widening the unwrap.
+///
+/// All eleven were already green when added. They are coverage for a landed change rather than a repair,
+/// which is why nothing here moves and no code changed with them. Two of them earn their place under
+/// measurement rather than by argument: restricting `single_element` inside
+/// `compare_eq_unwrapping_a_one_element_list` to unwrap only a `String` reddens
+/// `one_element_range_lhs` and `one_element_regex_lhs` and NOTHING else in the suite -- 1094 passed,
+/// 2 failed -- so those two are the only cells anywhere that catch a kind-blind regression in the
+/// unwrap. The other nine did not fall to that perturbation, or to removing the inline `rhsl[0]` unwrap
+/// in the `(None, Some)` arm, which leaves the whole suite green because the comparator called on both
+/// sides of that branch unwraps anyway. They are kept as the agreement and narrowness statements the
+/// grid is built out of, not as canaries.
 #[rstest::rstest]
 #[case::literal_rhs_matches(r#"Val == ["Name"]"#, Status::PASS)]
 #[case::variable_rhs_matches("Val == %onekey", Status::PASS)]
@@ -10706,6 +10731,17 @@ const THIRTY_AS: &str = r#"
 #[case::negated_two_element_literal_list_lhs("%lit_two != Val", Status::FAIL)]
 #[case::two_element_both_literal("%lit_two == %scalar_name", Status::FAIL)]
 #[case::negated_two_element_both_literal("%lit_two != %scalar_name", Status::FAIL)]
+#[case::one_element_range_rhs("Port == %lit_range", Status::PASS)]
+#[case::one_element_range_lhs("%lit_range == Port", Status::PASS)]
+#[case::negated_one_element_range("Port != %lit_range", Status::FAIL)]
+#[case::one_element_range_uncovered("Val == %lit_range", Status::FAIL)]
+#[case::one_element_range_unwrapped_reference("Port == r[80,90]", Status::PASS)]
+#[case::one_element_regex_rhs("Val == %lit_re", Status::PASS)]
+#[case::one_element_regex_lhs("%lit_re == Val", Status::PASS)]
+#[case::negated_one_element_regex("Val != %lit_re", Status::FAIL)]
+#[case::one_element_regex_unwrapped_reference("Val == /Nam/", Status::PASS)]
+#[case::two_element_range_list_stays_incomparable("Port == %lit_two_ranges", Status::FAIL)]
+#[case::negated_two_element_range_list("Port != %lit_two_ranges", Status::FAIL)]
 fn a_one_element_list_compares_the_same_typed_as_resolved(
     #[case] clause: &str,
     #[case] expected: Status,
@@ -10713,6 +10749,7 @@ fn a_one_element_list_compares_the_same_typed_as_resolved(
     const INPUT: &str = r#"
     {
         Val: "Name",
+        Port: 85,
         OneKey: ["Name"],
         OtherKey: ["Other"],
         TwoKeys: ["Name", "Other"]
@@ -10723,6 +10760,8 @@ fn a_one_element_list_compares_the_same_typed_as_resolved(
         "let onekey = OneKey\nlet otherkey = OtherKey\nlet twokeys = TwoKeys\n\
          let lit_name = [\"Name\"]\nlet lit_other = [\"Other\"]\n\
          let lit_two = [\"Name\", \"Other\"]\nlet scalar_name = \"Name\"\n\
+         let lit_range = [r[80,90]]\nlet lit_re = [/Nam/]\n\
+         let lit_two_ranges = [r[10,20], r[80,90]]\n\
          rule r {{ {clause} }}"
     );
 
