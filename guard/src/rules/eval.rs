@@ -820,6 +820,16 @@ fn incomparable_membership(lhs: &[QueryResult], rhs: &[QueryResult]) -> bool {
                 // reached the predicate, so the denominator was complete. `a_short_circuited_scalar_
                 // pairing_earns_no_refusal` is the cell that binds it; nothing in the suite did before.
                 //
+                // THE ZERO IS A MEASUREMENT AND NOT A DEAD INSTRUMENT, which the probe's own positive
+                // control is what establishes -- a run that answers "no movement" because it observed
+                // nothing looks identical to one that observed everything and found no movement. Two
+                // hand-checked clauses separate them. `Uint NOT IN [7, [9]]` over a `Uint` of 7 reported
+                // the two policies DISAGREEING, so the probe could see this arm at all; and
+                // `some Mixed[*] NOT IN [7, [9]]` over `[7, 99]` reported them AGREEING, because the
+                // sibling `99` refuses against `[9]` on its own account and the over-count changes
+                // nothing there. Without the first, 0 of 12,771 would prove only that the probe was
+                // blind.
+                //
                 // Why the gate caught all 66. The over-count needs a denylist entry that MATCHES the left
                 // value, or the walk does not stop early, and a later entry INCOMPARABLE to it, or the
                 // skipped pairing refuses nothing. A matched value fails `NOT IN`, so only a sibling can
