@@ -1334,6 +1334,23 @@ mod validate_tests {
     /// asserts the new wording on one rule and the old wording on the other, in the same report. A
     /// change that reworded membership failures unconditionally passes the first half and fails the
     /// second.
+    ///
+    /// Two figures in `56c95a51`'s message are wrong, and both are checkable from that commit alone.
+    ///
+    /// It states the suite as "3119 passed ... unchanged from the previous commit". The tree measures
+    /// 3124, and `88e2142f` before it measures 3123, so it moved by one -- and the one is this cell. A
+    /// commit that adds a test cannot leave the total unchanged, which makes that half falsifiable from
+    /// the diff without measuring anything at all.
+    ///
+    /// It also states "the diff is three source files". The diff is five: three under `guard/src`, this
+    /// file, and `guard/resources/validate/membership_lead_sentence.guard`, which the same message
+    /// describes two paragraphs earlier as the fixture that holds the pair. Its companion sentence, "No
+    /// golden or resource file moved", survives only under the reading that "moved" means "an existing
+    /// file changed"; nothing under `guard/resources` is modified anywhere in this branch, but six files
+    /// are added to it and this is one.
+    ///
+    /// The measured suite curve for the whole branch, and the mechanism behind the four stale absolutes,
+    /// are recorded at the head of `guard/src/rules/eval_tests.rs`.
     #[test]
     fn a_refused_membership_does_not_claim_a_match_happened() {
         let mut reader = Reader::default();

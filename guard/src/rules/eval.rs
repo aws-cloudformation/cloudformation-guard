@@ -1688,6 +1688,23 @@ fn binary_operation<'value, 'loc: 'value>(
     // there is no verdict here to check that against. Gated on the incomparability alone it printed that
     // beside a FAIL, which is the opposite of what happened. Measured across 231 `NOT IN` shapes: 177
     // reach the notice, 146 pass and 31 fail, and every one of the 31 printed it.
+    //
+    // Two things `e26817a6`'s message says about this predicate need correcting here, because a message
+    // cannot be amended.
+    //
+    // It cites the predicate as `eval.rs:1567`. That was right at `e26817a6` and is not right now: the
+    // line has moved. Cite the symbol instead -- the `membership_is_incomparable` binding in
+    // `binary_operation`. The quoted source text in that message is exact, which is what keeps it
+    // findable, so search for the text and not for the number. This is the same rot `a1e552fe` wrote the
+    // prefer-the-symbol rule against, and it happened inside the twelve commits that wrote the rule.
+    //
+    // And it attributes `"8 over-denials and creates 0"` to `69628df7` as a quotation. That string does
+    // not appear in `69628df7`'s message. The nearest real text there is "trading eight over-denials for
+    // four", which prices the REJECTED `unanswerable` repair rather than what `69628df7` fixed. The
+    // companion quotation in the same sentence, "no `NOT IN` cell moves", IS verbatim, and it is the one
+    // the conclusion rests on: that `69628df7` created 25 silent `NOT IN` over-denials while claiming
+    // none moved. The finding stands on the quotation that is real; the other one is not a paraphrase to
+    // be tracked down, it is a sentence to stop looking for.
     let membership_is_incomparable =
         cmp.1 && cmp.0 == CmpOperator::In && incomparable_membership(&lhs, rhs);
     let results = cmp.compare(&lhs, rhs)?;

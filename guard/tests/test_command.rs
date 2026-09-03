@@ -1777,6 +1777,13 @@ mod test_command_tests {
     ///
     /// Then each record is required to name its own directory, so distinctness means "the file is
     /// identified" rather than "the two lines happen to differ".
+    ///
+    /// `3957260b`'s message states the suite as "3085 -> 3087". The delta is right and neither absolute
+    /// is: the tree measures 3104 -> 3106, stale by 19 against the base its author used. The per-suite
+    /// half of the same sentence holds -- measured, `tests/test_command.rs` goes 79 to 81 and the other
+    /// eight targets do not move -- which is the pattern across all four stale figures on this branch:
+    /// the delta was measured against the parent and the absolute against something older. The curve and
+    /// the mechanism are at the head of `guard/src/rules/eval_tests.rs`.
     #[test]
     fn sibling_unchecked_expectation_records_are_distinguishable_in_the_default_format() {
         let mut reader = Reader::default();

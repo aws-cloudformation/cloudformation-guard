@@ -9,6 +9,76 @@ use crate::rules::eval_context::{root_scope, EventRecord, RecordTracker};
 
 use super::*;
 
+// # The figures this branch's commit messages state, re-derived at the commit that carries each
+//
+// Why this block exists. Four messages between `69628df7` and `dd24954b` state a suite absolute the
+// tree does not measure, and a message cannot be amended once pushed. Every one of the four was
+// computed correctly against the base its author had, and a later rebase then moved the absolute
+// while leaving the delta correct -- so in those messages the deltas are trustworthy and the totals
+// are not. That is the third shape the citation defect has taken here. `82f7f298` corrected figures
+// measured against an ancestor tree; `a1e552fe` corrected a `file:line` that a later comment
+// insertion invalidated; this is a COUNT that a rebase invalidated.
+//
+// Method, so the numbers can be checked rather than believed: one `git archive` tree and one
+// `CARGO_TARGET_DIR` per commit, `cargo test --all -- --test-threads=1`, both profiles. Debug equals
+// release at every commit below. The extractor self-check passed at all thirteen -- suite-qualified
+// name entries equal the raw `test ... ok` line count and distinct keys equal entries, so no name
+// collapsed into another and the set diffs are usable.
+//
+//     commit     measured   message   verdict
+//     69628df7   3085       3085      correct, and it is the base the four stale figures used
+//     e26817a6   3101       --
+//     ec2b9a5c   3103       3087      stale by 16, which is exactly `e26817a6`'s delta
+//     f2f87b82   3091+1F    red       correct: deliberately red, and see the paragraph below
+//     d63c1714   3104       --
+//     3957260b   3106       3085/3087 both absolutes stale by 19; its delta of +2 is correct
+//     a1e552fe   3106       3085      stale by 21; comment-only, so it cannot differ from 3106
+//     82f7f298   3106       3106      correct
+//     88e2142f   3123       --
+//     56c95a51   3124       3119      stale by 5; see also `guard/tests/validate.rs` on this commit
+//     ee60bc5f   3138       --
+//     1fd235a5   3138       --
+//     dd24954b   3138       3138      correct
+//
+// The two stale offsets are the same arithmetic. 19 is `e26817a6`'s 16 plus `ec2b9a5c`'s 2 plus
+// `d63c1714`'s 1; 21 is that plus `3957260b`'s 2. Each author measured 3085 at `69628df7` and added
+// their own delta to it, which is correct right up until a commit lands in between.
+//
+// `f2f87b82` reads as damage and is not. It is the red half of a red-then-green pair, so `cargo`
+// stops after the failing test binary: eight suites report rather than sixteen, and twelve cells
+// never run at all -- nine in `guard-ffi`, two in `guard-lambda`, one doctest under
+// `Doc-tests cfn_guard`. They are not removed, and they are back at `d63c1714`. The single failure is
+// `validate_tests::an_undecided_map_key_membership_filter_says_why`, on the `k_in_regex` rendering
+// carrying `Error Message []`, which is the assertion that commit names as its red.
+//
+// # `1fd235a5`'s reference sweep, with the population it never stated
+//
+// That message reports "the 232 backticked snake_case references in `guard/src` and `guard/tests`".
+// The figure names no population and fourteen mechanical readings of the obvious one all miss it.
+// Counting backticked lower_snake_case tokens on comment lines in those two trees gives 234 distinct
+// tokens of three or more underscore-joined words at `1fd235a5`, and 235 at its parent `ee60bc5f`,
+// which is the tree the sweep ran against -- the fix retires one name that resolved to nothing, so
+// the distinct count drops by exactly one. Occurrences rather than distinct tokens: 409 at three or
+// more underscores, 810 at two, 285 at four. Restricted to `///` and `//!`: 276 occurrences, 190
+// distinct. Restricted to `//`: 133 and 94. None of the fourteen is 232, so the figure is retired
+// rather than corrected, and the reproducible reading is the first: 235 at `ee60bc5f`, 234 here.
+//
+// The finding that figure was supporting is unaffected. An independent sweep reproduced the two
+// references that resolve to nothing -- both `an_empty_left_hand_list_against_a_queried_string` --
+// and turned up no third of that shape. It is not a clean negative and should not be quoted as one:
+// a deliberately wide resolution net still leaves 99 of 358 distinct tokens unmatched, and that
+// residue is external-crate methods (`read_to_string`, `min_by_key`, `try_parse_from`), clap
+// attributes (`default_value_ifs`, `arg_required_else_help`), rstest's generated `case_N_` labels,
+// and cell names that exist only inside string literals. That residue is why a bare "referenced but
+// not found" count measures the net and not the tree.
+//
+// # What is deliberately not restated
+//
+// The clause-sweep figures. The 94-, 140-, 210-, 235- and 432-clause sweeps and the 1080-shape grid
+// never had their clause lists committed, so no figure in any of them can be re-derived or falsified
+// from a checkout. `eval.rs` already records that for the rows it dates; nothing here repeats one of
+// those numbers as though a reader could check it.
+
 //
 // All unary function simple tests
 //
