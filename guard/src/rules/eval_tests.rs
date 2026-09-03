@@ -8421,6 +8421,134 @@ fn an_empty_selection_skip_says_which_query_matched_nothing() -> Result<()> {
     Ok(())
 }
 
+/// The empty-selection reason claims nothing about clauses this function cannot see.
+///
+/// `empty_selection_message` used to end "Nothing was refused -- the query ran and matched nothing".
+/// The second half is local and true. The first half is a claim about the whole rule, made by a
+/// function that is handed one query and cannot see the rule's other clauses -- and when one of them
+/// was refused, the sentence said otherwise. Exit 0 and `Status = SKIP` both ways, so only the message
+/// discriminates and a status assertion cannot.
+///
+/// Both orderings of one rule are run here, and the pair is the point. With the empty selection
+/// first, the walk surfaces its reason and the old wording denied a refusal that had happened. With
+/// the refusal first, the same rule on the same data surfaces "PathAwareValues are not comparable
+/// map, String" instead -- so the false half was also suppressing the only actionable fact in the
+/// report, and which of the two a reader saw depended on the order they wrote their disjuncts in.
+///
+/// The swapped cell is also this test's non-vacuity control. Without it, "the reason must not deny a
+/// refusal" would pass on a fixture where nothing was refused, which is the shape that would let the
+/// defect back in. The refusal cell proves the rule really does hold one.
+///
+/// Narrowing the claim to this query instead of dropping it was the tempting repair and does not
+/// work: a refusal inside *this* query's own filter also arrives with an empty selection.
+/// `Resources.*[ Properties.Size > 10 ]` over `Size: "50"` was measured setting this very message on
+/// its `BlockGuardCheck` and being shadowed by the deeper refusal that `find_skip_reason` reaches
+/// first, so "nothing about this query was undecidable" is unsupportable at that site too.
+///
+/// Not asserted here because it is not this defect: which of two sibling reasons surfaces still
+/// depends on clause order. That is a ranking question in `find_skip_reason`, not a false claim in a
+/// sentence.
+#[test]
+fn an_empty_selection_reason_does_not_deny_a_refusal_it_cannot_see() -> Result<()> {
+    // `KmsKeyId` is a map, and the second disjunct's filter compares it against a string, so that
+    // filter is refused. `MustBeTrue` is present so the rule has something to read if a gate opens.
+    const A_BUCKET_WITH_A_MAP_VALUED_KEY: &str = r#"{
+        "Resources": {
+            "A": {
+                "Type": "AWS::S3::Bucket",
+                "Properties": {
+                    "KmsKeyId": { "Ref": "MyKey" },
+                    "MustBeTrue": false
+                }
+            }
+        }
+    }"#;
+
+    // One rule, two orderings of the same two disjuncts.
+    const EMPTY_SELECTION_FIRST: &str = r###"
+    rule r {
+        Resources[ keys == /Z9/ ] {
+            Type == "AWS::S3::Bucket"
+        }
+        or Resources.*[ Properties.KmsKeyId == "alias/aws/s3" ].Type == "nope"
+    }
+    "###;
+    const REFUSAL_FIRST: &str = r###"
+    rule r {
+        Resources.*[ Properties.KmsKeyId == "alias/aws/s3" ].Type == "nope"
+        or Resources[ keys == /Z9/ ] {
+            Type == "AWS::S3::Bucket"
+        }
+    }
+    "###;
+
+    // (label, rules, which reason this ordering surfaces)
+    //
+    // Length pinned in the type so a deleted cell is a compile error, and the pair must stay a pair:
+    // dropping the refusal cell would make the assertion below vacuous.
+    let cases: [_; 2] = [
+        (
+            "the empty selection first",
+            EMPTY_SELECTION_FIRST,
+            "the empty-selection reason",
+        ),
+        ("the refusal first", REFUSAL_FIRST, "the refusal"),
+    ];
+
+    for (label, rules, surfaces) in cases {
+        let rules_file = RulesFile::try_from(rules)?;
+        let value = PathAwareValue::try_from(A_BUCKET_WITH_A_MAP_VALUED_KEY)?;
+        let mut root = root_scope(&rules_file, Rc::new(value));
+        assert_eq!(
+            eval_rules_file(&rules_file, &mut root, None)?,
+            Status::SKIP,
+            "{label}: the rule does not apply on this input, whichever order it is written in"
+        );
+        let top = root.reset_recorder().extract();
+        // Arguments spelled out rather than captured inline, for the edition-2018 reason given on the
+        // sibling tests above.
+        let reason = crate::rules::eval_context::find_skip_reason(&top)
+            .unwrap_or_else(|| panic!("{}: no skip reason was recorded at all", label));
+
+        // The defect. This rule holds a refused comparison, so no reason it produces may deny one --
+        // and this function's caller cannot see far enough to affirm one either.
+        assert!(
+            !reason.contains("Nothing was refused"),
+            "{}: this rule refuses a map-against-string comparison, so the reason must not deny it: \
+             {:?}",
+            label,
+            reason
+        );
+
+        match surfaces {
+            // The correct half of the sentence survives, which is why the commit that added it was
+            // worth landing.
+            // Asserted as the whole sentence, not as a substring, and that is the difference between
+            // this test and one the defect could walk back into. `!contains("Nothing was refused")`
+            // alone is a negative assertion over a literal: it passes for any rewording of the same
+            // false claim, because the rewording no longer holds the string being looked for. Pinning
+            // the exact sentence means any clause added to it -- that one or another -- fails here.
+            "the empty-selection reason" => assert_eq!(
+                "the rule did not apply because the query Resources. (map-key-filter-clauses) ran \
+                 and selected no values from this input.",
+                reason,
+                "{}: the sentence may say what this query did and nothing else",
+                label
+            ),
+            // The control: the rule really does hold a refusal, so the assertion above is not vacuous.
+            _ => assert!(
+                reason.contains("not comparable map, String"),
+                "{}: this ordering should surface the sibling refusal, which is what makes the \
+                 assertion above meaningful: {:?}",
+                label,
+                reason
+            ),
+        }
+    }
+
+    Ok(())
+}
+
 /// The two spellings of a `when` gate on an inapplicable rule have to agree, and neither may
 /// silently disarm the block.
 ///

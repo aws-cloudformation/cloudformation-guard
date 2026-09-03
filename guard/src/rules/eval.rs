@@ -917,10 +917,45 @@ fn empty_lhs_message() -> String {
 /// uses, so a filter prints as the parser's own name for it -- `Resources. (map-key-filter-clauses)`
 /// rather than `Resources[ keys == /Z9/ ]`. Ugly and not wrong; changing it would move every one of
 /// those messages and belongs on its own.
+///
+/// # Every claim here is about this query and nothing wider
+///
+/// This sentence used to end "Nothing was refused -- the query ran and matched nothing", and the
+/// first half of that was a claim about the whole rule made from a fact local to one query. This
+/// function is handed a query. It cannot see the rule's other clauses, so it cannot know whether one
+/// of them was refused -- and when one was, the sentence said otherwise:
+///
+/// ```text
+/// rule r {
+///     Resources[ keys == /Z9/ ] { Type == "AWS::S3::Bucket" }
+///     or Resources.*[ Properties.KmsKeyId == "alias/aws/s3" ].Type == "nope"
+/// }
+/// ```
+///
+/// over `KmsKeyId: {Ref: MyKey}`, the second disjunct's filter compares a map against a string and is
+/// refused. Exit 0 either way, and the report said "Nothing was refused". Swapping the two disjuncts
+/// makes the same rule on the same data report "a comparison in one of its query filters reported:
+/// PathAwareValues are not comparable map, String" instead, so the false half was also suppressing the
+/// one actionable fact in the report, and which of the two a reader saw depended on the order they
+/// happened to write their disjuncts in.
+///
+/// Narrowing the claim to this query rather than dropping it does not work either, and that is worth
+/// recording because it is the tempting repair. A refused comparison inside *this* query's own filter
+/// also arrives here with an empty selection -- `Resources.*[ Properties.Size > 10 ]` over
+/// `Size: "50"` sets this message on its `BlockGuardCheck` and is merely shadowed by the deeper
+/// refusal that `find_skip_reason` finds first. So "nothing about this query was undecidable" is
+/// unsupportable at this site too.
+///
+/// What is left is what the branch condition gives: the query ran, and it selected nothing. "Ran" is
+/// worth keeping and is local -- the `Err` arm above returns before this point, so reaching here means
+/// the query resolved rather than failed.
+///
+/// Not fixed here, and not this defect: which of two sibling reasons surfaces still depends on clause
+/// order, because the walk takes the first child carrying a message. That is a ranking question in
+/// `find_skip_reason` rather than a false claim in a sentence, and the two want separate changes.
 fn empty_selection_message(query: &[QueryPart<'_>]) -> String {
     format!(
-        "the rule did not apply because the query {} selected no values from this input. Nothing \
-         was refused -- the query ran and matched nothing.",
+        "the rule did not apply because the query {} ran and selected no values from this input.",
         SliceDisplay(query)
     )
 }
