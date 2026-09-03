@@ -383,15 +383,38 @@ fn test_operator_in_list_literal_to_query_ok() -> crate::rules::Result<()> {
         _ => unreachable!(),
     };
     assert_eq!(eval.len(), 2);
+    // Both arms are counted, because the arm carrying the `is_empty` claim below is optional to a `match`.
+    // Two `NotComparable` results satisfy `eval.len() == 2` and never enter the Success arm, so the
+    // strongest assertion in this test would be skipped and the test would still report green.
+    let mut successes = 0;
+    let mut not_comparable = 0;
     for each in eval {
         match each {
             ValueEvalResult::ComparisonResult(ComparisonResult::Success(Compare::ListIn(l))) => {
-                assert!(l.diff.is_empty());
+                successes += 1;
+                assert!(
+                    l.diff.is_empty(),
+                    "a Success must carry an empty diff, got {:?}",
+                    l.diff
+                );
+                // The positive half of the line above. An empty diff means "nothing went unmatched", and
+                // on its own that is also what a comparison which asked nothing produces -- the same
+                // conflation `contained_in`'s own `diff.is_empty()` Success decision rests on. So the
+                // count of elements that DID match is asserted against the operand's length, which
+                // separates "every element matched" from "no element was compared".
+                assert_eq!(
+                    matched_elements(&l).len(),
+                    2,
+                    "both elements of the literal must read as matched, or the empty diff above is the \
+                     emptiness of a comparison that never ran; got {:?}",
+                    matched_elements(&l)
+                );
                 assert_eq!(&*l.rhs, &scalar_query_list_value);
                 assert_eq!(&*l.lhs, &list_literal_value);
             }
 
             ValueEvalResult::ComparisonResult(ComparisonResult::NotComparable(nc)) => {
+                not_comparable += 1;
                 assert_eq!(*nc.pair.lhs, list_literal_value);
                 assert_eq!(&*nc.pair.rhs, &scalar_query_value);
             }
@@ -402,6 +425,12 @@ fn test_operator_in_list_literal_to_query_ok() -> crate::rules::Result<()> {
             }
         }
     }
+    assert_eq!(
+        (1, 1),
+        (successes, not_comparable),
+        "one result per query value and one arm each; a run that reached only one of the two arms \
+         leaves the other arm's assertions unexecuted"
+    );
 
     Ok(())
 }
@@ -733,7 +762,23 @@ fn test_operator_in_query_to_query_ok() -> crate::rules::Result<()> {
     for each in eval {
         match each {
             ValueEvalResult::ComparisonResult(ComparisonResult::Success(Compare::QueryIn(lin))) => {
-                assert!(lin.diff.is_empty());
+                assert!(
+                    lin.diff.is_empty(),
+                    "a Success must carry an empty diff, got {:?}",
+                    lin.diff
+                );
+                // The positive half. An empty diff is what "every value matched" and "no value was
+                // compared" both look like, and the two `for` loops below iterate the operands, so an
+                // empty `lhs` or `rhs` would run no assertion at all and leave that reading unchecked.
+                assert_eq!(
+                    (2, 2),
+                    (lin.lhs.len(), lin.rhs.len()),
+                    "both operands must carry their two values, or the empty diff above is the \
+                     emptiness of a comparison that never ran and the loops below check nothing; got \
+                     lhs {:?} rhs {:?}",
+                    lin.lhs,
+                    lin.rhs
+                );
                 for each in lin.lhs {
                     if each.is_scalar() {
                         assert_eq!(&*each, &lhs_scalar_value);
@@ -780,7 +825,21 @@ fn test_operator_in_query_to_query_ok() -> crate::rules::Result<()> {
     for each in eval {
         match each {
             ValueEvalResult::ComparisonResult(ComparisonResult::Success(Compare::QueryIn(qin))) => {
-                assert!(qin.diff.is_empty());
+                assert!(
+                    qin.diff.is_empty(),
+                    "a Success must carry an empty diff, got {:?}",
+                    qin.diff
+                );
+                // The positive half, for the reason given on the first half of this test: with an empty
+                // `lhs` the loop below runs no assertion, and an empty diff beside an empty operand is a
+                // comparison that asked nothing rather than one every value satisfied.
+                assert_eq!(
+                    (2, 1),
+                    (qin.lhs.len(), qin.rhs.len()),
+                    "the two left-hand values against the one list; got lhs {:?} rhs {:?}",
+                    qin.lhs,
+                    qin.rhs
+                );
                 for each in qin.lhs {
                     if each.is_scalar() {
                         assert_eq!(&*each, &lhs_scalar_value);
@@ -869,10 +928,20 @@ fn test_operator_in_query_to_query_not_ok() -> crate::rules::Result<()> {
     // Expect 2 results, one LHS unresolved, one for the rest
     //
     assert_eq!(eval.len(), 2);
+    // Counted, not just totalled. `eval.len() == 2` is satisfied by two `LhsUnresolved` results, which
+    // would skip the Success arm entirely and leave the empty-diff claim in it unexecuted. The comment
+    // above says one result of each kind is expected, so that is what is asserted.
+    let mut successes = 0;
+    let mut unresolved = 0;
     for each in eval {
         match each {
             ValueEvalResult::ComparisonResult(ComparisonResult::Success(Compare::QueryIn(qin))) => {
-                assert!(qin.diff.is_empty());
+                successes += 1;
+                assert!(
+                    qin.diff.is_empty(),
+                    "a Success must carry an empty diff, got {:?}",
+                    qin.diff
+                );
                 assert_eq!(qin.rhs.len(), 2);
                 assert_eq!(&*qin.rhs[0], &rhs_scalar_query_value);
                 assert_eq!(&*qin.rhs[1], &rhs_scalar_query_list_value);
@@ -882,6 +951,7 @@ fn test_operator_in_query_to_query_not_ok() -> crate::rules::Result<()> {
             }
 
             ValueEvalResult::LhsUnresolved(lhsur) => {
+                unresolved += 1;
                 assert_eq!(ur, lhsur);
             }
 
@@ -891,6 +961,11 @@ fn test_operator_in_query_to_query_not_ok() -> crate::rules::Result<()> {
             }
         }
     }
+    assert_eq!(
+        (1, 1),
+        (successes, unresolved),
+        "one Success and one unresolved left-hand result, or one of the two arms above checked nothing"
+    );
 
     //
     // Just list

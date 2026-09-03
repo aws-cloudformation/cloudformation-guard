@@ -11364,21 +11364,7 @@ fn the_incomparable_membership_notice_is_only_emitted_for_a_clause_that_passed(
         clause
     );
 
-    let emitted = notices
-        .iter()
-        .any(|n| n.contains("could not be compared with any element"));
-    assert_eq!(
-        expect_notice,
-        emitted,
-        "`{}` reached {:?}, so the incomparable-membership notice should {}; recorded {:?}",
-        clause,
-        status,
-        match expect_notice {
-            true => "have been emitted",
-            false => "have stayed silent",
-        },
-        notices
-    );
+    assert_membership_notice(clause, status, expect_notice, &notices);
 
     Ok(())
 }
@@ -11501,21 +11487,7 @@ fn the_notice_asks_about_the_pairs_the_operator_compared(
         clause
     );
 
-    let emitted = notices
-        .iter()
-        .any(|n| n.contains("could not be compared with any element"));
-    assert_eq!(
-        expect_notice,
-        emitted,
-        "`{}` reached {:?}, so the notice should {}; recorded {:?}",
-        clause,
-        status,
-        match expect_notice {
-            true => "have been emitted",
-            false => "have stayed silent",
-        },
-        notices
-    );
+    assert_membership_notice(clause, status, expect_notice, &notices);
 
     Ok(())
 }
@@ -11604,35 +11576,72 @@ fn the_notice_asks_about_the_pairs_the_operator_compared(
 /// rather than by the artifact, and rebuild the artifact before trusting it on any other.
 ///
 /// What this test can hold on its own is the verdict, which no cell may move.
+///
+/// # The fourth column
+///
+/// Every cell carries the vacuous-comparison notice it expects as well as the membership one, because a
+/// column that only records which notice stopped is satisfied by the clause going silent altogether. That
+/// is not hypothetical here: `an_empty_list_against_a_queried_string` was flipped to `false` when its
+/// warning moved channels, and the flip on its own would have pinned an absence rather than the notice
+/// that replaced it. Two cells carry `true` there and the other eleven record nothing of any kind, so the
+/// column is the honest shape of what this table can say.
 #[rstest::rstest]
 // The second granularity. Every element pair is answered and the whole-value pair refuses.
 #[case::a_whole_value_pair_only_a_nested_denylist_builds(
     "EmptyOuter NOT IN [[1]]",
     Status::PASS,
-    true
+    true,
+    false
 )]
-#[case::the_same_whole_value_pair_at_length_two("Nest NOT IN [[2], [7, 8]]", Status::PASS, true)]
-#[case::a_whole_value_pair_that_zips_onto_a_regex("Deep NOT IN [[/zzz/]]", Status::PASS, true)]
+#[case::the_same_whole_value_pair_at_length_two(
+    "Nest NOT IN [[2], [7, 8]]",
+    Status::PASS,
+    true,
+    false
+)]
+#[case::a_whole_value_pair_that_zips_onto_a_regex(
+    "Deep NOT IN [[/zzz/]]",
+    Status::PASS,
+    true,
+    false
+)]
 // Controls for it: a flat denylist never reaches the second loop, so these two stay silent.
 #[case::a_flat_denylist_builds_no_whole_value_pair(
     "Strs NOT IN [\"x\", \"y\"]",
     Status::PASS,
+    false,
     false
 )]
-#[case::a_flat_int_denylist_builds_no_whole_value_pair("Ints NOT IN [7, 8]", Status::PASS, false)]
+#[case::a_flat_int_denylist_builds_no_whole_value_pair(
+    "Ints NOT IN [7, 8]",
+    Status::PASS,
+    false,
+    false
+)]
 #[case::a_flat_queried_denylist_builds_no_whole_value_pair(
     "Ports NOT IN DenyInts",
     Status::PASS,
+    false,
     false
 )]
 // The shape refusal, which `compare_eq` is never asked about.
-#[case::a_list_against_queried_scalars("Ports NOT IN D13[*]", Status::PASS, true)]
-#[case::a_list_against_a_queried_map("Maps NOT IN Umap", Status::PASS, true)]
-#[case::a_list_against_a_queried_scalar("Ports NOT IN Uint", Status::PASS, true)]
+#[case::a_list_against_queried_scalars("Ports NOT IN D13[*]", Status::PASS, true, false)]
+#[case::a_list_against_a_queried_map("Maps NOT IN Umap", Status::PASS, true, false)]
+#[case::a_list_against_a_queried_scalar("Ports NOT IN Uint", Status::PASS, true, false)]
 // Controls for it: four ways the refusal is not what the clause passed on.
-#[case::a_literal_scalar_already_fails_closed("Ports NOT IN 5", Status::FAIL, false)]
-#[case::a_literal_string_never_reaches_the_refusal("Empty NOT IN \"abc\"", Status::PASS, false)]
-#[case::a_vacuous_match_happens_before_the_refusal("Empty NOT IN D13[*]", Status::FAIL, false)]
+#[case::a_literal_scalar_already_fails_closed("Ports NOT IN 5", Status::FAIL, false, false)]
+#[case::a_literal_string_never_reaches_the_refusal(
+    "Empty NOT IN \"abc\"",
+    Status::PASS,
+    false,
+    true
+)]
+#[case::a_vacuous_match_happens_before_the_refusal(
+    "Empty NOT IN D13[*]",
+    Status::FAIL,
+    false,
+    false
+)]
 // `Empty NOT IN Ustr` MOVED from the refusal block to this one, and the cell that follows it in this
 // file is why. It was `true` here: the shape pair `([], "abc")` reached `contained_in`, refused on the
 // shapes, and the `(None, None)` arm dropped the refusal, so the clause passed on it and this notice was
@@ -11650,11 +11659,12 @@ fn the_notice_asks_about_the_pairs_the_operator_compared(
 // `every_string_spelling_warns_through_the_channel_that_is_true_of_it` asserts the notice that IS emitted
 // across the whole family, so the coverage this cell gave up is replaced by a stronger claim than the
 // absence of one notice.
-#[case::an_empty_list_against_a_queried_string("Empty NOT IN Ustr", Status::PASS, false)]
+#[case::an_empty_list_against_a_queried_string("Empty NOT IN Ustr", Status::PASS, false, true)]
 fn the_notice_asks_about_every_granularity_the_operator_decides_at(
     #[case] clause: &str,
     #[case] expected: Status,
     #[case] expect_notice: bool,
+    #[case] expect_vacuous_notice: bool,
 ) -> Result<()> {
     // Every denylist is disjoint from every left-hand value, so no cell's verdict rests on a collision.
     const INPUT: &str = r#"
@@ -11683,17 +11693,32 @@ fn the_notice_asks_about_every_granularity_the_operator_decides_at(
         clause
     );
 
-    let emitted = notices
+    assert_membership_notice(clause, status, expect_notice, &notices);
+
+    // The fourth column, and it is here rather than only in the membership one because two cells in this
+    // table are silent on the membership channel while warning through the other. Asserting only what
+    // stopped is what the defect this table records looks like from the inside: the cell that flipped to
+    // `false` when the notice changed channels would have passed just as well had the clause gone silent
+    // altogether, which is the outcome that would be a regression rather than the fix.
+    //
+    // The column is `true` for exactly the two `Empty`-against-a-string spellings, measured on 2026-09-03
+    // -- every other cell here records no notice of any kind, so there is nothing else to name.
+    // `every_string_spelling_warns_through_the_channel_that_is_true_of_it` makes the same claim across the
+    // whole string family in both polarities; this keeps the two cells self-contained, so a change that
+    // deleted that test would not leave these two resting on an absence again.
+    let vacuous_emitted = notices
         .iter()
-        .any(|n| n.contains("could not be compared with any element"));
+        .any(|n| n.contains("passed without comparing anything"));
     assert_eq!(
-        expect_notice,
-        emitted,
-        "`{}` reached {:?}, so the notice should {}; recorded {:?}",
+        expect_vacuous_notice,
+        vacuous_emitted,
+        "`{}` reached {:?}, so the vacuous-comparison notice should {}; recorded {:?}",
         clause,
         status,
-        match expect_notice {
-            true => "have been emitted",
+        match expect_vacuous_notice {
+            true =>
+                "have been emitted, because the clause passed without comparing anything and that \
+                     is the channel whose wording is true of it",
             false => "have stayed silent",
         },
         notices
@@ -11766,6 +11791,13 @@ fn a_membership_decided_by_partial_eq_owes_no_notice() -> Result<()> {
             rules,
             notices
         );
+
+        // The silence above is the weak half twice over. The doc comment names the first reason -- a
+        // failing clause has its notice suppressed by the verdict gate whatever the predicate answered --
+        // and this is the second: a build where nothing emits this notice satisfies it too. The control
+        // separates that world from this one; nothing separates the verdict suppression, which is why the
+        // comment records the limit.
+        assert_the_membership_channel_is_live();
     }
 
     Ok(())
@@ -12184,21 +12216,7 @@ fn a_spent_budget_on_one_value_does_not_silence_another_values_notice(
         clause
     );
 
-    let emitted = notices
-        .iter()
-        .any(|n| n.contains("could not be compared with any element"));
-    assert_eq!(
-        expect_notice,
-        emitted,
-        "`{}` reached {:?}, so the notice should {}; recorded {:?}",
-        clause,
-        status,
-        match expect_notice {
-            true => "have been emitted",
-            false => "have stayed silent",
-        },
-        notices
-    );
+    assert_membership_notice(clause, status, expect_notice, &notices);
 
     Ok(())
 }
@@ -12369,11 +12387,115 @@ enum ExpectedNotice {
     Passed,
 }
 
+/// A clause that must emit the incomparable-membership notice, run beside every cell that asserts the
+/// notice stayed away.
+///
+/// # Why this exists
+///
+/// A cell of the form "this clause emits no membership notice" passes in two different worlds: the clause
+/// is correctly quiet, or `incomparable_membership` answers false for everything and the channel is dead.
+/// A predicate over an absence cannot separate them, and this file had thirty-seven such cells --
+/// thirteen `ExpectedNotice::Silent` and twenty-four `false` notice columns. Silencing the predicate at
+/// its source reddened only the cells expecting a notice; every silent cell stayed green while checking
+/// nothing.
+///
+/// # What was tried and rejected
+///
+/// Asserting the diagnostic the cell's own clause emits instead. That is the stronger claim wherever it
+/// is available -- it is what `every_string_spelling_warns_through_the_channel_that_is_true_of_it` does --
+/// and it is available for two cells out of the thirty-seven. Measured on 2026-09-03 over every silent
+/// cell in this file: `Empty NOT IN "abc"` and `Empty NOT IN Ustr` record the vacuous notice, and the
+/// other thirty-five record nothing whatsoever. A clause with no diagnostic of its own has nothing to
+/// name, so the liveness has to come from elsewhere in the same run.
+///
+/// A sibling `true` cell of the same table was rejected as that elsewhere. rstest generates one test per
+/// cell, so a sibling is a separate run: it proves the channel was live in ITS process and says nothing
+/// about this one. It also goes when the cell goes, so a table that loses its positive group loses its
+/// liveness without any cell reddening.
+///
+/// # What this proves and what it does not
+///
+/// It proves the channel was live in this process. It does not prove the caller's own clause reached the
+/// predicate, and nothing over an absence can, which is why the failure message says that rather than
+/// implying coverage the cell does not have.
+///
+/// `Map NOT IN Haystack` is the control because it is measured live rather than assumed -- it is a
+/// notice-expecting cell of two tables in this file, `a_map_against_a_scalar_denylist` and
+/// `a_left_hand_value_that_is_not_a_list_is_not_flattened` -- and because it is the miniature of the five
+/// aws-guard-rules-registry notices the corpus check pins. A map is not a list, so nothing about it
+/// flattens and neither the granularity fix nor the shape refusal reaches it.
+fn assert_the_membership_channel_is_live() {
+    const CONTROL: &str = "Map NOT IN Haystack";
+    const INPUT: &str = r#"
+    {
+        Map: { a: 1 },
+        Haystack: [7, "zzz", false]
+    }
+    "#;
+
+    let (status, notices) =
+        status_and_deprecations(CONTROL, INPUT).expect("the membership control must evaluate");
+
+    assert_eq!(
+        Status::PASS,
+        status,
+        "`{}` must pass on the incomparability for the notice below to be owed; a FAIL here means the \
+         control is broken rather than the cell that called it",
+        CONTROL
+    );
+    assert!(
+        notices
+            .iter()
+            .any(|n| n.contains("could not be compared with any element")),
+        "`{}` must emit the incomparable-membership notice, so that a cell asserting the absence of \
+         that notice is asserting something. Nothing emitted it here, which means the channel is dead \
+         and the caller's silence is not evidence about the caller's clause. Recorded {:?}",
+        CONTROL,
+        notices
+    );
+}
+
+/// Checks a cell's membership-notice expectation, and on the silent side proves the channel was live.
+///
+/// The four boolean tables above each carried their own copy of this block, and each copy's `false` side
+/// was an absence nothing separated from total silence. One helper, so the liveness arrives with the
+/// expectation rather than having to be remembered per table.
+fn assert_membership_notice(
+    subject: &str,
+    status: Status,
+    expect_notice: bool,
+    notices: &[String],
+) {
+    let emitted = notices
+        .iter()
+        .any(|n| n.contains("could not be compared with any element"));
+
+    assert_eq!(
+        expect_notice,
+        emitted,
+        "`{}` reached {:?}, so the incomparable-membership notice should {}; recorded {:?}",
+        subject,
+        status,
+        match expect_notice {
+            true => "have been emitted",
+            false => "have stayed silent",
+        },
+        notices
+    );
+
+    if !expect_notice {
+        assert_the_membership_channel_is_live();
+    }
+}
+
 /// Checks the membership notices a run recorded against what the cell expects.
 ///
 /// Every matching notice is checked rather than one of them, because a cell that only looks for the
 /// wording it wants is satisfied by that notice arriving beside one carrying the other wording, which
 /// is a state where an author reading the wrong one is told the wrong thing.
+///
+/// The `Silent` arm calls `assert_the_membership_channel_is_live`, for the reason given there: on its own
+/// it is satisfied by a build that emits this notice for nothing at all.
 fn assert_notice(rules: &str, status: Status, expected: ExpectedNotice, notices: &[String]) {
     let membership: Vec<&String> = notices
         .iter()
@@ -12381,14 +12503,17 @@ fn assert_notice(rules: &str, status: Status, expected: ExpectedNotice, notices:
         .collect();
 
     match expected {
-        ExpectedNotice::Silent => assert!(
-            membership.is_empty(),
-            "`{}` reached {:?} with nothing for this notice to say, so it should have stayed silent; \
-             recorded {:?}",
-            rules,
-            status,
-            notices
-        ),
+        ExpectedNotice::Silent => {
+            assert!(
+                membership.is_empty(),
+                "`{}` reached {:?} with nothing for this notice to say, so it should have stayed \
+                 silent; recorded {:?}",
+                rules,
+                status,
+                notices
+            );
+            assert_the_membership_channel_is_live();
+        }
         // Which wording, not just whether one arrived. The notice that says "passed because" on a
         // clause that did not pass is the contradiction f3eb258 removed, and emitting on a wider set of
         // clauses is a route back to it.
@@ -12504,6 +12629,14 @@ fn the_notice_fires_exactly_where_fail_closed_moves_the_answer(
         },
         notices
     );
+
+    // The measurement above is about `!=`, not about the notice: silencing the predicate leaves both
+    // statuses where they are, so the `moves == false` cells would keep passing with the channel dead.
+    // The two assertions this test calls independent stay independent -- the control is a third
+    // evaluation and reads neither of them.
+    if !moves {
+        assert_the_membership_channel_is_live();
+    }
 
     Ok(())
 }
@@ -13752,6 +13885,19 @@ fn a_denylist_refuses_a_value_it_could_not_evaluate_in_either_spelling(
 /// `NOT IN` would go from FAIL to FAIL for a different reason and hide behind its own exit code,
 /// which is what the negative message assertion is here to catch. `IN` would go from PASS to FAIL
 /// and turn a compliant template into a reported violation.
+///
+/// # Why the same clause without the matching element is run beside each cell
+///
+/// The negative message assertion could not fail. Measured on 2026-09-03: both spellings record ZERO
+/// comparison messages, so `messages` is empty and a predicate over its contents is satisfied by the
+/// emptiness rather than by anything about the regex. It would have gone on passing had the reporting
+/// stopped recording comparison messages at all, which is the state it looks like it rules out.
+///
+/// The discriminator is the same clause with the matching element removed. `IN [/re/]` over the same
+/// value DOES record "The regular expression could not be evaluated against the value", measured in the
+/// same run below. So the pair says what the cell means: the message exists, this mechanism produces it
+/// for this pattern and this value, and adding an element that matches is what makes it go away. Without
+/// the second half the cell asserts an absence against a channel that was never shown to speak.
 #[rstest::rstest]
 #[case::denied_by_the_element_that_matched(
     "NOT IN [/(?!x)((a+)+)b/, 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa']",
@@ -13777,6 +13923,36 @@ fn an_element_that_matches_decides_membership_beside_an_unevaluatable_regex(
          not be evaluated; recorded {:?}",
         clause,
         messages
+    );
+
+    // The positive half: the same denylist with the matching element taken out. The polarity is kept, so
+    // the pair differs in one element and nothing else.
+    let alone = format!(
+        "Resources.*[ Type == 'AWS::EC2::Volume' ].Properties.Size {}",
+        match expected {
+            Status::PASS => "IN [/(?!x)((a+)+)b/]",
+            _ => "NOT IN [/(?!x)((a+)+)b/]",
+        }
+    );
+    let (alone_status, alone_messages) =
+        status_and_messages(alone.as_str(), THIRTY_AS_IN_A_LIST).unwrap();
+
+    assert_eq!(
+        Status::FAIL,
+        alone_status,
+        "`{}` has nothing left to decide it, so it fails closed on the pattern that gave up; a \
+         different verdict means the control is broken rather than the cell",
+        alone
+    );
+    assert!(
+        alone_messages
+            .iter()
+            .any(|m| m.contains("regular expression could not be evaluated")),
+        "`{}` must record the message the cell above asserts the absence of. Nothing recorded it here, \
+         so the absence above is the emptiness of the message channel rather than a fact about the \
+         element that matched; recorded {:?}",
+        alone,
+        alone_messages
     );
 }
 

@@ -1674,6 +1674,15 @@ mod validate_tests {
     /// `clauses_whose_answer_changes_later_warn_now` is the positive half, on a clause that does pass. This
     /// asserting an absence is only meaningful beside it -- on its own it would be satisfied by a build that
     /// never emits this notice at all.
+    ///
+    /// Which is why that positive half now runs here too, as the third run below, rather than being left as
+    /// a cross-reference in this comment. A reference is not a control: the two tests are separate binaries'
+    /// worth of state as far as a reader is concerned, and nothing made the absence fail when the notice
+    /// stopped being emitted anywhere. The control is the same fixture pair
+    /// `clauses_whose_answer_changes_later_warn_now` uses, driven through the same `ValidateTestRunner` and
+    /// the same stderr drain, so what it proves is precisely what this test needs: the path from
+    /// `RootScope::deprecations` to a `DEPRECATION` line on stderr was live in this process. It does not
+    /// prove that the absorbed condition reached the predicate, and nothing over an absence can.
     #[test]
     fn a_notice_stays_away_from_the_failure_a_when_condition_absorbs() {
         // The same run twice, because `Writer::stripped` and `Writer::err_to_stripped` each consume the
@@ -1729,6 +1738,35 @@ mod validate_tests {
              this notice to announce; got {:?} from stderr {:?}",
             notices,
             stderr
+        );
+
+        // The positive half, in this process. Without it the assertion above is satisfied by a build in
+        // which no clause anywhere reaches stderr with a notice, which is the state it looks like it rules
+        // out and does not.
+        let mut reader = Reader::default();
+        let mut writer =
+            Writer::new_with_err(WBVec(vec![]), WBVec(vec![])).expect("Failed to create writer.");
+
+        let status_code = ValidateTestRunner::default()
+            .data(vec!["vacuous-and-incomparable-template.yaml"])
+            .rules(vec!["vacuous_and_incomparable_clauses.guard"])
+            .show_summary(vec!["none"])
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(
+            StatusCode::SUCCESS,
+            status_code,
+            "the control's clauses pass in this release; a differing exit code means the control is \
+             broken rather than the absence above"
+        );
+
+        let control_stderr = writer.err_to_stripped().expect("failed to read stderr");
+        assert!(
+            control_stderr.contains("could not be compared with any element"),
+            "a clause that does pass on an incomparability must reach stderr with this notice, or the \
+             empty `notices` above is not evidence about the absorbed condition -- it is evidence that \
+             nothing emits this notice at all; got {:?}",
+            control_stderr
         );
     }
 
@@ -2033,35 +2071,71 @@ mod validate_tests {
     /// mistaken for the ones above -- a filtered query that matched nothing, a `some` clause over the
     /// same empty collection whose answer is already FAIL and is not changing, and ordinary comparisons
     /// that decide normally.
+    ///
+    /// # Why the last row is a fixture that does warn
+    ///
+    /// Every row but the last asserts an absence, and until the control was added this test held nothing
+    /// else -- not even the exit code. So it could not fail for the property it names: a build in which no
+    /// clause anywhere reached stderr with a notice satisfied all of it, and that build is the regression
+    /// this test is the counterpart to. Measured: silencing `incomparable_membership` at its source left
+    /// this test green while reddening every test that expects a notice.
+    ///
+    /// The control is the fixture pair `clauses_whose_answer_changes_later_warn_now` uses, so the same
+    /// command, reporter and stderr drain carry it, and the row's expectation is the only difference
+    /// between it and the two quiet rows. The exit code is asserted on every row for the same reason --
+    /// a run that failed to start produces no stderr either, and an absence over an empty stream is not
+    /// a fact about the clause.
     #[test]
     fn clauses_whose_answer_is_unchanged_stay_quiet() {
-        for (label, rules_file, data_file) in [
+        for (label, rules_file, data_file, expect_notice) in [
             (
                 "a filtered query that matched nothing",
                 "large_volumes_encrypted_type_block.guard",
                 "no-volumes-template.yaml",
+                false,
             ),
             (
                 "ordinary comparisons that decide",
                 "denied_names_guarded_by_not_empty.guard",
                 "bucket-with-no-kms-keys-template.yaml",
+                false,
+            ),
+            // The control. Same command, same drain, opposite expectation.
+            (
+                "a clause whose answer does change, which must still warn",
+                "vacuous_and_incomparable_clauses.guard",
+                "vacuous-and-incomparable-template.yaml",
+                true,
             ),
         ] {
             let mut reader = Reader::default();
             let mut writer = Writer::new_with_err(WBVec(vec![]), WBVec(vec![]))
                 .expect("Failed to create writer.");
 
-            ValidateTestRunner::default()
+            let status_code = ValidateTestRunner::default()
                 .data(vec![data_file])
                 .rules(vec![rules_file])
                 .show_summary(vec!["none"])
                 .run(&mut writer, &mut reader);
 
+            assert_eq!(
+                StatusCode::SUCCESS,
+                status_code,
+                "{} must run to completion; a run that did not start produces no stderr either, and \
+                 the assertion below would read that as silence",
+                label
+            );
+
             let stderr = writer.err_to_stripped().expect("failed to read stderr");
-            assert!(
-                !stderr.contains("DEPRECATION"),
-                "{} should emit no notice, got: {}",
+            assert_eq!(
+                expect_notice,
+                stderr.contains("DEPRECATION"),
+                "{} should {} a notice, got: {}",
                 label,
+                match expect_notice {
+                    true => "emit",
+                    false => "emit no",
+                },
                 stderr
             );
         }
