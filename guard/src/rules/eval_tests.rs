@@ -16220,6 +16220,168 @@ fn a_matched_subset_earns_no_whole_value_refusal_the_operator_never_built(
     Ok(())
 }
 
+/// The whole-value pairing stops where the operator's whole-list walk stops.
+///
+/// The fourth instance of the short-circuit class, and the one that shows a repaired GATE does not
+/// repair a BODY. `whole_value_pairing_built` answers whether `contained_in`'s whole-list loop RUNS;
+/// that loop then `break`s on the first entry that matches, and the predicate's body walked every
+/// entry regardless. So a correctly gated loop still counted pairings the operator never compared.
+///
+/// # Why this one is live where the scalar arm's twin is latent
+///
+/// `a_short_circuited_scalar_pairing_earns_no_refusal` below is suppressed by the verdict gate:
+/// `compare_eq`'s comparability partitions into components with no edges between them, the left value
+/// there is a scalar, and no scalar bridges two components -- so a sibling comparable to the offending
+/// entry refuses on its own account. `{List}` is the sole component that bridges, and the bridge is
+/// only reachable from THIS arm: `compare_eq` on two lists compares LENGTH first and answers
+/// `Ok(false)` on a mismatch without ever examining element kinds. A length-1 sibling is therefore
+/// comparable to every length-2 entry, contributes no refusal, and leaves the suspect's phantom
+/// refusal carrying the notice alone. Reading one arm's latency as the other's is what would have
+/// hidden this, and is why the two repairs are not interchangeable.
+///
+/// # The cells, which share one left value
+///
+/// All three use `[[1], [2]]` on the left and differ only in the denylist, so nothing but the walk can
+/// explain a difference between them. Its inner lists are length 1 and every denylist entry is length
+/// 2, which is what keeps every ELEMENT pairing at `Ok(false)` on a length mismatch -- so a `true`
+/// here cannot have come from the element loop above. An earlier draft of this test got that wrong:
+/// its cell 2 paired `[7]` against `[[7.0]]`, which is `(Int, List)` and refuses at element
+/// granularity, so the cell measured the element walk and passed for the wrong reason.
+///
+/// Cells 1 and 2 are the two ways the operator's walk stops early, and both are here because a fix
+/// keyed on one would pass a table holding only the other -- the same reason the scalar test carries
+/// its `Float`/`Int` pair.
+///
+/// Cell 1 stops at `PartialEq`: the first entry IS the left value, so the operator breaks there and
+/// never reaches `["a", "b"]`. The predicate did, and `compare_eq` zips two length-2 lists into
+/// `compare_eq([1], "a")`, a refusal on kinds.
+///
+/// Cell 2 stops one step later, at `compare_eq` answering `Ok(true)` for operands that are not
+/// `PartialEq`-equal: `[[1.0], [2.0]]`, which zips to `1` against `1.0` and matches through the
+/// `(Int, Float)` arm.
+///
+/// Cell 3 is the discriminator and must stay `true`. `[["x","y"], ["a","b"]]` matches neither entry,
+/// so the operator's walk runs to completion and both of its kind refusals are owed. A fix that
+/// skipped this loop wholesale, rather than stopping where the operator stops, reddens here.
+///
+/// Asserted at the predicate because the notice cannot see cells 2 and 3 in isolation, and because a
+/// cell watching an exit code would pass with the defect in: the suspect value MATCHES, so it fails
+/// `NOT IN`, and only the sibling's pass carries the clause.
+#[test]
+fn the_whole_value_pairing_stops_where_the_operator_stops() {
+    use crate::rules::path_value::Path;
+
+    fn int(path: &str, value: i64) -> PathAwareValue {
+        PathAwareValue::Int((Path::new(path.to_string(), 0, 0), value))
+    }
+
+    fn float(path: &str, value: f64) -> PathAwareValue {
+        PathAwareValue::Float((Path::new(path.to_string(), 0, 0), value))
+    }
+
+    fn string(path: &str, value: &str) -> PathAwareValue {
+        PathAwareValue::String((Path::new(path.to_string(), 0, 0), value.to_string()))
+    }
+
+    fn list(path: &str, elements: Vec<PathAwareValue>) -> PathAwareValue {
+        PathAwareValue::List((Path::new(path.to_string(), 0, 0), elements))
+    }
+
+    let resolved = |v: PathAwareValue| vec![QueryResult::Resolved(Rc::new(v))];
+    let literal = |v: PathAwareValue| vec![QueryResult::Literal(Rc::new(v))];
+
+    // ONE left value for all three cells, so only the denylist varies and nothing but the walk can
+    // explain a difference. `[[1], [2]]`: two length-1 inner lists, which is what keeps every ELEMENT
+    // pairing comparable below.
+    let left = || {
+        list(
+            "/Whole/0",
+            vec![
+                list("/Whole/0/0", vec![int("/Whole/0/0/0", 1)]),
+                list("/Whole/0/1", vec![int("/Whole/0/1/0", 2)]),
+            ],
+        )
+    };
+
+    // The refusing second entry, shared by all three. Length 2, so `compare_eq` zips it against the
+    // left value and reaches `compare_eq([1], "a")`, a refusal on kinds -- while every length-1
+    // ELEMENT of the left value answers `Ok(false)` against it on length alone.
+    let strs = |tag: &str| {
+        list(
+            &format!("/{tag}/0/1"),
+            vec![
+                string(&format!("/{tag}/0/1/0"), "a"),
+                string(&format!("/{tag}/0/1/1"), "b"),
+            ],
+        )
+    };
+
+    let stops_on_partialeq = incomparable_membership(
+        &resolved(left()),
+        &literal(list(
+            "/Eq/0",
+            vec![
+                list(
+                    "/Eq/0/0",
+                    vec![
+                        list("/Eq/0/0/0", vec![int("/Eq/0/0/0/0", 1)]),
+                        list("/Eq/0/0/1", vec![int("/Eq/0/0/1/0", 2)]),
+                    ],
+                ),
+                strs("Eq"),
+            ],
+        )),
+    );
+
+    let stops_on_compare_eq = incomparable_membership(
+        &resolved(left()),
+        &literal(list(
+            "/Cmp/0",
+            vec![
+                list(
+                    "/Cmp/0/0",
+                    vec![
+                        list("/Cmp/0/0/0", vec![float("/Cmp/0/0/0/0", 1.0)]),
+                        list("/Cmp/0/0/1", vec![float("/Cmp/0/0/1/0", 2.0)]),
+                    ],
+                ),
+                strs("Cmp"),
+            ],
+        )),
+    );
+
+    let walks_the_whole_denylist = incomparable_membership(
+        &resolved(left()),
+        &literal(list(
+            "/Miss/0",
+            vec![
+                list(
+                    "/Miss/0/0",
+                    vec![string("/Miss/0/0/0", "x"), string("/Miss/0/0/1", "y")],
+                ),
+                strs("Miss"),
+            ],
+        )),
+    );
+
+    assert_eq!(
+        (false, false, true),
+        (
+            stops_on_partialeq,
+            stops_on_compare_eq,
+            walks_the_whole_denylist
+        ),
+        "first: the first entry IS the left value, so `contained_in`'s whole-list walk breaks there \
+         on `PartialEq` and the `[\"a\",\"b\"]` after it is a pairing the operator never built. \
+         second: `[[1.0], [2.0]]` is not `PartialEq`-equal to `[[1], [2]]` but `compare_eq` zips it \
+         to `1` against `1.0` and answers `Ok(true)`, which is the OTHER early return -- a fix keyed \
+         on `PartialEq` alone reddens here. third: `[[\"x\",\"y\"], [\"a\",\"b\"]]` matches \
+         neither entry, so the walk runs to completion and both of its kind refusals are owed; \
+         skipping this loop wholesale cannot pass this cell. Every ELEMENT pairing in all three cells \
+         is `Ok(false)` on a length mismatch, so nothing but the whole-value walk can set these"
+    );
+}
+
 /// A scalar left value earns no refusal from denylist entries its walk never reached.
 ///
 /// The third and last site of the short-circuit class. `incomparable_membership`'s

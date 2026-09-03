@@ -1296,25 +1296,42 @@ fn contained_in(lhs_value: Rc<PathAwareValue>, rhs_value: Rc<PathAwareValue>) ->
                     // `x IN <list>` is what the second one protects.
                     let flat_subset = diff.is_empty();
 
+                    // THIS WALK WAS A THIRD COPY OF `is_one_of` and is now that function. Written out,
+                    // it was the same five arms in the same order over the same slice: `PartialEq`
+                    // first, then `compare_eq`, `Ok(true)` matching and breaking, `RegexError`
+                    // recorded once, every other `Err` discarded. `is_one_of` over the whole
+                    // left-hand value answers all of it, and `Membership`'s three variants are
+                    // exactly the three outcomes this needed -- `Matched` is `whole_list_member`,
+                    // `Unanswerable` carries the reason, `NoMatch` is neither.
+                    //
+                    // Collapsed rather than left agreeing, because the copy is what let the two drift.
+                    // `super::incomparable_membership` mirrors this walk to decide whether a refusal
+                    // belongs to a pairing the operator built, and it had already diverged here twice:
+                    // once on the GATE, repaired by reading `whole_value_pairing_built`, and once on
+                    // the BODY, which walked past the break this loop takes. A predicate reading one
+                    // walk cannot diverge from it.
+                    //
+                    // `Matched` DISCARDING a `RegexError` seen earlier in the same walk is not a
+                    // behavior change, though it is the one difference worth checking. The original
+                    // recorded the reason and then broke on a later match, keeping it in
+                    // `unanswerable`; `is_one_of` returns `Matched` and drops it. The match below
+                    // reads `(flat_subset || whole_list_member, unanswerable)` and its `(true, _)` arm
+                    // ignores the reason whenever the membership held, so both spellings answer
+                    // `Success` on that input.
+                    //
+                    // The element walk's reason still outranks this one, which `is_none()` preserves:
+                    // `unanswerable` arrives already populated from `elements_not_matched` above when
+                    // an ELEMENT could not be decided, and that is the reason a reader of the failure
+                    // wants first.
                     let mut whole_list_member = false;
                     if !flat_subset {
-                        for elem in rhsl {
-                            if elem == &*lhs_value {
-                                whole_list_member = true;
-                                break;
-                            }
-                            match compare_eq(&lhs_value, elem) {
-                                Ok(true) => {
-                                    whole_list_member = true;
-                                    break;
+                        match is_one_of(&lhs_value, rhsl) {
+                            Membership::Matched => whole_list_member = true,
+                            Membership::NoMatch => {}
+                            Membership::Unanswerable(unanswered) => {
+                                if unanswerable.is_none() {
+                                    unanswerable = Some(unanswered);
                                 }
-                                Ok(false) => {}
-                                Err(err @ Error::RegexError(_)) => {
-                                    if unanswerable.is_none() {
-                                        unanswerable = Some(unanswerable_reason(err));
-                                    }
-                                }
-                                Err(_) => {}
                             }
                         }
                     }

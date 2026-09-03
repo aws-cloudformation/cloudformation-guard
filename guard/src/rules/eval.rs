@@ -694,12 +694,52 @@ fn incomparable_membership(lhs: &[QueryResult], rhs: &[QueryResult]) -> bool {
                     // The element-loop half moved nothing observable until this gate landed, which is
                     // why it is the later commit rather than the earlier one: on every clause where it
                     // mattered the residual also fired, and the residual held the notice up.
+                    // THE GATE WAS REPAIRED AND THE BODY WAS NOT, which is the fourth instance of this
+                    // class and the last one in this arm. `whole_value_pairing_built` answers whether
+                    // the operator's whole-list loop RUNS; it says nothing about how far that loop
+                    // walks. The operator's loop `break`s on the first entry that matches -- by
+                    // `PartialEq` or by `compare_eq` answering `Ok(true)` -- and this body used to walk
+                    // every entry regardless, so a correctly gated loop still counted pairings the
+                    // operator never compared.
+                    //
+                    // Worth naming as its own mistake rather than as more of the same: replacing a
+                    // re-derived CONDITION with an observed one reads as having brought the whole loop
+                    // into line, and the body is a second place the same question has to be asked. The
+                    // gate repair left this walk byte-identical to what it was before that commit.
+                    //
+                    // `membership_pairing_refused` over a one-element left side is the body, because
+                    // the operator's whole-list walk IS `is_one_of` over the whole value -- that
+                    // function now runs it, so there is one walk and the predicate reads it. The gate
+                    // stays `whole_value_pairing_built`: two observations of the operator, one per
+                    // question, neither re-derived.
+                    //
+                    // Its latency argument does NOT transfer from the `(left, List)` arm below, and
+                    // assuming it did is what would have hidden this. That arm is suppressed because
+                    // `compare_eq` has no edge between its numeric and textual comparability classes,
+                    // so a sibling comparable to the offending entry refuses on its own account. The
+                    // `(List, List)` arm bridges those classes: `compare_eq` on two lists compares
+                    // LENGTH first and answers `Ok(false)` on a mismatch without examining element
+                    // kinds. So a length-1 sibling is comparable to every length-2 entry, contributes
+                    // no refusal of its own, and leaves the suspect's phantom refusal carrying the
+                    // notice alone.
+                    //
+                    // Measured with `Whole` of `[[[1], [2]], [[9]]]`:
+                    // `some Whole[*] NOT IN [[[1],[2]], ["a","b"]]` exits 0 and printed the notice. The
+                    // suspect `[[1], [2]]` is `PartialEq`-equal to entry 0, so the operator breaks
+                    // there and never reaches `["a","b"]`; this body did, and `compare_eq` zipped two
+                    // length-2 lists into `compare_eq([1], "a")`, a refusal on kinds. The sibling
+                    // `[[9]]` answers `Ok(false)` on length against both entries and refuses nothing,
+                    // so the clause passes on a perfectly comparable value. Sibling alone is silent,
+                    // suspect alone exits 19, and the unquantified spelling exits 19 -- the notice
+                    // needed `some` and a sibling. The registry filter spelling fires too, so this one
+                    // is user-visible rather than latent.
                     if rhsl.iter().any(|right| right.is_list())
                         && operators::whole_value_pairing_built(lhsl, rhsl)
                     {
-                        for right in rhsl {
-                            refused |= pair_refused(value, right);
-                        }
+                        refused |= operators::membership_pairing_refused(
+                            std::slice::from_ref(&**value),
+                            rhsl,
+                        );
                     }
                 }
 
