@@ -8883,6 +8883,26 @@ fn a_nested_list_on_the_right_of_in_is_found_in_any_position(
 /// change moves anything here. `Pair NOT IN [1, 3]` must FAIL: `1` is named. Verdict negation turns it
 /// PASS.
 ///
+/// Every cell has a `_via_query` twin naming the same denylist as a document property, because the rule
+/// above is about two values and says nothing about how the right-hand one was written. It used to be
+/// pinned for the written-out spelling only, and the two spellings disagreed on exactly the cells that
+/// matter: `Pair NOT IN DenyOneThree` exited 0 where `Pair NOT IN [1, 3]` exited 19, and
+/// `Nest NOT IN DenyNestedNine` exited 0 where `Nest NOT IN [[9]]` exited 19. Two denylists admitting a
+/// value whose element they name, in the spelling a real rules file uses.
+///
+/// A written-out right-hand side reaches `InOperation`'s `(None, Some)` arm, which hands the pair
+/// straight to `contained_in` and lets the negation wrapper read the element-wise `ListIn` diff it
+/// returns. A queried one reaches the `(None, None)` arm, which keeps one verdict for the whole
+/// left-hand operand set and counted only `contained_in`'s *Success* as a match -- so a `Fail` carrying
+/// a real element collision was indistinguishable from a total miss, joined the unmatched set, and
+/// negated to a pass. The 34 twins that were already green are why the repair had to leave the `IN`
+/// polarity and every total miss alone rather than fail closed on the whole arm.
+///
+/// The four `_via_query` cells for `Empty` agree with their written-out siblings for a reason worth
+/// keeping: `contained_in` fails an empty left-hand list against a nested denylist with an *empty*
+/// diff, and an empty diff is correctly no collision. A repair that read "failed" as "collided" would
+/// move `undenied_empty_over_a_nested_list_via_query` from PASS to FAIL.
+///
 /// The `_whatever_its_depth` cells are why the subset test no longer requires the matching right-hand
 /// element to be a non-list. With that requirement, an element that is itself a list could not
 /// contribute to the subset reading even when the denylist holds it verbatim, so `Nest IN [1, [9]]`
@@ -8940,18 +8960,119 @@ fn a_nested_list_on_the_right_of_in_is_found_in_any_position(
 #[case::in_empty_over_a_nested_list("Empty", r#"IN [[9]]"#, Status::FAIL)]
 #[case::denied_empty_over_a_flat_list("Empty", r#"NOT IN [1,2,3]"#, Status::FAIL)]
 #[case::undenied_empty_over_a_nested_list("Empty", r#"NOT IN [[9]]"#, Status::PASS)]
+#[case::undenied_nested_pair_via_query("Pair", "NOT IN DenyNestedPair", Status::PASS)]
+#[case::undenied_nested_singleton_via_query("Pair", "NOT IN DenyNestedSeven", Status::PASS)]
+#[case::undenied_nested_strings_via_query("Pair", "NOT IN DenyWrappedStrs", Status::PASS)]
+#[case::undenied_mixed_denylist_via_query("Pair", "NOT IN DenyMixedStrs", Status::PASS)]
+#[case::undenied_strings_against_a_nested_pair_via_query(
+    "Strs",
+    "NOT IN DenyNestedOneTwo",
+    Status::PASS
+)]
+#[case::undenied_strings_against_a_mixed_denylist_via_query(
+    "Strs",
+    "NOT IN DenyStrsAndNine",
+    Status::PASS
+)]
+#[case::denied_by_whole_list_membership_via_query("Strs", "NOT IN DenyNestedAB", Status::FAIL)]
+#[case::denied_by_element_collision_via_query("Strs", "NOT IN DenyABAndNine", Status::FAIL)]
+#[case::in_nested_pair_via_query("Pair", "IN DenyNestedPair", Status::FAIL)]
+#[case::in_nested_singleton_via_query("Pair", "IN DenyNestedSeven", Status::FAIL)]
+#[case::in_nested_strings_via_query("Pair", "IN DenyWrappedStrs", Status::FAIL)]
+#[case::in_mixed_denylist_via_query("Pair", "IN DenyMixedStrs", Status::FAIL)]
+#[case::in_strings_against_a_nested_pair_via_query("Strs", "IN DenyNestedOneTwo", Status::FAIL)]
+#[case::in_strings_against_a_mixed_denylist_via_query("Strs", "IN DenyStrsAndNine", Status::FAIL)]
+#[case::in_by_whole_list_membership_via_query("Strs", "IN DenyNestedAB", Status::PASS)]
+#[case::in_by_flat_subset_beside_a_nested_element_via_query(
+    "Strs",
+    "IN DenyABAndNine",
+    Status::PASS
+)]
+#[case::denied_by_one_flat_element_via_query("Pair", "NOT IN DenyOneThree", Status::FAIL)]
+#[case::undenied_by_a_disjoint_flat_list_via_query("Pair", "NOT IN DenyThreeFour", Status::PASS)]
+#[case::denied_by_every_flat_element_via_query("Pair", "NOT IN DenyOneTwo", Status::FAIL)]
+#[case::in_one_flat_element_via_query("Pair", "IN DenyOneThree", Status::FAIL)]
+#[case::in_a_disjoint_flat_list_via_query("Pair", "IN DenyThreeFour", Status::FAIL)]
+#[case::in_every_flat_element_via_query("Pair", "IN DenyOneTwo", Status::PASS)]
+#[case::in_flat_subset_survives_a_nested_neighbour_via_query(
+    "Pair",
+    "IN DenyOneTwoAndNine",
+    Status::PASS
+)]
+#[case::denied_by_flat_subset_beside_a_nested_neighbour_via_query(
+    "Pair",
+    "NOT IN DenyOneTwoAndNine",
+    Status::FAIL
+)]
+#[case::in_elements_wrapped_one_deep_is_not_a_subset_via_query(
+    "Pair",
+    "IN DenyWrappedOneTwo",
+    Status::FAIL
+)]
+#[case::undenied_by_elements_wrapped_one_deep_via_query(
+    "Pair",
+    "NOT IN DenyWrappedOneTwo",
+    Status::PASS
+)]
+#[case::in_partly_nested_left_is_not_a_subset_via_query("Nest", "IN DenyNestedNine", Status::FAIL)]
+#[case::denied_by_a_nested_element_collision_via_query(
+    "Nest",
+    "NOT IN DenyNestedNine",
+    Status::FAIL
+)]
+#[case::in_a_nested_element_is_a_member_via_query("Deep", "IN DenyNestedWrappedA", Status::PASS)]
+#[case::denied_by_a_nested_element_that_is_named_via_query(
+    "Deep",
+    "NOT IN DenyNestedWrappedA",
+    Status::FAIL
+)]
+#[case::in_every_element_found_whatever_its_depth_via_query(
+    "Nest",
+    "IN DenyOneAndNine",
+    Status::PASS
+)]
+#[case::denied_by_every_element_whatever_its_depth_via_query(
+    "Nest",
+    "NOT IN DenyOneAndNine",
+    Status::FAIL
+)]
+#[case::in_empty_over_a_flat_list_via_query("Empty", "IN DenyOneTwoThree", Status::PASS)]
+#[case::in_empty_over_a_nested_list_via_query("Empty", "IN DenyNestedNine", Status::FAIL)]
+#[case::denied_empty_over_a_flat_list_via_query("Empty", "NOT IN DenyOneTwoThree", Status::FAIL)]
+#[case::undenied_empty_over_a_nested_list_via_query("Empty", "NOT IN DenyNestedNine", Status::PASS)]
 fn a_list_denylist_holding_a_nested_list_denies_only_what_it_names(
     #[case] property: &str,
     #[case] comparison: &str,
     #[case] expected: Status,
 ) -> Result<()> {
+    // The `Deny*` properties are the written-out denylists above, one per distinct list, so that a
+    // `_via_query` cell asks the same question of the same two values through the other arm. Flat, not
+    // nested under `Resources`: an unqualified right-hand name resolves against the document root, and
+    // wrapping the data changes what it resolves to rather than how it is compared.
     const INPUT: &str = r#"
     {
         Pair: [1, 2],
         Strs: ["a", "b"],
         Nest: [1, [9]],
         Deep: [["a"]],
-        Empty: []
+        Empty: [],
+        DenyNestedPair: [[99,98]],
+        DenyNestedSeven: [[7]],
+        DenyWrappedStrs: [["a"],["b"]],
+        DenyMixedStrs: ["x", ["y"]],
+        DenyNestedOneTwo: [[1,2]],
+        DenyStrsAndNine: ["x","y",[9]],
+        DenyNestedAB: [["a","b"]],
+        DenyABAndNine: ["a","b",[9]],
+        DenyOneThree: [1, 3],
+        DenyThreeFour: [3, 4],
+        DenyOneTwo: [1, 2],
+        DenyOneTwoAndNine: [1, 2, [9]],
+        DenyWrappedOneTwo: [[1],[2]],
+        DenyNestedNine: [[9]],
+        DenyNestedWrappedA: [["a"]],
+        DenyOneAndNine: [1, [9]],
+        DenyOneTwoThree: [1,2,3]
     }
     "#;
 
@@ -8963,6 +9084,64 @@ fn a_list_denylist_holding_a_nested_list_denies_only_what_it_names(
         "clause: {} {}",
         property,
         comparison
+    );
+
+    Ok(())
+}
+
+/// One variable, two bindings, one answer.
+///
+/// `let d = <name>` and `let d = <list>` read identically at the use site, and a rules file names its
+/// denylist with the first form far more often than it writes the list out at the clause. But the two
+/// bindings reach different arms of `InOperation::compare`: a variable bound to a query is not a
+/// literal, so `%d` on the right lands in the two-query arm, while a variable bound to a list stays
+/// literal and lands beside a written-out list. So the arm that had the element-collision defect is the
+/// one a real rules file reaches, and the arm that was correct is the one the suite exercised.
+///
+/// Measured before the repair: `let d = DenyOneThree` with `Pair NOT IN %d` exited 0 and
+/// `let d = [1, 3]` with the same clause exited 19, on one document where `Pair` is `[1, 2]` and both
+/// bindings name `1`. Every cell here is paired so that a change reaching only one binding form fails
+/// rather than passing half the table.
+///
+/// The document is shared with
+/// `a_list_denylist_holding_a_nested_list_denies_only_what_it_names`, whose `_via_query` cells cover
+/// the unwrapped `Pair NOT IN DenyOneThree` spelling. This adds the variable indirection on top of it,
+/// which is a third spelling of the same question rather than a third code path.
+#[rstest::rstest]
+#[case::query_bound_one_flat_element("DenyOneThree", "Pair NOT IN %d", Status::FAIL)]
+#[case::literal_bound_one_flat_element("[1, 3]", "Pair NOT IN %d", Status::FAIL)]
+#[case::query_bound_disjoint_flat_list("DenyThreeFour", "Pair NOT IN %d", Status::PASS)]
+#[case::literal_bound_disjoint_flat_list("[3, 4]", "Pair NOT IN %d", Status::PASS)]
+#[case::query_bound_nested_element_collision("DenyNestedNine", "Nest NOT IN %d", Status::FAIL)]
+#[case::literal_bound_nested_element_collision("[[9]]", "Nest NOT IN %d", Status::FAIL)]
+#[case::query_bound_in_every_flat_element("DenyOneTwo", "Pair IN %d", Status::PASS)]
+#[case::literal_bound_in_every_flat_element("[1, 2]", "Pair IN %d", Status::PASS)]
+#[case::query_bound_in_one_flat_element("DenyOneThree", "Pair IN %d", Status::FAIL)]
+#[case::literal_bound_in_one_flat_element("[1, 3]", "Pair IN %d", Status::FAIL)]
+fn a_denylist_named_by_a_variable_denies_what_the_same_list_written_out_denies(
+    #[case] binding: &str,
+    #[case] clause: &str,
+    #[case] expected: Status,
+) -> Result<()> {
+    const INPUT: &str = r#"
+    {
+        Pair: [1, 2],
+        Nest: [1, [9]],
+        DenyOneThree: [1, 3],
+        DenyThreeFour: [3, 4],
+        DenyOneTwo: [1, 2],
+        DenyNestedNine: [[9]]
+    }
+    "#;
+
+    let rules = format!("let d = {binding}\nrule membership {{ {clause} }}");
+
+    assert_eq!(
+        expected,
+        rule_status_in(&rules, INPUT, "membership")?,
+        "let d = {} / {}",
+        binding,
+        clause
     );
 
     Ok(())
