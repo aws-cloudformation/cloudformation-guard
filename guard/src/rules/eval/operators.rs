@@ -31,12 +31,19 @@ pub(crate) enum DiffFrom {
 #[derive(Clone, Debug)]
 pub(crate) struct QueryIn {
     pub(crate) diff: Vec<Rc<PathAwareValue>>,
-    /// The left-hand values that found no equal on the right.
+    /// The left-hand values that collide with nothing on the right.
     ///
-    /// Equal to `diff` whenever `diff_from` is [`DiffFrom::Lhs`], which is every `IN` spelling and most
-    /// of `==`. It is a separate field because `diff` answers "what should the report name" and this
-    /// answers "which left-hand values failed", and [`DiffFrom::Rhs`] is the case where those two are
-    /// not the same set. The negation wrapper needs the second question and only ever had the first.
+    /// A separate field because `diff` answers "what should the report name" and this answers "which
+    /// left-hand values found nothing", and the two part company for two unrelated reasons: under
+    /// [`DiffFrom::Rhs`] the diff holds right-hand values instead, and under
+    /// [`QueryIn::partly_matched`] a left-hand list is in the diff because `IN` rejected it and out of
+    /// this set because the right-hand side names one of its elements. Equal to `diff` everywhere else,
+    /// which is [`QueryIn::new`] and so every remaining `IN` spelling and most of `==`. The negation
+    /// wrapper needs the second question and only ever had the first.
+    ///
+    /// "Collide" rather than "found no equal", which is what this said while `partly_matched` did not
+    /// exist: a list-valued left-hand side with one element named on the right has no equal there and
+    /// collides with it anyway, and `NOT IN` has to deny it.
     pub(crate) lhs_unmatched: Vec<Rc<PathAwareValue>>,
     pub(crate) lhs: Vec<Rc<PathAwareValue>>,
     pub(crate) rhs: Vec<Rc<PathAwareValue>>,
@@ -56,6 +63,34 @@ impl QueryIn {
             lhs,
             rhs,
             lhs_unmatched: diff.clone(),
+            diff,
+            diff_from: DiffFrom::Lhs,
+        }
+    }
+
+    /// `IN` between two queries, where the values the report should name and the values that collide
+    /// with the right-hand side are not the same set.
+    ///
+    /// A list-valued left-hand side only *partly* present in a right-hand one is in both: it is outside
+    /// `IN`, so the report names it, and it is outside `NOT IN` as well, because the right-hand side
+    /// names one of its elements. `collides` is the left-hand values in that position, and it is removed
+    /// from `lhs_unmatched` rather than from `diff`, which is what keeps the two answers apart --
+    /// `Pair NOT IN Deny` must deny a `Pair` of `[1, 2]` against a `Deny` of `[1, 3]`, and
+    /// `Pair IN Deny` must still fail and still name `/Pair` when it does.
+    ///
+    /// `diff_from` stays [`DiffFrom::Lhs`]: the diff is left-hand values either way, so the reporter
+    /// prints the right-hand operand as what they were compared with, exactly as for [`QueryIn::new`].
+    /// Only the negation wrapper reads `lhs_unmatched`, so nothing else can see the difference.
+    fn partly_matched(
+        diff: Vec<Rc<PathAwareValue>>,
+        collides: Vec<Rc<PathAwareValue>>,
+        lhs: Vec<Rc<PathAwareValue>>,
+        rhs: Vec<Rc<PathAwareValue>>,
+    ) -> QueryIn {
+        QueryIn {
+            lhs,
+            rhs,
+            lhs_unmatched: reverse_diff(collides, &diff),
             diff,
             diff_from: DiffFrom::Lhs,
         }
@@ -101,6 +136,31 @@ impl ListIn {
     ) -> ListIn {
         ListIn { lhs, rhs, diff }
     }
+}
+
+/// The elements of a [`ListIn`]'s left-hand list that the right-hand side did match.
+///
+/// `ListIn::diff` holds the elements that found nothing, so this is its complement, and it is the set
+/// `NOT IN` reports: those are the values that collide with the denylist. Empty exactly when nothing
+/// collided, which is both the verdict the negation wrapper needs and the question
+/// `InOperation`'s two-query arm asks about a partly-present left-hand list. One function rather than
+/// two loops, so the two spellings of `NOT IN` cannot disagree about what counts as a collision --
+/// disagreeing about that is what let `Pair NOT IN Deny` admit a `Pair` the written-out denylist denied.
+///
+/// An empty result is not the same as an empty `diff`. A left-hand list that is empty has no elements to
+/// match, so both are empty and nothing collided, which is the answer `Empty NOT IN [[9]]` needs.
+fn matched_elements(lin: &ListIn) -> Vec<Rc<PathAwareValue>> {
+    let elements = match &*lin.lhs {
+        PathAwareValue::List((_, elements)) => elements,
+        // `ListIn` is constructed only by `contained_in`'s list-valued left-hand arm.
+        _ => unreachable!(),
+    };
+
+    elements
+        .iter()
+        .map(|each| Rc::new(each.clone()))
+        .filter(|each| !lin.diff.contains(each))
+        .collect()
 }
 
 #[derive(Clone, Debug)]
@@ -881,10 +941,12 @@ impl Comparator for InOperation {
                 // the first also pins the "and N more" summary this single result carries. Do not
                 // expand here.
                 let mut diff = Vec::with_capacity(lhs_selected.len());
+                let mut collides = Vec::new();
                 let mut unanswerable: Vec<ValueEvalResult> = Vec::new();
                 'each_lhs: for eachl in &lhs_selected {
                     let mut unanswerable_against: Option<(Rc<PathAwareValue>, StringContainment)> =
                         None;
+                    let mut element_collision = false;
                     for eachr in &rhs_selected {
                         // Containment first, membership second, which is the order the two arms above
                         // apply when the right-hand side is written out. This arm asked `contained_in`
@@ -909,10 +971,30 @@ impl Comparator for InOperation {
                             StringContainment::NoneFound => {}
                         }
 
-                        if let ValueEvalResult::ComparisonResult(ComparisonResult::Success(_)) =
-                            contained_in(Rc::clone(eachl), Rc::clone(eachr))
-                        {
-                            continue 'each_lhs;
+                        match contained_in(Rc::clone(eachl), Rc::clone(eachr)) {
+                            ValueEvalResult::ComparisonResult(ComparisonResult::Success(_)) => {
+                                continue 'each_lhs
+                            }
+
+                            // A failed membership is not the same statement as a total miss, and this
+                            // arm used to treat it as one. `contained_in` fails a list-valued left-hand
+                            // side that is only *partly* present -- neither the whole list nor every
+                            // element found an equal -- and reports the elements that found nothing as
+                            // the `ListIn` diff. The elements missing from that diff DID find one, and
+                            // those are the values a denylist names. Counting only Success as a match
+                            // made a `Fail` carrying a real element collision indistinguishable from a
+                            // pairing where nothing matched at all, so it joined the unmatched set and
+                            // negated to a pass: with `Pair` of `[1, 2]` and `Deny` of `[1, 3]`,
+                            // `Pair NOT IN Deny` exited 0 while `Pair NOT IN [1, 3]` exited 19.
+                            //
+                            // Recorded rather than answered, for the reason the string case above gives:
+                            // a full match against a later right-hand result still wins, so a partial
+                            // collision only decides when nothing else does.
+                            ValueEvalResult::ComparisonResult(ComparisonResult::Fail(
+                                Compare::ListIn(lin),
+                            )) => element_collision |= !matched_elements(&lin).is_empty(),
+
+                            _ => {}
                         }
                     }
 
@@ -948,6 +1030,10 @@ impl Comparator for InOperation {
 
                         unanswerable.push(not_comparable_because(Rc::clone(eachl), other, reason));
                         continue;
+                    }
+
+                    if element_collision {
+                        collides.push(Rc::clone(eachl));
                     }
 
                     diff.push(Rc::clone(eachl));
@@ -987,7 +1073,7 @@ impl Comparator for InOperation {
                         ))
                     } else {
                         ValueEvalResult::ComparisonResult(ComparisonResult::Fail(Compare::QueryIn(
-                            QueryIn::new(diff, lhs_selected, rhs_selected),
+                            QueryIn::partly_matched(diff, collides, lhs_selected, rhs_selected),
                         )))
                     });
                 }
@@ -1469,17 +1555,7 @@ impl Comparator for (crate::rules::CmpOperator, bool) {
                                         }
 
                                         Compare::ListIn(lin) => {
-                                            let lhs = match &*lin.lhs {
-                                                PathAwareValue::List((_, v)) => v,
-                                                _ => unreachable!(),
-                                            };
-                                            let mut reverse_diff = Vec::with_capacity(lhs.len());
-                                            for each in lhs {
-                                                let each = Rc::new(each.clone());
-                                                if !lin.diff.contains(&each) {
-                                                    reverse_diff.push(each)
-                                                }
-                                            }
+                                            let reverse_diff = matched_elements(&lin);
                                             if reverse_diff.is_empty() {
                                                 ValueEvalResult::ComparisonResult(
                                                     ComparisonResult::Success(Compare::ListIn(
