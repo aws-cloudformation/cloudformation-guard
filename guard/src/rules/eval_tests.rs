@@ -8968,6 +8968,122 @@ fn a_list_denylist_holding_a_nested_list_denies_only_what_it_names(
     Ok(())
 }
 
+/// A range inside a list literal is a range for a list-valued left-hand side too.
+///
+/// `d7f01ec` made a range nested in a list literal behave like a range, and it did so in
+/// `contained_in`'s scalar-left-hand arm only. The list-valued arm decides its subset reading with
+/// `Vec::contains`, which is `PartialEq`, and `PartialEq` has no range-membership arm -- those live in
+/// `compare_eq`. So the same defect that commit describes survived one branch over: for `Ports` of
+/// `[85]`, `Ports IN [r[80,90]]` failed and `Ports NOT IN [r[80,90]]` passed, which is a denylist of
+/// forbidden port ranges admitting every port. Measured at `689b417` and at earlier commits on this
+/// branch; it never moved, so it is that commit's incompleteness rather than a regression from it.
+///
+/// Seventeen of these cells were wrong before the fix. Every one has its opposite polarity here, so a
+/// fix that made membership always true, or always false, fails rather than passing half the table.
+///
+/// The reference spelling is a plain element, not the unwrapped range. For a scalar left-hand side
+/// `Port IN r[80,90]` has always been right and is the natural control, but a *list* against an
+/// unwrapped range refuses in both polarities -- `contained_in`'s list arm sends a non-list right-hand
+/// side to the incomparable catch-all -- so it cannot say what the wrapped spelling ought to answer.
+/// The `_reference_plain_element` cells do that instead: `Ports IN [85]` passes and
+/// `Ports NOT IN [85]` fails, and `[r[80,90]]` has to give the same two answers for a value the range
+/// covers. The two `list_against_an_unwrapped_range` cells are here so that a later change which makes
+/// that spelling answer has to say so out loud; they are not the property under test.
+///
+/// The rule these cells state, unchanged from
+/// `a_list_denylist_holding_a_nested_list_denies_only_what_it_names`: `NOT IN` fails if and only if the
+/// whole left-hand list is a member of the right-hand list, or any left-hand element is. A range
+/// covering an element makes that element a member. It is not `not(IN)`, and `Partly` -- `[85, 99]`,
+/// one element inside `r[80,90]` and one outside -- is the cell where that matters: it is not a subset,
+/// so `IN` fails, and `85` is named, so `NOT IN` fails as well. Both polarities failing on a partial
+/// collision is what the plain-element spelling beside it already does, which is why
+/// `partly_covered_reference_plain_denied` sits next to it.
+///
+/// The three numeric-widening cells are separate because `compare_eq`'s range table is typed: `Int`
+/// against `RangeInt`, `Float` against `RangeInt`, and `Int` against `RangeFloat` are three arms, and a
+/// fix that reached only the first would pass `list_covered` while leaving a float-valued property
+/// undeniable.
+///
+/// `range_beside_a_nested_list` is the second branch of the same arm. A right-hand list holding any
+/// nested list takes the membership-or-subset path rather than the flat-subset path, and both compute
+/// the element-wise diff the same way, so both needed the same repair. Without that cell a fix to the
+/// flat branch alone reads as complete.
+#[rstest::rstest]
+#[case::scalar_covered_wrapped("Port", "IN [r[80,90]]", Status::PASS)]
+#[case::scalar_covered_unwrapped("Port", "IN r[80,90]", Status::PASS)]
+#[case::scalar_denied_wrapped("Port", "NOT IN [r[80,90]]", Status::FAIL)]
+#[case::scalar_denied_unwrapped("Port", "NOT IN r[80,90]", Status::FAIL)]
+#[case::scalar_uncovered_wrapped("Port", "IN [r[10,20]]", Status::FAIL)]
+#[case::scalar_undenied_wrapped("Port", "NOT IN [r[10,20]]", Status::PASS)]
+#[case::list_covered("Ports", "IN [r[80,90]]", Status::PASS)]
+#[case::list_denied("Ports", "NOT IN [r[80,90]]", Status::FAIL)]
+#[case::list_reference_plain_element("Ports", "IN [85]", Status::PASS)]
+#[case::list_reference_plain_element_denied("Ports", "NOT IN [85]", Status::FAIL)]
+#[case::list_uncovered("Outside", "IN [r[80,90]]", Status::FAIL)]
+#[case::list_undenied("Outside", "NOT IN [r[80,90]]", Status::PASS)]
+#[case::every_element_covered("AllIn", "IN [r[80,90]]", Status::PASS)]
+#[case::every_element_denied("AllIn", "NOT IN [r[80,90]]", Status::FAIL)]
+#[case::no_element_covered("AllOut", "IN [r[80,90]]", Status::FAIL)]
+#[case::no_element_denied("AllOut", "NOT IN [r[80,90]]", Status::PASS)]
+#[case::partly_covered_is_not_a_subset("Partly", "IN [r[80,90]]", Status::FAIL)]
+#[case::partly_covered_is_still_denied("Partly", "NOT IN [r[80,90]]", Status::FAIL)]
+#[case::partly_covered_reference_plain("Partly", "IN [85]", Status::FAIL)]
+#[case::partly_covered_reference_plain_denied("Partly", "NOT IN [85]", Status::FAIL)]
+#[case::int_and_float_covered("Mixed", "IN [r[80,90]]", Status::PASS)]
+#[case::int_and_float_denied("Mixed", "NOT IN [r[80,90]]", Status::FAIL)]
+#[case::float_in_an_int_range("Floats", "IN [r[80,90]]", Status::PASS)]
+#[case::float_in_an_int_range_denied("Floats", "NOT IN [r[80,90]]", Status::FAIL)]
+#[case::int_in_a_float_range("Ports", "IN [r[80.0,90.0]]", Status::PASS)]
+#[case::int_in_a_float_range_denied("Ports", "NOT IN [r[80.0,90.0]]", Status::FAIL)]
+#[case::range_beside_a_string("Ports", r#"IN [r[80,90], "zzz"]"#, Status::PASS)]
+#[case::range_beside_a_string_denied("Ports", r#"NOT IN [r[80,90], "zzz"]"#, Status::FAIL)]
+#[case::range_beside_a_nested_list("Ports", "IN [r[80,90], [9]]", Status::PASS)]
+#[case::range_beside_a_nested_list_denied("Ports", "NOT IN [r[80,90], [9]]", Status::FAIL)]
+#[case::two_ranges_one_covering("Ports", "IN [r[10,20], r[80,90]]", Status::PASS)]
+#[case::two_ranges_one_covering_denied("Ports", "NOT IN [r[10,20], r[80,90]]", Status::FAIL)]
+#[case::two_ranges_neither_covering("Outside", "IN [r[10,20], r[30,40]]", Status::FAIL)]
+#[case::two_ranges_neither_covering_undenied(
+    "Outside",
+    "NOT IN [r[10,20], r[30,40]]",
+    Status::PASS
+)]
+#[case::plain_element_matches_beside_a_range("Outside", "IN [r[10,20], 99]", Status::PASS)]
+#[case::plain_element_denies_beside_a_range("Outside", "NOT IN [r[10,20], 99]", Status::FAIL)]
+#[case::list_against_an_unwrapped_range("Ports", "IN r[80,90]", Status::FAIL)]
+#[case::list_against_an_unwrapped_range_negated("Ports", "NOT IN r[80,90]", Status::FAIL)]
+fn a_range_in_a_list_denylist_denies_a_list_valued_property(
+    #[case] property: &str,
+    #[case] comparison: &str,
+    #[case] expected: Status,
+) -> Result<()> {
+    // Nothing sits on a bound. `r[80,90]` is inclusive and `r(80,90)` is not, and a cell whose answer
+    // turns on which one it is would be testing the bound reading rather than the membership one.
+    const INPUT: &str = r#"
+    {
+        Port: 85,
+        Ports: [85],
+        Outside: [99],
+        AllIn: [81, 85, 89],
+        AllOut: [1, 2, 3],
+        Partly: [85, 99],
+        Mixed: [85, 85.5],
+        Floats: [85.5]
+    }
+    "#;
+
+    let rules = format!("rule membership {{ {property} {comparison} }}");
+
+    assert_eq!(
+        expected,
+        rule_status_in(&rules, INPUT, "membership")?,
+        "clause: {} {}",
+        property,
+        comparison
+    );
+
+    Ok(())
+}
+
 /// `or` is decided by whichever disjunct can decide it, in either order.
 ///
 /// `eval_conjunction_clauses` returned on the first disjunct that raised, so the rest of the
