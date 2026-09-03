@@ -1505,6 +1505,49 @@ impl Comparator for InOperation {
                     // direction for a policy engine: a denylist that cannot decide must not report
                     // compliance.
                     //
+                    // BOTH third answers under one `!element_collision`, and they used to be two blocks
+                    // with opposite precedence: the membership one was gated and the containment one was
+                    // checked unconditionally, one screen above it. So a clause that established a
+                    // collision AND could not decide a containment reported the containment complaint
+                    // and dropped the collision. With `Vals` of `["abc", "zzz"]` and `Deny` of
+                    // `["abcdef", "zzz"]`, `Vals NOT IN Deny[*]` recorded `Some but not all of
+                    // Value=["abc","zzz"] is contained in Value="abcdef"` -- the claim that the question
+                    // has no answer -- while `"zzz"` is verbatim a denylist entry. Two right-hand
+                    // results produce the two records, which is why neither one alone looks wrong:
+                    // `"abcdef"` holds `"abc"` and not `"zzz"`, so `found_in_string` reaches `Partial`,
+                    // and `"zzz"` is matched exactly by one element, so `is_one_of` reaches `Matched`.
+                    //
+                    // The collision wins, and that is the rule the other two sites already follow. A
+                    // collision is a claim this arm can support -- the denylist holds this element, so
+                    // `NOT IN` denies it on that basis and the report can name it -- and an undecidable
+                    // containment supports no claim about the value at all. Reporting the second while
+                    // holding the first states the weaker of two findings and discards the one a rule
+                    // author can act on. `found_in_string`'s `All` already continues the outer loop
+                    // immediately, and `is_one_of` applies the same precedence internally by letting
+                    // `Matched` outrank `Unanswerable`, so this is one site joining a rule rather than a
+                    // new rule. One `if` for both, because two guards that have to agree are what came
+                    // apart.
+                    //
+                    // The verdict does not move and the report does. `NotComparable` fails closed in
+                    // both polarities and a non-empty `diff` carrying a collision also fails both, so
+                    // the clause above is exit 19 before and after; measured, `Vals IN Deny[*]` is 19
+                    // too. What changes is that the undecidable reason disappears and an `InComparison`
+                    // naming the collision takes its place, which is why
+                    // `a_decided_element_collision_outranks_an_undecidable_containment` asserts on the
+                    // recorded messages and `a_reported_collision_is_recorded_as_a_membership_check`
+                    // asserts on the variant -- the first alone is satisfied by dropping both answers.
+                    //
+                    // Why nothing caught it. `found_in_string` outranks the collision arm for
+                    // essentially every string pairing, so that arm has observable effect only when no
+                    // right-hand value is a string -- which is what `e331c6b`'s own reproducer used, at
+                    // `rhs_kind=int`. Traced: against a string right operand, a contained element gives
+                    // `Partial` or `All` and a non-string element gives `HoldsANonString`, so both record
+                    // or continue before the collision can decide; and the one remaining case, every
+                    // element a string and none contained, cannot produce a collision either, because an
+                    // element EQUAL to the string would also be contained in it. The clause above is the
+                    // gap, where the two answers come from different right-hand results and neither
+                    // trace covers both at once.
+                    //
                     // Three reasons, because they are three different complaints and a reader acts on
                     // them differently: a list whose elements are all strings but only some of them
                     // present, a list holding something containment cannot be asked of at all, and a
@@ -1513,33 +1556,37 @@ impl Comparator for InOperation {
                     // examined the value's contents and a message about them would name what was never
                     // tested. A `Map` reaches this reason and does hold something, which is why the
                     // wording is about what was asked rather than about what the value contains.
-                    if let Some((other, undecidable)) = unanswerable_against {
-                        let reason = match undecidable {
-                            StringContainment::HoldsANonString => format!(
-                                "{} holds a value that is not a string, so it cannot be tested for \
-                                 containment in {}",
-                                eachl, other
-                            ),
-
-                            StringContainment::NotAString => format!(
-                                "{} is not a string, so it cannot be tested for containment in {}",
-                                eachl, other
-                            ),
-
-                            _ => format!("Some but not all of {} is contained in {}", eachl, other),
-                        };
-
-                        unanswerable.push(not_comparable_because(Rc::clone(eachl), other, reason));
-                        continue;
-                    }
-
-                    // The membership question's own third answer, joining the containment one above
-                    // rather than getting a rule of its own. Same shape: nothing matched, one comparison
-                    // had no answer, so there is no verdict to record in either polarity and the reason
-                    // is what a rule author can act on. Reached only when `element_collision` is false,
-                    // because a matched element decides the value and the failed comparison then changed
-                    // nothing -- the precedence `is_one_of` applies internally, applied again here.
                     if !element_collision {
+                        if let Some((other, undecidable)) = unanswerable_against {
+                            let reason = match undecidable {
+                                StringContainment::HoldsANonString => format!(
+                                    "{} holds a value that is not a string, so it cannot be tested \
+                                     for containment in {}",
+                                    eachl, other
+                                ),
+
+                                StringContainment::NotAString => format!(
+                                    "{} is not a string, so it cannot be tested for containment in {}",
+                                    eachl, other
+                                ),
+
+                                _ => {
+                                    format!("Some but not all of {} is contained in {}", eachl, other)
+                                }
+                            };
+
+                            unanswerable.push(not_comparable_because(
+                                Rc::clone(eachl),
+                                other,
+                                reason,
+                            ));
+                            continue;
+                        }
+
+                        // The membership question's own third answer, joining the containment one above
+                        // rather than getting a rule of its own. Same shape: nothing matched, one
+                        // comparison had no answer, so there is no verdict to record in either polarity
+                        // and the reason is what a rule author can act on.
                         if let Some((other, reason)) = unanswerable_membership {
                             unanswerable.push(not_comparable_because(
                                 Rc::clone(eachl),

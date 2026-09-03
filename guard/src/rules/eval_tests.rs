@@ -11835,6 +11835,147 @@ fn the_reason_a_containment_cannot_be_asked_names_the_right_operand(
     Ok(())
 }
 
+/// A decided element collision outranks an undecidable containment, in the arm as well as inside
+/// `is_one_of`.
+///
+/// Why this exists. The two-query arm has two "third answers" for one value and they had opposite
+/// precedence. `unanswerable_membership` is gated on `!element_collision`, with the reason written out
+/// beside it -- a matched element decides the value, so the comparison that could not be evaluated
+/// changed nothing -- and that is the precedence `is_one_of` applies internally, applied again at the
+/// arm. `unanswerable_against` was checked unconditionally, one screen above it, so for a clause where
+/// both fired the containment complaint won and the collision was never reported.
+///
+/// The clause that shows it. With `Vals` of `["abc", "zzz"]` and `Deny` of `["abcdef", "zzz"]`,
+/// `Vals NOT IN Deny[*]` recorded `Some but not all of Value=["abc","zzz"] is contained in
+/// Value="abcdef"` -- a statement that the question has no answer -- while `element_collision` was true,
+/// because `"zzz"` is verbatim a denylist entry. Two right-hand results produce the two records: the
+/// undecidable one comes from `"abcdef"`, which holds `"abc"` and not `"zzz"`, and the collision comes
+/// from `"zzz"`, which one left-hand element equals exactly. So this is not a value the tool cannot
+/// decide; it is a value the denylist names, described as undecidable.
+///
+/// A report defect and not a wrong verdict, which is why the status assertion is not the discriminating
+/// one. `NotComparable` fails closed in both polarities -- measured, `Vals IN Deny[*]` and
+/// `Vals NOT IN Deny[*]` are both exit 19 -- and a non-empty `diff` carrying a collision also fails
+/// both, so the exit code is 19 before and after. What moves is which record a rule author reads: the
+/// undecidable reason disappears and an `InComparison` naming the collision takes its place. A
+/// status-only assertion cannot see that, which is the same blind spot
+/// `the_reason_a_containment_cannot_be_asked_names_the_right_operand` above was written to cover.
+///
+/// Which answer should win, and why it is the collision. A collision is a claim the arm can support:
+/// the denylist holds this element, so `NOT IN` denies it on that basis and the report can say so. An
+/// undecidable containment supports no claim about the value at all. Reporting the second while holding
+/// the first states the weaker of two findings and discards the one a rule author can act on. The arm
+/// already agreed with that twice -- `found_in_string`'s `All` continues the outer loop immediately, and
+/// `unanswerable_membership` yields to `element_collision` -- so this is one site joining a rule the
+/// other two already follow rather than a new rule.
+///
+/// Why nothing caught it. `found_in_string` outranks the collision arm for essentially every string
+/// pairing, so `e331c6ba`'s arm has observable effect only when no right-hand value is a string -- which
+/// is what its own reproducer used, `rhs_kind=int`. Traced: for a list-valued left-hand side against a
+/// string right operand, if any element is contained the answer is `Partial` or `All`, and if any element
+/// is not a string it is `HoldsANonString`; both record or continue before the collision can decide.
+/// Only "every element is a string and none is contained" reaches the collision arm, and an element that
+/// EQUALS the string would also be contained in it, so that case can never produce a collision either.
+/// The mixed case in this test is the gap: the undecidable record and the collision come from different
+/// right-hand results, so neither of those traces applies to both at once.
+///
+/// `an_int_denylist_reports_the_collision` is the control for the shape that always worked, where no
+/// right-hand value is a string and so nothing competes with the collision. A fix credited with it has
+/// not touched the defect.
+#[rstest::rstest]
+// THE DEFECT. Both third answers fire, from different right-hand results, and the collision must be the
+// one reported.
+#[case::a_string_denylist_reports_the_collision_not_the_undecidable_containment(
+    "Vals NOT IN Deny[*]",
+    "Some but not all of"
+)]
+// The same clause in the other polarity. `IN` fails for a different reason -- the value is unmatched --
+// and must not carry the undecidable reason either.
+#[case::the_in_polarity_reports_no_undecidable_reason_either(
+    "Vals IN Deny[*]",
+    "Some but not all of"
+)]
+// The control: an int denylist, so no right-hand value is a string, `found_in_string` records nothing,
+// and the collision was always the answer.
+#[case::an_int_denylist_reports_the_collision("Ints NOT IN DenyInts[*]", "Some but not all of")]
+fn a_decided_element_collision_outranks_an_undecidable_containment(
+    #[case] clause: &str,
+    #[case] forbidden_fragment: &str,
+) -> Result<()> {
+    // `Deny` holds one entry that CONTAINS a left-hand element without equalling it and one that equals
+    // another element exactly. That split is the fixture: one entry drives `found_in_string` to
+    // `Partial` and the other drives `is_one_of` to `Matched`, so the two third answers come from
+    // different right-hand results and compete.
+    const INPUT: &str = r#"
+    {
+        Vals: ["abc", "zzz"],
+        Deny: ["abcdef", "zzz"],
+        Ints: [1, 2],
+        DenyInts: [2, 7]
+    }
+    "#;
+
+    let (status, messages) = status_and_messages(clause, INPUT)?;
+
+    assert_eq!(
+        Status::FAIL,
+        status,
+        "`{}` must fail closed; this change moves the report, not the verdict",
+        clause
+    );
+
+    assert!(
+        !messages.join("\n").contains(forbidden_fragment),
+        "`{}` names a value the denylist holds verbatim, so it must NOT be reported as undecidable \
+         with a reason containing `{}`; recorded: {:?}",
+        clause,
+        forbidden_fragment,
+        messages
+    );
+
+    Ok(())
+}
+
+/// The collision the clause above must report, asserted positively on the record variant.
+///
+/// The negative assertion next door cannot tell "the collision is reported" from "nothing is reported":
+/// `recorded_comparison_messages` only reads `Comparison` records, and the membership claim is an
+/// `InComparison` carrying no message at all. So a fix that dropped both third answers would satisfy it.
+/// This reads the variants instead, which is what `recorded_clause_check_kinds` exists for and the same
+/// pairing `an_unanswerable_containment_records_one_verdict_not_two` uses.
+#[rstest::rstest]
+#[case::a_string_denylist("Vals NOT IN Deny[*]")]
+#[case::an_int_denylist("Ints NOT IN DenyInts[*]")]
+fn a_reported_collision_is_recorded_as_a_membership_check(#[case] clause: &str) -> Result<()> {
+    const INPUT: &str = r#"
+    {
+        Vals: ["abc", "zzz"],
+        Deny: ["abcdef", "zzz"],
+        Ints: [1, 2],
+        DenyInts: [2, 7]
+    }
+    "#;
+
+    let rules = format!("rule r {{\n  {clause}\n}}");
+    let rules_file = RulesFile::try_from(rules.as_str())?;
+    let value = PathAwareValue::try_from(INPUT)?;
+    let mut root = root_scope(&rules_file, Rc::new(value));
+    let status = eval_rules_file(&rules_file, &mut root, None)?;
+    let mut kinds = Vec::new();
+    recorded_clause_check_kinds(&root.reset_recorder().extract(), &mut kinds);
+
+    assert_eq!(Status::FAIL, status, "clause: {}", clause);
+
+    assert!(
+        kinds.iter().any(|kind| kind.starts_with("InComparison")),
+        "`{}` must record the collision as a membership check; recorded: {:?}",
+        clause,
+        kinds
+    );
+
+    Ok(())
+}
+
 /// Runs one clause and returns the rule's status together with the deprecation notices recorded.
 ///
 /// Separate from `status_and_messages` next door, and the distinction is the reason a notice that
