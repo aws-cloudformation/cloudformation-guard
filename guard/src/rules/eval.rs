@@ -668,6 +668,18 @@ fn incomparable_membership(lhs: &[QueryResult], rhs: &[QueryResult]) -> bool {
                     // `NoEmpty` control beside it, and
                     // `every_string_spelling_warns_through_the_channel_that_is_true_of_it` is the
                     // sole-value population this condition was right about.
+                    //
+                    // The widened condition holds, and the argument is structural rather than a sweep --
+                    // worth recording because a soundness claim is cheap to assert and rarely grounded.
+                    // Inside `InOperation::compare`'s `(None, None)` arm an empty left-hand list never
+                    // reaches `contained_in` for ANY right-hand kind: against a `String` the arm
+                    // increments `uncompared_pairings` and `continue`s, and against every other kind it
+                    // takes `continue 'each_lhs`, both above the `found_in_string` call. So no right-hand
+                    // kind is owed the shape refusal and `lhsl.is_empty()` cannot be too wide. The other
+                    // half is that `both_queried` is asked of `operators::is_literal`, the same function
+                    // that selects that arm, so the predicate and the arm cannot drift into disagreeing
+                    // about which pairs exist. Neither half depends on a clause list, so both survive a
+                    // rebase; prefer them to a re-run of the grid.
                     let vacuous_match = lhsl.is_empty();
                     if both_queried && !vacuous_match {
                         refused = true;
@@ -1705,6 +1717,34 @@ fn binary_operation<'value, 'loc: 'value>(
     // the conclusion rests on: that `69628df7` created 25 silent `NOT IN` over-denials while claiming
     // none moved. The finding stands on the quotation that is real; the other one is not a paraphrase to
     // be tracked down, it is a sentence to stop looking for.
+    //
+    // Two further claims in that message are about the residual query-versus-literal set rather than the
+    // verdict, and both need correcting.
+    //
+    // "all 12 are over-admissions, the safer direction" holds over that commit's own 432-clause sweep and
+    // does not generalize, which is how it reads. Over-denials survive in that set. With `NoEmptyPartial`
+    // of `["ab"]` and `Strs2` of `["abc", "zzz"]`, `NoEmptyPartial NOT IN Strs2[*]` exits 19 while
+    // `NoEmptyPartial NOT IN ["abc", "zzz"]` exits 0 -- the query denying a value its literal admits,
+    // because `found_in_string` reads substring containment where the literal reads membership. Identical
+    // at `abbf73a7`, `69628df7`, `e26817a6` and here, so it is pre-existing and this branch created none
+    // of it. Two of four enumerated query/literal pairs are over-denials; that population is those four
+    // pairs and no claim is made about a wider one.
+    //
+    // And the two cells that message calls "the two new ones" are misattributed and mislabeled. They are
+    // `Empty IN Strs[0]` and `Empty IN Strs[*]`, and both moved FAIL to PASS at `69628df7`, not here:
+    // exit 19 at `abbf73a7`, exit 0 at `69628df7` and after. At `e26817a6` they are not disagreements at
+    // all, query and literal both exiting 0. The label is wrong as well: `Strs[0]` and `Strs[*]` never
+    // diverge FROM EACH OTHER. Over 56 enumerated cells -- seven left operands, both polarities, four
+    // right-hand spellings -- they return identical verdicts at `abbf73a7`, `69628df7`, `e26817a6` and
+    // here. What diverges is the queried string against the written-out list, and the surviving instance
+    // is `Empty NOT IN Strs[*]` at 0 against its literal's 19, in the `NOT IN` polarity, at every commit
+    // measured. Prefer this correction to the number: a wrong count invites recomputation, while a wrong
+    // mechanism name gets believed.
+    //
+    // None of that touches the impossibility argument carried above `found_in_string` and in
+    // `eval_tests.rs`. That one is about the verdicts an oracle OWES two spellings which resolve to the
+    // same value -- a statement about the specification, not about observed divergence, and it stands.
+    // What is corrected here is only a message reusing its name for a pair of cells it does not describe.
     let membership_is_incomparable =
         cmp.1 && cmp.0 == CmpOperator::In && incomparable_membership(&lhs, rhs);
     let results = cmp.compare(&lhs, rhs)?;

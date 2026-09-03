@@ -1349,6 +1349,11 @@ mod validate_tests {
     /// file changed"; nothing under `guard/resources` is modified anywhere in this branch, but six files
     /// are added to it and this is one.
     ///
+    /// A third claim in that message is corrected elsewhere rather than here: `9a449316` records that
+    /// "Three renderers, because three build this sentence independently" overstates it, because
+    /// `SingleLineReporter` in `cfn_reporter.rs` is unreachable. A reader meeting `56c95a51`'s message
+    /// should collect all three corrections and not stop at the two above.
+    ///
     /// The measured suite curve for the whole branch, and the mechanism behind the four stale absolutes,
     /// are recorded at the head of `guard/src/rules/eval_tests.rs`.
     #[test]

@@ -39,10 +39,18 @@ use super::*;
 //     ee60bc5f   3138       --
 //     1fd235a5   3138       --
 //     dd24954b   3138       3138      correct
+//     a4eaf4e8   3142       --        the tip this correction sits on
 //
 // The two stale offsets are the same arithmetic. 19 is `e26817a6`'s 16 plus `ec2b9a5c`'s 2 plus
 // `d63c1714`'s 1; 21 is that plus `3957260b`'s 2. Each author measured 3085 at `69628df7` and added
 // their own delta to it, which is correct right up until a commit lands in between.
+//
+// The last row is why every figure above names a SHA. Six commits landed past `dd24954b` while this
+// correction was being written -- four `test:`, one `docs:`, and `a4eaf4e8`, which is a behavior fix --
+// and the suite went 3138 to 3142. A figure tied to a SHA survived that; a figure stated as "the
+// current total" would not have. Two of those six also correct claims of their own: `9a449316` retires
+// `56c95a51`'s "Three renderers" as two live ones, and `a4eaf4e8` repairs a skip reason that read a
+// referenced rule's gate as its own.
 //
 // `f2f87b82` reads as damage and is not. It is the red half of a red-then-green pair, so `cargo`
 // stops after the failing test binary: eight suites report rather than sixteen, and twelve cells
@@ -10936,6 +10944,23 @@ fn every_string_spelling_warns_through_the_channel_that_is_true_of_it(
 /// the `NotComparable` -- which is the reason this notice exists -- so the value joins the unmatched set
 /// and `NOT IN` succeeds on a comparison that was never decided. `Ints NOT IN 7` written out is exit 19 on
 /// the same two values.
+///
+/// `ee60bc5f`'s message says the fix moves "exactly those three" clauses. It moves more, and the reason is
+/// a gap in the grid rather than a gap in the fix. The 210-clause grid held `Mix`, `MixRev` and
+/// `MixTwoStr` and no shape with the empty list DUPLICATED. `TwoEmpty`, `[[], [], "q"]`, is that shape,
+/// and it behaves exactly as the three do: measured at `56c95a51` it emits the membership notice, at
+/// `ee60bc5f` it is silent, and its verdict does not move. It is also the value-equal-duplicates case
+/// `e26817a6`'s `reverse_diff` reasoning names -- `Empties` of `[[], []]` -- so one clause exercises both
+/// commits' mechanisms at once.
+///
+/// The count, with its population written out because the total is a property of the population. Four
+/// left shapes -- the three above plus `TwoEmpty` -- against three right operands: `Ustr`, `"abc"`; a
+/// one-entry string list reached as `Str1[*]`; and a two-entry `["abc", "zzz"]` reached as `Str2[*]`.
+/// Both expanded lists are queried strings once expanded. Eleven of those twelve clauses lose the notice
+/// at `ee60bc5f`, none gains one, and no verdict moves. The twelfth, `MixTwoStr[*] NOT IN Str2[*]`, never
+/// had the notice: it exits 19 because `"z"` substring-matches `"zzz"` through `found_in_string`, so the
+/// gate requiring the clause to have PASSED was already shut. Choose a second list that no sibling
+/// substring-matches and the total is twelve, which is exactly why the number alone is not the finding.
 #[rstest::rstest]
 // THE DEFECT. An empty list beside a string sibling that decides the clause, in both element orders and
 // at two sibling counts.
