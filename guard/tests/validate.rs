@@ -2138,6 +2138,28 @@ mod validate_tests {
                 },
                 stderr
             );
+
+            // Both channels by name, and not merely a `DEPRECATION` line. The quiet rows above assert
+            // that no notice of any kind arrives, so a control that only proves *some* notice reaches
+            // stderr leaves them satisfied when one channel dies and the other carries the word --
+            // measured, that is exactly what happens with `incomparable_membership` silenced, because
+            // this fixture's vacuous clause keeps warning. Naming both is what makes either channel
+            // going quiet fail here.
+            if expect_notice {
+                for text in [
+                    "could not be compared with any element",
+                    "passed without comparing anything",
+                ] {
+                    assert!(
+                        stderr.contains(text),
+                        "{} must carry the notice reading {:?}; without it the quiet rows above are \
+                         satisfied by that channel being dead rather than by their clauses. Got: {}",
+                        label,
+                        text,
+                        stderr
+                    );
+                }
+            }
         }
     }
 
