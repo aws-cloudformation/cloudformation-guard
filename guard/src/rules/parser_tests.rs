@@ -7679,3 +7679,78 @@ fn the_message_scan_treats_a_bare_carriage_return_as_a_line_ending() {
     );
 }
 
+/// A map literal that names the same key twice is refused rather than resolved by position.
+///
+/// `pairs.into_iter().collect::<IndexMap<_, _>>()` keeps the last value silently, so reordering two
+/// entries with the same name changed the verdict. Against a template holding `Encrypted: false`:
+///
+/// ```text
+/// Resources.One.Properties == { "Encrypted": true, "Encrypted": false }   ->  exit 0   PASS
+/// Resources.One.Properties == { "Encrypted": false, "Encrypted": true }   ->  exit 19  FAIL
+/// ```
+///
+/// This was the only duplicate-name class the rules parser still resolved by guessing. `block` refuses a
+/// variable declared twice in a scope, `rules_file` refuses a duplicated rule name and a duplicated
+/// file-level variable, and `parameter_names` refuses a repeated parameter, each for this reason and each
+/// saying so: the file is rejected rather than guessed at. Rules files are authored, so an ambiguous one
+/// is a mistake to report, not an input to accommodate.
+///
+/// The document side is deliberately different and is not changed here: a duplicated key in a *template*
+/// warns and evaluates the last value, because the template is often not the reader's to edit.
+#[rstest::rstest]
+#[case::quoted_keys(
+    "rule r { Resources.One.Properties == { \"Encrypted\": true, \"Encrypted\": false } }\n"
+)]
+#[case::the_other_order(
+    "rule r { Resources.One.Properties == { \"Encrypted\": false, \"Encrypted\": true } }\n"
+)]
+#[case::bare_keys("rule r { Resources.One.Properties == { Encrypted: true, Encrypted: false } }\n")]
+#[case::quoted_beside_bare(
+    "rule r { Resources.One.Properties == { \"Encrypted\": true, Encrypted: false } }\n"
+)]
+#[case::three_entries(
+    "rule r { Resources.One.Properties == { A: 1, Encrypted: true, Encrypted: false } }\n"
+)]
+#[case::inside_a_nested_map(
+    "rule r { Resources.One.Properties == { Tags: { Name: \"a\", Name: \"b\" } } }\n"
+)]
+#[case::in_a_let_assignment("let want = { Encrypted: true, Encrypted: false }\nrule r { Resources.One.Properties == %want }\n")]
+fn a_map_literal_with_a_repeated_key_is_refused(#[case] rules: &str) {
+    let err = rules_file(from_str2(rules)).expect_err("a repeated map key must not parse");
+    let rendered = format!("{}", err);
+    assert!(
+        rendered.contains("more than once"),
+        "the error must name the problem, not merely fail: {}",
+        rendered
+    );
+}
+
+/// The control, so the check above cannot pass by rejecting every literal.
+///
+/// The list case is the reason this is a control rather than a formality. A repeated *value* in a list is
+/// legitimate -- `in [1, 1, 2]` is a set of candidates, and repeats there mean nothing at all -- so a
+/// duplicate check written over `Value` rather than over map keys would reject working rules files.
+#[rstest::rstest]
+#[case::distinct_keys(
+    "rule r { Resources.One.Properties == { Encrypted: true, Public: false } }\n"
+)]
+#[case::keys_sharing_a_prefix("rule r { Resources.One.Properties == { A: 1, AB: 2, ABC: 3 } }\n")]
+#[case::the_same_key_in_two_different_maps(
+    "rule r { Resources.One.Properties == { Tags: { Name: \"a\" }, Other: { Name: \"b\" } } }\n"
+)]
+#[case::a_repeated_list_value(
+    "rule r { Resources.One.Properties.Encrypted in [true, true, false] }\n"
+)]
+#[case::a_repeated_value_under_distinct_keys(
+    "rule r { Resources.One.Properties == { A: true, B: true } }\n"
+)]
+fn distinct_map_keys_and_repeated_list_values_still_parse(
+    #[case] rules: &str,
+) -> Result<(), Error> {
+    assert!(
+        rules_file(from_str2(rules))?.is_some(),
+        "nothing is ambiguous here and it must parse: {}",
+        rules
+    );
+    Ok(())
+}
