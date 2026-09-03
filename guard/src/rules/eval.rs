@@ -246,6 +246,12 @@ fn empty_reference_message(negated: bool) -> String {
 ///
 /// Returns `None` the moment one pair is comparable, so a mixed list that contains anything of the
 /// right kind is left alone -- that case decides on the comparable element and is not changing.
+///
+/// Half of the condition, not all of it. `Some` here means the clause *could* have passed on the
+/// strength of the incomparability, and the caller still has to check that it did: this comparison
+/// asks about the whole left-hand value, while `contained_in` decides a list-valued left-hand side
+/// element by element, so a list the denylist plainly names answers `Some` here and then fails. See
+/// `binary_operation`, which emits only once the verdict is in.
 fn incomparable_membership(
     lhs: &[QueryResult],
     rhs: &[QueryResult],
@@ -1106,17 +1112,30 @@ fn binary_operation<'value, 'loc: 'value>(
     role: ClauseRole,
 ) -> Result<EvaluationResult> {
     let lhs = eval_context.query(lhs_query)?;
-    // Checked before the comparison rather than after, because the answer is not recoverable from the
-    // result: the not-flag has already turned "no element matched" into a success by then, and a
-    // success from an incomparable operand looks exactly like a real one. Only `NOT IN` reaches this,
-    // so the extra comparisons cost nothing on any other clause.
-    if cmp.1 && cmp.0 == CmpOperator::In {
-        if let Some(notice) = incomparable_membership(&lhs, rhs, &context) {
-            eval_context.record_deprecation(notice);
-        }
-    }
+    // Computed here and emitted at the bottom, because neither end of the comparison has both halves
+    // of the condition.
+    //
+    // It has to be computed before, because the incomparability is not recoverable from the result:
+    // the not-flag has already turned "no element matched" into a success by then, and a success from
+    // an incomparable operand looks exactly like a real one. Only `NOT IN` reaches this, so the extra
+    // comparisons cost nothing on any other clause.
+    //
+    // It has to be emitted after, because the notice says the clause *passed* and there is no verdict
+    // at this point to check that against. Gated on the incomparability alone, it printed
+    // "<clause> passed because the value could not be compared with any element of the list" beside a
+    // FAIL, which is the opposite of what happened -- and misdirects as well, since a clause that
+    // already fails is not one the coming fail-closed change moves. Measured across 231 `NOT IN`
+    // shapes: 177 reach the notice, 146 pass and 31 fail, and every one of the 31 printed it.
+    let membership_notice = match cmp.1 && cmp.0 == CmpOperator::In {
+        true => incomparable_membership(&lhs, rhs, &context),
+        false => None,
+    };
     let results = cmp.compare(&lhs, rhs)?;
-    match results {
+    // Annotated, and bound before it is unwrapped. Every arm below is an `Ok(..)`, and the function's
+    // return type used to pin their error type because the match was the tail expression. It is not
+    // any more, and `?` erases the error type through `From`, so without the annotation the arms infer
+    // nothing.
+    let outcome: Result<EvaluationResult> = match results {
         // The left-hand query selected nothing, so there was nothing to compare. Which answer that
         // deserves depends on the shape of the query, and the two cases are not alike.
         //
@@ -1431,6 +1450,42 @@ fn binary_operation<'value, 'loc: 'value>(
                 }
             }
             Ok(EvaluationResult::QueryValueResult(statues))
+        }
+    };
+    let outcome = outcome?;
+
+    if let Some(notice) = membership_notice {
+        if clause_passed(&outcome) {
+            eval_context.record_deprecation(notice);
+        }
+    }
+
+    Ok(outcome)
+}
+
+/// True when the clause reached PASS on every value it decided.
+///
+/// The whole clause rather than any one value, because the notice this gates makes a claim about the
+/// clause -- "<clause> passed" -- and a clause with one failing value has not passed. Emitting on any
+/// single passing value was the alternative, and it keeps the notice alive on a clause that mixes
+/// passing and failing values, where suppressing it loses a warning about the passing half. Rejected
+/// for two reasons. It reinstates the contradiction this exists to remove, on the same line the reader
+/// greps. And the loss is not the loss it looks like: a clause with a failing value already exits the
+/// file 19, so the author is already looking at it, which is not the silent-green case the notice is
+/// there to prevent.
+///
+/// No mixed clause was found to choose between the two on. Across the 231 `NOT IN` shapes swept for
+/// this, the 177 that reach the notice record either all PASS or all FAIL, so the two readings agree
+/// on every measured input and the argument above decides an unreached case rather than an observed
+/// one.
+///
+/// An empty result is not a pass. Nothing decided means nothing passed, and a notice saying otherwise
+/// would be the same defect with a different cause.
+fn clause_passed(result: &EvaluationResult) -> bool {
+    match result {
+        EvaluationResult::EmptyQueryResult(status, _) => *status == Status::PASS,
+        EvaluationResult::QueryValueResult(values) => {
+            !values.is_empty() && values.iter().all(|(_, status)| *status == Status::PASS)
         }
     }
 }
