@@ -1010,6 +1010,123 @@ mod validate_tests {
         );
     }
 
+    /// A gate whose comparison had no answer does not silence the rule it guards.
+    ///
+    /// The same hazard as `an_unevaluatable_gate_fails_the_rule_closed`, reached through the other
+    /// error kind, and that one was closed while this one was open. `!EMPTY` on a boolean raises
+    /// `IncompatibleError`, which `is_unevaluatable` recognises, so the gate keeps the error and the
+    /// enclosing rule fails closed. A `NOT IN` whose regex exhausted its backtracking budget never
+    /// becomes an `Error`: `is_one_of` promotes it to `Membership::Unanswerable`, `binary_operation`
+    /// records it at its `NotComparable` arm as a per-value `Status::FAIL`, and one level out a FAIL
+    /// on a condition is what a condition that was decided and did not match looks like. `eval_rule`
+    /// maps that to a rule-level SKIP, so the file exits 0 having enforced nothing.
+    ///
+    /// Measured on `undecided-membership-gate-template.yaml`, all three `NOT IN` spellings:
+    ///
+    ///     rule guarded when Cat NOT IN [[/re/]]    exit 0   SKIP, body never ran
+    ///     rule guarded when Cat NOT IN [/re/]      exit 0   SKIP
+    ///     rule guarded when Cat[*] NOT IN [/re/]   exit 0   SKIP
+    ///     rule guarded when Enabled !EMPTY         exit 19  control, already failed closed
+    ///     rule direct { MustBeTrue == true }       exit 19  control, the body is a real violation
+    ///
+    /// Asserts the reported violation rather than only the exit code, for the reason
+    /// `an_undecidable_nested_gate_does_not_silence_the_outer_rule` gives: `unrelated_violation`
+    /// exits this file 19 whatever happens to `guarded`, so a test reading the exit code alone passes
+    /// while the guarded body is still being dropped.
+    #[test]
+    fn an_undecided_membership_gate_fails_the_rule_closed() {
+        let mut reader = Reader::default();
+        let mut writer = Writer::new(WBVec(vec![])).expect("Failed to create writer.");
+
+        let status_code = ValidateTestRunner::default()
+            .data(vec!["undecided-membership-gate-template.yaml"])
+            .rules(vec!["undecided_membership_gate_guarding_a_violation.guard"])
+            .show_summary(vec!["all"])
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(
+            StatusCode::VALIDATION_ERROR, status_code,
+            "a gate whose comparison had no answer must not report success; exit 0 here means the \
+             guarded body was silently skipped"
+        );
+
+        let output = writer.stripped().expect("failed to read the writer");
+        assert!(
+            output.contains("guarded"),
+            "the rule whose gate could not be decided must be named as failing:\n{}",
+            output
+        );
+        assert!(
+            !output.contains("SKIP rules"),
+            "the rule must not be reported as not applicable; a comparison with no answer is not a \
+             condition that was decided and did not match:\n{}",
+            output
+        );
+        assert!(
+            output.contains("unrelated_violation"),
+            "failing the rule closed must not discard the rest of the file:\n{}",
+            output
+        );
+        assert!(
+            output.contains("could not be evaluated"),
+            "the console must say why the rule failed rather than leaving the reader to guess:\n{}",
+            output
+        );
+    }
+
+    /// The same undecidable comparison as a filter predicate, where the absorption is different and
+    /// the exit code is the same.
+    ///
+    /// A `when` condition that fails makes the rule inapplicable. A filter predicate that fails
+    /// selects nothing, and an assertion over an empty selection SKIPs. Both roles carry
+    /// `ClauseRole::Gate`, so both reach the same repair, and both exited 0 with the body unchecked.
+    ///
+    /// This is also the canary for the direction the repair must not take. Five
+    /// aws-guard-rules-registry rules depend on `NOT IN` inside a filter predicate answering "not a
+    /// member" for a `!Ref`-shaped value, because failing closed there would make the filter select
+    /// fewer resources and turn a reported violation into a pass. They are untouched, and mechanically
+    /// so: a kind mismatch is discarded by `is_one_of`'s `Err(_) => {}` before any comparison result
+    /// exists, while only a promoted `RegexError` becomes the `NotComparable` this repair reads.
+    /// `.github/scripts/check-registry-corpus.sh` holds that corpus to its known state.
+    #[test]
+    fn an_undecided_membership_filter_fails_the_clause_closed() {
+        let mut reader = Reader::default();
+        let mut writer = Writer::new(WBVec(vec![])).expect("Failed to create writer.");
+
+        let status_code = ValidateTestRunner::default()
+            .data(vec!["undecided-membership-gate-template.yaml"])
+            .rules(vec!["undecided_membership_filter_guarding_a_violation.guard"])
+            .show_summary(vec!["all"])
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(
+            StatusCode::VALIDATION_ERROR, status_code,
+            "a filter predicate whose comparison had no answer must not select nothing and pass; \
+             exit 0 here means the body was never compared"
+        );
+
+        let output = writer.stripped().expect("failed to read the writer");
+        // `unrelated_violation` exits this file 19 on its own, and at baseline `guarded` appeared in
+        // the SKIP list -- so the exit code and a bare `contains("guarded")` were both satisfied while
+        // the body went unchecked. The SKIP assertion is the one that can fail here.
+        assert!(
+            !output.contains("SKIP rules"),
+            "`guarded` must not be reported as not applicable; its filter predicate could not be \
+             decided, which is not the same as a filter that selected nothing:\n{}",
+            output
+        );
+        assert!(
+            output.contains("guarded"),
+            "the rule whose filter could not be decided must be named as failing:\n{}",
+            output
+        );
+        assert!(
+            output.contains("unrelated_violation"),
+            "failing the clause closed must not discard the rest of the file:\n{}",
+            output
+        );
+    }
+
     /// Two keys spelled the same way in one template must compare equal, and must not compare
     /// unequal.
     ///

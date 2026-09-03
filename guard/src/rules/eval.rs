@@ -1285,9 +1285,10 @@ where
 /// `role` decides what a positive comparison against an empty reference reports: it
 /// is unsatisfiable, so it fails as an [`ClauseRole::Assertion`] but must stay a SKIP
 /// as a [`ClauseRole::Gate`]. See [`ClauseRole`] for why failing a gate is unsafe.
-// Nine arguments, two over the lint's limit; the last two are `location` and `match_all`, both of them
-// there for the deprecation notice at the bottom. Two ways to get back under it were considered and both
-// cost more than the lint does.
+// Nine arguments, two over the lint's limit; the last two are `location` and `match_all`. `location` is
+// there for the deprecation notice at the bottom and `match_all` for both that notice and
+// `undecided_gate` beside it. Two ways to get back under it were considered and both cost more than the
+// lint does.
 //
 // Folding either into `context` is the obvious one and it is not a refactor, it is a behaviour change:
 // `context` is what every record in this function is filed under and what the reporters print, so widening
@@ -1311,7 +1312,8 @@ fn binary_operation<'value, 'loc: 'value>(
     location: &FileLocation<'loc>,
     // Whether the query needs every value or any one of them, which is what "did this clause pass" means
     // for it. Passed in rather than read off `lhs_query`, because that is the `query` field alone while the
-    // flag lives on the `AccessQuery` around it; the single caller has both.
+    // flag lives on the `AccessQuery` around it; the single caller has both. Read by the notice at the
+    // bottom and by `undecided_gate` beside it, which asks a different question of it -- see there.
     match_all: bool,
 ) -> Result<EvaluationResult> {
     let lhs = eval_context.query(lhs_query)?;
@@ -1330,6 +1332,17 @@ fn binary_operation<'value, 'loc: 'value>(
     let membership_is_incomparable =
         cmp.1 && cmp.0 == CmpOperator::In && incomparable_membership(&lhs, rhs);
     let results = cmp.compare(&lhs, rhs)?;
+    // The first comparison the operator could not answer, as opposed to one it answered no.
+    //
+    // Collected while the results are walked because it is not recoverable afterwards. Both outcomes
+    // arrive at the `NotComparable` arm below as `Status::FAIL`, and `EvaluationResult` carries
+    // statuses and values -- nothing that says whether a FAIL was a verdict or an absence of one. The
+    // reason is kept so the failure the gate produces can name the pattern or the operand kinds rather
+    // than announcing an undecidable condition and stopping there.
+    //
+    // First rather than all of them, matching `is_one_of` and `elements_not_matched`: a clause naming
+    // one reason is what the console renders for a clause anyway.
+    let mut undecided_reason: Option<String> = None;
     // Annotated, and bound before it is unwrapped. Every arm below is an `Ok(..)`, and the function's
     // return type used to pin their error type because the match was the tail expression. It is not
     // any more, and `?` erases the error type through `From`, so without the annotation the arms infer
@@ -1489,6 +1502,15 @@ fn binary_operation<'value, 'loc: 'value>(
                     operators::ValueEvalResult::ComparisonResult(
                         operators::ComparisonResult::NotComparable(nc),
                     ) => {
+                        // Only an abandoned evaluation. A refusal to compare kinds stays a plain FAIL
+                        // here, because rule authors write a value against both spellings it might
+                        // carry and rely on the pairing that does not apply answering "no" rather than
+                        // "unknown". See `Unanswerable` for what reading it the other way costs.
+                        if undecided_reason.is_none()
+                            && nc.cause == operators::Unanswerable::EngineGaveUp
+                        {
+                            undecided_reason = Some(nc.reason.clone());
+                        }
                         eval_context.start_record(&context)?;
                         eval_context.end_record(
                             &context,
@@ -1653,6 +1675,61 @@ fn binary_operation<'value, 'loc: 'value>(
     };
     let outcome = outcome?;
 
+    // A gate whose comparison had no answer keeps the error instead of answering FAIL.
+    //
+    // This is the same fail-open `ClauseRole::Gate` exists to prevent, reached through the one channel
+    // that was not carrying it. `is_unevaluatable` recognises `IncompatibleError`, so `!EMPTY` against a
+    // boolean already fails a gate closed. A comparison that could not be decided never becomes an
+    // `Error` at all: `is_one_of` promotes a spent backtracking budget to `Membership::Unanswerable`,
+    // which arrives at the arm above as a per-value `Status::FAIL`. One level out `eval_rule` and
+    // `eval_when_condition_block` map every non-PASS condition to SKIP, so the body was dropped at exit
+    // 0. Measured on a `Cat` of one thirty-character string of `a`s, every spelling leaking:
+    //
+    //     rule guarded when Cat NOT IN [[/(?!x)((a+)+)b/]] { MustBeTrue == true }   exit 0
+    //     rule guarded when Cat NOT IN [/(?!x)((a+)+)b/]   { MustBeTrue == true }   exit 0
+    //     rule guarded when Cat[*] NOT IN [/(?!x)((a+)+)b/] { MustBeTrue == true }  exit 0
+    //     rule guarded when Enabled !EMPTY                 { MustBeTrue == true }   exit 19
+    //     rule direct { MustBeTrue == true }                                        exit 19
+    //
+    // An error and not a status, which is the whole reason this works. `own_skip_reason` in
+    // `eval_context.rs` reached the same diagnosis and concluded it could not be fixed, because "both
+    // FAIL and SKIP on a condition drop the block it guards, so telling them apart needs a status that
+    // means 'could not tell', which `Status` does not have". True of that site, which is a reporter. The
+    // evaluator has such a channel: an `Err` is not folded by `eval_conjunction_clauses` into the FAIL
+    // that outranks passing siblings -- it is held, discarded if a later disjunct decides the `or`, and
+    // otherwise returned for the caller to split by role. That is exactly the shape the arms above want,
+    // which is why `EmptyRhsUnsatisfiable` and its neighbours had to settle for SKIP-as-a-gate and this
+    // does not.
+    //
+    // `IncompatibleError` rather than a new variant, so every existing `(is_unevaluatable, is_strict)`
+    // site handles it with no new plumbing: a gate propagates it and fails its own rule closed, and an
+    // outer assertion turns it into the FAIL that keeps the rest of the file reporting.
+    //
+    // Gate only. An assertion already fails closed here and its report names the clause and the operand
+    // values; converting would replace that with a rule-level failure and lose the comparison record.
+    // `a_catastrophic_regex_asserted` and `the_whole_list_spelling_now_refuses` pin that half.
+    //
+    // An abandoned evaluation only, never a refusal to compare kinds, and that boundary is measured
+    // rather than chosen for safety. Rule authors write a value against both spellings it might carry
+    // and rely on the pairing that does not apply answering "no" rather than "unknown"; the registry's
+    // `ScanOnPush == 'False' OR ScanOnPush == false` is the canonical shape. Reading a kind mismatch as
+    // undecidable moves 143 rules of the pinned aws-guard-rules-registry corpus off their expectations,
+    // most of them suppression tests expecting SKIP, where the merge-base has 0 failed rules. So the
+    // kind-mismatch half of this defect stays open, tracked in `docs/KNOWN_ISSUES.md` behind the same
+    // precondition `incomparable_membership_notice` already records -- those rules have to change first
+    // -- and the notice is what covers it meanwhile. `Unanswerable` carries the split.
+    //
+    // The fold is respected rather than preempted, which is the second thing `match_all` is read for here.
+    // Under `match_all` one undecided value is enough, because a clause that needs every value to pass
+    // cannot be satisfied while one is unknown. Under `some` a value that genuinely passed decides the
+    // clause on its own -- "undecidable or true is true", the same reading `eval_conjunction_clauses`
+    // applies to a disjunction -- so preempting there would turn a legitimate PASS into a failure. The
+    // `some` half of that test is `clause_passed`'s own arm rather than a second copy of it;
+    // `undecided_gate` says why the `match_all` half is not shared.
+    if let Some(reason) = undecided_gate(&outcome, undecided_reason, match_all, role) {
+        return Err(Error::IncompatibleError(reason));
+    }
+
     // Which notice, or none: the verdict picks the wording, and the role decides whether a failure is
     // worth a notice at all.
     //
@@ -1699,6 +1776,59 @@ fn binary_operation<'value, 'loc: 'value>(
     }
 
     Ok(outcome)
+}
+
+/// The reason a gate could not be decided, when that is what happened.
+///
+/// `None` means the clause may answer with a status: it is an assertion, or nothing was undecided, or
+/// a `some` clause found a value that passed. `Some(reason)` means the gate has no answer and
+/// [`binary_operation`] must keep the error rather than report the FAIL its values carry.
+///
+/// Split out rather than written inline because the condition is four terms and three of them are easy
+/// to get backwards.
+///
+/// Disjoint from the notice below it, by construction rather than by ordering, and it stays disjoint under
+/// both readings of the verdict. This fires only when `reason` is `Some`, and the arm that sets `reason`
+/// pushes a `Status::FAIL` for that value. Under `match_all` the notice needs every value PASS, which that
+/// FAIL denies. Under `some` the notice needs one PASS, and this declines outright when there is one. So no
+/// result satisfies both, and the early return can never suppress a notice that would otherwise have gone
+/// out. Worth stating because the two sites sit a few lines apart and the ordering looks load-bearing.
+///
+/// The `some` arm is [`clause_passed`]'s own, called rather than reimplemented. It used to be a local
+/// `any_passed`, written while the notice still read `all(PASS)` for both quantifiers; once `clause_passed`
+/// became `match_all`-aware the two were the same predicate over the same vector, and two copies that agree
+/// are the setup for the next divergence.
+///
+/// The `match_all` arm is deliberately NOT shared, and that is a difference of question rather than of
+/// answer. [`clause_passed`] asks "did this clause pass", which decides eligibility for a notice about a
+/// future release. This asks "can this gate still be satisfied". Under `match_all` those come apart: a
+/// clause needing every value cannot be satisfied while one value is unknown, so one undecided value is
+/// enough here, where `clause_passed` would report not-passed and say nothing about why. Unifying them into
+/// one predicate would have to pick one of the two meanings for `match_all` and would silently hand the
+/// other caller the wrong one.
+///
+/// Takes the reason by value: the caller has no use for it once this declines, and threading a
+/// reference would make the `Err` construction clone a string on the path that is about to fail.
+fn undecided_gate(
+    result: &EvaluationResult,
+    reason: Option<String>,
+    match_all: bool,
+    role: ClauseRole,
+) -> Option<String> {
+    let reason = reason?;
+
+    if role.is_strict() {
+        return None;
+    }
+
+    // A `some` clause is decided by any value that passed, so an undecided sibling changes nothing.
+    // Under `match_all` no value can rescue the clause, so the question is only whether one was
+    // undecided -- which `reason` being `Some` already answered.
+    if !match_all && clause_passed(result, false) {
+        return None;
+    }
+
+    Some(reason)
 }
 
 /// True when the clause reached PASS, under the `match_all` its query was written with.

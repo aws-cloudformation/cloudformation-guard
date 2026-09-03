@@ -222,7 +222,60 @@ pub(crate) enum EvalResult {
 #[derive(Clone, Debug)]
 pub(crate) struct NotComparable {
     pub(crate) reason: String,
+    /// Why there was no answer, which is not recoverable from `reason`.
+    pub(crate) cause: Unanswerable,
     pub(crate) pair: LhsRhsPair,
+}
+
+/// Why a comparison had no answer.
+///
+/// Both kinds record `NotComparable` and both fail a clause closed, so for a long time nothing needed
+/// to tell them apart. `binary_operation` does: it turns an undecidable *gate* into an error so the
+/// rule fails closed instead of being skipped, and only one of these two may be treated that way.
+///
+/// [`Unanswerable::IncomparableKinds`] must not be, and the reason is a load-bearing idiom rather than
+/// caution. Rule authors write a value against both spellings it might carry -- the registry's
+/// `ScanOnPush == 'False' OR ScanOnPush == false` is the canonical shape -- and rely on the pairing
+/// that does not apply answering "no" rather than "unknown". Reading it as unknown makes
+/// `ECR_REPO_SCAN_ON_PUSH` fail on a compliant template; measured, 143 rules across the pinned
+/// aws-guard-rules-registry corpus move that way, most of them suppression tests expecting SKIP.
+/// `docs/KNOWN_ISSUES.md` already tracks that suppression as a defect whose repair needs those rules
+/// changed first, and this keeps that boundary exactly where it was.
+///
+/// [`Unanswerable::EngineGaveUp`] has no such constituency. The operands were of kinds the comparator
+/// has an arm for and the engine quit part way, so no rule can be relying on the answer -- there is no
+/// answer to rely on, and the same clause decides differently as the subject gets longer.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Unanswerable {
+    /// The operands are of kinds the comparator has no arm for, so it refused before comparing.
+    IncomparableKinds,
+    /// The operands were comparable and the evaluation was abandoned -- today, `fancy_regex`
+    /// exhausting its backtracking budget.
+    EngineGaveUp,
+}
+
+/// A reason with the cause that produced it, so the two cannot drift apart.
+///
+/// Paired rather than passed separately because the reason travels a long way from where the error was
+/// seen: through `is_one_of`, `elements_not_matched`, and two membership loops before anything builds a
+/// [`NotComparable`]. Every one of those hops used to carry a bare `String`, so a site that wanted the
+/// cause would have had to re-derive it from the wording -- which is a classifier that goes silently
+/// wrong the first time a message is reworded.
+#[derive(Clone, Debug)]
+pub(crate) struct Unanswered {
+    pub(crate) reason: String,
+    pub(crate) cause: Unanswerable,
+}
+
+impl Unanswered {
+    /// A refusal to compare two kinds, for the sites that build the wording themselves rather than
+    /// receiving an `Error`.
+    fn kinds(reason: String) -> Self {
+        Unanswered {
+            reason,
+            cause: Unanswerable::IncomparableKinds,
+        }
+    }
 }
 
 pub(crate) trait Comparator {
@@ -335,9 +388,12 @@ where
 /// The two reachable variants today are `NotComparable`, from `compare_values` under all five
 /// comparators, and `RegexError`, from `compare_eq` alone. Anything else still reports rather than
 /// aborts, because a wrong-looking message beats no verdict at all.
-fn unanswerable_reason(err: Error) -> String {
+/// Returns the cause beside the reason. Only this function sees the `Error`, so it is the one place
+/// that can classify without guessing, and every reason reaching a [`NotComparable`] from an error
+/// comes through here.
+fn unanswerable_reason(err: Error) -> Unanswered {
     match err {
-        Error::NotComparable(reason) => reason,
+        Error::NotComparable(reason) => Unanswered::kinds(reason),
 
         // `fancy_regex` returns a `Result` from `is_match` because its backtracking engine gives
         // up rather than running forever: a pattern holding a lookaround or a backreference cannot
@@ -349,21 +405,28 @@ fn unanswerable_reason(err: Error) -> String {
         // `fancy_regex`'s own message is reported rather than `RegexError`'s, which reads "Regex
         // expression parse error" -- true of a pattern that would not compile, and misleading
         // about one that compiled and then ran out of backtracking.
-        Error::RegexError(err) => {
-            format!("The regular expression could not be evaluated against the value: {err}")
-        }
+        Error::RegexError(err) => Unanswered {
+            reason: format!(
+                "The regular expression could not be evaluated against the value: {err}"
+            ),
+            cause: Unanswerable::EngineGaveUp,
+        },
 
-        rest => format!("The comparison could not be performed: {rest}"),
+        // Classified with the kind mismatches rather than given a third variant. Nothing reaches this
+        // arm today -- the doc comment above enumerates the two that do -- and the conservative
+        // reading is the one that leaves a gate's verdict where it already was.
+        rest => Unanswered::kinds(format!("The comparison could not be performed: {rest}")),
     }
 }
 
 fn not_comparable_because(
     lhs: Rc<PathAwareValue>,
     rhs: Rc<PathAwareValue>,
-    reason: String,
+    unanswered: Unanswered,
 ) -> ValueEvalResult {
     ValueEvalResult::ComparisonResult(ComparisonResult::NotComparable(NotComparable {
-        reason,
+        reason: unanswered.reason,
+        cause: unanswered.cause,
         pair: LhsRhsPair { lhs, rhs },
     }))
 }
@@ -591,6 +654,7 @@ fn not_comparable(lhs: Rc<PathAwareValue>, rhs: Rc<PathAwareValue>) -> ValueEval
             rhs: Rc::clone(&rhs),
         },
         reason: format!("Type not comparable, {}, {}", lhs, rhs),
+        cause: Unanswerable::IncomparableKinds,
     }))
 }
 
@@ -686,7 +750,7 @@ fn fail(lhs: Rc<PathAwareValue>, rhs: Rc<PathAwareValue>) -> ValueEvalResult {
 /// is the verdict -- and the claim it replaces, that promoting would change "the shape of the `ListIn`
 /// diff for no input that exists", was wrong about the input and about what moves.
 fn is_one_of(each: &PathAwareValue, rhsl: &[PathAwareValue]) -> Membership {
-    let mut unanswerable: Option<String> = None;
+    let mut unanswerable: Option<Unanswered> = None;
     for elem in rhsl {
         if elem == each {
             return Membership::Matched;
@@ -704,7 +768,7 @@ fn is_one_of(each: &PathAwareValue, rhsl: &[PathAwareValue]) -> Membership {
     }
 
     match unanswerable {
-        Some(reason) => Membership::Unanswerable(reason),
+        Some(unanswered) => Membership::Unanswerable(unanswered),
         None => Membership::NoMatch,
     }
 }
@@ -724,7 +788,11 @@ enum Membership {
     ///
     /// Carries the first reason rather than all of them, which is what the scalar arm reports and
     /// what a clause naming one pattern needs.
-    Unanswerable(String),
+    ///
+    /// Always [`Unanswerable::EngineGaveUp`] as things stand: [`is_one_of`] promotes only
+    /// `RegexError` and discards a kind mismatch. The cause is carried rather than assumed at the
+    /// consuming sites so that widening what gets promoted cannot silently reclassify a gate.
+    Unanswerable(Unanswered),
 }
 
 /// The left-hand elements that no right-hand element matched, and the first reason one of them could
@@ -736,17 +804,17 @@ enum Membership {
 fn elements_not_matched(
     lhsl: &[PathAwareValue],
     rhsl: &[PathAwareValue],
-) -> (Vec<Rc<PathAwareValue>>, Option<String>) {
+) -> (Vec<Rc<PathAwareValue>>, Option<Unanswered>) {
     let mut diff = Vec::new();
-    let mut unanswerable: Option<String> = None;
+    let mut unanswerable: Option<Unanswered> = None;
 
     for each in lhsl {
         match is_one_of(each, rhsl) {
             Membership::Matched => {}
             Membership::NoMatch => diff.push(Rc::new(each.clone())),
-            Membership::Unanswerable(reason) => {
+            Membership::Unanswerable(unanswered) => {
                 if unanswerable.is_none() {
-                    unanswerable = Some(reason);
+                    unanswerable = Some(unanswered);
                 }
                 diff.push(Rc::new(each.clone()));
             }
@@ -1005,6 +1073,10 @@ fn contained_in(lhs_value: Rc<PathAwareValue>, rhs_value: Rc<PathAwareValue>) ->
                         rhs: rhs_value.clone(),
                     },
                     reason: format!("Can not compare type {}, {}", lhs_value, rhs_value),
+                    // A list against a value that is not one. `compare_eq` has no arm for the pair, so
+                    // this is a refusal to compare kinds and not an abandoned evaluation -- which is
+                    // what keeps `Cat NOT IN [/^a+$/]` on the side of the boundary it was already on.
+                    cause: Unanswerable::IncomparableKinds,
                 }))
             }
         },
@@ -1045,7 +1117,7 @@ fn contained_in(lhs_value: Rc<PathAwareValue>, rhs_value: Rc<PathAwareValue>) ->
                 // spelling so that rule authors hear about the change before a pipeline does.
                 // Failing those cells here would land that change without its notice, and it moves
                 // cells of `every_operator_and_operand_shape_agrees_with_a_stated_oracle`.
-                let mut unanswerable: Option<String> = None;
+                let mut unanswerable: Option<Unanswered> = None;
                 let mut found = false;
                 for elem in rhsl {
                     if elem == rest {
@@ -1204,7 +1276,7 @@ impl Comparator for InOperation {
                 'each_lhs: for eachl in &lhs_selected {
                     let mut unanswerable_against: Option<(Rc<PathAwareValue>, StringContainment)> =
                         None;
-                    let mut unanswerable_membership: Option<(Rc<PathAwareValue>, String)> = None;
+                    let mut unanswerable_membership: Option<(Rc<PathAwareValue>, Unanswered)> = None;
                     let mut element_collision = false;
                     for eachr in &rhs_selected {
                         // The vacuous match, for a right operand that denotes a SET of candidate values.
@@ -1512,10 +1584,10 @@ impl Comparator for InOperation {
                                     match is_one_of(each, std::slice::from_ref(&**eachr)) {
                                         Membership::Matched => element_collision = true,
                                         Membership::NoMatch => {}
-                                        Membership::Unanswerable(reason) => {
+                                        Membership::Unanswerable(unanswered) => {
                                             if unanswerable_membership.is_none() {
                                                 unanswerable_membership =
-                                                    Some((Rc::clone(eachr), reason));
+                                                    Some((Rc::clone(eachr), unanswered));
                                             }
                                         }
                                     }
@@ -1602,10 +1674,13 @@ impl Comparator for InOperation {
                                 }
                             };
 
+                            // Kinds, not an abandoned evaluation: every wording above is about what the
+                            // operands are, and `found_in_string` refuses on the shape of the value
+                            // rather than starting a match it cannot finish.
                             unanswerable.push(not_comparable_because(
                                 Rc::clone(eachl),
                                 other,
-                                reason,
+                                Unanswered::kinds(reason),
                             ));
                             continue;
                         }
@@ -1614,11 +1689,11 @@ impl Comparator for InOperation {
                         // rather than getting a rule of its own. Same shape: nothing matched, one
                         // comparison had no answer, so there is no verdict to record in either polarity
                         // and the reason is what a rule author can act on.
-                        if let Some((other, reason)) = unanswerable_membership {
+                        if let Some((other, unanswered)) = unanswerable_membership {
                             unanswerable.push(not_comparable_because(
                                 Rc::clone(eachl),
                                 other,
-                                reason,
+                                unanswered,
                             ));
                             continue;
                         }
@@ -1851,13 +1926,13 @@ impl Comparator for EqOperation {
                 // error already stored. So with a left operand of `[1]` against a right of `["x", 1]` the
                 // clause failed on the right-hand extra and reported that `1` is not comparable with
                 // `"x"` -- a pairing that decided nothing, since `1` matched.
-                let mut unanswerable: Option<(Rc<PathAwareValue>, Rc<PathAwareValue>, String)> =
+                let mut unanswerable: Option<(Rc<PathAwareValue>, Rc<PathAwareValue>, Unanswered)> =
                     None;
                 let mut without_a_match =
                     |from: &[Rc<PathAwareValue>], against: &[Rc<PathAwareValue>]| {
                         let mut unmatched = Vec::with_capacity(from.len());
                         'each: for each in from {
-                            let mut refused: Option<(Rc<PathAwareValue>, String)> = None;
+                            let mut refused: Option<(Rc<PathAwareValue>, Unanswered)> = None;
                             for other in against {
                                 match compare_eq_unwrapping_a_one_element_list(each, other) {
                                     Ok(true) => continue 'each,
@@ -1873,8 +1948,8 @@ impl Comparator for EqOperation {
                             // `each` has no equal anywhere in `against`, so it is one of the values that
                             // fails the clause, and a pairing it could not answer is now worth reporting.
                             if unanswerable.is_none() {
-                                if let Some((other, reason)) = refused {
-                                    unanswerable = Some((Rc::clone(each), other, reason));
+                                if let Some((other, unanswered)) = refused {
+                                    unanswerable = Some((Rc::clone(each), other, unanswered));
                                 }
                             }
                             unmatched.push(Rc::clone(each));

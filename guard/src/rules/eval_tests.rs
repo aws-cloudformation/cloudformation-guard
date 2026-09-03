@@ -10410,34 +10410,53 @@ fn the_incomparable_membership_notice_is_emitted_where_fail_closed_moves_the_cla
 /// broke: a regex `compare_eq` could not evaluate "is read rather than discarded, which is what makes
 /// `Port in [/re/]` answer the same way as `Port == /re/`".
 ///
-/// # Why `Silent` is right on the gate cells, which say nothing at all
+/// # Why `Silent` is right on the gate cells, and why they no longer say nothing at all
 ///
 /// An earlier revision justified `Silent` here with "the clause now fails AND the report names the regex".
-/// The first half holds everywhere; the second is true only of the assertion cells. Measured on the gate
-/// cells: `rule r when Cat[*] NOT IN [/re/] { Cat EXISTS }` exits 0 with **zero bytes on stdout and zero on
-/// stderr**, and so does the `[[/re/]]` spelling, whose `(List, List)` pair reaches the engine through the
-/// zip. Asserted, the same clause exits 19 with about 500 bytes naming the regex. So two of these cells
-/// pin a run that reports nothing whatsoever about a clause the tool could not evaluate, and a
-/// justification resting on the report was resting on the wrong role.
+/// The first half held everywhere; the second was true only of the assertion cells. Measured before
+/// `undecided_gate`: `rule r when Cat[*] NOT IN [/re/] { Cat EXISTS }` exited 0 with **zero bytes on stdout
+/// and zero on stderr**, and so did the `[[/re/]]` spelling, whose `(List, List)` pair reaches the engine
+/// through the zip. Asserted, the same clause exited 19 with about 500 bytes naming the regex. So two of
+/// these cells pinned a run that reported nothing whatsoever about a clause the tool could not evaluate,
+/// and a justification resting on the report was resting on the wrong role.
 ///
 /// `Silent` stands anyway, and not by inertia. This notice makes one claim -- a future release fails closed
 /// where this one passes -- and both halves of it are false here. The pair was comparable in kind and the
 /// engine gave up, so there is no incomparable pair to warn about; and the clause does not pass, so the
-/// fail-closed change does not move it. `!=` already fails closed, and a gate reaching `NotComparable`
-/// skips its rule at exit 0 exactly as this one does, before and after. A notice would be two false
-/// sentences bought to fill a silence.
+/// fail-closed change does not move it. A notice would be two false sentences bought to fill a silence.
 ///
-/// **The silence is a real defect and it is not this one.** A `when` condition that could not be evaluated
-/// vanishes: no verdict, no report line, no diagnostic. That is a reporting gap, it predates every commit
-/// on this branch, and closing it means making an unevaluatable gate visible in the report rather than
-/// borrowing a deprecation notice to stand in for it. Left alone here deliberately, because a diagnostics
-/// change that moves report text is a different change with a different blast radius -- and recorded here
-/// so the next reader finds the measurement rather than re-deriving it from a green cell.
+/// **That silence was a real defect, it was not this one, and `undecided_gate` is what closed it.** The
+/// note this replaces said the gap "predates every commit on this branch" and that closing it "means making
+/// an unevaluatable gate visible in the report rather than borrowing a deprecation notice to stand in for
+/// it". That is exactly what happened, through the verdict rather than through report text: a spent budget
+/// in a gate is now an `IncompatibleError`, so `eval_rule` fails the rule closed instead of mapping a
+/// per-value FAIL to a rule-level SKIP. The two gate cells above therefore expect FAIL, and the run that
+/// produced zero bytes now exits 19 naming the rule and the reason. The assertion cells are unchanged and
+/// are the control: they already failed closed with the clause and operands named, and converting there
+/// would have replaced that with a rule-level failure and lost the comparison record.
+///
+/// **The silence is still there for one cell**, and that is the boundary this test now marks.
+/// `an_ordinary_regex_against_a_whole_list_in_a_condition` stays SKIP at exit 0 with nothing reported. Its
+/// FAIL is a *decided* one -- the element matches the pattern -- so no comparison result carries an
+/// undecided answer and `undecided_gate` has nothing to read. Its own cell comment traces the two operand
+/// shapes that make the predicate and the verdict disagree there.
+///
+/// The wider boundary is a refusal to compare *kinds*, which a gate must keep absorbing even when a
+/// comparison result does carry it. Rule authors write a value against both spellings it might carry --
+/// `ScanOnPush == 'False' OR ScanOnPush == false` is the registry's canonical shape -- and rely on the
+/// pairing that does not apply answering "no" rather than "unknown". Measured: reading every undecided
+/// comparison as unknown moves 143 rules of the pinned aws-guard-rules-registry corpus off their
+/// expectations, most of them suppression tests expecting SKIP, against 0 failed rules at the base.
+/// `ECR_REPO_SCAN_ON_PUSH` fails on a compliant template that way.
+///
+/// So `Unanswerable` splits the two causes and only `EngineGaveUp` fails a gate closed. That leaves the
+/// kind-mismatch half open, tracked in `docs/KNOWN_ISSUES.md`, whose repair still needs those registry
+/// rules changed first -- exactly the precondition `incomparable_membership_notice` already records.
 #[rstest::rstest]
 // The pattern is `CATASTROPHIC`, spelled out because a `#[case]` attribute cannot interpolate a const.
-#[case::a_catastrophic_regex_in_a_condition(
+#[case::a_catastrophic_regex_in_a_condition_fails_closed(
     "rule r when Cat[*] NOT IN [/(?!x)((a+)+)b/] { Cat EXISTS }",
-    Status::SKIP,
+    Status::FAIL,
     ExpectedNotice::Silent
 )]
 #[case::a_catastrophic_regex_asserted(
@@ -10449,14 +10468,22 @@ fn the_incomparable_membership_notice_is_emitted_where_fail_closed_moves_the_cla
 // a `compare_eq` arm, so the whole-list comparison is a real incomparability and the predicate fires.
 // It was the did-not-pass wording while a failing gate was noticed, and that wording is gone with the
 // gate that reached it -- a gate that fails answers the same before and after the fail-closed change.
+//
+// SKIP rather than FAIL, and this is the cell that separates `undecided_gate` from the predicate above
+// it. The two ask different questions of different operands. The predicate probes the whole left-hand
+// value against each element, so `compare_eq(Cat, /^a+$/)` refuses and it fires. The clause is decided
+// element by element, where `"aaa..."` against `/^a+$/` matches -- so `contained_in` answers Success,
+// `NOT IN` negates it, and the FAIL is a decided verdict with no undecided comparison result anywhere in
+// it. `undecided_gate` reads the results, finds nothing undecided, and declines. A whole-value refusal
+// that no comparison result carries is not something a gate can fail closed on.
 #[case::an_ordinary_regex_against_a_whole_list_in_a_condition(
     "rule r when Cat NOT IN [/^a+$/] { Cat EXISTS }",
     Status::SKIP,
     ExpectedNotice::Silent
 )]
-#[case::a_comparable_element_beside_the_catastrophic_one(
+#[case::a_comparable_element_beside_the_catastrophic_one_fails_closed(
     "rule r when Mixed[*] NOT IN [/(?!x)((a+)+)b/] { Mixed EXISTS }",
-    Status::SKIP,
+    Status::FAIL,
     ExpectedNotice::Silent
 )]
 #[case::the_whole_list_spelling_now_refuses(
