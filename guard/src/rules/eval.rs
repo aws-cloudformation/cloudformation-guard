@@ -1077,7 +1077,33 @@ struct ComparisonWithRhs {
 #[allow(dead_code)]
 struct NotComparableWithRhs {
     reason: String,
+    /// Why there was no answer, for the same reason [`operators::NotComparable`] carries it: the map-key
+    /// path has to tell a refusal to compare kinds from an evaluation the engine abandoned, and the
+    /// reason string cannot be classified after the fact.
+    cause: operators::Unanswerable,
     pair: LhsRhsPair,
+}
+
+/// A refusal to compare, built the same way at each of the three sites that raise one.
+///
+/// Shared so the classification happens once, in `operators::unanswerable_reason`, rather than three
+/// times by hand. Before this, `each_lhs_compare` matched `Error::NotComparable` and propagated
+/// everything else, so a `RegexError` from a spent backtracking budget left the evaluator entirely: the
+/// full report printed, then `main` reported "Error occurred Regex expression parse error for rules
+/// file" and exited 255, which `guard/tests/utils.rs` names `INTERNAL_FAILURE`. Measured on
+/// `Cfg[ keys == /(?!x)((a+)+)b/ ]`, the threshold was template-driven -- a seventeen-character key
+/// exited 19 and an eighteen-character key exited 255 -- and all four comparators were affected.
+fn map_key_refusal(
+    err: Error,
+    lhs: Rc<PathAwareValue>,
+    rhs: Rc<PathAwareValue>,
+) -> ComparisonResult {
+    let unanswered = operators::unanswerable_reason(err);
+    ComparisonResult::NotComparable(NotComparableWithRhs {
+        reason: unanswered.reason,
+        cause: unanswered.cause,
+        pair: LhsRhsPair { lhs, rhs },
+    })
 }
 
 struct UnResolvedRhs {
@@ -1108,7 +1134,13 @@ where
                         }));
                     }
 
-                    Err(Error::NotComparable(reason)) => {
+                    // Any refusal, not only `NotComparable`. This arm used to name that one variant and
+                    // leave a sibling `Err(e) => return Err(e)`, so a spent backtracking budget left the
+                    // evaluator unclassified; see `map_key_refusal`. Both kinds are now offered the
+                    // element-wise retries below, which is a second chance at a decidable answer rather
+                    // than a change of meaning: a shorter element may finish inside the budget where the
+                    // whole value did not.
+                    Err(e) => {
                         if lhs.is_list() {
                             // && each_rhs_resolved.is_scalar() {
                             if let PathAwareValue::List((_, inner)) = &*lhs {
@@ -1126,19 +1158,11 @@ where
                                             ));
                                         }
 
-                                        Err(Error::NotComparable(reason)) => {
-                                            statues.push(ComparisonResult::NotComparable(
-                                                NotComparableWithRhs {
-                                                    reason,
-                                                    pair: LhsRhsPair {
-                                                        lhs: Rc::new(each.clone()),
-                                                        rhs: Rc::clone(each_rhs_resolved),
-                                                    },
-                                                },
-                                            ));
-                                        }
-
-                                        Err(e) => return Err(e),
+                                        Err(e) => statues.push(map_key_refusal(
+                                            e,
+                                            Rc::new(each.clone()),
+                                            Rc::clone(each_rhs_resolved),
+                                        )),
                                     }
                                 }
                                 continue;
@@ -1165,21 +1189,11 @@ where
                                                 ));
                                             }
 
-                                            Err(Error::NotComparable(reason)) => {
-                                                statues.push(ComparisonResult::NotComparable(
-                                                    NotComparableWithRhs {
-                                                        reason,
-                                                        pair: LhsRhsPair {
-                                                            lhs: Rc::clone(&lhs),
-                                                            rhs: Rc::new(
-                                                                rhs_inner_single_element.clone(),
-                                                            ),
-                                                        },
-                                                    },
-                                                ));
-                                            }
-
-                                            Err(e) => return Err(e),
+                                            Err(e) => statues.push(map_key_refusal(
+                                                e,
+                                                Rc::clone(&lhs),
+                                                Rc::new(rhs_inner_single_element.clone()),
+                                            )),
                                         }
                                         continue;
                                     }
@@ -1187,16 +1201,12 @@ where
                             }
                         }
 
-                        statues.push(ComparisonResult::NotComparable(NotComparableWithRhs {
-                            reason,
-                            pair: LhsRhsPair {
-                                lhs: Rc::clone(&lhs),
-                                rhs: Rc::clone(each_rhs_resolved),
-                            },
-                        }));
+                        statues.push(map_key_refusal(
+                            e,
+                            Rc::clone(&lhs),
+                            Rc::clone(each_rhs_resolved),
+                        ));
                     }
-
-                    Err(e) => return Err(e),
                 }
             }
 
@@ -1258,7 +1268,14 @@ fn report_value<'r, 'value: 'r, 'loc: 'value>(
             None,
         ),
         //},
+        // The reason is carried rather than dropped. This arm bound the pair and discarded `reason`
+        // through the `..`, so a key comparison that had no answer recorded a bare FAIL and the console
+        // rendered it as "provided value [...] did not match expected value [...]" -- which asserts the
+        // comparison was made and answered no. For a spent backtracking budget that is false, and it is
+        // the sentence a rule author reads. Every other site that records a refusal already carries its
+        // reason into the `Error Message` slot; this one is brought into line.
         ComparisonResult::NotComparable(NotComparableWithRhs {
+            reason,
             pair:
                 LhsRhsPair {
                     rhs: rhs_value,
@@ -1269,7 +1286,7 @@ fn report_value<'r, 'value: 'r, 'loc: 'value>(
             QueryResult::Resolved(Rc::clone(lhs_value)),
             Some(QueryResult::Resolved(Rc::clone(rhs_value))),
             false,
-            None,
+            Some(reason.clone()),
         ),
         //            },
         ComparisonResult::UnResolvedRhs(UnResolvedRhs {
@@ -2136,6 +2153,8 @@ pub(super) fn real_binary_operation<'value, 'loc: 'value>(
     eval_context: &mut dyn EvalContext<'value, 'loc>,
 ) -> Result<EvaluationResult> {
     let mut statues: Vec<(QueryResult, Status)> = Vec::with_capacity(lhs.len());
+    // The first key comparison that had no answer, if any had none. See the return below.
+    let mut undecided: Option<String> = None;
 
     // One key per right-hand value, before anything counts them or compares against them.
     //
@@ -2190,6 +2209,21 @@ pub(super) fn real_binary_operation<'value, 'loc: 'value>(
                     }
                 };
 
+                // Read before the fold consumes `r`. A key whose comparison had no answer becomes a
+                // `Status::FAIL` like a key that plainly did not match, and one level up that means
+                // "not selected" -- so the selection silently shrinks by a key nobody decided about,
+                // and an assertion over the smaller selection can pass.
+                if undecided.is_none() {
+                    undecided = r.iter().find_map(|each| match each {
+                        ComparisonResult::NotComparable(nc)
+                            if nc.cause == operators::Unanswerable::EngineGaveUp =>
+                        {
+                            Some(nc.reason.clone())
+                        }
+                        _ => None,
+                    });
+                }
+
                 match cmp {
                     // Membership is satisfied by one match. Negated membership is not: a key is
                     // outside a set only if it differs from every element, so `NOT IN` folds with
@@ -2226,7 +2260,26 @@ pub(super) fn real_binary_operation<'value, 'loc: 'value>(
             }
         };
     }
-    Ok(EvaluationResult::QueryValueResult(statues))
+
+    // A selection nobody could decide fails the clause closed rather than selecting a subset.
+    //
+    // `undecided_gate` is the sibling of this, and the differences are why this is written out rather
+    // than calling it. There is no `role` to split on: `real_binary_operation`'s only caller is the
+    // `[ keys <op> ... ]` filter in `eval_context.rs`, and a filter predicate is always a gate, so the
+    // fail-closed direction is the only one available. And there is no decided-failure mirror, because
+    // a key that plainly does not match decides nothing about the selection -- it is simply not in it,
+    // which is the ordinary case rather than an answer about the whole filter.
+    //
+    // Known cost, and it is a cost rather than an oversight: `Cfg[ keys == /re/ ] !empty` over a key the
+    // pattern decidedly matches BESIDE an undecided key reports a failure, where three-valued logic
+    // would answer yes on the strength of the matching key. Telling those apart needs the enclosing
+    // operator, which this function is not given -- non-emptiness is decided there while membership is
+    // not, and only the caller knows which of the two it asked about. Nothing regresses: measured at
+    // `b8d3901e` that shape exited 255, so there is no correct behaviour here to preserve.
+    match undecided {
+        Some(reason) => Err(Error::UndecidableComparison(reason)),
+        None => Ok(EvaluationResult::QueryValueResult(statues)),
+    }
 }
 
 #[allow(clippy::never_loop)]

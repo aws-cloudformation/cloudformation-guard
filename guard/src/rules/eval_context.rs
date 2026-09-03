@@ -2575,27 +2575,47 @@ fn own_skip_reason(record: &EventRecord<'_>) -> Option<String> {
 
         // A clause that failed *and* explained itself, reached while walking a rule that skipped.
         //
-        // Only two things record an explanation on a comparison: a reference that resolved to no
-        // values, and operands that cannot be compared. Both mean the clause could not be decided,
-        // as opposed to being decided false -- the ordinary failure arm records `message: None`. So
-        // finding one here says the rule did not apply because a condition was undecidable, which
-        // is a different situation from a condition that was simply not met, and the only one worth
-        // interrupting an operator over.
+        // The wording claims only what a SKIP proves. It used to say the condition "could not be
+        // decided", and that sentence is false in both cases that reach here.
         //
-        // This is the quietest wrong answer left in the evaluator. `when ... Size > 10` against a
-        // template carrying `Size: "50"` -- a string, which CloudFormation templates produce
-        // routinely -- cannot be decided, so the condition does not pass, so the rule is reported
-        // as not applicable and its body never runs. Exit 0, nothing named. The rule still does not
-        // enforce, and it cannot be made to from here: both FAIL and SKIP on a condition drop the
-        // block it guards, so telling them apart needs a status that means "could not tell", which
-        // `Status` does not have. Saying so is what is available, and it turns a silent non-check
-        // into a visible one.
+        // A refusal to compare KINDS is a decided answer under the semantics `Unanswerable` draws:
+        // `NOT IN` reads such a pair as "not a member", which rule authors rely on when they write a
+        // value against both spellings it might carry. So a condition that failed on one was decided,
+        // and calling it undecidable contradicts the distinction the evaluator is built on.
+        //
+        // A comparison the engine ABANDONED cannot have produced this SKIP either, because
+        // `undecided_gate` raises on one instead of letting it answer -- so reaching a SKIP with such an
+        // explanation recorded proves some OTHER value decided the clause. Measured on
+        // `when Vals[*].V NOT IN [/(?!x)((a+)+)b/, 7]` over `V: 7` and a thirty-character `a` string:
+        // the rule skips because `7` is named by the denylist, and the old sentence blamed the regex
+        // pair -- the one pair the evaluator explicitly refused to let decide anything.
+        //
+        // So both facts are stated and neither is attributed: the condition was not met, and this is
+        // what one of its comparisons reported. A reader who needs to know whether the explanation
+        // caused the outcome has the clause and the operands in front of them.
+        //
+        // The other half of this arm's documented population turned out to be unreachable. A reference
+        // that resolved to no values records its explanation through `EmptyQueryResult`, not through a
+        // comparison, and as a gate it produces `Status::SKIP` rather than the FAIL this arm matches --
+        // measured, `when Missing.Thing == 5 { ... }` skips the rule with no explanation line at all.
+        // Worth naming as a gap rather than leaving as a claim this arm cannot support.
+        //
+        // What this comment used to assert about the fix is disproved and the correction matters more
+        // than the wording. It said an undecidable condition "cannot be made to enforce from here:
+        // both FAIL and SKIP on a condition drop the block it guards, so telling them apart needs a
+        // status that means 'could not tell', which `Status` does not have". True of `Status`, and the
+        // evaluator does not need one: an `Err` is that third value, and `undecided_gate` uses it to
+        // fail such a rule closed. The kind-mismatch half stays open, tracked in
+        // `docs/KNOWN_ISSUES.md`, because closing it needs the registry rules that depend on the
+        // current reading changed first -- a precondition, not an impossibility. `when ... Size > 10`
+        // against `Size: "50"` is still the quiet wrong answer, and it is quiet for that reason.
         Some(RecordType::ClauseValueCheck(ClauseCheck::Comparison(ComparisonClauseCheck {
             status: Status::FAIL,
             message: Some(explanation),
             ..
         }))) => Some(format!(
-            "the rule did not apply because one of its conditions could not be decided: {}",
+            "the rule did not apply because one of its conditions was not met; a comparison it made \
+             reported: {}",
             explanation
         )),
 

@@ -391,7 +391,10 @@ where
 /// Returns the cause beside the reason. Only this function sees the `Error`, so it is the one place
 /// that can classify without guessing, and every reason reaching a [`NotComparable`] from an error
 /// comes through here.
-fn unanswerable_reason(err: Error) -> Unanswered {
+/// `pub(super)` so `each_lhs_compare` on the map-key path can classify with this one rather than
+/// growing a second copy. That path used to propagate anything that was not `NotComparable`, which is
+/// how a spent backtracking budget in `[ keys <op> ... ]` reached `main` and exited 255.
+pub(super) fn unanswerable_reason(err: Error) -> Unanswered {
     match err {
         Error::NotComparable(reason) => Unanswered::kinds(reason),
 

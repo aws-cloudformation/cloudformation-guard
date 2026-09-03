@@ -1131,6 +1131,72 @@ mod validate_tests {
         );
     }
 
+    /// A map-key filter whose regex ran out of budget fails the clause closed instead of crashing.
+    ///
+    /// The `[ keys <op> ... ]` path is `real_binary_operation`, and it reached none of the machinery the
+    /// other spellings of this question use: `each_lhs_compare` matched `Error::NotComparable` and
+    /// propagated everything else, so a `RegexError` left the evaluator unclassified and `main` exited
+    /// 255 -- `INTERNAL_FAILURE`, the code this repository uses for the tool itself breaking.
+    ///
+    /// **The exit code is the assertion that matters, and a verdict-only test would have passed while
+    /// the tool was crashing.** The crash printed the entire report first, `k_eq_regex` included, and
+    /// only then emitted "Error occurred ..." and exited 255. So `contains("k_eq_regex")` was satisfied,
+    /// the rule was already listed as FAILED, and every string in the report read normally. Measured by
+    /// key length, all four comparators alike:
+    ///
+    /// ```text
+    /// 10 -> 19    17 -> 19    18 -> 255    19 -> 255    30 -> 255
+    /// ```
+    ///
+    /// Eighteen characters is where `(?!x)((a+)+)b` gives up on this path, which makes the threshold a
+    /// property of the template rather than of the rule: one more byte in a map key turned a verdict
+    /// into a crash.
+    #[test]
+    fn an_undecided_map_key_filter_does_not_crash_the_run() {
+        let mut reader = Reader::default();
+        let mut writer = Writer::new(WBVec(vec![])).expect("Failed to create writer.");
+
+        let status_code = ValidateTestRunner::default()
+            .data(vec!["undecided-map-key-template.json"])
+            .rules(vec!["undecided_map_key_filter.guard"])
+            .show_summary(vec!["all"])
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(
+            StatusCode::VALIDATION_ERROR,
+            status_code,
+            "a map-key comparison that could not be answered must fail the clause, not the tool; \
+             {} here is INTERNAL_FAILURE and says cfn-guard broke rather than that the template did",
+            StatusCode::INTERNAL_FAILURE
+        );
+
+        let output = writer.stripped().expect("failed to read the writer");
+        assert!(
+            !output.contains("Error occurred"),
+            "the run must not report an unclassified error after printing its report:\n{}",
+            output
+        );
+        assert!(
+            output.contains("k_eq_regex"),
+            "the rule holding the undecidable key comparison must be named:\n{}",
+            output
+        );
+        assert!(
+            output.contains("unrelated_violation"),
+            "failing the clause closed must not discard the rest of the file:\n{}",
+            output
+        );
+        // The reason travels with the record. `report_value` bound the pair and dropped it, so an
+        // eighteen-character key was rendered as "did not match expected value" -- a claim that the
+        // comparison was made and answered no, about a comparison that was abandoned.
+        assert!(
+            output.contains("The regular expression could not be evaluated against the value"),
+            "the report must say the comparison had no answer rather than that the key did not \
+             match:\n{}",
+            output
+        );
+    }
+
     /// Two keys spelled the same way in one template must compare equal, and must not compare
     /// unequal.
     ///
@@ -1989,24 +2055,35 @@ mod validate_tests {
         }
     }
 
-    /// A condition that could not be decided has to say so, and a condition that was merely false
-    /// must not.
+    /// A rule that did not apply explains itself when one of its comparisons reported something, and
+    /// stays quiet when none did.
     ///
     /// This is the quietest wrong answer left in the evaluator, and the reason the discrimination
-    /// matters. `when ... Size > 10` against a template carrying `Size: "50"` cannot be decided, so
-    /// the condition does not pass, so the rule is reported as not applicable and its unencrypted
-    /// volume is never checked. Exit 0. A template with `Size: 50` fails the same rule.
+    /// matters. `when ... Size > 10` against a template carrying `Size: "50"` refuses to compare a
+    /// string with an integer, so the condition does not pass, so the rule is reported as not
+    /// applicable and its unencrypted volume is never checked. Exit 0. A template with `Size: 50`
+    /// fails the same rule.
     ///
-    /// The rule still does not enforce, and it cannot be made to from here: on a condition, both
-    /// FAIL and SKIP drop the block being guarded, so telling "could not decide" from "decided
-    /// false" at the point it matters needs a status meaning "could not tell", which `Status` does
-    /// not have. What is available is saying so, which turns a silent non-check into a visible one.
-    /// When that third state exists, this test is where the stronger behaviour gets asserted.
+    /// The probe is the new half of the sentence rather than the old one, and the old one had to go.
+    /// It read "one of its conditions could not be decided", which is false here: a refusal to compare
+    /// kinds is a decided answer under the reading `Unanswerable` draws, and `NOT IN` relies on it. It
+    /// was also false in the other direction -- a comparison the engine abandoned cannot produce a SKIP
+    /// at all, because `undecided_gate` raises on one -- so the sentence was wrong about both of the
+    /// cases that reach it. `own_skip_reason` says which measurements established that.
     ///
-    /// The false-condition case is asserted alongside because the discriminator is the whole
-    /// mechanism: only an undecidable comparison records an explanation, so a rule that legitimately
-    /// does not apply stays quiet. Without that, every inapplicable rule in a large ruleset would
-    /// grow a line of output and the signal would be worthless.
+    /// This rule still does not enforce, and the reason is a precondition rather than the impossibility
+    /// this comment used to claim. It said telling "could not decide" from "decided false" needs a
+    /// status meaning "could not tell", which `Status` does not have; true of `Status`, and the
+    /// evaluator does not need one, because an `Err` is that third value and `undecided_gate` already
+    /// fails such a rule closed with it. What keeps this case quiet is that closing the kind-mismatch
+    /// half would move the aws-guard-rules-registry rules that depend on the current reading -- tracked
+    /// in `docs/KNOWN_ISSUES.md`. When those change, this test is where the stronger behaviour gets
+    /// asserted.
+    ///
+    /// The quiet case is asserted alongside because the discriminator is the whole mechanism: only a
+    /// comparison that recorded an explanation produces a line, so a rule that legitimately does not
+    /// apply stays silent. Without that, every inapplicable rule in a large ruleset would grow a line
+    /// of output and the signal would be worthless.
     #[rstest::rstest]
     #[case(None, "volume-size-as-string-template.yaml", true)]
     #[case(Some("json"), "volume-size-as-string-template.yaml", true)]
@@ -2042,7 +2119,7 @@ mod validate_tests {
         );
 
         let output = writer.stripped().expect("failed to read the writer");
-        let explained = output.contains("could not be decided");
+        let explained = output.contains("a comparison it made reported");
         assert_eq!(
             explained,
             expect_explanation,
@@ -2135,8 +2212,8 @@ mod validate_tests {
     /// The order is what matters. A type block attaches a summary to its own SKIP, so taking `own`
     /// first stops the recursion and the deeper explanation is built, recorded, and never read. Here
     /// the deeper one is the useful one: `Size: "50"` is a string, so the gate's comparison against 10
-    /// cannot be decided, and "a condition could not be decided" is a different thing for an author to
-    /// read than "every volume was exempted".
+    /// refuses on kinds, and a line naming that refusal is a different thing for an author to read
+    /// than "every volume was exempted".
     ///
     /// Asserting the absence of the block summary is what makes this a test of the ordering rather
     /// than of the message: with `own` taken first, the summary is what would appear.
@@ -2159,7 +2236,7 @@ mod validate_tests {
 
         let output = writer.stripped().expect("failed to read the writer");
         assert!(
-            output.contains("could not be decided"),
+            output.contains("a comparison it made reported"),
             "the console must give the specific reason the condition failed:\n{}",
             output
         );
