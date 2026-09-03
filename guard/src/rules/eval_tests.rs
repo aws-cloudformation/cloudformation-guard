@@ -9922,9 +9922,25 @@ fn the_incomparable_membership_notice_survives_a_failure_the_file_does_not_repor
 /// `compare_eq`'s arms rather than a judgment call. `(String, Regex)` is an arm, so a spent budget
 /// there is a `RegexError`. `(List, Regex)` is not an arm at all: it falls through to `compare_values`,
 /// whose catch-all refuses with `NotComparable`, which is a real incomparability and keeps its notice.
-/// The last cell follows from the same fact -- the whole-list spelling never reaches the regex engine,
-/// so this fix cannot touch it, and its notice remains the whole-value-versus-element divergence
-/// `incomparable_membership` documents rather than anything to do with regexes.
+/// The last cell does NOT follow from the same fact, and reading it that way is the mistake worth
+/// naming here. "`(List, Regex)` is not an arm, so the whole-list spelling never reaches the engine" is
+/// a true sentence about `incomparable_membership`, which compares the WHOLE left-hand value against
+/// each element and therefore does ask `compare_eq(List, Regex)`. It is a false sentence about the
+/// CLAUSE, which also runs `contained_in`'s element-wise pass, where each String element of `Cat` meets
+/// the `Regex` through the `(String, Regex)` arm that builds the pattern and runs it. One sentence about
+/// a predicate got read as a sentence about a clause, and the cell then pinned a verdict the predicate
+/// has no say over.
+///
+/// So the last cell is a `RegexError` case after all, and it now refuses. Measured on this input:
+/// `One not in [/re/]` for a scalar `One` exits 19 with the reason, `Cat[*] not in [/re/]` exits 19 with
+/// the reason, and `Cat not in [/re/]` exited 0 with a notice. Two spellings of one question already
+/// answered 19, and this cell pinned the third as correct. `operators.rs` states the requirement it
+/// broke: a regex `compare_eq` could not evaluate "is read rather than discarded, which is what makes
+/// `Port in [/re/]` answer the same way as `Port == /re/`".
+///
+/// `Silent` rather than the did-not-pass wording, and that is measured rather than derived. The clause
+/// now fails AND the report names the regex, so the visibility gate suppresses the notice; the recorded
+/// deprecation count for this cell is zero.
 #[rstest::rstest]
 // The pattern is `CATASTROPHIC`, spelled out because a `#[case]` attribute cannot interpolate a const.
 #[case::a_catastrophic_regex_in_a_condition(
@@ -9947,10 +9963,10 @@ fn the_incomparable_membership_notice_survives_a_failure_the_file_does_not_repor
     Status::SKIP,
     ExpectedNotice::Silent
 )]
-#[case::the_whole_list_spelling_is_untouched(
+#[case::the_whole_list_spelling_now_refuses(
     "rule r { Cat NOT IN [/(?!x)((a+)+)b/] }",
-    Status::PASS,
-    ExpectedNotice::Passed
+    Status::FAIL,
+    ExpectedNotice::Silent
 )]
 fn a_spent_backtracking_budget_is_not_an_incomparable_pair(
     #[case] rules: &str,

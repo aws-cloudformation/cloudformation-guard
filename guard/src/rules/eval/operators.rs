@@ -626,41 +626,117 @@ fn fail(lhs: Rc<PathAwareValue>, rhs: Rc<PathAwareValue>) -> ValueEvalResult {
 /// only add a match, never remove one, and `PartialEq` stays first because it short circuits on the
 /// common case and costs one comparison on a path that runs one anyway.
 ///
-/// `unwrap_or(false)` rather than the `RegexError` promotion the scalar arm does. `Err` here is
-/// `NotComparable` in every case the suite reaches, it arrives constantly, and swallowing it is the
-/// point: a pair that cannot be compared is not a match, so the element belongs in the diff below rather
-/// than aborting the clause. `compare_eq`'s `(_, _)` fall-through asks `compare_values`, whose own
-/// `(_, _)` refuses any pairing of kinds it has no arm for, and a denylist written beside values of
-/// another kind is ordinary rather than exotic.
+/// `NotComparable` is swallowed and `RegexError` is promoted, which is the split the scalar arm of
+/// `contained_in` already makes at its own membership loop. `Err` here is `NotComparable` in every
+/// reachable case but one, it arrives constantly, and swallowing it is the point: a pair that cannot be
+/// compared is not a match, so the element belongs in the diff below rather than aborting the clause.
+/// `compare_eq`'s `(_, _)` fall-through asks `compare_values`, whose own `(_, _)` refuses any pairing of
+/// kinds it has no arm for, and a denylist written beside values of another kind is ordinary rather than
+/// exotic.
 ///
-/// Measured, by replacing this `unwrap_or(false)` with a panic on `Err`: 58 tests redden, one recorded
-/// error each, all 58 `NotComparable` from that fall-through -- `int, array` 26, `String, array` 12,
-/// `map, array` 8, `int, String` 8, `array, int` 4. (`cargo test --all` counts them 116 times, because
-/// the lib target and the bin target each compile this module.) So this is not an unreachable arm kept
-/// for safety. The sibling scalar arm below swallows the same error through its own `Err(_) => {}`, for
-/// the reason written out there: `NOT IN` against an operand of a kind it cannot be compared with
-/// currently passes, `docs/KNOWN_ISSUES.md` records that suppression as a tracked defect, and
-/// `incomparable_membership` in `eval.rs` warns rule authors before it changes. Two sites, one reading.
+/// Measured, by replacing the `Err(_) => {}` arm below with a panic on `Err`: 58 tests redden, one
+/// recorded error each, all 58 `NotComparable` from that fall-through -- `int, array` 26,
+/// `String, array` 12, `map, array` 8, `int, String` 8, `array, int` 4. (`cargo test --all` counts them
+/// 116 times, because the lib target and the bin target each compile this module.) So this is not an
+/// unreachable arm kept for safety. The sibling scalar arm below swallows the same error through its own
+/// `Err(_) => {}`, for the reason written out there: `NOT IN` against an operand of a kind it cannot be
+/// compared with currently passes, `docs/KNOWN_ISSUES.md` records that suppression as a tracked defect,
+/// and `incomparable_membership` in `eval.rs` warns rule authors before it changes. Two sites, one
+/// reading.
+///
+/// Two probes, two questions, and the 58 answers only the first. A panic reddens every test that
+/// *reaches* the line, which is 58. Promoting to [`Membership::Unanswerable`] reddens only the tests
+/// whose *verdict or message moves*, which is 11 -- both counted as distinct tests, so 116 and 22 are
+/// the same two figures doubled across the lib and bin targets. So 58 execute this arm and 11 depend on
+/// what it returns, and the 47 in between run the line without caring: they find a match on another
+/// element, or their verdict is already decided. A reader who reaches for the promotion probe and gets
+/// 11 has measured the second question, not contradicted the first.
 ///
 /// The other two errors `compare_eq` can raise are not alike. A NaN against a numeric range cannot
 /// arrive, for the reason `compare_eq`'s own note gives -- it enumerates the four `Float` construction
 /// sites that gate a non-finite one. `RegexError` splits in two. A pattern that will not compile cannot
 /// arrive, because `parse_regex_inner` answers `nom::Err::Failure` unless `Regex::try_from` accepted the
 /// pattern first, and no data format has a regex spelling. A pattern that compiled and then exhausted
-/// `fancy_regex`'s backtracking budget does arrive here: the same panic probe fires with
-/// `Vals IN [/(?!x)((a+)+)b/]` against a `Vals` holding one thirty-character string of `a`s.
+/// `fancy_regex`'s backtracking budget does arrive here, raised by `reg.is_match(s)` at the foot of
+/// `compare_eq`: the same panic probe fires with `Vals IN [/(?!x)((a+)+)b/]` against a `Vals` holding one
+/// thirty-character string of `a`s.
 ///
-/// That is a divergence from the scalar arm rather than a shape with no inputs, and it is open. On that
-/// value `Val NOT IN [/(?!x)((a+)+)b/]` fails and reports that the regex could not be evaluated, while
-/// `Vals NOT IN [/(?!x)((a+)+)b/]` passes carrying no message at all -- a denylist admitting a value it
-/// could not evaluate, which is what
-/// `a_regex_in_a_list_literal_fails_the_clause_instead_of_aborting` closed for the scalar spelling. No
-/// cell covers it through this arm, and promoting it moves a verdict, so it is not a change to make from
-/// a comment. Recorded here because `NotComparable` is what `unwrap_or(false)` is for, and this is the
-/// shape to read first if the promotion is ever added.
-fn is_one_of(each: &PathAwareValue, rhsl: &[PathAwareValue]) -> bool {
-    rhsl.iter()
-        .any(|elem| elem == each || compare_eq(each, elem).unwrap_or(false))
+/// That one is promoted, and the direction is the codebase's own requirement rather than a preference for
+/// two spellings agreeing. The scalar arm below states the requirement: a regex `compare_eq` could not
+/// evaluate "is read rather than discarded, which is what makes `Port in [/re/]` answer the same way as
+/// `Port == /re/`". This arm never honored it. For a `Size` of thirty `a` characters,
+/// `Size NOT IN [/(?!x)((a+)+)b/]` exited 19 as a scalar and 0 as a list, so what the promotion changes
+/// is the verdict -- and the claim it replaces, that promoting would change "the shape of the `ListIn`
+/// diff for no input that exists", was wrong about the input and about what moves.
+fn is_one_of(each: &PathAwareValue, rhsl: &[PathAwareValue]) -> Membership {
+    let mut unanswerable: Option<String> = None;
+    for elem in rhsl {
+        if elem == each {
+            return Membership::Matched;
+        }
+        match compare_eq(each, elem) {
+            Ok(true) => return Membership::Matched,
+            Ok(false) => {}
+            Err(err @ Error::RegexError(_)) => {
+                if unanswerable.is_none() {
+                    unanswerable = Some(unanswerable_reason(err));
+                }
+            }
+            Err(_) => {}
+        }
+    }
+
+    match unanswerable {
+        Some(reason) => Membership::Unanswerable(reason),
+        None => Membership::NoMatch,
+    }
+}
+
+/// What a right-hand list says about one left-hand element.
+///
+/// Three answers because `compare_eq` has three outcomes, and folding the middle one into
+/// [`Membership::NoMatch`] is what let a denylist admit a value. `Matched` outranks
+/// `Unanswerable` inside [`is_one_of`] rather than at its callers: once an element matches, the
+/// answer did not depend on the comparison that failed, so there is nothing left to report.
+enum Membership {
+    /// Some right-hand element matched.
+    Matched,
+    /// No right-hand element matched, and every comparison had an answer.
+    NoMatch,
+    /// No right-hand element matched, and at least one comparison had no answer.
+    ///
+    /// Carries the first reason rather than all of them, which is what the scalar arm reports and
+    /// what a clause naming one pattern needs.
+    Unanswerable(String),
+}
+
+/// The left-hand elements that no right-hand element matched, and the first reason one of them could
+/// not be decided.
+///
+/// Both branches below need this pair, and both used to build the diff with the same four lines. The
+/// reason travels with the diff because it is only about elements that landed in it: an element that
+/// matched is decided, so a pattern that failed against it changes no verdict.
+fn elements_not_matched(
+    lhsl: &[PathAwareValue],
+    rhsl: &[PathAwareValue],
+) -> (Vec<Rc<PathAwareValue>>, Option<String>) {
+    let mut diff = Vec::new();
+    let mut unanswerable: Option<String> = None;
+
+    for each in lhsl {
+        match is_one_of(each, rhsl) {
+            Membership::Matched => {}
+            Membership::NoMatch => diff.push(Rc::new(each.clone())),
+            Membership::Unanswerable(reason) => {
+                if unanswerable.is_none() {
+                    unanswerable = Some(reason);
+                }
+                diff.push(Rc::new(each.clone()));
+            }
+        }
+    }
+
+    (diff, unanswerable)
 }
 
 fn contained_in(lhs_value: Rc<PathAwareValue>, rhs_value: Rc<PathAwareValue>) -> ValueEvalResult {
@@ -703,13 +779,22 @@ fn contained_in(lhs_value: Rc<PathAwareValue>, rhs_value: Rc<PathAwareValue>) ->
                 // range or a regex reaches the function that knows about them, and the whole-list
                 // membership test asks `compare_eq` on the list itself for the same reason.
                 //
-                // The two are not both exercised, and it is the membership one that is not. Measured by
-                // replacing each `unwrap_or(false)` with a panic on `Err` in the same build: the one
-                // inside `is_one_of` fires for 58 tests, and this one -- `compare_eq(&lhs_value, elem)`
-                // just below -- fires for none, anywhere in the lib suite. So its error path has no
-                // coverage at all, and a reader reasoning about what this branch swallows should not
-                // assume the sibling's 58 arrivals say anything about this line. `is_one_of`'s own
-                // comment carries the kinds that do arrive there.
+                // The two swallow different populations, and the count from one says nothing about the
+                // other. Measured by panicking on `Err` at this site alone, with the `flat_subset`
+                // short circuit left in place: 18 lib tests reach it, 16 carrying `NotComparable` and 2
+                // carrying `RegexError`. The sibling inside `is_one_of` reaches 58, all
+                // `NotComparable`, so a reader carrying 58 across to this line would be describing a
+                // different set.
+                //
+                // This corrects the measurement 2631880 recorded here, which read "fires for none,
+                // anywhere in the lib suite". That was taken without distinguishing the two error
+                // kinds and is wrong about `NotComparable`: 16 tests drove one through this line before
+                // this branch was touched, which is why promoting `RegexError` alone moves no cell of
+                // theirs. What was true, and is the half worth keeping, is that the `RegexError` path
+                // here had no coverage. The 2 cells above are the first: they are
+                // `a_denylist_refuses_a_value_it_could_not_evaluate_in_either_spelling`'s two nested
+                // spellings, and before them nothing in the suite had ever driven a regex failure
+                // through this comparison.
                 //
                 // The subset test used to stay on `PartialEq`, to match the all-flat branch below. That
                 // matched the branch and left the same hole in it: a range beside a list-valued
@@ -786,13 +871,26 @@ fn contained_in(lhs_value: Rc<PathAwareValue>, rhs_value: Rc<PathAwareValue>) ->
                 // compared. Measured rather than reasoned: `Empty NOT IN [1,2,3]` and
                 // `Empty NOT IN [1,2,3,[9]]` each print nothing on stderr. So the guard was not holding
                 // a line that notice was about to move.
+                // The membership reading beside the subset one raises on its own, and it used to
+                // swallow that too. `compare_eq` recurses through a pair of lists element by
+                // element, so for a `Size` of `["aaa..."]` the pair `(Size, [/re/])` reaches
+                // `compare_eq(String, Regex)` and raises from there. The element-wise pass above
+                // never sees that pattern -- `compare_eq` has no `(String, List)` arm and falls
+                // through to `compare_values`, whose catch-all refuses on the shapes before any regex
+                // runs -- so this call site is the only one that can report it, and
+                // `Size NOT IN [[/(?!x)((a+)+)b/]]` exited 0 while the unnested spelling exited 19.
+                //
+                // `if !flat_subset` is the short circuit the `flat_subset ||` expression this replaced
+                // had for free, and it is kept deliberately rather than by habit. Without it the
+                // membership comparison runs on every input that reaches this branch instead of only
+                // the ones that need it: measured with a panic at that arm, arrivals went from 18 lib
+                // tests to 39. No verdict moves either way, because a true `flat_subset` decides the
+                // clause before `unanswerable` is read, so the difference is work done and the
+                // population any future probe here measures. It also keeps the vacuous case cheap:
+                // with the `is_empty` guard gone, an empty left-hand list makes `flat_subset` true, so
+                // it now skips the membership loop rather than walking a denylist it cannot match.
                 if rhsl.iter().any(|elem| elem.is_list()) {
-                    let diff = lhsl
-                        .iter()
-                        .filter(|each| !is_one_of(each, rhsl))
-                        .cloned()
-                        .map(Rc::new)
-                        .collect::<Vec<_>>();
+                    let (diff, mut unanswerable) = elements_not_matched(lhsl, rhsl);
                     // An open question is deliberately NOT answered here. `IN` for a list has two
                     // readings, and which one an empty left-hand side should get is unresolved
                     // upstream: under the subset reading every element of `[]` is in the denylist
@@ -812,35 +910,63 @@ fn contained_in(lhs_value: Rc<PathAwareValue>, rhs_value: Rc<PathAwareValue>) ->
                     // the rest of the empty-left-hand cells follow from it. An allowlist spelled
                     // `x IN <list>` is what the second one protects.
                     let flat_subset = diff.is_empty();
-                    if flat_subset
-                        || rhsl.iter().any(|elem| {
-                            elem == &*lhs_value || compare_eq(&lhs_value, elem).unwrap_or(false)
-                        })
-                    {
-                        ValueEvalResult::ComparisonResult(ComparisonResult::Success(
+
+                    let mut whole_list_member = false;
+                    if !flat_subset {
+                        for elem in rhsl {
+                            if elem == &*lhs_value {
+                                whole_list_member = true;
+                                break;
+                            }
+                            match compare_eq(&lhs_value, elem) {
+                                Ok(true) => {
+                                    whole_list_member = true;
+                                    break;
+                                }
+                                Ok(false) => {}
+                                Err(err @ Error::RegexError(_)) => {
+                                    if unanswerable.is_none() {
+                                        unanswerable = Some(unanswerable_reason(err));
+                                    }
+                                }
+                                Err(_) => {}
+                            }
+                        }
+                    }
+
+                    // Either reading matching outranks a reason, for `Membership::Matched`'s reason:
+                    // the verdict did not rest on the comparison that failed.
+                    match (flat_subset || whole_list_member, unanswerable) {
+                        (true, _) => ValueEvalResult::ComparisonResult(ComparisonResult::Success(
                             Compare::ListIn(ListIn::new(vec![], lhs_value, rhs_value)),
-                        ))
-                    } else {
-                        ValueEvalResult::ComparisonResult(ComparisonResult::Fail(Compare::ListIn(
-                            ListIn::new(diff, lhs_value, rhs_value),
-                        )))
+                        )),
+
+                        (false, Some(reason)) => {
+                            not_comparable_because(lhs_value, rhs_value, reason)
+                        }
+
+                        (false, None) => ValueEvalResult::ComparisonResult(ComparisonResult::Fail(
+                            Compare::ListIn(ListIn::new(diff, lhs_value, rhs_value)),
+                        )),
                     }
                 } else {
-                    let diff = lhsl
-                        .iter()
-                        .filter(|each| !is_one_of(each, rhsl))
-                        .cloned()
-                        .map(Rc::new)
-                        .collect::<Vec<_>>();
+                    let (diff, unanswerable) = elements_not_matched(lhsl, rhsl);
 
-                    if diff.is_empty() {
-                        ValueEvalResult::ComparisonResult(ComparisonResult::Success(
+                    // An empty diff cannot carry a reason: an element with no answer is put in the
+                    // diff beside the ones that plainly did not match, so `(true, _)` is `(true,
+                    // None)` and the wildcard states that rather than admitting a fourth case.
+                    match (diff.is_empty(), unanswerable) {
+                        (true, _) => ValueEvalResult::ComparisonResult(ComparisonResult::Success(
                             Compare::ListIn(ListIn::new(diff, lhs_value, rhs_value)),
-                        ))
-                    } else {
-                        ValueEvalResult::ComparisonResult(ComparisonResult::Fail(Compare::ListIn(
-                            ListIn::new(diff, lhs_value, rhs_value),
-                        )))
+                        )),
+
+                        (false, Some(reason)) => {
+                            not_comparable_because(lhs_value, rhs_value, reason)
+                        }
+
+                        (false, None) => ValueEvalResult::ComparisonResult(ComparisonResult::Fail(
+                            Compare::ListIn(ListIn::new(diff, lhs_value, rhs_value)),
+                        )),
                     }
                 }
             }
@@ -1051,6 +1177,7 @@ impl Comparator for InOperation {
                 'each_lhs: for eachl in &lhs_selected {
                     let mut unanswerable_against: Option<(Rc<PathAwareValue>, StringContainment)> =
                         None;
+                    let mut unanswerable_membership: Option<(Rc<PathAwareValue>, String)> = None;
                     let mut element_collision = false;
                     for eachr in &rhs_selected {
                         // Containment first, membership second, which is the order the two arms above
@@ -1189,11 +1316,47 @@ impl Comparator for InOperation {
                         // `a_denylist_named_by_a_variable_denies_what_the_same_list_written_out_denies`
                         // covers that spelling. Closing this is a change to how a queried right-hand
                         // operand reaches the comparators, not a repair to this arm.
+                        //
+                        // `is_one_of` answers three ways now, and the third one belongs to the
+                        // `unanswerable` list below rather than to `element_collision`. A collision is a
+                        // claim: the report says this value collides with the denylist, and `NOT IN`
+                        // denies it on that basis. An element whose comparison could not be evaluated
+                        // supports no such claim, so folding it into the boolean either way states
+                        // something false -- `true` asserts a collision nothing established, `false`
+                        // asserts absence from a denylist that was never read. This arm already has a
+                        // third answer for exactly that, three paragraphs down, and it fails closed in
+                        // both polarities while naming the reason. `Matched` still wins, because a
+                        // matched element decides the value without reference to the one that failed.
+                        //
+                        // No input reaches that third answer today, and it is written out rather than
+                        // met with an `unreachable!()` for a reason that is about where the values come
+                        // from. `is_one_of` promotes `RegexError` only, so reaching it needs a
+                        // `PathAwareValue::Regex` on the right, and `eachr` here is a query result. Data
+                        // cannot carry one: `Value::Regex` is built in exactly one place,
+                        // `parse_regex_inner` in the rules parser, and `MarkedValue::Regex` -- the
+                        // variant the data path would have to produce -- is never constructed anywhere
+                        // in the crate. A rules literal can be a regex, and four spellings of one
+                        // bound to a `let` and expanded with `[*]` were measured: none reaches this arm
+                        // at all. The arm itself is live, so this is not dead code guarded by a dead
+                        // check -- the reproducer in e331c6b's own message drives it twice with
+                        // `rhs_kind=int`. So the shape is defensive: it costs one match arm, and it is
+                        // what stops a future spelling that does put a literal regex here from silently
+                        // reading "could not evaluate" as "does not collide", which is the defect this
+                        // commit exists to close one arm over.
                         if let PathAwareValue::List((_, elements)) = &**eachl {
                             if !eachr.is_list() {
-                                element_collision |= elements
-                                    .iter()
-                                    .any(|each| is_one_of(each, std::slice::from_ref(&**eachr)));
+                                for each in elements {
+                                    match is_one_of(each, std::slice::from_ref(&**eachr)) {
+                                        Membership::Matched => element_collision = true,
+                                        Membership::NoMatch => {}
+                                        Membership::Unanswerable(reason) => {
+                                            if unanswerable_membership.is_none() {
+                                                unanswerable_membership =
+                                                    Some((Rc::clone(eachr), reason));
+                                            }
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
@@ -1232,6 +1395,23 @@ impl Comparator for InOperation {
 
                         unanswerable.push(not_comparable_because(Rc::clone(eachl), other, reason));
                         continue;
+                    }
+
+                    // The membership question's own third answer, joining the containment one above
+                    // rather than getting a rule of its own. Same shape: nothing matched, one comparison
+                    // had no answer, so there is no verdict to record in either polarity and the reason
+                    // is what a rule author can act on. Reached only when `element_collision` is false,
+                    // because a matched element decides the value and the failed comparison then changed
+                    // nothing -- the precedence `is_one_of` applies internally, applied again here.
+                    if !element_collision {
+                        if let Some((other, reason)) = unanswerable_membership {
+                            unanswerable.push(not_comparable_because(
+                                Rc::clone(eachl),
+                                other,
+                                reason,
+                            ));
+                            continue;
+                        }
                     }
 
                     if element_collision {
