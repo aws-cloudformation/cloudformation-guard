@@ -501,14 +501,25 @@ fn contained_in(lhs_value: Rc<PathAwareValue>, rhs_value: Rc<PathAwareValue>) ->
             PathAwareValue::List((_, rhsl)) => {
                 // A list-valued left-hand side is IN a right-hand list if the whole list is one of
                 // its elements, or if the left-hand side is non-empty and every left-hand element is
-                // one of its non-list elements.
+                // one of its elements.
                 //
                 // Two readings, and each right-hand element decides for itself which one it can
                 // answer. Membership -- "the whole left-hand list is one of these elements" -- is what
                 // `Resources IN [["a","b"], ["c","d"]]` means, and only a nested list can satisfy it.
                 // Subset -- "every left-hand element is one of these" -- is what
-                // `Actions IN ["s3:Get", "s3:Put"]` means, and only a non-list element can contribute
-                // to it. Nothing about one element changes what another element answers.
+                // `Actions IN ["s3:Get", "s3:Put"]` means. Nothing about one element changes what
+                // another element answers.
+                //
+                // The subset test asks nothing about the depth of the element that matches, and it
+                // used to require a non-list one. That requirement made two spellings of the same
+                // question disagree with each other: for a `Nest` of `[1, [9]]`, `Nest IN [1, [9]]`
+                // failed because `[9]` could not match the `[9]` written beside it, and
+                // `Nest NOT IN [1, [9]]` failed as well -- neither polarity would admit a pair of
+                // operands where every element of the left is spelled out on the right. It also let
+                // this branch report a failure with an empty diff, since the diff below is computed
+                // with `Vec::contains`, which has no such requirement. Dropping it makes "every
+                // element matched" and "the element-wise diff is empty" the same statement, which is
+                // why `flat_subset` is now written in terms of `diff` rather than beside it.
                 //
                 // That independence is the whole fix. Reading `rhsl[0]` let element zero answer for
                 // elements 1..n: for a `Pair` of `[1, 2]`, `Pair NOT IN ["zzz", [1,2]]` exited 0 and
@@ -529,10 +540,28 @@ fn contained_in(lhs_value: Rc<PathAwareValue>, rhs_value: Rc<PathAwareValue>) ->
                 // order-independent, so it closes the defect, but it keeps the shape of what caused
                 // it: one nested element would suppress the subset reading for every flat element
                 // beside it, so adding `[9]` to `IN [1, 2]` stopped `1` and `2` matching, with no
-                // diagnostic and nothing wrong with the clause. Measured over every `NOT IN` cell in
-                // the grid, the two rules agree, so nothing about a denylist turns on this choice --
-                // in this arm a failed membership reports the whole left-hand list as the diff, and
-                // the negation wrapper counts every left-hand element as colliding either way.
+                // diagnostic and nothing wrong with the clause.
+                //
+                // The diff on failure is the unmatched ELEMENTS, which is what the flat branch below
+                // reports and what the negation wrapper reads. That wrapper takes the elements of
+                // `lin.lhs` and keeps the ones absent from `lin.diff`, calling those the values that
+                // collide with the denylist. Reporting the whole left-hand list as a single diff
+                // element -- which is what this branch did -- matches no element of itself, so every
+                // element read as colliding and `NOT IN` failed for every left-hand value whenever
+                // the denylist held any nested list: `Pair NOT IN [[99,98]]`, two disjoint pairs,
+                // exited 19. Populating it element-wise is the whole fix, and it must land with the
+                // paragraph above: a failure whose diff is empty would report every element as
+                // colliding again, for the same reason and by the same route.
+                //
+                // Negating the verdict was tried and rejected before this commit, and the measurement
+                // is a reviewer's rather than this one's. A marker field mirroring `QueryIn::diff_from`
+                // would let the wrapper flip a failed membership to Success without recomputing
+                // anything, and it is smaller. It admits four values the denylist names, because "the
+                // whole list is not a member" says nothing about the elements: for a `Nest` of
+                // `[1, [9]]`, `Nest NOT IN [[9]]` reaches exit 0 under it, and so does
+                // `Deep NOT IN [["a"]]` for a `Deep` of `[["a"]]`. Both are cells of
+                // `a_list_denylist_holding_a_nested_list_denies_only_what_it_names`, which is where to
+                // look before trying it again.
                 //
                 // The `is_empty` guard keeps an empty left-hand list failing here. It is vacuously a
                 // subset of anything, and `[] IN [1,2,3]` does pass through the branch below, so the
@@ -540,10 +569,13 @@ fn contained_in(lhs_value: Rc<PathAwareValue>, rhs_value: Rc<PathAwareValue>) ->
                 // collection passing a comparison is what `vacuous_comparison_notice` in `eval.rs` is
                 // deprecating, and this is not the commit to add another one.
                 if rhsl.iter().any(|elem| elem.is_list()) {
-                    let flat_subset = !lhsl.is_empty()
-                        && lhsl
-                            .iter()
-                            .all(|l| rhsl.iter().any(|r| !r.is_list() && r == l));
+                    let diff = lhsl
+                        .iter()
+                        .filter(|each| !rhsl.contains(each))
+                        .cloned()
+                        .map(Rc::new)
+                        .collect::<Vec<_>>();
+                    let flat_subset = !lhsl.is_empty() && diff.is_empty();
                     if flat_subset
                         || rhsl.iter().any(|elem| {
                             elem == &*lhs_value || compare_eq(&lhs_value, elem).unwrap_or(false)
@@ -554,11 +586,7 @@ fn contained_in(lhs_value: Rc<PathAwareValue>, rhs_value: Rc<PathAwareValue>) ->
                         ))
                     } else {
                         ValueEvalResult::ComparisonResult(ComparisonResult::Fail(Compare::ListIn(
-                            ListIn::new(
-                                vec![Rc::clone(&lhs_value)],
-                                Rc::clone(&lhs_value),
-                                Rc::clone(&rhs_value),
-                            ),
+                            ListIn::new(diff, lhs_value, rhs_value),
                         )))
                     }
                 } else {
