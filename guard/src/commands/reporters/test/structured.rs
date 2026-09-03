@@ -1,8 +1,8 @@
 use std::{convert::TryFrom, path::PathBuf, rc::Rc, time::Instant};
 
 use crate::commands::reporters::test::{
-    get_by_rules, get_status_result, test_file_parse_error, unchecked_expectation_message,
-    unmatched_expectation_names, Diagnostics,
+    get_by_rules, get_status_result, located_diagnostic, test_file_parse_error,
+    unchecked_expectation_message, unmatched_expectation_names, Diagnostics,
 };
 use crate::commands::reporters::{
     FailingTestCase, TestCase as JunitTestCase, TestCaseStatus, TestSuite,
@@ -422,7 +422,16 @@ impl<'reporter> StructuredTestReporter<'reporter> {
                 })
                 .collect::<Vec<UncheckedExpectation>>();
 
-                diagnostics.extend(unchecked.iter().map(|each| each.reason.clone()));
+                // Located on the way to stderr, and not in the report. `reason` sits in an entry whose
+                // `rule_file` already names the file; the stderr line has no such field, and this walk
+                // keeps one `Diagnostics` set across every rules file, so two siblings with the same
+                // unchecked expectation deduped to a single line naming neither. Same wrapper as the
+                // plaintext reporter, so the two streams render the fact one way.
+                diagnostics.extend(
+                    unchecked
+                        .iter()
+                        .map(|each| located_diagnostic(file, &each.reason)),
+                );
 
                 let mut test_case = TestCase {
                     name,

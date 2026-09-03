@@ -393,6 +393,7 @@ fn handle_plaintext_directory(
                         test_data: &data_test_files,
                         rules,
                         verbose,
+                        rules_file: path.to_str().unwrap_or(""),
                         writer,
                     };
 
@@ -450,6 +451,7 @@ fn handle_plaintext_single_file(
                         writer,
                         verbose,
                         rules,
+                        rules_file: path.to_str().unwrap_or(""),
                     };
 
                     reporter.report()

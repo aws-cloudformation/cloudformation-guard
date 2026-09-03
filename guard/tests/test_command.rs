@@ -1746,6 +1746,143 @@ mod test_command_tests {
         }
     }
 
+    /// The directory for the two cells below.
+    ///
+    /// Two subdirectories holding a byte-identical `names_absent_rule.guard` that declares
+    /// `present_rule`, each paired with a suite expecting `absent_rule`. Both directories therefore
+    /// drop one expectation, and `unchecked_expectation_message` describes it as being "in this file"
+    /// -- a phrase with no referent once two files say it.
+    const UNCHECKED_SIBLING_DIR: &str = "resources/test-command/unchecked-expectation-sibling-dirs";
+
+    /// The rules file both subdirectories hold.
+    const UNCHECKED_SIBLING_FILE: &str = "names_absent_rule.guard";
+
+    /// The fragment every one of these records ends with, whichever of the sentences produced it.
+    const UNCHECKED_SUFFIX: &str = "so its expectation was not checked";
+
+    /// Two sibling records for an unchecked expectation are distinguishable in the default format.
+    ///
+    /// This is the format a caller gets without asking for one, and it is the format where the identity
+    /// of the affected rules file is recoverable from nowhere else. The report on stdout carries no
+    /// unchecked-expectation entry at all -- measured, zero records pairing the expectation with a file
+    /// -- so the two stderr lines are the whole account of what was dropped. While the sentence said
+    /// only "this file", those two lines were byte-identical and a reader could not tell which
+    /// directory either belonged to.
+    ///
+    /// Distinctness, not count. `handle_plaintext_directory` builds a `GenericReporter` and a
+    /// diagnostics set per rules file, so the count is 2 before the fix and 2 after: a count assertion
+    /// passes with the fix reverted and would be satisfied by the very duplication this cell exists to
+    /// reject. Verified by running this cell at `69628df7`, where it reddens on the distinctness
+    /// assertion with two identical lines.
+    ///
+    /// Then each record is required to name its own directory, so distinctness means "the file is
+    /// identified" rather than "the two lines happen to differ".
+    #[test]
+    fn sibling_unchecked_expectation_records_are_distinguishable_in_the_default_format() {
+        let mut reader = Reader::default();
+        let mut writer =
+            Writer::new_with_err(WBVec(vec![]), WBVec(vec![])).expect("Failed to create writer.");
+
+        let status_code = TestCommandTestRunner::default()
+            .directory(Option::from(UNCHECKED_SIBLING_DIR))
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(
+            StatusCode::INCORRECT_STATUS_ERROR,
+            status_code,
+            "an expectation that was never compared against anything is an error, and both \
+             directories dropped one"
+        );
+
+        let stderr = writer.err_to_stripped().expect("failed to read stderr");
+        let records: Vec<&str> = stderr
+            .lines()
+            .filter(|l| l.contains(UNCHECKED_SUFFIX))
+            .collect();
+
+        let distinct: std::collections::BTreeSet<&&str> = records.iter().collect();
+        assert_eq!(
+            distinct.len(),
+            2,
+            "the two records must differ. Identical lines mean neither names the file it is about, \
+             and in this format nothing else does either. Got {:?} from stderr {:?}",
+            records,
+            stderr
+        );
+
+        for parent in ["first", "second"] {
+            let located = reported_path(UNCHECKED_SIBLING_DIR, &[parent, UNCHECKED_SIBLING_FILE]);
+            let matched: Vec<&&str> = records.iter().filter(|r| r.contains(&located)).collect();
+
+            assert_eq!(
+                1,
+                matched.len(),
+                "expected exactly one record naming `{}`, got {:?} from {:?}",
+                located,
+                matched,
+                records
+            );
+        }
+    }
+
+    /// The premise the cell above rests on: this format's report holds no unchecked-expectation entry.
+    ///
+    /// Separate so the two failures cannot be confused. If the report grows such an entry the identity
+    /// becomes recoverable from stdout and the argument for naming the file on stderr weakens -- that is
+    /// a change of circumstances, not a regression in the naming, and it should not redden a cell about
+    /// distinctness.
+    ///
+    /// The structured formats are the contrast and are asserted here too, because the claim is
+    /// comparative: they carry the record *and* the rules file in the document, and this format carries
+    /// neither.
+    #[test]
+    fn the_default_format_reports_no_unchecked_expectation_entry_on_stdout() {
+        let run = |output: Option<&str>| {
+            let mut reader = Reader::default();
+            let mut writer = Writer::new_with_err(WBVec(vec![]), WBVec(vec![]))
+                .expect("Failed to create writer.");
+
+            match output {
+                None => TestCommandTestRunner::default()
+                    .directory(Option::from(UNCHECKED_SIBLING_DIR))
+                    .run(&mut writer, &mut reader),
+                Some(fmt) => TestCommandTestRunner::default()
+                    .directory(Option::from(UNCHECKED_SIBLING_DIR))
+                    .output_format(fmt)
+                    .run(&mut writer, &mut reader),
+            };
+
+            writer.stripped().expect("failed to read stdout")
+        };
+
+        let default_stdout = run(None);
+        assert!(
+            !default_stdout.contains(UNCHECKED_SUFFIX),
+            "the default format's report carries no unchecked-expectation record; if it now does, the \
+             sibling-distinctness cell above is no longer the only account of the dropped expectation \
+             and should be re-read. Got {:?}",
+            default_stdout
+        );
+
+        for fmt in ["json", "yaml"] {
+            let structured_stdout = run(Some(fmt));
+            assert!(
+                structured_stdout.contains(UNCHECKED_SUFFIX),
+                "-o {} must carry the record in its document, which is what makes the default format \
+                 the one that needs the name on stderr. Got {:?}",
+                fmt,
+                structured_stdout
+            );
+            assert!(
+                structured_stdout.contains(UNCHECKED_SIBLING_FILE),
+                "-o {} must also name the rules file in its document, so the record there is \
+                 attributable without the stderr line. Got {:?}",
+                fmt,
+                structured_stdout
+            );
+        }
+    }
+
     /// Two runs of the same command over the same files must produce the same report.
     ///
     /// They did not. Both test reporters iterate the map built by `get_by_rules`, which was a

@@ -25,8 +25,17 @@
 # Condition 5 has to read stderr because orphaned test files are not in the report at all; they are
 # only ever written as diagnostics. Condition 2 reads stdout rather than the equivalent stderr
 # diagnostics because the report carries one entry per (case, expectation) -- 30 of them -- while the
-# diagnostics are a set and collapse to the 11 distinct names, so only the report can tell you that a
-# name lost some of its expectations but not all.
+# diagnostics are a set and collapse, so only the report can tell you that a name lost some of its
+# expectations but not all.
+#
+# That collapse is now keyed per rules file as well as per sentence, since the diagnostic carries the
+# file it is about. This corpus is unaffected for a blunter reason than it first appears: all 11 of its
+# unchecked expectations come from one rules file --
+# rules/aws/aws_cloudformation/cfn_no_explicit_resource_names.guard -- with 11 different rule names, so
+# there is exactly one file to key on and the line count is unchanged. Measured, not inferred: 11
+# records, 11 distinct lines, 1 distinct file, 11 distinct names. A corpus whose unchecked names were
+# spread over several files would still collapse per name here and would now show one line per
+# (file, name) instead. None of that changes what this condition reads or why.
 #
 # Usage: check-registry-corpus.sh <path-to-cfn-guard> <path-to-registry-rules-dir>
 #

@@ -9,8 +9,9 @@ use crate::{
     commands::{
         files::iterate_over,
         reporters::test::{
-            get_by_rules, get_status_result, test_file_parse_error, unchecked_expectation_message,
-            unmatched_expectation_names, write_diagnostics, Diagnostics,
+            get_by_rules, get_status_result, located_diagnostic, test_file_parse_error,
+            unchecked_expectation_message, unmatched_expectation_names, write_diagnostics,
+            Diagnostics,
         },
         test::TestSpec,
         validate, SUCCESS_STATUS_CODE, TEST_ERROR_STATUS_CODE, TEST_FAILURE_STATUS_CODE,
@@ -40,6 +41,10 @@ pub struct GenericReporter<'report> {
     pub(crate) test_data: &'report [PathBuf],
     pub(crate) verbose: bool,
     pub(crate) rules: RulesFile<'report>,
+    /// The rules file being tested, as the caller named it, for the diagnostics that do not identify
+    /// their own subject. `rules` is the parsed file and carries no path, and this reporter is built once
+    /// per rules file by both plaintext handlers, which each already hold it.
+    pub(crate) rules_file: &'report str,
     pub(crate) writer: &'report mut crate::utils::writer::Writer,
 }
 
@@ -184,11 +189,14 @@ impl<'report> GenericReporter<'report> {
         // *which* expectation named nothing was the half that went missing, and a stale rule name
         // reads as coverage the author does not have, which is the reason the sentence exists.
         let unchecked = unmatched_expectation_names(&spec.expectations.rules, &evaluated);
-        diagnostics.extend(
-            unchecked
-                .iter()
-                .map(|name| unchecked_expectation_message(&self.rules, name)),
-        );
+        // Located, because this sentence says "in this file" and this is the format where nothing else
+        // says which. See `located_diagnostic`.
+        diagnostics.extend(unchecked.iter().map(|name| {
+            located_diagnostic(
+                self.rules_file,
+                &unchecked_expectation_message(&self.rules, name),
+            )
+        }));
 
         for (rule_name, rule) in by_rules {
             let expected = match spec.expectations.rules.get(rule_name) {

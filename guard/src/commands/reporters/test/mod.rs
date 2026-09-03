@@ -79,35 +79,34 @@ pub(crate) fn unmatched_expectation_names(
 /// expectation is checked against it. Measured, because keying on what ran would otherwise report a
 /// rule that is plainly in the file as missing from it.
 ///
-/// # Known gap: this sentence names no file, so a directory walk collapses it
+/// Says "in this file" and does not name it, so every stderr caller wraps it in
+/// [`located_diagnostic`]. The report does not, because the enclosing `UncheckedExpectation` sits in an
+/// entry whose `rule_file` already answers it.
 ///
-/// "this file" is whichever file the reader was already looking at, and the sentence carries nothing to
-/// say which. `handle_structured_directory_report` keeps one `Diagnostics` set across the whole walk, so
-/// two rules files that both fail to declare the same expected rule produce one line between them.
-/// Measured over two directories each holding a `y.guard` and a suite expecting an `absent_rule`:
+/// This was recorded here as a known gap and deferred, on the premise that the identity was always
+/// recoverable from the document on stdout. That premise was wrong, and wrong in the format that matters
+/// most. It was checked against `json` -- where the entry does carry `rule_file` -- and generalized
+/// without checking `single-line-summary`, which is the default. Measured over two sibling directories
+/// each holding a `y.guard` and a suite expecting an `absent_rule`:
 ///
 /// ```text
-/// test -d <dir> -o json    1 line
-/// test -d <dir>            2 lines, byte-identical
+/// single-line-summary   2 stderr lines, byte-identical   0 records on stdout
+/// json                  1 stderr line                    2 records on stdout, each with rule_file
+/// yaml                  1 stderr line                    2 records on stdout, each with rule_file
+/// junit                 1 stderr line                    2 records on stdout, each under its testsuite
 /// ```
 ///
-/// The same 2-to-1 collapse `no_rules_declared_message` had, and it is deliberately left in place. The
-/// difference is what the report carries. That sentence's arm pushes no `TestResult` at all, so the line
-/// was the only record and losing it lost the fact; this one appears as the `reason` of an entry inside
-/// a report whose `rule_file` field names the file, so nothing is unrecoverable -- the stdout document
-/// already answers the question the stderr line cannot.
+/// So in the default format the two lines were the whole account of two dropped expectations and named
+/// neither file. The deferral rested on a field that format does not have.
 ///
-/// Not fixed because naming the file here costs more than it buys. This function is the single source of
-/// the sentence, on purpose and as the note above says, so the file name would land in the report's
-/// `reason` as well as on stderr: four golden files carry it verbatim
+/// The other half of the old note was right and is why the sentence itself is unchanged: it reaches the
+/// report as an `UncheckedExpectation::reason`, four golden files carry it verbatim
 /// (`unchecked_expectation_{json,yaml,junit}.out` and
-/// `no_expectation_beside_unchecked_expectation_json.out`), and every consumer parsing those documents
-/// would see the text change in order to be told something the enclosing entry already says. Naming it
-/// on stderr only would re-split a sentence that was consolidated here precisely to stop the two copies
-/// drifting.
+/// `no_expectation_beside_unchecked_expectation_json.out`), and moving the file inside it would change
+/// documents consumers parse in order to repeat what the entry already says. The locator goes on the
+/// stream that has no field for it.
 ///
-/// What would change the answer: a `Diagnostics` entry that carried its file as a field rather than
-/// inside the string, so the set could key on both and the rendering could stay one sentence.
+/// The junit field is `<testsuite name=...>`, not `rule_file`; an earlier note here said otherwise.
 pub(crate) fn unchecked_expectation_message(rules: &RulesFile<'_>, name: &str) -> String {
     if rules
         .parameterized_rules
@@ -193,6 +192,33 @@ pub(crate) fn unmatched_test_file_message(path: &Path) -> String {
         "{} did not match any rules file, so it was not run",
         path.display()
     )
+}
+
+/// A diagnostic with the rules file it is about in front of it.
+///
+/// Some of these sentences identify their own subject -- [`no_rules_declared_message`] and
+/// [`unmatched_test_file_message`] both open with the path. [`unchecked_expectation_message`] does not:
+/// it says "in this file", which has no referent once two rules files in one walk both produce it. Two
+/// sibling directories each dropping the same expectation gave two byte-identical lines, and in
+/// `single-line-summary` -- the default format -- that pair was the entire record. Measured: zero
+/// entries on stdout pairing an unchecked expectation with a file, against two in `json` and `yaml`,
+/// where the enclosing entry's `rule_file` answers it. So the format a caller gets without asking was
+/// the one where the identity was recoverable from nowhere.
+///
+/// Applied here rather than inside the sentence, which is what keeps every expected-output fixture
+/// untouched. The sentence also reaches the structured report as an `UncheckedExpectation::reason`, and
+/// four golden files carry it verbatim; putting the file inside it would move bytes in documents that
+/// consumers parse in order to say something the entry's own `rule_file` already says. `stderr` has no
+/// such field, so this is where the locator belongs.
+///
+/// Both stderr call sites go through this one function. Prefixing only the plaintext one would leave the
+/// same fact rendered two ways on the same stream depending on `--output-format`, which is the drift the
+/// note on [`unchecked_expectation_message`] exists to prevent.
+///
+/// `path: message`, so it lines up with the sentences that already open with their path and reads the way
+/// a diagnostic is expected to.
+pub(crate) fn located_diagnostic(rules_file: &str, message: &str) -> String {
+    format!("{rules_file}: {message}")
 }
 
 /// Write what a run collected. Sorted by the set, so two runs over the same input agree.
