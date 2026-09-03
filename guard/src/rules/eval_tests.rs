@@ -10344,13 +10344,20 @@ fn the_incomparable_membership_notice_survives_a_failure_the_file_does_not_repor
 /// there is a `RegexError`. `(List, Regex)` is not an arm at all: it falls through to `compare_values`,
 /// whose catch-all refuses with `NotComparable`, which is a real incomparability and keeps its notice.
 /// The last cell does NOT follow from the same fact, and reading it that way is the mistake worth
-/// naming here. "`(List, Regex)` is not an arm, so the whole-list spelling never reaches the engine" is
-/// a true sentence about `incomparable_membership`, which compares the WHOLE left-hand value against
-/// each element and therefore does ask `compare_eq(List, Regex)`. It is a false sentence about the
-/// CLAUSE, which also runs `contained_in`'s element-wise pass, where each String element of `Cat` meets
-/// the `Regex` through the `(String, Regex)` arm that builds the pattern and runs it. One sentence about
-/// a predicate got read as a sentence about a clause, and the cell then pinned a verdict the predicate
-/// has no say over.
+/// naming here. "`(List, Regex)` is not an arm, so the whole-list spelling never reaches the engine"
+/// joins a premise to a conclusion, and the conclusion fails under both readings of what it is about.
+///
+/// Of `incomparable_membership` it holds only for a FLAT denylist. That predicate compares the WHOLE
+/// left-hand value against each element of the right-hand side flattened one level, so
+/// `Cat NOT IN [/re/]` does ask `compare_eq(List, Regex)` and does refuse without running anything --
+/// but `Cat NOT IN [[/re/]]` hands it `(List, List)`, which zips into `(String, Regex)` and runs the
+/// pattern. So the predicate reaches the engine on a whole-list left-hand side too, and the sentence was
+/// never true of it in general, only of the input this cell happens to use.
+///
+/// Of the CLAUSE it is false for the flat spelling as well, because the clause also runs
+/// `contained_in`'s element-wise pass, where each String element of `Cat` meets the `Regex` through the
+/// `(String, Regex)` arm that builds the pattern and runs it. One sentence about which arms exist got
+/// read as a sentence about a clause, and the cell then pinned a verdict the predicate has no say over.
 ///
 /// So the last cell is a `RegexError` case after all, and it now refuses. Measured on this input:
 /// `One not in [/re/]` for a scalar `One` exits 19 with the reason, `Cat[*] not in [/re/]` exits 19 with

@@ -266,11 +266,16 @@ fn empty_reference_message(negated: bool) -> String {
 /// `Strs NOT IN ["x","y"]` emits the notice and `Strs NOT IN ["x","y",["p"]]` does not, both passing,
 /// element-wise facts identical. Adding an irrelevant nested list flips
 /// `compare_eq(whole_lhs_list, element)` from `Err` to `Ok`, because of which arm each pair lands on.
-/// `compare_eq` answers `(List, List)` itself and always returns `Ok` -- `false` on a length mismatch,
-/// never a refusal. It has no `(List, String)` arm at all, so that pair falls through its `(_, _)` arm
-/// into `compare_values`, whose own catch-all refuses with `NotComparable`. So the notice's trigger is
-/// decided by the *kind* of an unrelated denylist element rather than by anything about the comparison
-/// the clause performs.
+/// `compare_eq` answers `(List, List)` itself, and for this pair the length is what decides: a
+/// two-element `Strs` against the one-element `["p"]` mismatches, so that arm returns `Ok(false)` without
+/// looking at an element. It is not always `Ok`, which is the correction to carry into the `(List, Regex)`
+/// note further down -- on EQUAL lengths it zips and propagates with `?`, so an element that refuses
+/// refuses for the whole pair. `two_equal_length_lists_propagate_what_their_elements_raise` in
+/// `path_value_tests.rs` pins both exits. The discriminator above is unaffected either way, because the
+/// pair it turns on takes the length exit. `compare_eq` has no `(List, String)` arm at all, so that pair
+/// falls through its `(_, _)` arm into `compare_values`, whose own catch-all refuses with
+/// `NotComparable`. So the notice's trigger is decided by the *kind* of an unrelated denylist element
+/// rather than by anything about the comparison the clause performs.
 ///
 /// Wrong in the other direction too, from the early return above: `Str NOT IN Haystack` over
 /// `["zzz", 7, false]` stays silent because `"a"` and `"zzz"` are comparable, though `"a"` against `7`
@@ -375,11 +380,23 @@ fn incomparable_membership(lhs: &[QueryResult], rhs: &[QueryResult]) -> bool {
                 // `a_regex_that_exceeds_the_backtrack_limit_fails_the_clause_instead_of_aborting` pins
                 // that. This notice has nothing to add to it.
                 //
-                // Narrow on purpose. `(List, Regex)` is not an arm at all, so the whole-list spelling
-                // never reaches the engine and keeps refusing with `NotComparable` -- which this still
-                // counts, and which the section above calls out as a false alarm of a different kind.
-                // Widening it to every `Err` would silence that class here instead of where it is
-                // documented to be fixed.
+                // Narrow on purpose, and the reason is which pair this predicate builds rather than how
+                // the clause is spelled. `(List, Regex)` is not an arm, so a whole-list left-hand side
+                // against a FLAT denylist holding a regex falls through to `compare_values` and refuses
+                // with `NotComparable` -- which this still counts, and which the section above calls out
+                // as a false alarm of a different kind. Widening this to every `Err` would silence that
+                // class here instead of where it is documented to be fixed.
+                //
+                // It does NOT follow that the whole-list spelling never reaches the engine, and this
+                // comment said so until the arm below was measured. The predicate flattens the right-hand
+                // side one level, so a denylist holding a NESTED list hands it `(List, List)`, which
+                // `compare_eq` answers by zipping: for `Cat NOT IN [[/re/]]` over a one-element `Cat` that
+                // zip is `(String, Regex)`, which builds the pattern and runs it. `RegexError` therefore
+                // arrives here from the whole-list spelling too, and silencing it is this arm's job in
+                // that spelling as much as in the element-wise one. Measured at 9bcf2053 with the release
+                // binary: `rule r { Cat NOT IN [[/(?!x)((a+)+)b/]] }` over a `Cat` of one thirty-character
+                // string of `a`s exits 19 and prints nothing, `contained_in` having promoted the same
+                // error into the verdict.
                 Err(Error::RegexError(_)) => return false,
                 Err(_) => {}
             }
