@@ -36,6 +36,135 @@ pub(crate) fn from_str2(in_str: &str) -> Span {
     Span::new_extra(in_str, "")
 }
 
+thread_local! {
+    /// Where each line of the rules file being parsed starts, or `None` outside a [`rules_file`] call.
+    ///
+    /// Parse-scoped state, for the same reason `NESTING_DEPTH` is: `nom`'s combinator signatures carry a
+    /// `Span` and nothing else, so a parser deep in the grammar cannot be handed the whole file, and this is
+    /// the only thing that can tell it where a byte offset sits. Set and cleared by [`SourceScope`].
+    static SOURCE: std::cell::RefCell<Option<LineIndex>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Where every line of a rules file starts, so that a byte offset can be turned into a line and a column.
+///
+/// `nom_locate` already answers that question -- `location_line()` and `get_utf8_column()` -- but it answers
+/// it by counting `\n` alone, and this parser reads a bare `\r` as a line ending too: `multispace1` accepts
+/// `" \t\r\n"`, `comment2` ends a comment at either, and `newline` and `extract_message` both take either.
+/// So in a file whose lines end with a bare CR, the file parsed correctly and then reported every position
+/// in it wrongly -- one error physically on line 6 came out as *line 1, column 119*, 119 being the whole-file
+/// byte offset, because with no `\n` anywhere the file is one line and the column degenerates into the
+/// offset. Every clause `FileLocation`, the nesting-depth refusal, and the parse-error message all reported
+/// that way, and nothing in the output said so: "line 1 column 119" is a position, just not the error's.
+///
+/// Counting here rather than fixing it at each of the ten reporting sites, because a position computed one
+/// way in nine places and another way in the tenth is the defect again. `position_of` is the only place any
+/// of them now asks.
+///
+/// The `String` is a copy of the file. One allocation of a few KB per parse, which buys a `line_starts` scan
+/// done once instead of a backwards search per position: the column needs the text to count characters
+/// rather than bytes, and a UTF-8 aware count cannot be reconstructed from offsets alone.
+struct LineIndex {
+    text: String,
+    /// Byte offset of the first character of each line, ascending, always starting with 0.
+    line_starts: Vec<usize>,
+}
+
+impl LineIndex {
+    fn of(text: &str) -> LineIndex {
+        let bytes = text.as_bytes();
+        let mut line_starts = vec![0];
+        for (at, byte) in bytes.iter().enumerate() {
+            // `\r\n` is one line ending, not two: the `\r` starts nothing, the `\n` after it does.
+            let ends_a_line = match *byte {
+                b'\n' => true,
+                b'\r' => bytes.get(at + 1) != Some(&b'\n'),
+                _ => false,
+            };
+            if ends_a_line {
+                line_starts.push(at + 1);
+            }
+        }
+
+        LineIndex {
+            text: text.to_string(),
+            line_starts,
+        }
+    }
+
+    /// The one-based line and character column of a byte offset.
+    ///
+    /// Identical to what `nom_locate` reports for a file whose only line ending is `\n`, which is what keeps
+    /// this from moving every position in every existing rules file: the line is one plus the number of line
+    /// endings before the offset, and the column is one plus the number of characters since the last one.
+    fn position(&self, offset: usize) -> (u32, u32) {
+        let offset = offset.min(self.text.len());
+        let line = self.line_starts.partition_point(|start| *start <= offset);
+        let start = self.line_starts[line - 1];
+        let column = self.text[start..offset].chars().count() + 1;
+        (line as u32, column as u32)
+    }
+}
+
+/// One rules file held open for position reporting, cleared when it goes out of scope.
+///
+/// `Drop` rather than an explicit clear, so that the early return on a parse error cannot leave a previous
+/// file's index behind for the next parse on this thread to read positions out of.
+struct SourceScope;
+
+impl SourceScope {
+    /// Opens `span`'s file for position reporting, if `span` is the whole of it.
+    ///
+    /// The offsets a position is looked up by are absolute, so an index built from a span that has already
+    /// consumed something would answer against the wrong text -- and answer plausibly, which is worse than
+    /// refusing. An advanced span therefore opens nothing and leaves `position_of` on its `nom_locate`
+    /// fallback. Every caller of [`rules_file`] passes a fresh span; this is what keeps a future one that
+    /// does not from silently reporting positions into the middle of its own file.
+    fn enter(span: &Span) -> SourceScope {
+        if span.location_offset() == 0 {
+            let index = LineIndex::of(span.fragment());
+            SOURCE.with(|source| *source.borrow_mut() = Some(index));
+        }
+        SourceScope
+    }
+}
+
+impl Drop for SourceScope {
+    fn drop(&mut self) {
+        SOURCE.with(|source| *source.borrow_mut() = None);
+    }
+}
+
+/// The line and column to report for `span`, counting a bare `\r` as a line ending like the rest of this
+/// parser does.
+///
+/// Falls back to `nom_locate`'s own answer when no file is open, which is what the parsers reached directly
+/// rather than through [`rules_file`] get: `Value::try_from(&str)` parsing one value, and the unit tests that
+/// call a single combinator. Those inputs are a value or a clause rather than a file, so the fallback is the
+/// same answer this would give -- and it is the answer they got before this existed.
+fn position_of(span: &Span) -> (u32, u32) {
+    SOURCE.with(|source| match source.borrow().as_ref() {
+        Some(index) => index.position(span.location_offset()),
+        None => (span.location_line(), span.get_utf8_column() as u32),
+    })
+}
+
+/// Where a clause begins, as it will be reported.
+///
+/// One function for the seven places that stamp a position onto a parsed expression, which used to spell it
+/// out each time. Six of the seven asked for `get_utf8_column` and the seventh -- `function_expr` -- asked
+/// for `get_column`, a byte column, so a file with a multi-byte character in a line reported that one clause
+/// at a different column than the six around it. That is what duplicated position code costs: nothing looked
+/// wrong at any one of the seven.
+fn file_location_of<'loc>(input: &Span<'loc>) -> FileLocation<'loc> {
+    let (line, column) = position_of(input);
+    FileLocation {
+        file_name: input.extra,
+        line,
+        column,
+    }
+}
+
 #[derive(Clone, PartialEq, Debug)]
 pub(crate) struct ParserError<'a> {
     pub(crate) context: String,
@@ -87,11 +216,12 @@ impl<'a> nom::error::FromExternalError<Span<'a>, std::num::ParseIntError> for Pa
 
 impl<'a> std::fmt::Display for ParserError<'a> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        let (line, column) = position_of(&self.span);
         let message = format!(
             "Error parsing file {} at line {} at column {}, when handling {}, fragment {}",
             self.span.extra,
-            self.span.location_line(),
-            self.span.get_utf8_column(),
+            line,
+            column,
             self.context,
             *self.span.fragment()
         );
@@ -330,6 +460,7 @@ impl NestingGuard {
     ) -> Result<NestingGuard, nom::Err<ParserError<'a>>> {
         let level = NESTING_DEPTH.with(|open| open.get()) + 1;
         if level > MAX_NESTING_DEPTH {
+            let (line, column) = position_of(&input);
             return Err(nom::Err::Failure(ParserError {
                 span: input,
                 kind: ErrorKind::TooLarge,
@@ -338,8 +469,7 @@ impl NestingGuard {
                      this file goes deeper: the {construct} opened at line {} column {} is at level \
                      {level}. Real rules files nest a handful of levels; nothing in AWS's own rules \
                      registry comes close to this.",
-                    input.location_line(),
-                    input.get_utf8_column(),
+                    line, column,
                 ),
             }));
         }
@@ -362,8 +492,7 @@ impl Drop for NestingGuard {
 //                                                                                                //
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-/// A comment, ending at the end of its line -- and a bare CR ends a line here, as it does everywhere else in
-/// this parser.
+/// A comment, ending at the end of its line -- at `\n`, or at the `\r` of a CRLF pair.
 ///
 /// `multispace1`, which `white_space_or_comment` reaches for the other half of its alternation, accepts
 /// `" \t\r\n"`, so a lone `\r` is a line ending as far as every whitespace position is concerned. This search
@@ -373,9 +502,18 @@ impl Drop for NestingGuard {
 /// that did not, which is the worst shape for it to be in -- whether the file is readable depended on whether
 /// it happened to contain a comment.
 ///
-/// A `\r` inside a comment in an otherwise LF file now ends the comment too, and that is the same judgement:
-/// this parser treats a bare CR as a line ending, so text after one is the next line rather than more comment.
-/// No rules file in this repository or in the AWS rule registry contains a CR of either kind.
+/// An earlier version of this comment said a bare CR ends a line "as it does everywhere else in this parser".
+/// That was not true when it was written, and the sentence is the reason it took a while to find out:
+/// `extract_message` split on `\n` alone, so in a bare-CR file it read the whole file as one line and deleted
+/// a clause, and every reported line and column collapsed to line 1. The claim read as an established
+/// invariant while naming the one construct where it did not hold. Both are fixed now -- `extract_message`
+/// takes either ending, and `position_of` counts either -- so the sentence is true, and
+/// `rewriting_line_endings_does_not_change_how_a_rules_file_parses` is what keeps it true.
+///
+/// The `\r` arm is load-bearing twice over: it ends a comment in a bare-CR file, and it stops the `\r` of a
+/// CRLF pair from being taken as comment text, which would leave a trailing CR on every comment in a file
+/// saved by a Windows editor. No rules file in this repository or in the AWS rule registry contains a CR of
+/// either kind.
 pub(in crate::rules) fn comment2(input: Span) -> IResult<Span, Span> {
     delimited(
         char('#'),
@@ -1462,17 +1600,33 @@ pub(crate) fn value_cmp(input: Span) -> IResult<Span, (CmpOperator, bool)> {
 /// cannot be admitted without reopening the defect, because the swallowed clause in the first example above
 /// is itself a line ending in `>>`. In exchange, a brace in a body is now just text, so the JSON-quoting
 /// message that the first bound rejected parses.
+///
+/// "Line" here means what it means everywhere else in this parser: a line ends at `\n`, or at a bare `\r`,
+/// which `multispace1`, `comment2` and `newline` all already accepted.
+///
+/// The paragraph above described searching all remaining input for `>>` as history, and for a file holding a
+/// `\n` it was. The split was written as `find('\n')` though, so in a file whose lines end with a bare `\r`
+/// there were no line breaks to find: "the opening line" became the whole remaining file, and the `>>` search
+/// reverted *exactly* to the upstream behaviour this function replaced -- the first `>>` anywhere closed the
+/// message, and the clause carrying it was absorbed into the message text and ceased to exist. All three
+/// shapes above reproduced that way in a bare-CR file, at exit 0, against a template that violated the
+/// deleted clause. So the comment above was not describing history at all; it was describing the defect this
+/// file still had, reachable through a different input encoding.
+///
+/// `the_message_scan_treats_a_bare_carriage_return_as_a_line_ending` pins the fix at this function through
+/// `custom_message`, and `rewriting_line_endings_does_not_change_how_a_rules_file_parses` pins it through the
+/// whole file, so a later change that reintroduces either half fails a test rather than a template.
 fn extract_message(input: Span) -> IResult<Span, &str> {
     let fragment = input.fragment();
-    let opening_line_end = fragment.find('\n').unwrap_or(fragment.len());
+    let next_line_break = |from: usize| fragment[from..].find(|c: char| c == '\n' || c == '\r');
+    let opening_line_end = next_line_break(0).unwrap_or(fragment.len());
 
     let closing_tag = fragment[..opening_line_end].find(">>").or_else(|| {
         let mut cursor = opening_line_end;
         while cursor < fragment.len() {
             let line_start = cursor + 1;
-            let line_end = fragment[line_start..]
-                .find('\n')
-                .map_or(fragment.len(), |offset| line_start + offset);
+            let line_end =
+                next_line_break(line_start).map_or(fragment.len(), |offset| line_start + offset);
             let line = &fragment[line_start..line_end];
             let body = line.trim_start();
             if body.trim_end() == ">>" {
@@ -1870,11 +2024,7 @@ where
     A: FnMut(Span<'loc>) -> IResult<Span<'loc>, AccessQuery<'loc>>,
     M: FnMut(GuardAccessClause<'loc>) -> T + 'loc,
 {
-    let location = FileLocation {
-        file_name: input.extra,
-        line: input.location_line(),
-        column: input.get_utf8_column() as u32,
-    };
+    let location = file_location_of(&input);
 
     let (rest, not) = preceded(zero_or_more_ws_or_comment, opt(not))(input)?;
     let (rest, query) = access(rest)?;
@@ -1972,11 +2122,7 @@ where
 }
 
 pub(crate) fn block_clause(input: Span) -> IResult<Span, GuardClause> {
-    let location = FileLocation {
-        file_name: input.extra,
-        line: input.location_line(),
-        column: input.get_utf8_column() as u32,
-    };
+    let location = file_location_of(&input);
 
     let (rest, query) = access(input)?;
     block_clause_with_query(rest, location, query)
@@ -2011,11 +2157,7 @@ fn block_clause_with_query<'loc>(
 }
 
 fn function_expr(input: Span) -> IResult<Span, FunctionExpr> {
-    let location = FileLocation {
-        file_name: input.extra,
-        line: input.location_line(),
-        column: input.get_column() as u32,
-    };
+    let location = file_location_of(&input);
     let (input, (name, parameters)) = call_expr(input)?;
 
     let name = FunctionName::try_from(name.as_str()).map_err(|e| {
@@ -2081,11 +2223,7 @@ fn call_expr(input: Span) -> IResult<Span, (String, Vec<LetValue>)> {
 pub(crate) fn parameterized_rule_call_clause(
     input: Span,
 ) -> IResult<Span, ParameterizedNamedRuleClause> {
-    let location = FileLocation {
-        file_name: input.extra,
-        line: input.location_line(),
-        column: input.get_utf8_column() as u32,
-    };
+    let location = file_location_of(&input);
 
     let (input, not) = opt(not)(input)?;
     let (input, (rule_name, access_clauses)) = call_expr(input)?;
@@ -2177,11 +2315,7 @@ fn clause(input: Span) -> IResult<Span, GuardClause> {
 /// after a negation the block reading needs the filter to hang off the negation word itself and the
 /// comparison reading needs a name in its place, so at most one of the two descends.
 fn access_clause_or_block(input: Span) -> IResult<Span, GuardClause> {
-    let location = FileLocation {
-        file_name: input.extra,
-        line: input.location_line(),
-        column: input.get_utf8_column() as u32,
-    };
+    let location = file_location_of(&input);
 
     // A negation consumes at least one character, so an unmoved offset means the prefix took neither a
     // negation nor any whitespace, which is exactly when the two readings open on the same span.
@@ -2251,11 +2385,7 @@ fn newline(input: Span) -> IResult<Span, Span> {
 }
 
 fn rule_clause(input: Span) -> IResult<Span, GuardClause> {
-    let location = FileLocation {
-        file_name: input.extra,
-        line: input.location_line(),
-        column: input.get_utf8_column() as u32,
-    };
+    let location = file_location_of(&input);
 
     let (remaining, not) = opt(not)(input)?;
     let (remaining, ct_type) = var_name(remaining)?;
@@ -2329,13 +2459,12 @@ where
         match disjunction_clauses(rest, |i: Span| f(i), true) {
             Err(nom::Err::Error(_)) => {
                 if conjunctions.is_empty() {
+                    let (line, column) = position_of(&input);
                     return Err(nom::Err::Failure(ParserError {
                         span: input,
                         context: format!(
                             "There were no clauses present {}#{}@{}",
-                            input.extra,
-                            input.location_line(),
-                            input.get_utf8_column()
+                            input.extra, line, column
                         ),
                         kind: ErrorKind::Many1,
                     }));
@@ -2844,11 +2973,7 @@ fn type_block(input: Span) -> IResult<Span, TypeBlock> {
     //
     // Start must be a type name like "AWS::SQS::Queue"
     //
-    let location = FileLocation {
-        file_name: input.extra,
-        line: input.location_line(),
-        column: input.get_utf8_column() as u32,
-    };
+    let location = file_location_of(&input);
     let (input, name) = type_name(input)?;
 
     //
@@ -3207,6 +3332,32 @@ pub(crate) fn get_rule_name<'b>(rule_file_name: &str, rule_name: &'b str) -> &'b
 // Rules File
 //
 pub(crate) fn rules_file(input: Span) -> Result<Option<RulesFile>, Error> {
+    // Every position reported while parsing this file is measured against the file, not against `\n`.
+    //
+    // Three separate things in this parser count lines, and they did not agree. `multispace1`, `comment2`
+    // and `newline` treat a lone `\r` as a line ending. `extract_message` split on `\n`, which is the
+    // clause-deleting defect fixed there. And every line and column reported comes from `nom_locate`,
+    // which counts `\n` alone -- so a file whose lines end in a bare `\r` parsed correctly and then
+    // described itself wrongly, reporting an error on line 6 as line 1 column 119. `SourceScope` is what
+    // makes the third one agree with the first two; `position_of` is where all ten reporting sites ask.
+    //
+    // Held for the whole function rather than for the parse, because the `?` below renders a
+    // `ParserError` into its message through `From`, and that runs before this guard drops.
+    //
+    // A bare CR is a supported line ending here, deliberately and by test:
+    // `a_bare_carriage_return_ends_a_line_like_the_other_two_spellings` compares 9 constructs across all
+    // three spellings, and `a_cr_only_rules_file_still_enforces_its_rules` runs one end to end. Refusing
+    // such a file would have been the smaller change -- one check here, and every `\n` assumption in the
+    // file becomes sound by construction -- and it was rejected because those two tests say the support
+    // is intended, not incidental.
+    //
+    // Two sites outside this function still count `\n` alone, named so that they are not read as covered:
+    // `ReadCursor` in `utils/mod.rs` splits with `str::lines`, so a bare-CR *data* file renders its
+    // `Code:` excerpt as one line; and the single-line reporters flatten a message with
+    // `replace('\n', ";")`, which leaves the `\r` of a CRLF message body in the output. Both are the
+    // document and reporting sides rather than the parser, and neither can change a verdict.
+    let _source = SourceScope::enter(&input);
+
     let input = match zero_or_more_ws_or_comment(input) {
         Ok(input) => {
             if input.0.is_empty() {
