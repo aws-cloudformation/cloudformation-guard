@@ -87,12 +87,20 @@ fn break_width(bytes: &[u8], at: usize) -> Option<usize> {
 ///
 /// `start` has to clear *every* byte of the terminator, and getting that wrong does not produce a wrong
 /// line number -- it panics. Recognize a three-byte LS but step one byte and `start` lands on `\x80`,
-/// mid-character, and the next `&buffer[start..at]` is a slice at a boundary that is not a character
-/// boundary: `start byte index 4 is not a char boundary; it is inside '\u{2028}'`. Measured on all four
-/// of `one<LS>two<LS>`, `one<LS>two`, `one<NEL>two<NEL>` and `one<NEL>two`, so it is not confined to a
-/// trailing separator -- a single multi-byte break anywhere in the file is enough, reaching the panic
-/// either at the in-loop push or at the final one. That is why the width comes from `break_width` rather
-/// than from a fixed step.
+/// mid-character, and the next `&buffer[start..at]` slices at a boundary that is not a character
+/// boundary. On the pinned toolchain that reads
+/// `byte index 4 is not a char boundary; it is inside '\u{2028}' (bytes 3..6) of ...`.
+///
+/// Measured on all four of `one<LS>two<LS>`, `one<LS>two`, `one<NEL>two<NEL>` and `one<NEL>two`, so it
+/// is not confined to a trailing separator -- a single multi-byte break anywhere in the file is enough,
+/// reaching the panic either at the in-loop push or at the final one. That is why the width comes from
+/// `break_width` rather than from a fixed step.
+///
+/// The wording above is 1.77.2's. An earlier version of this comment quoted it as `start byte index 4`,
+/// which is a later std's phrasing: the probe that produced it was built with a bare `rustc`, and a bare
+/// `rustc` ignores `rust-toolchain.toml` and resolved to 1.97.1. Quote std text from the pinned
+/// toolchain, via `rustup run 1.77.2 rustc` or `cargo`, or the quote describes a compiler this project
+/// does not use.
 ///
 /// Eager rather than an iterator, because the result is a `Vec` of slices into a buffer that is already
 /// in memory, and `ReadCursor` caches every line it reads anyway.
@@ -381,9 +389,11 @@ mod tests {
                 buffer
             );
 
-            // A terminator at the end of the file adds no empty line. This is the case a naive
-            // extension gets wrong for a multi-byte separator: clearing only the lead byte leaves
-            // `start` inside the separator and the file grows a final line made of its tail.
+            // A terminator at the end of the file adds no empty line. A naive extension that
+            // recognizes a multi-byte separator but clears only its lead byte leaves `start` inside
+            // the separator, and the next slice panics on a boundary that is not a character
+            // boundary. It is not confined to this case -- see `split_lines` for the four shapes
+            // that were measured, of which two have no trailing separator at all.
             let trailing = format!("one{sep}two{sep}three{sep}", sep = separator);
             assert_eq!(
                 vec![(1, "one"), (2, "two"), (3, "three")],
