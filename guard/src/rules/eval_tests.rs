@@ -7895,6 +7895,132 @@ fn a_type_block_skip_names_the_cause_it_can_support() -> Result<()> {
     Ok(())
 }
 
+/// A skip explanation taken off a failing comparison says where the comparison came from, and does
+/// not invent a condition.
+///
+/// The sibling above is the same defect one arm over. This one is the `ClauseValueCheck` arm of
+/// `own_skip_reason`, which prefixed every explanation it found with "the rule did not apply because
+/// one of its conditions was not met". That is a claim about the rule's *shape*, and a query filter
+/// refuses comparisons without any `when` existing anywhere: `rule g { Resources.*[ Properties.Size >
+/// 10 ] { Properties.X == 1 } }` over `Size: "50"` exits 0 SKIP and said a condition was not met, in a
+/// rule with zero `when` tokens. A reader goes looking for a condition they never wrote.
+///
+/// Which populations reach that arm was asserted rather than measured, and that is the reason this
+/// survived -- the comment above it enumerated two shapes, argued a third impossible, and declared a
+/// fourth unreachable, so the arm read as fully accounted for. Measured by walking the record tree,
+/// the paths that arrive are `RuleCondition`, `WhenCheck > WhenCondition`, `TypeCheck > TypeBlock >
+/// TypeCondition`, `RuleCondition > Disjunction`, `BlockGuardCheck > Filter`, `GuardClauseBlockCheck >
+/// Filter`, and `RuleCondition > .. > Filter`. Three of those seven pass through a filter, and two of
+/// the three have no condition record anywhere on the path.
+///
+/// So the wording is chosen from the path rather than assumed, and the three cells below are the three
+/// answers. A condition record anywhere above the comparison earns the condition sentence -- including
+/// the last cell, where a filter sits *inside* a `when`, because there the rule does have a condition
+/// and it genuinely was not met. A filter with no condition above it gets a sentence about a filter. A
+/// path carrying neither gets neither claim, which is the part that matters for the next reader: a
+/// record shape nobody has enumerated yet lands on the claim-free wording instead of a false one.
+///
+/// The four condition cells are not padding. A fix that stopped saying "condition" everywhere would
+/// silence a true sentence on four ordinary rule shapes, and only these cells can fail for that.
+///
+/// Asserted through the record tree rather than the console, for the reason given on the sibling.
+#[test]
+fn a_comparison_skip_reason_names_the_gate_it_was_reached_through() -> Result<()> {
+    // `Size` is a string and every gate below compares it to an integer, so the refusal is the same
+    // `PathAwareValues are not comparable String, int` in each cell and only the path differs. `X` is
+    // present so a body clause has something to read once a gate does open.
+    const ONE_STRING_SIZED_VOLUME: &str = r#"{
+        "Resources": {
+            "V1": {
+                "Type": "AWS::EC2::Volume",
+                "Properties": { "Size": "50", "X": 1 }
+            }
+        }
+    }"#;
+
+    // (label, rules, the fragment the reason must contain, a fragment it must not)
+    let cases = [
+        (
+            "a query filter, with no `when` anywhere in the rule",
+            r#"rule g { Resources.*[ Properties.Size > 10 ] { Properties.X == 1 } }"#,
+            "query filter",
+            "condition",
+        ),
+        (
+            "a query filter in a `let`, still with no `when`",
+            r#"let sel = Resources.*[ Properties.Size > 10 ]
+               rule g { %sel.Properties.X == 1 }"#,
+            "query filter",
+            "condition",
+        ),
+        (
+            "a `when` condition on the rule",
+            r#"rule g when Resources.V1.Properties.Size > 10 { Resources.V1.Properties.X == 1 }"#,
+            "one of its conditions was not met",
+            "query filter",
+        ),
+        (
+            "a `when` condition on a block inside the rule",
+            r#"rule g { when Resources.V1.Properties.Size > 10 { Resources.V1.Properties.X == 1 } }"#,
+            "one of its conditions was not met",
+            "query filter",
+        ),
+        (
+            "a `when` condition on a type block",
+            r#"rule g { AWS::EC2::Volume when Properties.Size > 10 { Properties.X == 1 } }"#,
+            "one of its conditions was not met",
+            "query filter",
+        ),
+        (
+            "a filter inside a `when` condition -- the condition is real and was not met",
+            r#"rule g when Resources.*[ Properties.Size > 10 ] not empty { Resources.V1.Properties.X == 1 }"#,
+            "one of its conditions was not met",
+            "query filter",
+        ),
+    ];
+
+    for (label, rules, expected, forbidden) in cases {
+        let rules_file = RulesFile::try_from(rules)?;
+        let value = PathAwareValue::try_from(ONE_STRING_SIZED_VOLUME)?;
+        let mut root = root_scope(&rules_file, Rc::new(value));
+        assert_eq!(
+            eval_rules_file(&rules_file, &mut root, None)?,
+            Status::SKIP,
+            "{label}: the rule does not apply on this input"
+        );
+        let top = root.reset_recorder().extract();
+        // Arguments spelled out rather than captured inline, for the edition-2018 reason given on the
+        // sibling test.
+        let reason = crate::rules::eval_context::find_skip_reason(&top)
+            .unwrap_or_else(|| panic!("{}: no skip reason was recorded at all", label));
+
+        // Every cell keeps the explanation itself. A fix that dropped the refusal to avoid misnaming
+        // its source would pass a contains/forbids pair about the prefix alone.
+        assert!(
+            reason.contains("not comparable"),
+            "{}: the reason lost the comparison's own explanation: {:?}",
+            label,
+            reason
+        );
+        assert!(
+            reason.contains(expected),
+            "{}: wanted {:?} in the reason, got {:?}",
+            label,
+            expected,
+            reason
+        );
+        assert!(
+            !reason.contains(forbidden),
+            "{}: the reason claimed {:?}, which this rule cannot support: {:?}",
+            label,
+            forbidden,
+            reason
+        );
+    }
+
+    Ok(())
+}
+
 /// The two spellings of a `when` gate on an inapplicable rule have to agree, and neither may
 /// silently disarm the block.
 ///

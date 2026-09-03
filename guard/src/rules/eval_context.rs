@@ -2546,11 +2546,60 @@ pub(crate) struct Messages {
 /// integer -- was built, recorded, and never read. Pinned by
 /// `a_specific_skip_reason_is_not_shadowed_by_the_block_summary`.
 pub(crate) fn find_skip_reason(record: &EventRecord<'_>) -> Option<String> {
+    skip_reason_reached_through(record, ReachedThrough::Neither)
+}
+
+/// Which kind of gate a skip explanation was reached through, accumulated on the way down.
+///
+/// The explanation itself is recorded on a comparison, and a comparison does not know what encloses
+/// it. What encloses it is the whole difference between two sentences a reader acts on differently, so
+/// it is carried here rather than guessed at the leaf. See the `ClauseValueCheck` arm of
+/// [`own_skip_reason`] for the sentences and for the measured list of paths that arrive.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum ReachedThrough {
+    /// Nothing on the path so far says. Deliberately the starting value and deliberately not treated
+    /// as "condition": a record shape nobody has enumerated yet gets a sentence that claims neither.
+    Neither,
+    /// A `when` condition -- on the rule, on a block, or on a type block.
+    Condition,
+    /// A query filter, with no `when` condition anywhere above it.
+    Filter,
+}
+
+impl ReachedThrough {
+    /// Folds one record on the path into the answer.
+    ///
+    /// `Condition` is sticky, and that is the substantive choice here rather than a shortcut. A filter
+    /// can sit inside a `when` -- `when Resources.*[ Size > 10 ] not empty` -- and there the rule does
+    /// have a condition and the condition genuinely was not met, so the condition sentence is the true
+    /// one even though the refusal came from a filter within it.
+    fn descend(self, record: &EventRecord<'_>) -> Self {
+        match &record.container {
+            Some(
+                RecordType::RuleCondition(_)
+                | RecordType::WhenCondition(_)
+                | RecordType::TypeCondition(_),
+            ) => Self::Condition,
+            // Keyed on the three `*Condition` variants above rather than on `WhenCheck`, because
+            // `WhenCheck` is the block a condition guards rather than the condition: its own
+            // `WhenCondition` child is what holds the comparisons, and that is the record a refusal is
+            // actually filed under.
+            Some(RecordType::Filter(_)) if self != Self::Condition => Self::Filter,
+            _ => self,
+        }
+    }
+}
+
+fn skip_reason_reached_through(
+    record: &EventRecord<'_>,
+    reached: ReachedThrough,
+) -> Option<String> {
+    let reached = reached.descend(record);
     record
         .children
         .iter()
-        .find_map(find_skip_reason)
-        .or_else(|| own_skip_reason(record))
+        .find_map(|child| skip_reason_reached_through(child, reached))
+        .or_else(|| own_skip_reason(record, reached))
 }
 
 /// The explanation this record carries itself, ignoring its children.
@@ -2558,7 +2607,7 @@ pub(crate) fn find_skip_reason(record: &EventRecord<'_>) -> Option<String> {
 /// Split out of [`find_skip_reason`] so the recursion order is one readable expression, and so the
 /// block-shaped variants share a single body -- they did not, and `clippy::collapsible_match` failed
 /// the `cargo clippy -- -D warnings` gate on the duplicate.
-fn own_skip_reason(record: &EventRecord<'_>) -> Option<String> {
+fn own_skip_reason(record: &EventRecord<'_>, reached: ReachedThrough) -> Option<String> {
     match &record.container {
         Some(RecordType::TypeCheck(TypeBlockCheck { block, .. }))
         | Some(RecordType::GuardClauseBlockCheck(block))
@@ -2590,34 +2639,71 @@ fn own_skip_reason(record: &EventRecord<'_>) -> Option<String> {
         // the rule skips because `7` is named by the denylist, and the old sentence blamed the regex
         // pair -- the one pair the evaluator explicitly refused to let decide anything.
         //
-        // So both facts are stated and neither is attributed: the condition was not met, and this is
-        // what one of its comparisons reported. A reader who needs to know whether the explanation
-        // caused the outcome has the clause and the operands in front of them.
+        // So both facts are stated and neither is attributed: what the gate was, and what one of its
+        // comparisons reported. A reader who needs to know whether the explanation caused the outcome
+        // has the clause and the operands in front of them.
         //
-        // The other half of this arm's documented population turned out to be unreachable. A reference
-        // that resolved to no values records its explanation through `EmptyQueryResult`, not through a
-        // comparison, and as a gate it produces `Status::SKIP` rather than the FAIL this arm matches --
-        // measured, `when Missing.Thing == 5 { ... }` skips the rule with no explanation line at all.
-        // Worth naming as a gap rather than leaving as a claim this arm cannot support.
+        // # Which shapes arrive here, measured rather than argued
         //
-        // What this comment used to assert about the fix is disproved and the correction matters more
-        // than the wording. It said an undecidable condition "cannot be made to enforce from here:
-        // both FAIL and SKIP on a condition drop the block it guards, so telling them apart needs a
-        // status that means 'could not tell', which `Status` does not have". True of `Status`, and the
-        // evaluator does not need one: an `Err` is that third value, and `undecided_gate` uses it to
-        // fail such a rule closed. The kind-mismatch half stays open, tracked in
-        // `docs/KNOWN_ISSUES.md`, because closing it needs the registry rules that depend on the
-        // current reading changed first -- a precondition, not an impossibility. `when ... Size > 10`
-        // against `Size: "50"` is still the quiet wrong answer, and it is quiet for that reason.
+        // This arm used to open every explanation with "one of its conditions was not met", and that is
+        // a claim about the rule's shape rather than about the comparison. A query filter refuses
+        // comparisons with no `when` existing anywhere: `rule g { Resources.*[ Properties.Size > 10 ] {
+        // Properties.X == 1 } }` over `Size: "50"` exits 0 SKIP and said a condition was not met, in a
+        // rule with zero `when` tokens. The reader is sent to inspect something they never wrote.
+        //
+        // The reason that survived is the shape of this comment, not the shape of the sentence. It
+        // enumerated two arriving populations, argued a third impossible and declared a fourth
+        // unreachable, so the arm read as fully accounted for and nobody re-measured it. It was not
+        // accounted for. Walking the record tree, seven paths reach this arm:
+        //
+        //   RuleCondition                                  a `when` on the rule
+        //   WhenCheck > WhenCondition                       a `when` on a block
+        //   TypeCheck > TypeBlock > TypeCondition           a `when` on a type block
+        //   RuleCondition > Disjunction                     a `when` holding an `or`
+        //   RuleCondition > .. > Filter                     a filter INSIDE a `when`
+        //   BlockGuardCheck > Filter                        a query filter, no `when` anywhere
+        //   GuardClauseBlockCheck > Filter                  a filter bound by a `let`, no `when`
+        //
+        // Three pass through a filter and two of those three carry no condition record at all. Those
+        // two are the false ones; the fifth is not, because a rule whose `when` selects nothing does
+        // have a condition and it was not met.
+        //
+        // So the sentence is chosen from the path, which [`ReachedThrough`] carries down. A condition
+        // anywhere above earns the condition sentence. A filter with nothing above it gets a sentence
+        // about a filter. A path with neither gets both claims dropped and keeps only the explanation --
+        // no measured shape lands there today, and that is the point of it: the next record shape added
+        // to this tree gets a sentence that is merely incomplete instead of one that is wrong.
+        //
+        // A previous revision of this comment also asserted that an undecidable condition "cannot be
+        // made to enforce from here", on the ground that telling FAIL and SKIP apart needs a status
+        // meaning "could not tell" which `Status` lacks. True of `Status`, and the evaluator does not
+        // need one: an `Err` is that third value, and `undecided_gate` uses it to fail such a rule
+        // closed. The kind-mismatch half stays open, tracked in `docs/KNOWN_ISSUES.md`, because closing
+        // it needs the registry rules that depend on the current reading changed first -- a
+        // precondition, not an impossibility. `Size > 10` against `Size: "50"` is still the quiet wrong
+        // answer whether it is spelled as a condition or as a filter, and this arm only makes it
+        // legible; it does not make it enforce.
         Some(RecordType::ClauseValueCheck(ClauseCheck::Comparison(ComparisonClauseCheck {
             status: Status::FAIL,
             message: Some(explanation),
             ..
-        }))) => Some(format!(
-            "the rule did not apply because one of its conditions was not met; a comparison it made \
-             reported: {}",
-            explanation
-        )),
+        }))) => Some(match reached {
+            ReachedThrough::Condition => format!(
+                "the rule did not apply because one of its conditions was not met; a comparison it \
+                 made reported: {}",
+                explanation
+            ),
+            ReachedThrough::Filter => format!(
+                "the rule did not apply; a comparison in one of its query filters reported: {}",
+                explanation
+            ),
+            ReachedThrough::Neither => {
+                format!(
+                    "the rule did not apply; a comparison it made reported: {}",
+                    explanation
+                )
+            }
+        }),
 
         _ => None,
     }
