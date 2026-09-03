@@ -54,7 +54,40 @@ fi
 guard_bin=$1
 rules_dir=$2
 
-state_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/../registry-corpus-state" && pwd)"
+# The state files sit beside this script, so they are found relative to where this file really lives
+# rather than to whatever name it was invoked under. Two measured failures in the previous shape,
+# `state_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/../registry-corpus-state" && pwd)"`:
+#
+# Reached through a symlink to the script, `dirname` gave the link's directory, so the walk looked for
+# the state files beside the link and found nothing. And the `cd` failing took the whole run with it --
+# a command substitution in an assignment carries its own exit status, so `set -e` fires at that line,
+# which is *above* the `-f` checks that would have named the missing file. What reached the log was a
+# bare `cd:` line and no verdict: the same unreadable shape as the temp-root failure this script
+# already had once, and the reason both are now `exit 2` with a sentence instead.
+#
+# `readlink` without `-f`, because `-f` is a GNU extension and macos-latest ships no GNU coreutils. One
+# link per iteration, a relative target resolved against the link's own directory, and a bound on the
+# chain so a symlink cycle is an error rather than a hang.
+script_path=${BASH_SOURCE[0]}
+links_followed=0
+while [[ -L $script_path ]]; do
+    if ((links_followed++ >= 16)); then
+        printf 'gave up following symlinks to %s after %d hops\n' "${BASH_SOURCE[0]}" "$links_followed" >&2
+        exit 2
+    fi
+    link_target=$(readlink "$script_path")
+    case $link_target in
+    /*) script_path=$link_target ;;
+    *) script_path=$(dirname "$script_path")/$link_target ;;
+    esac
+done
+
+# `|| { ...; exit 2; }` and not a bare assignment: see above.
+state_dir=$(cd "$(dirname "$script_path")/../registry-corpus-state" 2>/dev/null && pwd) || {
+    printf 'no registry-corpus-state directory beside %s\n' "$script_path" >&2
+    printf 'this script reads its expected state from a sibling directory of its own\n' >&2
+    exit 2
+}
 readonly state_dir
 readonly expected_unchecked="$state_dir/unchecked-expectations.txt"
 readonly expected_orphans="$state_dir/orphaned-test-files.txt"
