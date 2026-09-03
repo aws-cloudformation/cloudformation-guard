@@ -2805,6 +2805,11 @@ fn first_duplicate_assignment(assignments: &[LetExpr<'_>]) -> Option<String> {
 /// both to pick. No scope phrase, unlike the duplicate-assignment messages -- a duplicate is only a
 /// problem relative to a scope, while a cycle is unresolvable wherever it sits, and the block-level
 /// site carries a span that says where.
+///
+/// That last clause was false when it was written and is true now. The block-level site reported the
+/// span left after the whole body was consumed, which lands on the closing brace of the enclosing
+/// block rather than on the scope holding the ring; it now reports the block's opening brace. The
+/// file-level site still carries no position at all, which is a separate gap and not this one.
 fn let_cycle_message(cycle: &[&str]) -> String {
     if let [only] = cycle {
         return format!(
@@ -2961,15 +2966,31 @@ where
     T: Clone + 'loc,
 {
     move |input: Span| {
-        let (input, _start_block) = preceded(zero_or_more_ws_or_comment, char('{'))(input)?;
+        // `at_brace` is held on the opening `{` and the advanced spans get their own names, which is
+        // what `parse_map` does and what the two refusals below need. Shadowing `input` per step is
+        // the ordinary shape in this file, and here it put both reported positions *past the whole
+        // block body*: the span in hand after `fold_many1` is the text after the last clause, which
+        // lands on the closing brace of the enclosing block. Measured, on a duplicate `let v` at
+        // line 3 column 5 of a four-line rule body, the refusal reported line 5 column 1 -- the
+        // rule's own `}` -- and on the same duplicate inside a `when` block at line 4 column 9 it
+        // reported line 6 column 5, that block's `}`. A reader is sent to a brace they did not write
+        // wrong.
+        //
+        // The brace rather than the offending statement, and that is a deliberate stop short of
+        // perfect. `LetExpr` carries no location, so naming the declaration itself would mean
+        // teaching the fold below to accumulate spans -- a wider change than a locator repair. The
+        // opening brace is the scope the message is about ("in the same scope"), it is a construct
+        // the author wrote, and it is the same choice `parse_map` made for the same reason.
+        let (at_brace, _leading) = zero_or_more_ws_or_comment(input)?;
+        let (after_open, _start_block) = char('{')(at_brace)?;
 
         // Held for the rest of this function, which is the whole of the block's body, so the level is
         // open for exactly as long as the block is. `_nesting` rather than `_`, which would drop it
         // here and count nothing.
-        let _nesting = NestingGuard::enter(input, "block")?;
+        let _nesting = NestingGuard::enter(after_open, "block")?;
 
         let mut conjunctions: Conjunctions<T> = Conjunctions::new();
-        let (input, results) = fold_many1(
+        let (after_body, results) = fold_many1(
             alt((
                 map(preceded(zero_or_more_ws_or_comment, assignment), |s| {
                     (Some(s), None)
@@ -2984,7 +3005,7 @@ where
                 acc.push(pair);
                 acc
             },
-        )(input)?;
+        )(after_open)?;
 
         let mut assignments = vec![];
         for each in results {
@@ -3016,7 +3037,7 @@ where
         // them; file-level declarations are checked where they are collected in `rules_file`.
         if let Some(duplicate) = first_duplicate_assignment(&assignments) {
             return Err(nom::Err::Failure(ParserError {
-                span: input,
+                span: at_brace,
                 kind: ErrorKind::Tag,
                 context: format!(
                     "Variable {} is assigned more than once in the same scope. Which assignment wins \
@@ -3038,17 +3059,22 @@ where
         // text. This rejects exactly the files that cannot resolve and names the ring, where a depth
         // limit would turn the crash into an arbitrary failure at an arbitrary depth and would still
         // reject a legal chain that happened to be longer than the limit.
+        // Same span, same reason as the duplicate check above. This site had the identical defect and
+        // is fixed with it rather than left for later: the two are one expression apart, share the
+        // one shadowed span, and `let_cycle_message`'s own comment asserted that "the block-level
+        // site carries a span that says where", which was false by the same measurement.
         if let Some(cycle) = first_let_cycle(&assignments) {
             return Err(nom::Err::Failure(ParserError {
-                span: input,
+                span: at_brace,
                 kind: ErrorKind::Tag,
                 context: let_cycle_message(&cycle),
             }));
         }
 
-        let (input, _end_block) = cut(preceded(zero_or_more_ws_or_comment, char('}')))(input)?;
+        let (after_close, _end_block) =
+            cut(preceded(zero_or_more_ws_or_comment, char('}')))(after_body)?;
 
-        Ok((input, (assignments, conjunctions)))
+        Ok((after_close, (assignments, conjunctions)))
     }
 }
 

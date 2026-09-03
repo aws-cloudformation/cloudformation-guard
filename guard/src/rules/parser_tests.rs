@@ -7891,6 +7891,124 @@ fn the_repeated_map_key_refusal_points_at_the_literal(
     );
 }
 
+/// A refusal inside a block points at that block's opening brace, not past the whole body.
+///
+/// `block` shadowed `input` at each step -- the ordinary shape in this file -- so the span both of its
+/// refusals reported with was the one left after `fold_many1` consumed the body. That lands on the
+/// closing brace of the enclosing block. Measured before the fix:
+///
+/// ```text
+/// duplicate `let v` at line 3 column 5 of a rule body      reported line 5 column 1   the rule's `}`
+/// the same duplicate inside a `when` at line 4 column 9    reported line 6 column 5   that block's `}`
+/// a `let` cycle at line 2 column 5 of a rule body          reported line 5 column 1   the rule's `}`
+/// the same cycle inside a `when` at line 3 column 9        reported line 6 column 5   that block's `}`
+/// ```
+///
+/// A brace the author did not write wrong, two lines past the construct, is a different construct
+/// rather than an imprecise column -- which is why the deferral that called it "imprecise" does not
+/// hold. The last round deferred this site on that reading while fixing `parse_map`, whose defect was
+/// the same shadowing one function away.
+///
+/// Both refusals in `block` are asserted, not just the duplicate one. They are one expression apart
+/// and shared the single shadowed span, so a fix aimed at either alone would leave a known-identical
+/// defect two lines below it.
+///
+/// The exact column is asserted and the old wrong position is asserted absent, because a test that
+/// only checked for "some position" passed before the fix. The column is re-derived from the fixture
+/// line rather than trusted, and searched within the named line rather than as a bare `{` over the
+/// whole text -- the nested cases hold two braces and a whole-text search finds the outer one, which
+/// is the mistake the sibling test above records catching.
+///
+/// The message and the refusal itself are asserted alongside the position, because only the position
+/// was meant to move: these files exited 5 before and exit 5 now.
+#[rstest::rstest]
+#[case::a_duplicate_in_a_rule_body(
+    "rule r {\n    let v = 1\n    let v = 2\n    Resources exists\n}\n",
+    "Variable v is assigned more than once in the same scope",
+    1,
+    8,
+    5,
+    1
+)]
+#[case::a_duplicate_in_a_nested_when_block(
+    "rule r {\n    when Resources exists {\n        let v = 1\n        let v = 2\n        Resources exists\n    }\n}\n",
+    "Variable v is assigned more than once in the same scope",
+    2,
+    27,
+    6,
+    5
+)]
+#[case::a_let_cycle_in_a_rule_body(
+    "rule r {\n    let a = %b\n    let b = %a\n    %a == 1\n}\n",
+    "Variables a -> b -> a are defined in terms of each other",
+    1,
+    8,
+    5,
+    1
+)]
+#[case::a_let_cycle_in_a_nested_when_block(
+    "rule r {\n    when Resources exists {\n        let a = %b\n        let b = %a\n        %a == 1\n    }\n}\n",
+    "Variables a -> b -> a are defined in terms of each other",
+    2,
+    27,
+    6,
+    5
+)]
+fn a_refusal_in_a_block_points_at_the_block_it_is_about(
+    #[case] rules: &str,
+    #[case] message: &str,
+    #[case] line: usize,
+    #[case] open_brace_column: usize,
+    #[case] past_the_body_line: usize,
+    #[case] past_the_body_column: usize,
+) {
+    // The fixture says where the block opens; check it rather than trust it, so a reworded case cannot
+    // leave the expected column pointing at the wrong character. Searched within the named line, not
+    // over the whole text: the nested cases hold a rule brace and a `when` brace, and only the line
+    // narrows it to the right one. ASCII fixtures, so a byte offset is a column here.
+    let text = rules
+        .lines()
+        .nth(line - 1)
+        .expect("the case names a line the fixture has");
+    assert_eq!(
+        Some(open_brace_column - 1),
+        text.find('{'),
+        "the case says the block opens at column {} of {:?}",
+        open_brace_column,
+        text
+    );
+
+    let rendered = format!(
+        "{}",
+        rules_file(from_str2(rules)).expect_err("an unresolvable block must not parse")
+    );
+
+    assert!(
+        rendered.contains(message),
+        "the refusal should still say {:?}: {}",
+        message,
+        rendered
+    );
+
+    let wanted = format!("at line {} at column {}", line, open_brace_column);
+    assert!(
+        rendered.contains(&wanted),
+        "the refusal should report {:?}, the column of the block's opening brace: {}",
+        wanted,
+        rendered
+    );
+    let wrong = format!(
+        "at line {} at column {}",
+        past_the_body_line, past_the_body_column
+    );
+    assert!(
+        !rendered.contains(&wrong),
+        "and not {:?}, which is the closing brace past the whole body: {}",
+        wrong,
+        rendered
+    );
+}
+
 /// The control, so the check above cannot pass by rejecting every literal.
 ///
 /// The list case is the reason this is a control rather than a formality. A repeated *value* in a list is
