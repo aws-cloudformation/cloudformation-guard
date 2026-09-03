@@ -10235,10 +10235,12 @@ fn the_incomparable_membership_notice_is_only_emitted_for_a_clause_that_passed(
 /// that against the fail-closed spelling of each shape rather than deriving it, so it fails if the
 /// language ever stops agreeing.
 ///
-/// So the gate is the verdict alone, which is what it was before the role joined it. `some` was examined
-/// as a reason to read that verdict as any-value-passed instead of every-value, and rejected on a
-/// measurement rather than a preference: see `clause_passed`, and `a_some_clause_one_value_of_which_fails`
-/// below for the shape.
+/// So the gate is the verdict alone, which is what it was before the role joined it -- read under the
+/// query's own `match_all`, since "did this clause pass" needs one value for `some` and every value
+/// otherwise. That reading is load-bearing rather than tidy: an `all(PASS)` one is silent on a `some`
+/// clause that passes on a genuine incomparability while a sibling value fails to a spent regex budget.
+/// It also costs a false alarm, and `a_some_clause_one_value_of_which_fails` below is that cost;
+/// `clause_passed` weighs the two.
 ///
 /// The cells that changed answer when the role left this gate are the two former `absorb` ones, the
 /// filter, and `an_already_fail_closed_gate`. The rest are controls, and each pins a different edge:
@@ -10274,16 +10276,20 @@ fn the_incomparable_membership_notice_is_only_emitted_for_a_clause_that_passed(
     Status::PASS,
     ExpectedNotice::Passed
 )]
-// `some` reaches PASS on one value while another fails, and the notice stays with the verdict rather
-// than following the clause's own fold. Silent, and the reason is a property of the predicate rather
-// than a preference: it answers false as soon as one pair is comparable, and a value only collides with
-// an element it is comparable with, so a mixed clause carrying a real incomparability cannot reach here
-// at all. Only the whole-value false-alarm class can, which is what this cell is -- every pair
-// `contained_in` compared is int against int. See `clause_passed`.
+// `some` reaches PASS on one value while another fails, and the verdict is read under the query's own
+// `match_all`, so the clause counts as passing and is noticed.
+//
+// This cell is the cost of that reading, stated where it can be seen rather than in a commit message.
+// Every pair `contained_in` compared here is int against int -- `[1, 2]` collides with `1` element-wise
+// and `[7, 8]` does not -- so the notice is owed to `incomparable_membership`'s whole-value premise and is
+// one of the false alarms it documents. An `all(PASS)` reading is silent here, and it is also silent on
+// `a_refusing_pair_beside_a_spent_budget` below, which is a true positive. Keeping this one quiet costs
+// that one, and `clause_passed` says why the two cannot be separated: a spent regex budget fails a value
+// on a pair that is neither a collision nor an incomparability.
 #[case::a_some_clause_one_value_of_which_fails(
     "rule r { some Resources.*.Properties.Ports NOT IN [1, 3] }",
     Status::PASS,
-    ExpectedNotice::Silent
+    ExpectedNotice::Passed
 )]
 // Clauses that do not pass. The change leaves every one of these where it is.
 #[case::an_assertion_that_fails(
@@ -10463,6 +10469,87 @@ fn a_spent_backtracking_budget_is_not_an_incomparable_pair(
     );
 
     assert_notice(rules, status, expected_notice, &notices);
+
+    Ok(())
+}
+
+/// One value's spent regex budget does not silence the notice another value earned.
+///
+/// `incomparable_membership` walks every left-hand value against every right-hand element and returns on
+/// the first `RegexError`, which is a decision about the whole clause taken on the evidence of one pair.
+/// The pair it is right about is its own: a spent backtracking budget means the operands were of
+/// comparable kinds and the engine quit, so that pair is not an incomparability and must not produce a
+/// notice. What does not follow is that no *other* pair is one.
+///
+/// The cells are the isolation. `A` is a string thirty `a` characters long, which exhausts the budget
+/// against this pattern; `B` is a list, and `(List, Regex)` is not a `compare_eq` arm at all, so its pair
+/// refuses with `NotComparable` -- a real incomparability, and the shape the notice exists for. Measured
+/// before this: `B` alone earns the notice, `A` alone earns nothing and fails, and the two together earn
+/// nothing. Adding `A` to the query destroyed the warning `B` was owed, on a clause that passes.
+///
+/// `some` is required and is not incidental. A value whose pair exhausts the budget fails its own
+/// `contained_in` pass, because `match_value` promotes `RegexError`, so under `match_all` the clause
+/// cannot pass and the verdict gate suppresses the notice for a reason that has nothing to do with this
+/// defect. `some` lets `B` carry the clause to PASS while `A` fails, which is the only shape where the
+/// early return is observable through the gate at all.
+///
+/// So the silencing is per pair now: a `RegexError` pair is passed over, and the notice goes out if some
+/// other pair refused and none was answered. A pair that *was* answered still returns immediately -- that
+/// is the documented early return, and `a_comparable_element_beside_the_catastrophic_one` in the test
+/// above pins it, which is why this fix does not widen the notice to clauses decided on a comparable
+/// element.
+#[rstest::rstest]
+// The list value alone. Its pair refuses, the clause passes, and the notice is owed.
+#[case::a_refusing_pair_alone("some Multi.B.V NOT IN [/(?!x)((a+)+)b/]", Status::PASS, true)]
+// Both values. The same refusing pair is still there, and so is the notice.
+#[case::a_refusing_pair_beside_a_spent_budget(
+    "some Multi.*.V NOT IN [/(?!x)((a+)+)b/]",
+    Status::PASS,
+    true
+)]
+// The spent budget alone. Nothing refused, so nothing is owed -- and the clause fails, because
+// `match_value` promotes the error.
+#[case::a_spent_budget_alone("some Multi.A.V NOT IN [/(?!x)((a+)+)b/]", Status::FAIL, false)]
+fn a_spent_budget_on_one_value_does_not_silence_another_values_notice(
+    #[case] clause: &str,
+    #[case] expected: Status,
+    #[case] expect_notice: bool,
+) -> Result<()> {
+    // Thirty `a` characters is the length at which `(?!x)((a+)+)b` exhausts the budget, matching the
+    // test above. `B` holds a list so that its whole-value pair against the pattern reaches
+    // `compare_values`' catch-all rather than the regex engine.
+    const INPUT: &str = r#"
+    {
+        Multi: {
+            A: { V: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" },
+            B: { V: [1, 2] }
+        }
+    }
+    "#;
+
+    let (status, notices) = deprecations_for_rules(&format!("rule r {{ {clause} }}"), INPUT)?;
+
+    assert_eq!(
+        expected, status,
+        "`{}` changed verdict; this is a diagnostics fix and must move no status",
+        clause
+    );
+
+    let emitted = notices
+        .iter()
+        .any(|n| n.contains("could not be compared with any element"));
+    assert_eq!(
+        expect_notice,
+        emitted,
+        "`{}` reached {:?}, so the notice should {}; recorded {:?}",
+        clause,
+        status,
+        match expect_notice {
+            true => "have been emitted",
+            false => "have stayed silent",
+        },
+        notices
+    );
 
     Ok(())
 }

@@ -292,9 +292,14 @@ fn empty_reference_message(negated: bool) -> String {
 /// classification does not cover. Reverting that gate brings every emission back inside it, and the 10
 /// false negatives are still 10, because a clause that does not pass is not one the change moves.
 ///
-/// # Aligning it is the right fix, and must wait for the `[*]` bypass
+/// # Aligning it is the right fix, and once had to wait for the `[*]` bypass
 ///
-/// **Do not flatten the left-hand side here while the `[*]` membership bypass is open**, however
+/// **This section is superseded. The bypass it waits on closed in `e331c6b`; read "The bypass closed"
+/// below before acting on anything here.** Kept because the measurements in it are still the record of
+/// why the noise was accepted, and because the constraint it imposes is the one a reader is most likely to
+/// grep for and obey without noticing it has expired.
+///
+/// Do not flatten the left-hand side here while the `[*]` membership bypass is open, however
 /// obviously correct it looks. Measured on a tree with that change and nothing else: the suite stays
 /// green at 2503 passed / 0 failed, all five aws-guard-rules-registry notices survive, the seven false
 /// alarms go -- and `Pair NOT IN Deny13[*]`, with `{"Pair":[1,2],"Deny13":[1,3]}`, goes from exit 0
@@ -322,8 +327,15 @@ fn empty_reference_message(negated: bool) -> String {
 /// `e331c6b` closed the right-expanded denylist arm, and the re-measurement the paragraph above asks
 /// for was run rather than assumed. `Pair NOT IN Deny13[*]` over `{"Pair":[1,2],"Deny13":[1,3]}`:
 /// exit 0 *with* the notice at `b05f922`, **exit 19 and silent** at `8ed1b54`. So the clause no longer
-/// admits a value its denylist names, and the notice on it is no longer a true positive -- the verdict
-/// gate suppresses it, correctly, because the file now reports the clause.
+/// admits a value its denylist names, and the notice on it is no longer a true positive.
+///
+/// Why it is silent depends on the spelling, and an earlier revision of this paragraph gave one reason for
+/// both. Asserted -- which is the spelling `8ed1b54` measured -- the verdict gate suppresses it and the
+/// report does name the clause: exit 19, `provided value [[1,2]] did match expected value in [[1,3]]`. As
+/// a `when` condition the verdict gate still suppresses it and the report names nothing at all: exit 0,
+/// empty stdout. Both are silent and only the first is silent for the reason given, so the sentence was
+/// true of what it measured and false as a general claim. The conclusion it supports is unaffected, and is
+/// wider than it was stated to be: every spelling of this clause is now silent, in either role.
 ///
 /// That removes the reason the noise was accepted. The section above trades seven false alarms on
 /// compliant rules for one true positive on a live bypass at exit 0, and that true positive is gone.
@@ -358,10 +370,16 @@ fn incomparable_membership(lhs: &[QueryResult], rhs: &[QueryResult]) -> bool {
     if elements.is_empty() {
         return false;
     }
+    // Some pair refused for a reason that is an incomparability. Tracked rather than returned, because
+    // the answer is a property of the whole cross product: one refusal is enough, and no refusal at all
+    // means there is nothing here to warn about.
+    let mut refused = false;
     for value in &lhs_values {
         for element in &elements {
             match compare_eq(value, element) {
-                // A pair the comparison answered. Nothing here was undecidable.
+                // A pair the comparison answered. Whatever the clause decided, it had this to decide on,
+                // so the incomparability is not what its answer rests on. Returns for the whole clause
+                // deliberately -- see the mixed-list note above.
                 Ok(_) => return false,
                 // Not every `Err` is an incomparability, and this one is not. `fancy_regex` returns a
                 // `Result` from `is_match` because its backtracking engine can run out of budget, so a
@@ -371,35 +389,48 @@ fn incomparable_membership(lhs: &[QueryResult], rhs: &[QueryResult]) -> bool {
                 // reason was wrong: the engine quit, the values were fine, and rewriting the operands
                 // to "values of the same kind" would not change anything.
                 //
-                // Silences the notice rather than reporting something else, because these clauses are
-                // already answered elsewhere: `match_value` promotes `RegexError`, so the clause fails
-                // and says the regular expression could not be evaluated.
-                // `a_regex_that_exceeds_the_backtrack_limit_fails_the_clause_instead_of_aborting` pins
-                // that. This notice has nothing to add to it.
+                // Passed over rather than answering for the clause. It used to return false here, which
+                // decided the whole cross product on the evidence of one pair, and the pair it is right
+                // about is its own. `some Multi.*.V NOT IN [/re/]` over a thirty-character `a` string and
+                // a list: the string exhausts the budget, the list's pair is `(List, Regex)` -- not an arm
+                // at all, so a real `NotComparable` -- and the clause passes on the list. Measured, the
+                // list alone earned the notice and the two together earned nothing, so an unrelated
+                // sibling value's spent budget destroyed a warning that was owed.
+                // `a_spent_budget_on_one_value_does_not_silence_another_values_notice` pins all three.
                 //
                 // Narrow on purpose, and the reason is which pair this predicate builds rather than how
                 // the clause is spelled. `(List, Regex)` is not an arm, so a whole-list left-hand side
                 // against a FLAT denylist holding a regex falls through to `compare_values` and refuses
-                // with `NotComparable` -- which this still counts, and which the section above calls out
-                // as a false alarm of a different kind. Widening this to every `Err` would silence that
-                // class here instead of where it is documented to be fixed.
+                // with `NotComparable` -- which the arm below still counts, and which the section above
+                // calls out as a false alarm of a different kind. Passing over every `Err` here would
+                // silence that class instead of leaving it where it is documented to be fixed.
                 //
                 // It does NOT follow that the whole-list spelling never reaches the engine, and this
                 // comment said so until the arm below was measured. The predicate flattens the right-hand
                 // side one level, so a denylist holding a NESTED list hands it `(List, List)`, which
                 // `compare_eq` answers by zipping: for `Cat NOT IN [[/re/]]` over a one-element `Cat` that
                 // zip is `(String, Regex)`, which builds the pattern and runs it. `RegexError` therefore
-                // arrives here from the whole-list spelling too, and silencing it is this arm's job in
+                // arrives here from the whole-list spelling too, and passing it over is this arm's job in
                 // that spelling as much as in the element-wise one. Measured at 9bcf2053 with the release
                 // binary: `rule r { Cat NOT IN [[/(?!x)((a+)+)b/]] }` over a `Cat` of one thirty-character
                 // string of `a`s exits 19 and prints nothing, `contained_in` having promoted the same
-                // error into the verdict.
-                Err(Error::RegexError(_)) => return false,
-                Err(_) => {}
+                // error into the verdict. That measurement still holds after the change below, because
+                // the zipped pair is the only one this clause builds: nothing else refuses, `refused`
+                // stays false, and the notice stays away exactly as it did when this arm returned.
+                //
+                // Nothing is lost by narrowing it. Where the budget is the only thing that refused,
+                // `refused` stays false and the notice still does not go out, which is the case this arm
+                // was added for; and such a clause is answered elsewhere anyway, since `match_value`
+                // promotes `RegexError` and the clause fails saying the expression could not be
+                // evaluated. That last part is true of an assertion and not of a gate -- a failing gate
+                // is reported by nothing -- but the notice is not the thing to fix it with, because a
+                // clause that does not pass is not one the coming fail-closed change moves.
+                Err(Error::RegexError(_)) => {}
+                Err(_) => refused = true,
             }
         }
     }
-    true
+    refused
 }
 
 /// Notice for a comparison that passed without comparing anything, because the value it selected was
@@ -431,9 +462,24 @@ fn vacuous_comparison_notice(context: &str, location: &FileLocation<'_>) -> Stri
 /// `false` as a tracked defect. `!=` already fails closed on the same operands; `NOT IN` does not.
 ///
 /// Not changed in this release, and the reason is specific rather than caution: five rules in
-/// aws-guard-rules-registry use `NOT IN` inside a filter predicate to catch a `!Ref`-shaped value, and
-/// failing closed makes the filter select fewer resources, which turns a reported violation into a
-/// pass. Those rules have to change first.
+/// aws-guard-rules-registry rely on the current reading, and failing closed breaks them. They have to
+/// change first.
+///
+/// Four of the five and the fifth break differently, which is worth stating because one sentence used to
+/// cover all five and described only the four. The four are filter predicates matching a `!Ref`-shaped
+/// value against a regex denylist -- `some Properties.Users[*].Password not in [ /{{resolve\:...}}/, ... ]`
+/// in `amazon_mq_broker_users_no_plaintext_password.guard:69` and its three siblings. Failing closed there
+/// makes the filter select fewer resources, so a reported violation becomes a pass: the dangerous
+/// direction, because nothing in the output changes.
+///
+/// The fifth is `secretsmanager_using_cmk.guard:41`,
+/// `%aws_secretsmanager_secret_cmk.Properties.KmsKeyId not in ["alias/aws/secretsmanager"]`, and it is a
+/// rule-body assertion rather than a filter, with a plain `String` element rather than a regex. Its pair is
+/// `compare_eq(Map, String)` -- `KmsKeyId` is `{Ref: MyKMSKey}` in the fixture -- which has no arm and
+/// reaches `compare_values`' catch-all. Failing closed there fails the clause, so the rule reports a
+/// violation against a template that satisfies it by pointing at a customer-managed key. That is a false
+/// alarm rather than a hidden one, and it is visible, so do not carry the filter argument over to it: the
+/// harm is the opposite direction and the remedy for the rule is a different one.
 ///
 /// Ends with the clause's source position, which is what makes the notice identify its own subject.
 /// `context` is the clause's `Display` and carries no rule name, no file and no position, so two clauses
@@ -1239,18 +1285,19 @@ where
 /// `role` decides what a positive comparison against an empty reference reports: it
 /// is unsatisfiable, so it fails as an [`ClauseRole::Assertion`] but must stay a SKIP
 /// as a [`ClauseRole::Gate`]. See [`ClauseRole`] for why failing a gate is unsafe.
-// Eight arguments, one over the lint's limit, and the eighth is `location`. Two ways to get back under it
-// were considered and both cost more than the lint does.
+// Nine arguments, two over the lint's limit; the last two are `location` and `match_all`, both of them
+// there for the deprecation notice at the bottom. Two ways to get back under it were considered and both
+// cost more than the lint does.
 //
-// Folding the position into `context` is the obvious one and it is not a refactor, it is a behaviour
-// change: `context` is what every record in this function is filed under and what the reporters print, so
-// widening it moves report text and the golden files with it. This change is diagnostics only.
+// Folding either into `context` is the obvious one and it is not a refactor, it is a behaviour change:
+// `context` is what every record in this function is filed under and what the reporters print, so widening
+// it moves report text and the golden files with it. This change is diagnostics only.
 //
-// Taking `&AccessClause` in place of `lhs_query`, `custom_message` and `location` -- all three are its
-// fields, and the one call site has it -- would reach six. That is a better signature and it rewrites the
-// interior of a four-hundred-line function to reach a lint limit, with no behavioural gain and a real
-// chance of a transcription error in the arms that clone `custom_message`. Worth doing on its own, next to
-// nothing else.
+// Taking `&AccessClause` in place of `lhs_query`, `custom_message`, `location` and `match_all` -- all four
+// are its fields or its query's, and the one call site has it -- would reach five. That is a better
+// signature and it rewrites the interior of a four-hundred-line function to reach a lint limit, with no
+// behavioural gain and a real chance of a transcription error in the arms that clone `custom_message`.
+// Worth doing on its own, next to nothing else.
 #[allow(clippy::too_many_arguments)]
 fn binary_operation<'value, 'loc: 'value>(
     lhs_query: &'value [QueryPart<'loc>],
@@ -1262,6 +1309,10 @@ fn binary_operation<'value, 'loc: 'value>(
     role: ClauseRole,
     // Where the clause is written, for the notice below and nothing else.
     location: &FileLocation<'loc>,
+    // Whether the query needs every value or any one of them, which is what "did this clause pass" means
+    // for it. Passed in rather than read off `lhs_query`, because that is the `query` field alone while the
+    // flag lives on the `AccessQuery` around it; the single caller has both.
+    match_all: bool,
 ) -> Result<EvaluationResult> {
     let lhs = eval_context.query(lhs_query)?;
     // Computed here and emitted at the bottom, because neither end of the comparison has both halves
@@ -1640,51 +1691,54 @@ fn binary_operation<'value, 'loc: 'value>(
     // spelling of each shape, so it goes red if the language stops agreeing.
     //
     // So the gate is the verdict, and the verdict alone -- which is what it was before the role joined it.
-    //
-    // `some` was examined as a reason to read the verdict as any-value-passed rather than every-value,
-    // since a `some` clause reaches PASS on one value while an `all(PASS)` reading calls that not passing.
-    // It is not one, and the reason is a property of the predicate above rather than a judgment: it
-    // answers false the moment one pair is comparable, and a value can only collide with an element it is
-    // comparable with. So wherever it fires on operands genuinely beyond comparison, no value collides and
-    // every value passes, and the two readings agree. They differ only where a list left-hand side is
-    // incomparable as a whole while its elements are not, which is the whole-value false-alarm class this
-    // predicate documents -- `some Resources.*.Properties.Ports NOT IN [1, 3]` over `[1, 2]` and `[7, 8]`,
-    // where every pair `contained_in` compared is int against int. Measured: `some Vals.*.V NOT IN
-    // ["unset"]` over `1` and `"unset"`, the mixed shape with a real incomparability in it, records no
-    // notice at all, because `"unset"` against `"unset"` is comparable and the predicate stops there.
-    // Reading the verdict as any-value-passed would therefore add notices to the false-alarm class and to
-    // nothing else.
-    if membership_is_incomparable && clause_passed(&outcome) {
+    // Read under the query's own `match_all`, because "did this clause pass" means one value for `some`
+    // and every value otherwise; `clause_passed` says why that is not interchangeable with `all(PASS)`,
+    // and what the difference costs.
+    if membership_is_incomparable && clause_passed(&outcome, match_all) {
         eval_context.record_deprecation(incomparable_membership_notice(&context, location));
     }
 
     Ok(outcome)
 }
 
-/// True when the clause reached PASS on every value it decided.
+/// True when the clause reached PASS, under the `match_all` its query was written with.
 ///
-/// The whole clause rather than any one value, because the notice this gates makes a claim about the
-/// clause -- "<clause> passed" -- and a clause with one failing value has not passed.
+/// The clause and not any one value, because the notice this gates makes a claim about the clause --
+/// "<clause> passed" -- and the clause is what the coming fail-closed change will or will not move. How
+/// many values that takes is the query's own question: `match_all` needs every one, `some` needs one, and
+/// this matches the fold the caller applies to these same statuses to get the status it reports.
 ///
-/// Every value rather than any one of them, which matters for a `some` query, whose own fold needs only
-/// one. It looks like the wrong reading for such a query and is not, because of where
-/// `incomparable_membership` can fire: it answers false as soon as one pair is comparable, and a value
-/// only collides with an element it can be compared with, so wherever it fires on operands genuinely
-/// beyond comparison there is no collision and every value passes. The two readings can disagree only in
-/// its whole-value false-alarm class -- a list incomparable entire whose elements are not -- so reading
-/// any-value-passed here would widen that class and reach no clause outside it. Measured: `some Vals.*.V
-/// NOT IN ["unset"]` over `1` and `"unset"`, a mixed clause holding a real incomparability, records no
-/// notice under either reading, because the predicate stops at `"unset"` against `"unset"`.
+/// Reading `all(PASS)` for both was tried, on the argument that the two agree wherever this notice can
+/// fire: `incomparable_membership` answers false as soon as one pair is comparable, and a value only
+/// collides with an element it can be compared with, so a genuine incomparability should mean no
+/// collision and every value passing. **That argument is wrong, and the counterexample is a spent regex
+/// budget.** `match_value` promotes `RegexError`, so a value can fail on a pair that is neither a
+/// collision nor an incomparability -- comparable in kind, engine gave up. `some Multi.*.V NOT IN [/re/]`
+/// over a thirty-character `a` string and the list `[1, 2]` is exactly that: the string's pair exhausts
+/// the budget and fails, the list's pair is a real `NotComparable`, and the clause reaches PASS on the
+/// list. An `all(PASS)` reading is silent there, and it is silent on a true positive.
 ///
-/// An empty result is not a pass. Nothing decided means nothing passed, and a notice saying otherwise
-/// would be the same defect with a different cause. Unreachable from the notice as things stand --
-/// `incomparable_membership` answers false unless some left-hand value resolved, and a resolved value
-/// produces a status -- so it is a guard against a future caller rather than a case in play.
-fn clause_passed(result: &EvaluationResult) -> bool {
+/// So the two readings are not interchangeable, and the cost of this one is stated rather than hidden: it
+/// also lets `some` reach the whole-value false-alarm class `incomparable_membership` documents, where a
+/// list is incomparable entire while its elements are not. `some Resources.*.Properties.Ports NOT IN
+/// [1, 3]` over `[1, 2]` and `[7, 8]` now warns, and every pair `contained_in` compared there was int
+/// against int. That class is already the known noise this predicate trades on and is slated to go with
+/// the alignment fix; losing a true positive to keep it quiet is the worse of the two.
+///
+/// An empty result is not a pass under either reading. Nothing decided means nothing passed, and a notice
+/// saying otherwise would be the same defect with a different cause. Unreachable from the notice as
+/// things stand -- `incomparable_membership` answers false unless some left-hand value resolved, and a
+/// resolved value produces a status -- so it is a guard against a future caller rather than a case in
+/// play.
+fn clause_passed(result: &EvaluationResult, match_all: bool) -> bool {
     match result {
         EvaluationResult::EmptyQueryResult(status, _) => *status == Status::PASS,
         EvaluationResult::QueryValueResult(values) => {
-            !values.is_empty() && values.iter().all(|(_, status)| *status == Status::PASS)
+            !values.is_empty()
+                && match match_all {
+                    true => values.iter().all(|(_, status)| *status == Status::PASS),
+                    false => values.iter().any(|(_, status)| *status == Status::PASS),
+                }
         }
     }
 }
@@ -1912,6 +1966,7 @@ pub(in crate::rules) fn eval_guard_access_clause<'value, 'loc: 'value>(
             resolver,
             role,
             &gac.access_clause.location,
+            all,
         )
     };
 
