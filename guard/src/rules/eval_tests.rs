@@ -16500,6 +16500,21 @@ fn the_whole_value_pairing_stops_where_the_operator_stops() {
 /// check did the matching -- which is why its binding is no longer named after `PartialEq`. Stated
 /// rather than left implicit, because "cells 1 and 2 are the two ways it returns early" reads as a
 /// promise that a mutation of either is caught.
+///
+/// INERT rather than untested, which is a distinction a green result alone cannot make. Deleting
+/// `if elem == each { return Matched }` leaves the whole lib target green, 1430 passed and 0 failed;
+/// deleting `Ok(true) => return Matched` from the same loop produces 20 failures. So the site is
+/// reached and exercised, and the first branch changes nothing when it is gone -- where "both deletions
+/// leave it green" would have been equally consistent with a loop nothing runs.
+///
+/// One limitation of the measurement above, since it bounds what "every arm" covers. The walk asks
+/// `elem == each` and then `compare_eq(each, elem)`, operands REVERSED between the two, and the
+/// asymmetry cell 2 relies on is one-directional. Both directions were checked for the two pairs the
+/// cells turn on -- `Int`/`Float` true both ways, `Int`/`RangeInt` false both ways -- and one direction
+/// only for the rest of the arms. A later probe over 2116 ordered pairs in the loop's own order found
+/// no violation and 15 pairs where `compare_eq` matches while `PartialEq` does not, so the conclusion
+/// holds in the direction that matters; the narrower basis is recorded because a claim about "every
+/// arm" invites a reader to assume both orders were walked.
 #[test]
 fn a_short_circuited_scalar_pairing_earns_no_refusal() {
     use crate::rules::path_value::Path;
@@ -16882,11 +16897,27 @@ fn a_subset_that_holds_earns_no_refusal_from_its_own_element_pairs() {
 /// # What these cells do NOT pin
 ///
 /// Each cell above was checked against a mutation of its OWN arm and of the neighbouring ones, because
-/// a cell that reddens under every mutation is riding along rather than discriminating. Flipping each
-/// of the four arms in turn moves exactly one cell here and one in the helper's table, and disabling
-/// the `both_queried` shape refusal below the loop or the `(List, List)` whole-value gate beside it
-/// reddens four and seven OTHER tests while leaving every cell here green -- so none of these cells
-/// rests on those two conditions.
+/// a cell that reddens under every mutation is riding along rather than discriminating.
+///
+/// THREE arms, not four, and the difference is structural rather than a shortfall in the mutations.
+/// Every cell carries a `Literal` on one side, so cells 1-2 reach `(None, Some)`, cells 3-4
+/// `(Some, None)` and cell 5 `(Some, Some)`; `(None, None)` needs both operands queried and no cell
+/// here is. That is the same fact the paragraph above states, and an earlier revision of this sentence
+/// generalized over "each of the four arms" -- contradicting its own neighbour six lines up, which
+/// records that forcing `(None, None)` to `false` moves nothing here. `(None, None)` is bound by the
+/// helper's cell 1 and by nothing in this table.
+///
+/// Replacing an arm with a CONSTANT is the mutation measured, which matters because the two predicate
+/// arms carry sub-conditions. `(None, Some)` branches on whether the right operand is a `String` and
+/// `(Some, None)` on `any(is_list)`, so NEGATING either flips both of its sub-branches and moves two
+/// cells; substituting `true` and then `false` moves one each. Six such substitutions across the four
+/// arms -- one apiece for the two arms that are already constants, two apiece for the two that are not
+/// -- move exactly one cell of the helper's table each, covering all six of its cells, and exactly one
+/// cell here each for five of the six, the `(None, None)` substitution being the one that moves none.
+///
+/// Disabling the `both_queried` shape refusal below the loop, or the `(List, List)` whole-value gate
+/// beside it, reddens four and seven OTHER tests while leaving every cell here green -- so none of
+/// these cells rests on those two conditions.
 ///
 /// One dependency is real and is recorded rather than hidden. Cell 4's `false` needs
 /// `operators::membership_pairing_refused` to answer false for the matched subset `[7]` against `[7]`;
