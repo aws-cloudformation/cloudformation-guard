@@ -8866,9 +8866,12 @@ fn a_nested_list_on_the_right_of_in_is_found_in_any_position(
 ///
 /// The rule these cells state, for a NON-EMPTY left-hand list: `NOT IN` fails if and only if the whole
 /// left-hand list is a member of the right-hand list, OR any left-hand element is. The qualifier is
-/// load-bearing and used to be missing -- `denied_empty_over_a_flat_list` below and its `_via_query`
-/// twin are the two cells that contradict the unqualified reading outright, and the paragraph on the
-/// `empty` cells says why both are right and the rule still holds everywhere else.
+/// load-bearing and used to be missing -- six cells below contradict the unqualified reading outright,
+/// and the paragraph on the `empty` cells says why all six are right and the rule still holds everywhere
+/// else. They are `denied_empty_over_a_flat_list`, `denied_empty_over_a_nested_list` and
+/// `denied_empty_over_a_mixed_denylist`, each with its `_via_query` twin. It was two before the empty
+/// case stopped depending on the denylist's shape, and the count moves with that exception rather than
+/// with this rule.
 ///
 /// It is not `not(IN)`. `IN` over a list-valued left-hand side means whole-list membership or a complete
 /// subset, so a left-hand list only *partly* present is outside `IN` and inside `NOT IN`, and both
@@ -8903,10 +8906,15 @@ fn a_nested_list_on_the_right_of_in_is_found_in_any_position(
 /// negated to a pass. The 34 twins that were already green are why the repair had to leave the `IN`
 /// polarity and every total miss alone rather than fail closed on the whole arm.
 ///
-/// The four `_via_query` cells for `Empty` agree with their written-out siblings for a reason worth
-/// keeping: `contained_in` fails an empty left-hand list against a nested denylist with an *empty*
-/// diff, and an empty diff is correctly no collision. A repair that read "failed" as "collided" would
-/// move `undenied_empty_over_a_nested_list_via_query` from PASS to FAIL.
+/// The `_via_query` cells for `Empty` agree with their written-out siblings, and both arms now answer
+/// FAIL for every denylist shape rather than only for a flat one. `contained_in` used to fail an empty
+/// left-hand list against a denylist holding a nested list, and it did so with an *empty* diff; an empty
+/// diff is correctly no collision, so the wrapper found nothing colliding and `NOT IN` passed. Reading
+/// that "failed" as "collided" was the tempting repair and is still the wrong one -- it makes a Fail
+/// with no members mean a collision, which is the one thing the diff exists to deny. The fix sits
+/// upstream of the wrapper instead: an empty left-hand list satisfies the subset reading vacuously, as
+/// it always did over a flat denylist, so `contained_in` answers Success and the wrapper is never handed
+/// a Fail with nothing in it.
 ///
 /// The `_whatever_its_depth` cells are why the subset test no longer requires the matching right-hand
 /// element to be a non-list. With that requirement, an element that is itself a list could not
@@ -8918,19 +8926,46 @@ fn a_nested_list_on_the_right_of_in_is_found_in_any_position(
 /// values that caused it. `in_elements_wrapped_one_deep_is_not_a_subset` is the control on the other
 /// side: dropping the requirement must not make `[1, 2]` a subset of `[[1], [2]]`.
 ///
-/// The four `empty` cells pin an inconsistency rather than fixing one, it is deliberate, and it is why
-/// the rule above is stated for a non-empty left-hand list. An empty left-hand list is vacuously a
-/// subset, so it passes `IN` over a flat denylist and fails over one holding a nested list, where the
-/// `is_empty` guard in `contained_in` (`eval/operators.rs`) keeps it out of the subset reading, for the
-/// reason its own comment gives there. `NOT IN` inherits both answers by negation, and the flat one is
-/// where the unqualified rule breaks: `denied_empty_over_a_flat_list` and
-/// `denied_empty_over_a_flat_list_via_query` are FAIL, and the rule gives PASS for both -- `[]` is not a
-/// member of `[1,2,3]` and has no element that `[1,2,3]` names, so neither disjunct holds. Both are
-/// right about different things. The cells are right about what Guard does, and the rule is right about
-/// every value that has an element to be named; what sits between them is the vacuous reading, which
-/// `vacuous_comparison_notice` in `eval.rs` is separately deprecating. Making the empty case obey the
-/// rule here would add a second vacuous pass rather than remove the first, so it stays, and these four
-/// cells are here so that a change which moves them says so out loud.
+/// The `empty` cells used to pin an inconsistency deliberately. It is closed now, because it was not
+/// stable under adding a denylist entry. An empty left-hand list is vacuously a subset, so it passed `IN`
+/// over a flat denylist; over one holding a nested list, the `is_empty` guard in `contained_in`
+/// (`eval/operators.rs`) kept it out of the subset reading. `NOT IN` inherited both answers by negation,
+/// which put a Fail-to-Success flip inside one denylist family: `Empty NOT IN [1, 2]` failed and
+/// `Empty NOT IN [1, 2, [9]]` passed, so adding an entry stopped a denylist denying a value it had
+/// already denied. Monotonicity is the property that cannot be traded away here, and it forces the empty
+/// case to answer the same way whatever the denylist holds. The guard is gone, and the branch selector's
+/// comment where it stood carries the argument, as the guard's own comment used to.
+///
+/// FAIL is that answer, and not because the unqualified rule gives it. The rule gives PASS: `[]` is not a
+/// member of `[1,2,3]` and has no element that `[1,2,3]` names, so neither disjunct holds. FAIL is the
+/// answer because `denied_empty_over_a_flat_list` and `denied_empty_over_a_flat_list_via_query` have been
+/// FAIL since before the nested-list work began, and because it is the conservative direction for a
+/// denylist. The vacuous reading is what sits between the rule and the cells, which is why the rule above
+/// is still stated for a non-empty left-hand list and this is still an exception to it rather than an
+/// instance of it.
+///
+/// Six cells contradict the unqualified reading now rather than two, and that is this commit's doing:
+/// `denied_empty_over_a_nested_list` and `denied_empty_over_a_mixed_denylist` join the two flat cells,
+/// each with its `_via_query` twin. All six are the same single exception, applied uniformly instead of
+/// only where the denylist happened to be flat. The `_denylist_holding_an_empty_list` pair is not among
+/// them, and that is why it is here: `[]` is a whole-list member of `[1, 2, []]`, so the unqualified rule
+/// gives FAIL on its own and those cells agree with it without needing the exception at all. They fail
+/// for a reason that survives the vacuous reading being revisited.
+///
+/// The cost is the one the previous comment here named: `in_empty_over_a_nested_list` moves from FAIL to
+/// PASS, a second vacuous pass rather than one fewer. Two things make that the right side of the trade.
+/// The other direction -- failing the empty case everywhere, so that no vacuous pass is left -- is
+/// monotone too, but it moves `in_empty_over_a_flat_list`, which predates this work and is what an
+/// allowlist spelled `x IN <list>` rests on. And neither pass is what `vacuous_comparison_notice` in
+/// `eval.rs` deprecates: that notice fires on `compared_nothing`, an operand query that expanded to no
+/// values at all, while an empty list is one value that does get compared. Measured rather than
+/// reasoned: `Empty NOT IN [1,2,3]` and `Empty NOT IN [1,2,3,[9]]` each print nothing on stderr. Both
+/// passes were silent before and both are silent after, so this adds no unnoticed behavior; it makes one
+/// answer out of two.
+///
+/// The `_mixed_denylist` cells are the coverage whose absence let the flip land. Every empty-left-hand
+/// cell here held a denylist that was purely flat or purely nested, so the one shape where the branch
+/// selector actually changed -- flat entries beside a nested list -- was never asked, in either arm.
 #[rstest::rstest]
 #[case::undenied_nested_pair("Pair", r#"NOT IN [[99,98]]"#, Status::PASS)]
 #[case::undenied_nested_singleton("Pair", r#"NOT IN [[7]]"#, Status::PASS)]
@@ -9408,8 +9443,9 @@ fn which_spelling_of_a_queried_denylist_reaches_which_arm(
 /// `a_list_denylist_holding_a_nested_list_denies_only_what_it_names` including its qualifier: for a
 /// non-empty left-hand list, `NOT IN` fails if and only if the whole left-hand list is a member of the
 /// right-hand list, or any left-hand element is. No property here is an empty list, so nothing below
-/// exercises the vacuous case that qualifier is about -- the two cells that do are
-/// `denied_empty_over_a_flat_list` and its `_via_query` twin, in the oracle named above. A range
+/// exercises the vacuous case that qualifier is about -- the six cells that do are
+/// `denied_empty_over_a_flat_list`, `denied_empty_over_a_nested_list` and
+/// `denied_empty_over_a_mixed_denylist`, each with its `_via_query` twin, in the oracle named above. A range
 /// covering an element makes that element a member. It is not `not(IN)`, and `Partly` -- `[85, 99]`,
 /// one element inside `r[80,90]` and one outside -- is the cell where that matters: it is not a subset,
 /// so `IN` fails, and `85` is named, so `NOT IN` fails as well. Both polarities failing on a partial
@@ -9526,7 +9562,12 @@ fn a_range_in_a_list_denylist_denies_a_list_valued_property(
 ///   *elements* against the right-hand elements. `incomparable_membership` never asks that question:
 ///   it compares the whole list value, which is comparable with nothing, so the gate fires on a
 ///   clause whose answer was decided perfectly normally.
-/// - `an_empty_left_hand_list` fails on `contained_in`'s deliberate `is_empty` guard.
+/// - `an_empty_left_hand_list` fails on the vacuous subset reading. `Haystack` holds no list, so
+///   `contained_in` takes its all-flat branch, where an empty left-hand list has an empty element-wise
+///   diff and `IN` succeeds on a value with nothing in it; the negation turns that into a failure. An
+///   earlier revision of this line blamed `contained_in`'s deliberate `is_empty` guard, which lived in
+///   the other branch and was never reached from here. That guard is gone now and this cell did not
+///   move when it went, which is the evidence.
 ///
 /// Asserted through `status_and_deprecations` rather than `status_and_messages`. A deprecation notice
 /// is not a record message -- it goes to `RootScope::deprecations`, which the commands drain to

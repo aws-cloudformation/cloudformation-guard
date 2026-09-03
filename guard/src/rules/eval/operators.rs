@@ -147,8 +147,12 @@ impl ListIn {
 /// two loops, so the two spellings of `NOT IN` cannot disagree about what counts as a collision --
 /// disagreeing about that is what let `Pair NOT IN Deny` admit a `Pair` the written-out denylist denied.
 ///
-/// An empty result is not the same as an empty `diff`. A left-hand list that is empty has no elements to
-/// match, so both are empty and nothing collided, which is the answer `Empty NOT IN [[9]]` needs.
+/// An empty result means nothing collided, and for every left-hand list that reaches here that is now the
+/// opposite of an empty `diff` rather than the same thing. The one input where both were empty was a
+/// left-hand list with no elements, and it no longer arrives: `contained_in` answers Success for an empty
+/// left-hand list in both of its branches, because the element-wise diff comes out empty and the subset
+/// reading holds vacuously, and the two call sites below match on `Fail` only. `Empty NOT IN [[9]]` used
+/// to be answered here, which is why it passed; it is decided before the negation wrapper now, and fails.
 fn matched_elements(lin: &ListIn) -> Vec<Rc<PathAwareValue>> {
     let elements = match &*lin.lhs {
         PathAwareValue::List((_, elements)) => elements,
@@ -741,11 +745,47 @@ fn contained_in(lhs_value: Rc<PathAwareValue>, rhs_value: Rc<PathAwareValue>) ->
                 // `a_list_denylist_holding_a_nested_list_denies_only_what_it_names`, which is where to
                 // look before trying it again.
                 //
-                // The `is_empty` guard keeps an empty left-hand list failing here. It is vacuously a
-                // subset of anything, and `[] IN [1,2,3]` does pass through the branch below, so the
-                // guard preserves an inconsistency rather than fixing one. Deliberate: an empty
-                // collection passing a comparison is what `vacuous_comparison_notice` in `eval.rs` is
-                // deprecating, and this is not the commit to add another one.
+                // An empty left-hand list reaches the subset reading here, the same as it does in the
+                // branch below. It has no elements, so `diff` comes out empty and the subset reading
+                // holds vacuously. An `is_empty` guard used to keep it out of that reading, on purpose,
+                // to avoid adding a second vacuous pass. The guard is gone because what it bought was
+                // not worth what it cost.
+                //
+                // What it cost was monotonicity, which is the property a denylist cannot trade away:
+                // adding an entry must never turn a failing `NOT IN` into a passing one. The guard
+                // applied in this branch only, and which branch a clause takes turns on whether the
+                // denylist holds a list at all, so the empty case answered one way for a flat denylist
+                // and the other way for the same denylist with one nested element added. On a document
+                // where `Empty` is `[]`, `Empty NOT IN [1,2,3]` exited 19 and `Empty NOT IN [1,2,3,[9]]`
+                // exited 0 -- one entry added, and a denylist that had denied the value admitted it. The
+                // flip was position-independent, so `[[9],1,2,3]` and `[1,[9],3]` did it too.
+                //
+                // `05232a2`'s message says "`NOT IN` therefore only ever goes from Success to Fail,
+                // never the other way." That is true of the mechanism that commit added and false of
+                // this function as it stands, and it is corrected here rather than left to be read as a
+                // guarantee about the branch: a reader who takes it that way concludes no lax flip can
+                // exist and stops looking, which is how the empty-left-hand flip above survived review.
+                // `contained_in` decides the `IN` verdict and the wrapper negates it, so a change that
+                // moves a Fail to a Success turns a `NOT IN` failure into a pass, and a change in the
+                // other direction does the opposite. Both are reachable from a one-token edit to the
+                // condition below.
+                //
+                // The cost of removing the guard is that `[] IN <a denylist holding a list>` now passes,
+                // which is a second vacuous pass rather than one fewer. Two alternatives were weighed.
+                // Failing the empty case in both branches leaves no vacuous pass at all and is also
+                // monotone, but it moves `[] IN [1,2,3]` from pass to fail -- behavior that predates the
+                // nested-list work, and what an allowlist written as `x IN <list>` rests on. Keeping the
+                // guard and special-casing the negation wrapper was rejected because the wrapper reads
+                // this diff to decide which values collide, so a Fail carrying an empty diff has to keep
+                // meaning no collision; the `_via_query` cells of
+                // `a_list_denylist_holding_a_nested_list_denies_only_what_it_names` pin that.
+                //
+                // `vacuous_comparison_notice` in `eval.rs` covers neither pass, which is why this change
+                // is silent before and after. That notice fires on `compared_nothing`, an operand query
+                // that expanded to no values at all, and an empty list is one value that does get
+                // compared. Measured rather than reasoned: `Empty NOT IN [1,2,3]` and
+                // `Empty NOT IN [1,2,3,[9]]` each print nothing on stderr. So the guard was not holding
+                // a line that notice was about to move.
                 if rhsl.iter().any(|elem| elem.is_list()) {
                     let diff = lhsl
                         .iter()
@@ -753,7 +793,7 @@ fn contained_in(lhs_value: Rc<PathAwareValue>, rhs_value: Rc<PathAwareValue>) ->
                         .cloned()
                         .map(Rc::new)
                         .collect::<Vec<_>>();
-                    let flat_subset = !lhsl.is_empty() && diff.is_empty();
+                    let flat_subset = diff.is_empty();
                     if flat_subset
                         || rhsl.iter().any(|elem| {
                             elem == &*lhs_value || compare_eq(&lhs_value, elem).unwrap_or(false)

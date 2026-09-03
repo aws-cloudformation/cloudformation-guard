@@ -1489,6 +1489,12 @@ fn a_successful_list_containment_carries_an_empty_diff() -> crate::rules::Result
         ("element matched at depth", "[[\"a\"]]", "[[\"a\"]]"),
         ("whole-list membership at depth", "[[\"a\"]]", "[[[\"a\"]]]"),
         ("empty left-hand list, all-flat branch", "[]", "[1,2,3]"),
+        // Two routes to Success now, and the label names the one no longer taken. `[]` is a
+        // whole-list member of `[1,2,3,[]]`, which is why this cell was written; since the
+        // `is_empty` guard came off `flat_subset` the vacuous subset reading also holds, and it is
+        // the left operand of the `||` so it decides first. Both construct `vec![]`, so the
+        // invariant this test pins is unaffected either way -- kept as a cell that reaches the
+        // nested-right-hand site by whichever route survives a change to the other.
         (
             "empty left-hand list is a member of the right",
             "[]",
