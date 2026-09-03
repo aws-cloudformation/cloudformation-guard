@@ -9262,14 +9262,36 @@ fn a_denylist_named_by_a_variable_denies_what_the_same_list_written_out_denies(
 /// side and was implemented for a list one by the absence of an arm -- the whole-list reading standing in
 /// for a question about elements. The element question is what was missing, and supplying it is the fix.
 ///
-/// One sibling is left open on purpose, and it is in this table rather than only in a comment.
-/// `Nest NOT IN DenyNestedNine[*]` -- a `Nest` of `[1, [9]]` against a denylist of `[[9]]` -- is still
-/// exit 0 while the written-out, unexpanded, and both-expanded spellings of the same question are all
-/// exit 19. `Deny[*]` resolves the right operand to the inner list `[9]`, and `contained_in` reads a
-/// list-shaped right-hand value as a set of candidate entries, so that spelling compares against `{9}`
-/// where the others compare against `{[9]}`. That is a different mechanism from the one repaired here --
-/// how a list-shaped right-hand result is read, rather than whether the collision is looked for -- and
-/// the two are separated so that a moved cell has one candidate cause.
+/// One sibling is open, it is in this table rather than only in a comment, and it is open because no
+/// repair confined to this arm closes it. `Nest NOT IN DenyNestedNine[*]` -- a `Nest` of `[1, [9]]`
+/// against a denylist of `[[9]]` -- is exit 0 while the written-out, unexpanded, and both-expanded
+/// spellings of the same question are all exit 19. `Deny[*]` resolves the right operand to the inner
+/// list `[9]`, and the collision question reads a list-shaped right-hand value as a set of candidate
+/// entries, so that spelling compares against `{9}` where the others compare against `{[9]}`.
+/// `right_expanded_nested_string_entry_undenied_no_local_fix` is the same bypass in strings.
+///
+/// What was tried and rejected, measured rather than argued. Dropping the `!eachr.is_list()` guard on
+/// the arm added here asks the entry question for a list-shaped right-hand result, closes both open
+/// cells, and moves no `IN` cell. It also turns
+/// `an_lhs_element_equal_to_the_whole_unexpanded_denylist_is_undenied` from PASS to FAIL while its
+/// written-out twin stays PASS: a `Wrap13` of `[[1, 3]]` against a `Deny13` of `[1, 3]` is denied by the
+/// query spelling and admitted by the literal one, which is this table's own defect class mirrored into
+/// over-denial. The full suite does not catch it -- 2553 passed with the only two failures being the
+/// pinned cell above, one per target -- which is why the `Wrap13` cells are here.
+///
+/// No local predicate separates the two, because they are one shape. A list-valued right-hand result is
+/// either the whole denylist, which an unexpanded `Deny13` resolves to, or a single entry, which
+/// `Deny13[*]` and `Deny13[0]` resolve to, and the first wants decomposing while the second wants taking
+/// whole. "An element of the left operand equals the whole right operand" is true of `Nest` against
+/// `[9]` and of `Wrap13` against `[1, 3]` alike, and the first owes FAIL and the second PASS.
+/// `QueryResult` is `Literal | Resolved | UnResolved`, carrying the value and its path and no record of
+/// the traversal, and `binary_operation` receives the right-hand side already resolved. The path will
+/// not stand in: `Denies[0]` is one entry whose path ends in a digit, and a numeric-string map key is a
+/// whole collection whose path ends in a digit too. Carrying the provenance would change
+/// `Comparator::compare` for every operator and would still miss `NOT IN %deny`, which
+/// `a_denylist_named_by_a_variable_denies_what_the_same_list_written_out_denies` covers, since a
+/// variable's binding is resolved before the comparator sees it. So closing this is a change to how a
+/// queried right-hand operand reaches the comparators, not a change to this arm.
 ///
 /// The deprecation notice stops firing for this clause, which is that deprecation completing rather than
 /// a warning going missing. `incomparable_membership` asks about the whole left-hand value, and `[1, 2]`
@@ -9326,19 +9348,37 @@ fn a_denylist_named_by_a_variable_denies_what_the_same_list_written_out_denies(
 // fix reached `diff` and changed what `IN` means.
 #[case::right_expanded_in_one_element("flat", "Pair IN Deny13[*]", Status::FAIL)]
 #[case::right_expanded_in_disjoint("flat", "Pair IN Deny34[*]", Status::FAIL)]
-// The sibling this commit does NOT close, pinned with the three spellings that answer it correctly so
-// the disagreement is in one table rather than in a comment. `DenyNestedNine` is `[[9]]` and `Nest` is
-// `[1, [9]]`, so the denylist names `[9]` and the property holds `[9]`: every spelling owes exit 19.
-// Three deliver it. `Nest NOT IN DenyNestedNine[*]` still passes, because `Deny[*]` resolves the right
-// operand to the inner list `[9]` and `contained_in` then reads THAT as a set of candidate entries,
-// `{9}`, rather than as the single entry `[9]` the other spellings compare against. Same class of
-// bypass, a different mechanism -- how a list-shaped right-hand result is read, not whether the
-// collision is looked for -- so it is a separate commit rather than bundled here.
+// An open bypass, pinned with the three spellings that answer it correctly so the disagreement is in
+// one table rather than in a comment. `DenyNestedNine` is `[[9]]` and `Nest` is `[1, [9]]`, so the
+// denylist names `[9]` and the property holds `[9]`: every spelling owes exit 19. Three deliver it.
+// `Nest NOT IN DenyNestedNine[*]` still passes, because `Deny[*]` resolves the right operand to the
+// inner list `[9]` and the collision question then reads THAT as a set of candidate entries, `{9}`,
+// rather than as the single entry `[9]` the other spellings compare against.
 //
-// Named for what is true rather than for what was assumed: the cell this commit replaced was called
-// `right_expanded_denies_nothing_yet` and its "yet" rested on a diagnosis that measurement disproved.
-// When this one is fixed it becomes FAIL and the name goes with it.
-#[case::right_expanded_nested_entry_still_undenied(
+// The name says `no_local_fix` because that is measured rather than assumed, and the measurement is a
+// cell in this table rather than a claim in this comment. Asking the entry question for a list-shaped
+// right-hand result -- dropping the `!eachr.is_list()` guard on the arm `e331c6b` added, which is the
+// whole of the obvious fix -- does close this cell and the `DeepA` one below. It also turns
+// `an_lhs_element_equal_to_the_whole_unexpanded_denylist_is_undenied` from PASS to FAIL while its
+// written-out twin stays PASS, which is a denylist over-denying in the spelling that was already
+// right, and the same query-versus-literal divergence this table exists to close, mirrored. Measured
+// on two fixtures and two value kinds.
+//
+// The reason no local predicate separates the two is that they are the same shape. A list-valued
+// `eachr` is either the whole denylist, which `Deny13` unexpanded resolves to, or one entry, which
+// `Deny13[*]` and `Deny13[0]` resolve to, and the two want opposite readings: decompose it for the
+// first, take it whole for the second. `Nest` against an `eachr` of `[9]` and `Wrap13` against an
+// `eachr` of `[1, 3]` are both "an element of the left operand equals the whole right operand", and
+// the first owes FAIL while the second owes PASS. `QueryResult` is `Literal | Resolved | UnResolved`
+// and carries no record of which traversal produced a value, and `binary_operation` is handed the
+// right-hand side already resolved, so the arm cannot ask. The path is not a sound substitute:
+// `Denies[0]` is one entry whose path ends in a digit and a numeric-string map key is a whole
+// collection whose path also ends in a digit. Threading the provenance would change
+// `Comparator::compare` for every operator, and would still not reach `NOT IN %deny`, which
+// `a_denylist_named_by_a_variable_denies_what_the_same_list_written_out_denies` covers. That is a
+// design change rather than a repair to this arm, so this cell records the bypass and the guard cells
+// below record what refuses the shortcut.
+#[case::right_expanded_nested_entry_undenied_no_local_fix(
     "flat",
     "Nest NOT IN DenyNestedNine[*]",
     Status::PASS
@@ -9346,6 +9386,85 @@ fn a_denylist_named_by_a_variable_denies_what_the_same_list_written_out_denies(
 #[case::nested_entry_denied_written_out("flat", "Nest NOT IN [[9]]", Status::FAIL)]
 #[case::nested_entry_denied_unexpanded("flat", "Nest NOT IN DenyNestedNine", Status::FAIL)]
 #[case::nested_entry_denied_both_expanded("flat", "Nest[*] NOT IN DenyNestedNine[*]", Status::FAIL)]
+// The same bypass in strings, so that the open cell above cannot be read as an integer-comparison
+// quirk. `DeepA` is `[["a"]]` and `DenyWrappedA` is `[["a"]]`: the denylist names `["a"]` and the
+// property holds `["a"]`. Written out and unexpanded both deny it; the right-expanded spelling does
+// not. A fix that closes one of these two and not the other has found something narrower than the
+// mechanism.
+#[case::right_expanded_nested_string_entry_undenied_no_local_fix(
+    "flat",
+    "DeepA NOT IN DenyWrappedA[*]",
+    Status::PASS
+)]
+#[case::nested_string_entry_denied_written_out("flat", r#"DeepA NOT IN [["a"]]"#, Status::FAIL)]
+#[case::nested_string_entry_denied_unexpanded("flat", "DeepA NOT IN DenyWrappedA", Status::FAIL)]
+// THE GUARD. `Wrap13` is `[[1, 3]]` and `Deny13` is `[1, 3]`, so the left operand's single element is
+// the denylist itself. The denylist names `1` and `3`; `Wrap13` is not `1` or `3` and holds neither, so
+// every spelling owes PASS and every spelling delivers it today. This is the cell that a fix for the
+// two open cells above must not move, and the obvious fix moves the middle one. Keep all three: the
+// divergence is only visible as the pair, because a fix that over-denies here leaves the written-out
+// spelling alone and the unexpanded query is where it shows.
+#[case::an_lhs_element_equal_to_the_whole_denylist_is_undenied_written_out(
+    "flat",
+    "Wrap13 NOT IN [1, 3]",
+    Status::PASS
+)]
+#[case::an_lhs_element_equal_to_the_whole_unexpanded_denylist_is_undenied(
+    "flat",
+    "Wrap13 NOT IN Deny13",
+    Status::PASS
+)]
+#[case::an_lhs_element_equal_to_the_whole_denylist_is_undenied_right_expanded(
+    "flat",
+    "Wrap13 NOT IN Deny13[*]",
+    Status::PASS
+)]
+// The disjoint mirror of the open cells, in all four spellings. `DenyNestedEight` is `[[8]]`, so it
+// names `[8]` and `Nest` holds `[9]`: nothing named, PASS everywhere. A fix that closed the bypass by
+// failing closed on the pairing wholesale, rather than by asking whether the entry is named, turns
+// these four FAIL. Over-denial is the worse defect of the two, so the mirror is pinned in as many
+// spellings as the bypass is.
+#[case::nested_entry_undenied_by_a_disjoint_denylist_written_out(
+    "flat",
+    "Nest NOT IN [[8]]",
+    Status::PASS
+)]
+#[case::nested_entry_undenied_by_a_disjoint_denylist_unexpanded(
+    "flat",
+    "Nest NOT IN DenyNestedEight",
+    Status::PASS
+)]
+#[case::right_expanded_nested_entry_undenied_by_a_disjoint_denylist(
+    "flat",
+    "Nest NOT IN DenyNestedEight[*]",
+    Status::PASS
+)]
+#[case::both_expanded_nested_entry_undenied_by_a_disjoint_denylist(
+    "flat",
+    "Nest[*] NOT IN DenyNestedEight[*]",
+    Status::PASS
+)]
+// The mirror defect, already present and not introduced by anything on this branch. `DenyWrappedOneTwo`
+// is `[[1], [2]]`, so it names `[1]` and `[2]`; `Pair` is `[1, 2]`, which is neither and holds neither,
+// so all three spellings owe PASS. Two deliver it. The right-expanded one FAILS, because the entry
+// `[1]` is decomposed to the candidate set `{1}` and `Pair` holds `1` -- the same reading at the same
+// wrong depth as the bypass above, in the direction that denies a value the denylist does not name.
+// Pinned at the current wrong answer rather than at the right one so that the suite stays green and the
+// disagreement stays visible; a fix that reads a list-shaped right-hand result as one entry turns this
+// cell PASS, and that is the fix landing rather than a regression.
+#[case::wrapped_elements_undenied_written_out("flat", "Pair NOT IN [[1], [2]]", Status::PASS)]
+#[case::wrapped_elements_undenied_unexpanded("flat", "Pair NOT IN DenyWrappedOneTwo", Status::PASS)]
+#[case::right_expanded_wrapped_elements_over_denied(
+    "flat",
+    "Pair NOT IN DenyWrappedOneTwo[*]",
+    Status::FAIL
+)]
+// `IN` for the nested-entry shapes, both polarities of denylist. `collides` is read only by the
+// negation wrapper, so a repair confined to it may not move either of these: `[1, [9]]` is not a subset
+// of `{9}` and not a subset of `{8}`, and it is not a member of either, so `IN` fails both ways. If one
+// moves, the fix reached `diff`.
+#[case::right_expanded_in_nested_entry("flat", "Nest IN DenyNestedNine[*]", Status::FAIL)]
+#[case::right_expanded_in_disjoint_nested_entry("flat", "Nest IN DenyNestedEight[*]", Status::FAIL)]
 #[case::nested_qualified_denied(
     "nested",
     "Resources.R.Properties.Pair NOT IN Resources.R.Properties.Deny13",
@@ -9379,15 +9498,29 @@ fn which_spelling_of_a_queried_denylist_reaches_which_arm(
     // are for the right-expanded cells and neither changes what the original cells ask. `Nest` and
     // `DenyNestedNine` are the sibling the repair does not reach: a denylist entry that is itself a
     // list, which the property holds as an element.
+    //
+    // The rest exist for the open right-expanded sibling and for the guard that refuses the obvious fix
+    // for it. `DenyNestedEight` is `DenyNestedNine` with the named value changed, so it names nothing
+    // `Nest` holds -- the over-denial mirror. `DeepA` and `DenyWrappedA` are the same open bypass in
+    // strings rather than integers, so a reader cannot take it for an integer-comparison quirk.
+    // `DenyWrappedOneTwo` is the mirror defect in the other direction, over-denial that is already
+    // present. `Wrap13` is the guard: its single element IS `Deny13`, which is the one shape that makes
+    // the entry reading and the candidate-set reading contradict each other, and the cells for it are
+    // what a fix has to keep PASS.
     const FLAT: &str = r#"
     {
         Pair: [1, 2],
         Nest: [1, [9]],
+        Wrap13: [[1, 3]],
+        DeepA: [["a"]],
         Deny13: [1, 3],
         Deny34: [3, 4],
         Deny349: [3, 4, 9],
         DenyNestedPair: [[1, 2]],
-        DenyNestedNine: [[9]]
+        DenyNestedNine: [[9]],
+        DenyNestedEight: [[8]],
+        DenyWrappedOneTwo: [[1], [2]],
+        DenyWrappedA: [["a"]]
     }
     "#;
 

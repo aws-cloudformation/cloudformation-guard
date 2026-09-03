@@ -1152,13 +1152,43 @@ impl Comparator for InOperation {
                         // such a result as a set of candidate entries rather than as one entry, so
                         // `Deny[*]` over a `Deny` of `[[9]]` compares against `{9}` where the written-out
                         // and unexpanded spellings compare against `{[9]}`. For a `Nest` of `[1, [9]]`
-                        // that is still exit 0 against three spellings at exit 19, and it is the same
-                        // class of bypass as the one repaired here, one operand shape further in.
-                        // `right_expanded_nested_entry_still_undenied` in `eval_tests.rs` pins it with
-                        // its three disagreeing siblings beside it. Not repaired in this commit because
-                        // it is a different mechanism -- how a list-shaped right-hand *result* is read,
-                        // not whether the collision is looked for -- and landing both at once makes it
-                        // impossible to say which one moved a cell.
+                        // that is exit 0 against three spellings at exit 19, and it is the same class of
+                        // bypass as the one repaired here, one operand shape further in.
+                        // `right_expanded_nested_entry_undenied_no_local_fix` in `eval_tests.rs` pins it
+                        // with its three disagreeing siblings beside it, and
+                        // `right_expanded_nested_string_entry_undenied_no_local_fix` pins the same bypass
+                        // in strings.
+                        //
+                        // Deleting the `!eachr.is_list()` guard is the obvious repair for it and is
+                        // WRONG, which is measured rather than argued. It closes both of those cells and
+                        // moves no `IN` cell, and it also denies a value no denylist names: for a
+                        // `Wrap13` of `[[1, 3]]` and a `Deny13` of `[1, 3]`,
+                        // `Wrap13 NOT IN Deny13` goes to exit 19 while `Wrap13 NOT IN [1, 3]` stays at 0
+                        // -- one denylist, one value, and the query spelling deciding to deny what the
+                        // literal spelling admits. That is this arm's own defect class mirrored into
+                        // over-denial, which is the worse direction for a policy tool. The three
+                        // `an_lhs_element_equal_to_the_whole_..._denylist_is_undenied` cells are the
+                        // guard, and they exist because the suite did not catch this: with them absent, a
+                        // build carrying that deletion reported 2553 passed and 0 unexpected failures.
+                        //
+                        // The reason it cannot be keyed on shape is that the two cases ARE one shape. A
+                        // list-valued `eachr` is either the whole denylist, which an unexpanded `Deny13`
+                        // resolves to, or one entry, which `Deny13[*]` and `Deny13[0]` resolve to; the
+                        // first has to be decomposed and the second taken whole. "An element of `eachl`
+                        // equals `eachr`" holds for `Nest` against `[9]` and for `Wrap13` against
+                        // `[1, 3]` alike, and the first owes FAIL and the second PASS, so no predicate
+                        // over these two values can separate them. `QueryResult` is
+                        // `Literal | Resolved | UnResolved` and keeps no record of the traversal that
+                        // produced a value, and `binary_operation` is handed the right-hand side already
+                        // resolved, so the arm has nothing to ask. The path is not a sound substitute:
+                        // `Denies[0]` is one entry whose path ends in a digit, and a numeric-string map
+                        // key is a whole collection whose path ends in a digit too. Carrying the
+                        // provenance means changing `Comparator::compare` for every operator, and even
+                        // then it does not reach `NOT IN %deny`, since a variable's binding is resolved
+                        // before any comparator sees it and
+                        // `a_denylist_named_by_a_variable_denies_what_the_same_list_written_out_denies`
+                        // covers that spelling. Closing this is a change to how a queried right-hand
+                        // operand reaches the comparators, not a repair to this arm.
                         if let PathAwareValue::List((_, elements)) = &**eachl {
                             if !eachr.is_list() {
                                 element_collision |= elements
