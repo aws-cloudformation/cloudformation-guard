@@ -2545,8 +2545,28 @@ pub(crate) struct Messages {
 /// underneath it -- the one naming `Size: "50"` as a string that cannot be compared against an
 /// integer -- was built, recorded, and never read. Pinned by
 /// `a_specific_skip_reason_is_not_shadowed_by_the_block_summary`.
+/// The walk stops at a referenced rule rather than reading its records as this rule's own. A rule that
+/// references another gets that other rule's whole subtree nested inside its own, so a search that
+/// recurses freely reads a gate belonging to the referenced rule and reports it as the referring rule's.
+/// `rule g { inner }` has no `when`, no filter and makes no comparison, and it said "one of its
+/// conditions was not met; a comparison it made reported ..." on the strength of `inner`'s `when`. See
+/// [`Walked::crosses_into_another_rule`].
 pub(crate) fn find_skip_reason(record: &EventRecord<'_>) -> Option<String> {
-    skip_reason_reached_through(record, ReachedThrough::Neither)
+    skip_reason_reached_through(record, Walked::nothing_yet())
+}
+
+/// What the walk down to an explanation has passed through.
+///
+/// Two questions, both about the path rather than the record holding the explanation, because a
+/// comparison does not know what encloses it: which kind of gate decided this, and whose rule the gate
+/// belongs to. Each is the difference between a sentence a reader can act on and one that sends them
+/// looking for something they never wrote.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+struct Walked {
+    gate: ReachedThrough,
+    /// Whether the walk is already inside a rule. Only true below a [`RecordType::RuleCheck`], which is
+    /// what makes a second one recognizable as somebody else's rule rather than this one's.
+    in_rule: bool,
 }
 
 /// Which kind of gate a skip explanation was reached through, accumulated on the way down.
@@ -2564,6 +2584,43 @@ enum ReachedThrough {
     Condition,
     /// A query filter, with no `when` condition anywhere above it.
     Filter,
+}
+
+impl Walked {
+    fn nothing_yet() -> Self {
+        Self {
+            gate: ReachedThrough::Neither,
+            in_rule: false,
+        }
+    }
+
+    /// Folds one record on the path into what has been passed through.
+    fn descend(self, record: &EventRecord<'_>) -> Self {
+        Self {
+            gate: self.gate.descend(record),
+            in_rule: self.in_rule || is_rule(record),
+        }
+    }
+
+    /// True when `child` starts a different rule's records than the one being explained.
+    ///
+    /// The boundary is observed rather than added: a referenced rule is evaluated into a nested
+    /// [`RecordType::RuleCheck`], carrying its own name, exactly where its records begin. Nothing had to
+    /// be invented to see it, which matters -- deriving "whose gate is this" from anything softer than
+    /// the marker the tree already sets is how the referring rule came to claim the referenced rule's
+    /// condition in the first place.
+    ///
+    /// Conditional on `in_rule`, and that is not a detail. The entry point is sometimes a rule's own
+    /// record -- `common.rs` calls this per skipped rule -- and sometimes the file's, whose children are
+    /// all `RuleCheck`. Refusing every `RuleCheck` would make the file-level call answer nothing at all;
+    /// refusing only a second one draws the line where a rule stops describing itself.
+    fn crosses_into_another_rule(self, child: &EventRecord<'_>) -> bool {
+        self.in_rule && is_rule(child)
+    }
+}
+
+fn is_rule(record: &EventRecord<'_>) -> bool {
+    matches!(record.container, Some(RecordType::RuleCheck(_)))
 }
 
 impl ReachedThrough {
@@ -2590,16 +2647,14 @@ impl ReachedThrough {
     }
 }
 
-fn skip_reason_reached_through(
-    record: &EventRecord<'_>,
-    reached: ReachedThrough,
-) -> Option<String> {
-    let reached = reached.descend(record);
+fn skip_reason_reached_through(record: &EventRecord<'_>, walked: Walked) -> Option<String> {
+    let walked = walked.descend(record);
     record
         .children
         .iter()
-        .find_map(|child| skip_reason_reached_through(child, reached))
-        .or_else(|| own_skip_reason(record, reached))
+        .filter(|child| !walked.crosses_into_another_rule(child))
+        .find_map(|child| skip_reason_reached_through(child, walked))
+        .or_else(|| own_skip_reason(record, walked.gate))
 }
 
 /// The explanation this record carries itself, ignoring its children.

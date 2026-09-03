@@ -7957,48 +7957,90 @@ fn a_comparison_skip_reason_names_the_gate_it_was_reached_through() -> Result<()
         }
     }"#;
 
-    // (label, rules, the fragment the reason must contain, a fragment it must not)
+    // (label, rules, the rule whose record to read or None for the file's, must contain, must not,
+    //  whether the reason should carry the comparison's own explanation)
+    //
+    // Naming a rule matters only where the file holds more than one, and the reference cell is the
+    // reason the column exists: `find_skip_reason` on the file record would answer with whichever rule
+    // comes first, and the defect is in what the *referring* rule says about itself. The reporters read
+    // it per rule -- `common.rs` calls it on each skipped rule's own record -- so naming one is the
+    // faithful call rather than a convenience.
     let cases = [
         (
             "a query filter, with no `when` anywhere in the rule",
             r#"rule g { Resources.*[ Properties.Size > 10 ] { Properties.X == 1 } }"#,
+            None,
             "query filter",
             "condition",
+            true,
         ),
         (
             "a query filter in a `let`, still with no `when`",
             r#"let sel = Resources.*[ Properties.Size > 10 ]
                rule g { %sel.Properties.X == 1 }"#,
+            None,
             "query filter",
             "condition",
+            true,
         ),
         (
             "a `when` condition on the rule",
             r#"rule g when Resources.V1.Properties.Size > 10 { Resources.V1.Properties.X == 1 }"#,
+            None,
             "one of its conditions was not met",
             "query filter",
+            true,
         ),
         (
             "a `when` condition on a block inside the rule",
             r#"rule g { when Resources.V1.Properties.Size > 10 { Resources.V1.Properties.X == 1 } }"#,
+            None,
             "one of its conditions was not met",
             "query filter",
+            true,
         ),
         (
             "a `when` condition on a type block",
             r#"rule g { AWS::EC2::Volume when Properties.Size > 10 { Properties.X == 1 } }"#,
+            None,
             "one of its conditions was not met",
             "query filter",
+            true,
         ),
         (
             "a filter inside a `when` condition -- the condition is real and was not met",
             r#"rule g when Resources.*[ Properties.Size > 10 ] not empty { Resources.V1.Properties.X == 1 }"#,
+            None,
             "one of its conditions was not met",
             "query filter",
+            true,
+        ),
+        // The referring rule owns none of the gate that decided it. `g` has no `when`, no filter, and
+        // makes no comparison; the refusal belongs to `inner`. `g`'s own record already carries the true
+        // sentence, and the walk crossed the rule boundary and answered with `inner`'s instead.
+        (
+            "a rule reference -- the gate belongs to the referenced rule, not this one",
+            r#"rule inner when Resources.V1.Properties.Size > 10 { Resources.V1.Properties.X == 1 }
+               rule g { inner }"#,
+            Some("g"),
+            "referenced rule [inner]",
+            "condition",
+            false,
+        ),
+        // The referenced rule itself, from the same run. Its condition is its own, so it keeps the
+        // condition sentence -- which is what stops a fix from silencing the boundary case everywhere.
+        (
+            "the referenced rule itself, whose condition really is its own",
+            r#"rule inner when Resources.V1.Properties.Size > 10 { Resources.V1.Properties.X == 1 }
+               rule g { inner }"#,
+            Some("inner"),
+            "one of its conditions was not met",
+            "referenced rule",
+            true,
         ),
     ];
 
-    for (label, rules, expected, forbidden) in cases {
+    for (label, rules, rule_name, expected, forbidden, carries_the_comparison) in cases {
         let rules_file = RulesFile::try_from(rules)?;
         let value = PathAwareValue::try_from(ONE_STRING_SIZED_VOLUME)?;
         let mut root = root_scope(&rules_file, Rc::new(value));
@@ -8007,18 +8049,39 @@ fn a_comparison_skip_reason_names_the_gate_it_was_reached_through() -> Result<()
             Status::SKIP,
             "{label}: the rule does not apply on this input"
         );
-        let top = root.reset_recorder().extract();
+        let file_record = root.reset_recorder().extract();
+        let top = match rule_name {
+            None => file_record,
+            Some(wanted) => file_record
+                .children
+                .into_iter()
+                .find(|child| {
+                    matches!(
+                        &child.container,
+                        Some(RecordType::RuleCheck(named)) if named.name == wanted
+                    )
+                })
+                .unwrap_or_else(|| panic!("{}: no record for rule {:?}", label, wanted)),
+        };
         // Arguments spelled out rather than captured inline, for the edition-2018 reason given on the
         // sibling test.
         let reason = crate::rules::eval_context::find_skip_reason(&top)
             .unwrap_or_else(|| panic!("{}: no skip reason was recorded at all", label));
 
-        // Every cell keeps the explanation itself. A fix that dropped the refusal to avoid misnaming
-        // its source would pass a contains/forbids pair about the prefix alone.
-        assert!(
+        // A cell whose reason comes off a comparison keeps that comparison's own explanation, so a fix
+        // that dropped the refusal to avoid misnaming its source cannot pass a contains/forbids pair
+        // about the prefix alone. The referring rule is the one cell where the reason is not about a
+        // comparison at all -- `g` makes none -- and requiring one there is what would push it back into
+        // reading the referenced rule's records.
+        assert_eq!(
+            carries_the_comparison,
             reason.contains("not comparable"),
-            "{}: the reason lost the comparison's own explanation: {:?}",
+            "{}: the comparison's own explanation should {} this reason: {:?}",
             label,
+            match carries_the_comparison {
+                true => "have survived into",
+                false => "not appear in",
+            },
             reason
         );
         assert!(
