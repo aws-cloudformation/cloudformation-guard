@@ -132,8 +132,22 @@ pub fn get_full_path_for_resource_file(path: &str) -> String {
 /// `//docs.oasis-open.org/.../sarif-schema-2.1.0.json`, and reducing that to its basename would
 /// break them. It is the only slash-bearing file reference in `guard/resources`, so the
 /// distinction is load-bearing for exactly one fixture and easy to lose.
+///
+/// `guard` and `ruleset` are in the list because rules files now reach output as the path they were
+/// given, and the harness passes absolute paths built from `CARGO_MANIFEST_DIR`. They used to be
+/// absent for a reason that no longer holds: `validate` reduced every rules file to its basename
+/// itself, so nothing rooted at the crate directory and ending in `.guard` could appear. That
+/// reduction is what made two rules files sharing a basename indistinguishable, and removing it moves
+/// the normalization to where the machine-specific part actually comes from -- the checkout location,
+/// which is the test harness's business and not the product's.
+///
+/// The four renderings this covers were all verified against the checked-in fixtures rather than
+/// argued: `<rules>.guard/<rule>    FAIL`, `Evaluation of rules <rules>.guard against data <data>`,
+/// `is not compliant with [<rules>.guard/<rule>]`, and `Location[file:<rules>.guard, line:N,
+/// column:N]`. The pattern is unanchored at its end, so the `/<rule>` and `, line:N` tails survive
+/// the substitution and only the directory prefix is dropped.
 pub fn replace_path_with_filenames(text: String) -> String {
-    let extensions = ["yaml", "yml", "json"];
+    let extensions = ["yaml", "yml", "json", "guard", "ruleset"];
     // Any path rooted at the crate directory, reduced to its final component.
     let pattern = format!(
         r#"{}[\w/.\-]*/([\w.\-]+\.(?:{}))"#,

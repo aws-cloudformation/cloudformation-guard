@@ -102,10 +102,14 @@ pub(crate) fn unchecked_expectation_message(rules: &RulesFile<'_>, name: &str) -
 /// other two exit `TEST_ERROR_STATUS_CODE` and name the rule. A suite asserting `MAIN: PASS` against
 /// a rules file with no `MAIN` in it read as success.
 ///
-/// Names the rules file by its final component only, not the path as given. The test-side path
-/// reducer normalises `.yaml`, `.yml` and `.json` and not `.guard`, so a full path here would make
-/// any expected-output fixture hold only for the checkout that produced it. `parse_tree` records the
-/// same constraint for the same reason.
+/// Names the rules file by its final component only, not the path as given.
+///
+/// The reason recorded here was that the test-side path reducer normalized `.yaml`, `.yml` and `.json`
+/// and not `.guard`, so a full path would have made any expected-output fixture hold only for the
+/// checkout that produced it. That is no longer true -- the reducer covers `.guard` and `.ruleset` now
+/// -- so this is a plain choice rather than a constraint, and it is left alone because this sentence is
+/// about a file that declares no rules at all. There is no clause to locate in it, so the directory
+/// adds nothing a reader would use. `parse_tree` records the same stale reason on the same footing.
 pub(crate) fn no_rules_declared_message(rules_file: &str, expectation: &str) -> String {
     format!("{rules_file} declares no rules, so the expectation for {expectation} was not checked")
 }

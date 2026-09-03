@@ -163,10 +163,11 @@ struct SarifInvocation {
 /// `message` is the only required member. `level` is given explicitly because it defaults to
 /// `warning`, and a ruleset that could not be read is an error.
 ///
-/// No `locations`. The member exists, but in this code path a rules file is known only by its bare
-/// file name -- `get_file_name(file, file)` reduces it to the basename -- which is not something a
-/// consumer can resolve to an artifact. Naming the file in the message says what is known without
-/// asserting a location that is not.
+/// No `locations`. The member exists, and a rules file is now known by the path it was given rather
+/// than by its basename, but that path is still whatever string the caller passed -- relative to a
+/// working directory the consumer of this report does not have, when the caller passed a relative one.
+/// SARIF wants a `uri` a consumer can resolve to an artifact, and this is not reliably one. Naming the
+/// file in the message says what is known without asserting a location that is not.
 #[derive(Debug, Deserialize, Serialize, Clone)]
 struct SarifNotification {
     level: String,

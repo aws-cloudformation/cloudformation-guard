@@ -340,7 +340,19 @@ fn handle_plaintext_directory(
                     continue;
                 }
             };
-            let span = crate::rules::parser::Span::new_extra(&content, &each_rule_file.prefix);
+            // The path, not `each_rule_file.prefix`. `prefix` is the file name with `.guard` or
+            // `.ruleset` stripped and no directory at all, so it was the coarsest of the three names
+            // this repository gave a rules file: `a/x.guard` and `b/x.guard` both parsed as `x`, and so
+            // did `x.guard` and `x.ruleset` in one directory -- a pair the pairing code two hundred
+            // lines down explicitly calls out as real.
+            //
+            // The name reaches the reader through the source position a deprecation notice ends with,
+            // and the walk over a directory is the invocation the aws-guard-rules-registry CI uses, so
+            // the collision landed on the corpus most likely to hit it.
+            //
+            // `prefix` keeps its job of matching test files to rules files, which is what it was built
+            // for and where dropping the extension is correct.
+            let span = crate::rules::parser::Span::new_extra(&content, path.to_str().unwrap_or(""));
 
             match crate::rules::parser::rules_file(span) {
                 Err(e) => {
@@ -631,7 +643,10 @@ fn handle_structured_directory_report(
                 }
             };
 
-            let span = crate::rules::parser::Span::new_extra(&content, &each_rule_file.prefix);
+            // The path, for the reason the plaintext walk above gives, plus one this path makes plain:
+            // the `rule_file` field two lines below is already `path.to_str()`, so one document said
+            // `a/x.guard` in its own field and `x` in any notice about it.
+            let span = crate::rules::parser::Span::new_extra(&content, path.to_str().unwrap_or(""));
 
             match crate::rules::parser::rules_file(span) {
                 Err(e) => {

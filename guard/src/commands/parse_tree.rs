@@ -161,12 +161,15 @@ impl Executable for ParseTree {
         let rules = match crate::rules::parser::rules_file(span) {
             Ok(rules) => rules,
             Err(e) => {
-                // The final component only, which is the name `validate` reports a rules file under
-                // (`file_name_of`, shared with it rather than reimplemented). Printing the path as
-                // given would put the caller's directory layout in the message, which is both noise
-                // and unassertable: the test-side path reducer normalises `.yaml`, `.yml` and `.json`
-                // and not `.guard`, so an expected string containing one would only hold for the
-                // checkout that produced it.
+                // The final component only. This used to be "the name `validate` reports a rules file
+                // under", and it no longer is: `validate` reports the path as given, because reducing
+                // it made two rules files sharing a basename indistinguishable in the source position
+                // its deprecation notices carry. The second half of the reason is stale too -- the
+                // test-side path reducer covers `.guard` and `.ruleset` now.
+                //
+                // Kept as the final component anyway, on its own merits. This is a parse error, so
+                // there is no clause to locate and nothing for a directory to disambiguate: the caller
+                // just named this one file on the command line and is being told it will not parse.
                 let name = match &self.rules {
                     Some(path) => file_name_of(Path::new(path)),
                     None => STDIN_RULES_NAME.to_string(),

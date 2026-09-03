@@ -537,7 +537,7 @@ impl Validate {
                     for each_file_content in iterate_over(&rules, |content, file| {
                         Ok(RuleFileInfo {
                             content,
-                            file_name: get_file_name(file, file),
+                            file_name: rules_file_locator(file),
                         })
                     }) {
                         match each_file_content {
@@ -1192,25 +1192,41 @@ fn report_no_rules_evaluated(writer: &mut Writer, skipped: &[String]) -> Result<
     Ok(())
 }
 
-fn get_file_name(file: &Path, base: &Path) -> String {
-    let empty_path = Path::new("");
-    match file.strip_prefix(base) {
-        Ok(path) => {
-            if path == empty_path {
-                file.file_name().unwrap().to_str().unwrap().to_string()
-            } else {
-                format!("{}", path.display())
-            }
-        }
-        Err(_) => format!("{}", file.display()),
-    }
+/// The name a rules file is reported and located under: the path as it was given.
+///
+/// This replaced `get_file_name(file, base)`, which every caller invoked as `get_file_name(file, file)`.
+/// `strip_prefix` against itself yields the empty path, so the function always took its
+/// `file_name()` branch and every rules file was known by its basename alone -- two arguments spent
+/// arriving at a value that needed neither. Two files named `same.guard` in different directories then
+/// produced byte-identical output everywhere the name appears, including the source position a
+/// deprecation notice ends with, which exists so a reader can go to the clause.
+///
+/// The path as given rather than a path derived from it, for three reasons.
+///
+/// It is reproducible. `resolve_path` is `PathBuf::from_str` on every non-wasm target and does not
+/// canonicalize, so a relative argument stays relative and the locator is the caller's own string.
+/// An absolute argument yields an absolute locator, which is the caller's choice and not this
+/// function's to rewrite; deriving a path relative to the process's working directory would make the
+/// same file report differently depending on where the command was run from.
+///
+/// It is what the data file already does. `Property [...] in data [...]` prints the data file exactly
+/// as it was passed, so the rules file was the asymmetric one.
+///
+/// And `test --rules-file` already does it -- `path.to_str()` -- so three of the four paths that name
+/// a rules file now agree on one rule instead of holding three spellings between them.
+///
+/// Rejected: relative to the `--rules` argument that produced the file, which is what the two-argument
+/// shape was reaching for. It distinguishes files found by walking a directory, but a caller naming two
+/// files explicitly makes each one its own base, which is the collapse above again.
+fn rules_file_locator(file: &Path) -> String {
+    file.display().to_string()
 }
 
 fn get_rule_info(rules: &[PathBuf], writer: &mut Writer) -> Result<Vec<RuleFileInfo>> {
     iterate_over(rules, |content, file| {
         Ok(RuleFileInfo {
             content,
-            file_name: get_file_name(file, file),
+            file_name: rules_file_locator(file),
         })
     })
     .try_fold(vec![], |mut res, rule| -> Result<Vec<RuleFileInfo>> {

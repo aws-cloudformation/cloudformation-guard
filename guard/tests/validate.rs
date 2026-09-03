@@ -1578,6 +1578,88 @@ mod validate_tests {
         );
     }
 
+    /// Two rules files that differ only by directory get two different locators.
+    ///
+    /// The notice ends with the clause's source position so that a reader can go to the clause, and
+    /// `7679a4b8` claimed each notice "names a distinct rules file and line". It did not. Both call
+    /// sites built the name with `get_file_name(file, file)`, and `strip_prefix` against itself yields
+    /// the empty path, so the function fell through to `file_name()` and every rules file was known by
+    /// its basename alone. Two files named `incomparable_membership.guard` in different directories
+    /// produced two byte-identical notices.
+    ///
+    /// The count was never the symptom and asserting it would miss this: each rules file gets its own
+    /// `RootScope` and therefore its own `BTreeSet`, so two notices are written either way. What was
+    /// lost is that they were the same two characters, and the reader could locate neither clause. So
+    /// this counts *distinct* lines, and separately requires each locator to name the directory that
+    /// tells the two files apart.
+    ///
+    /// The single-line path rather than `--structured`, deliberately: this fixes the locator, and
+    /// asserting it through the structured path would make this cell depend on the notices reaching
+    /// that path at all, which is a different defect with its own cell above. Red for one reason each.
+    #[test]
+    fn two_rules_files_sharing_a_basename_get_distinct_locators() {
+        let mut reader = Reader::default();
+        let mut writer =
+            Writer::new_with_err(WBVec(vec![]), WBVec(vec![])).expect("Failed to create writer.");
+
+        let status_code = ValidateTestRunner::default()
+            .data(vec!["vacuous-and-incomparable-template.yaml"])
+            .rules(vec![
+                "same-basename-rules-dirs/first/incomparable_membership.guard",
+                "same-basename-rules-dirs/second/incomparable_membership.guard",
+            ])
+            .show_summary(vec!["none"])
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(
+            StatusCode::SUCCESS,
+            status_code,
+            "naming a file is not a verdict; both clauses still pass in this release"
+        );
+
+        let stderr = writer.err_to_stripped().expect("failed to read stderr");
+        let notices: Vec<&str> = stderr
+            .lines()
+            .filter(|l| l.contains("DEPRECATION"))
+            .collect();
+
+        assert_eq!(
+            notices.len(),
+            2,
+            "one notice per rules file, since each gets its own scope; got {:?} from stderr {:?}",
+            notices,
+            stderr
+        );
+
+        let distinct: std::collections::BTreeSet<&&str> = notices.iter().collect();
+        assert_eq!(
+            distinct.len(),
+            2,
+            "the two notices must differ; identical lines mean the locator dropped the only thing \
+             that tells these two files apart, got {:?}",
+            notices
+        );
+
+        // And they differ by the directory, not by something incidental. Requiring each notice to
+        // carry its own parent and not the other's is what makes the assertion above mean "the
+        // locator distinguishes them" rather than "the two lines happen to be unequal".
+        for parent in ["first", "second"] {
+            let matched: Vec<&&str> = notices
+                .iter()
+                .filter(|n| n.contains(&format!("{parent}/incomparable_membership.guard")))
+                .collect();
+
+            assert_eq!(
+                1,
+                matched.len(),
+                "expected exactly one notice locating the clause in `{}`, got {:?} from {:?}",
+                parent,
+                matched,
+                notices
+            );
+        }
+    }
+
     /// The counterpart: clauses that are not changing stay silent.
     ///
     /// A deprecation notice is only useful if it is rare. The cases here are the ones most likely to be
