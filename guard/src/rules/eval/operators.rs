@@ -531,6 +531,35 @@ fn fail(lhs: Rc<PathAwareValue>, rhs: Rc<PathAwareValue>) -> ValueEvalResult {
     })))
 }
 
+/// Whether one left-hand element is one of a right-hand list's elements.
+///
+/// `PartialEq` and then `compare_eq`, which is the idiom `d7f01ec` put in the scalar-left-hand arm of
+/// `contained_in` and is here for the reason it gives there. `Vec::contains` decides membership with
+/// `PartialEq` alone, `PartialEq` is asked `element == value`, and the range table is written the other
+/// way round -- scalar on the left, range on the right -- and lives in `compare_eq`. So a list-valued
+/// left-hand side could not have an element matched by a range written beside it: for `Ports` of `[85]`,
+/// `Ports IN [r[80,90]]` failed and `Ports NOT IN [r[80,90]]` passed, a denylist of forbidden port
+/// ranges admitting every port. The scalar spelling of the same question was right, because it reaches
+/// `compare_eq`.
+///
+/// Asking both is not belt and braces, and it is not redundant either way round. `compare_eq` answers
+/// everything `PartialEq` answers here -- two equal ranges, a string against a regex it matches, a
+/// number across `Int` and `Float`, a `Char` against the one-character string that spells it, and two
+/// collections structurally -- and adds exactly `compare_eq`'s five range-membership arms. So this can
+/// only add a match, never remove one, and `PartialEq` stays first because it short circuits on the
+/// common case and costs one comparison on a path that runs one anyway.
+///
+/// `unwrap_or(false)` rather than the `RegexError` promotion the scalar arm does, deliberately.
+/// `compare_eq` raises on two inputs: a regex that will not compile, and a NaN against a numeric range.
+/// Neither can arrive -- the rules parser refuses an uncompilable pattern at parse time, and every
+/// construction site for a `Float` gates a non-finite one -- so promoting them would change the shape of
+/// the `ListIn` diff for no input that exists, and `PartialEq` reads the same pair as `false` through its
+/// own `Err(_) => false` arm. One reading rather than two.
+fn is_one_of(each: &PathAwareValue, rhsl: &[PathAwareValue]) -> bool {
+    rhsl.iter()
+        .any(|elem| elem == each || compare_eq(each, elem).unwrap_or(false))
+}
+
 fn contained_in(lhs_value: Rc<PathAwareValue>, rhs_value: Rc<PathAwareValue>) -> ValueEvalResult {
     match &*lhs_value {
         PathAwareValue::List((_, lhsl)) => match &*rhs_value {
@@ -566,11 +595,17 @@ fn contained_in(lhs_value: Rc<PathAwareValue>, rhs_value: Rc<PathAwareValue>) ->
                 //
                 // This is `d7f01ec`'s failure shape in the arm that commit did not reach. It fixed the
                 // scalar-left-hand arm below, where `rhsl.contains(rest)` could not see a range nested
-                // in a list literal, by asking each element in turn. Same idiom here, and membership
-                // asks `compare_eq` as well as `PartialEq` so a list holding a range or a regex
-                // reaches the function that knows about them. The subset test stays on `PartialEq`,
-                // which is what the all-flat branch below uses, so one reading does not silently
-                // become more permissive than the other spelling of itself.
+                // in a list literal, by asking each element in turn. Same idiom here, in both readings:
+                // `is_one_of` asks `compare_eq` as well as `PartialEq`, so a right-hand list holding a
+                // range or a regex reaches the function that knows about them, and the whole-list
+                // membership test asks `compare_eq` on the list itself for the same reason.
+                //
+                // The subset test used to stay on `PartialEq`, to match the all-flat branch below. That
+                // matched the branch and left the same hole in it: a range beside a list-valued
+                // left-hand side matched no element, so `Ports NOT IN [r[80,90]]` admitted a `Ports` of
+                // `[85]` while `Port NOT IN [r[80,90]]` denied an 85. Both readings ask `is_one_of` now,
+                // so the two agree at the level the scalar arm already worked at rather than at the one
+                // neither of them did.
                 //
                 // Gating subset on the RIGHT-hand side holding no list was tried and rejected. It is
                 // order-independent, so it closes the defect, but it keeps the shape of what caused
@@ -607,7 +642,7 @@ fn contained_in(lhs_value: Rc<PathAwareValue>, rhs_value: Rc<PathAwareValue>) ->
                 if rhsl.iter().any(|elem| elem.is_list()) {
                     let diff = lhsl
                         .iter()
-                        .filter(|each| !rhsl.contains(each))
+                        .filter(|each| !is_one_of(each, rhsl))
                         .cloned()
                         .map(Rc::new)
                         .collect::<Vec<_>>();
@@ -628,7 +663,7 @@ fn contained_in(lhs_value: Rc<PathAwareValue>, rhs_value: Rc<PathAwareValue>) ->
                 } else {
                     let diff = lhsl
                         .iter()
-                        .filter(|each| !rhsl.contains(each))
+                        .filter(|each| !is_one_of(each, rhsl))
                         .cloned()
                         .map(Rc::new)
                         .collect::<Vec<_>>();
