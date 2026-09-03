@@ -429,6 +429,21 @@ fn empty_reference_message(negated: bool) -> String {
 /// fix moves exactly those three and no verdict anywhere.
 /// `a_skipped_pairing_does_not_earn_a_sibling_a_membership_notice` carries them.
 ///
+/// Strengthening `clause_passed` is NOT the repair, and that path is closed rather than merely
+/// unattractive: a clause that compared nothing cannot reach `clause_passed = true` by either route.
+/// Through `QueryValueResult`, `nothing_was_compared` in the two-query arm suppresses the only push, so
+/// the vector is empty and the `!values.is_empty()` test rejects it; through `EmptyQueryResult`, all five
+/// constructions in `binary_operation` yield FAIL or SKIP and none can be PASS. The defect is entirely
+/// that this predicate answers `refused` for a pairing the operator declined to build.
+///
+/// Worth knowing for the next reader of an empty per-value vector, because it looks like a contradiction
+/// and is not one. A vacuous clause exits 0 while `clause_passed` is false, and both readers compute from
+/// the same vector at the same moment -- they ask different questions of emptiness. `clause_passed` asks
+/// whether a value passed and gets no; the reporting fold asks whether a value FAILED, also gets no, and
+/// `match_all` turns that into PASS. There is no race and no bug here. That the two answers happen to fail
+/// safe is a property of this call site rather than of the pattern, so a new reader of an empty vector has
+/// to establish its own direction rather than inherit this one.
+///
 /// The wider grid a repair has to survive is not this one, because a before-and-after only covers the
 /// shapes it enumerates. 928 further shapes -- the `[0]`/`[*]` spellings the impossibility proofs turn on, a
 /// two-value left query and `some`, an empty string, an empty map and a null on the left -- carry 25 more
