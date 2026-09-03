@@ -9764,17 +9764,122 @@ fn the_incomparable_membership_notice_survives_a_failure_the_file_does_not_repor
         rules
     );
 
-    // Every membership notice recorded, so a cell cannot be satisfied by one notice with the right
-    // wording arriving beside another with the wrong one.
+    assert_notice(rules, status, expected_notice, &notices);
+
+    Ok(())
+}
+
+/// A regex that ran out of backtracking budget is not an incomparable pair, and gets no notice.
+///
+/// `incomparable_membership` decides comparability with `compare_eq(..).is_ok()`, and `fancy_regex`
+/// answers `Err` when its backtracking engine gives up rather than when the operands cannot be
+/// compared. A `String` against a `Regex` is a pair `compare_eq` has an arm for -- it builds the
+/// pattern and runs it -- so an exhausted budget arrives as `Error::RegexError` from a comparison that
+/// was perfectly well typed. Read as incomparability, it produces a notice whose stated reason is
+/// wrong: the values were comparable and the engine quit.
+///
+/// This was latent while the notice was gated on the verdict alone, because these clauses fail --
+/// `match_value` promotes `RegexError` -- and a failing clause was suppressed. It stops being latent as
+/// soon as a failure that nothing reports is noticed again, which is what the gate above now does. So
+/// the two changes have to arrive together: measured on the tree before this, `rule r when Cat[*] NOT
+/// IN [/(?!x)((a+)+)b/] { ... }` over thirty `a` characters exits 0 with a notice saying the value
+/// could not be compared with any element of the list.
+///
+/// The third cell is what makes the fix narrow rather than a blanket silence, and it is a fact about
+/// `compare_eq`'s arms rather than a judgment call. `(String, Regex)` is an arm, so a spent budget
+/// there is a `RegexError`. `(List, Regex)` is not an arm at all: it falls through to `compare_values`,
+/// whose catch-all refuses with `NotComparable`, which is a real incomparability and keeps its notice.
+/// The last cell follows from the same fact -- the whole-list spelling never reaches the regex engine,
+/// so this fix cannot touch it, and its notice remains the whole-value-versus-element divergence
+/// `incomparable_membership` documents rather than anything to do with regexes.
+#[rstest::rstest]
+// The pattern is `CATASTROPHIC`, spelled out because a `#[case]` attribute cannot interpolate a const.
+#[case::a_catastrophic_regex_in_a_condition(
+    "rule r when Cat[*] NOT IN [/(?!x)((a+)+)b/] { Cat EXISTS }",
+    Status::SKIP,
+    ExpectedNotice::Silent
+)]
+#[case::a_catastrophic_regex_asserted(
+    "rule r { Cat[*] NOT IN [/(?!x)((a+)+)b/] }",
+    Status::FAIL,
+    ExpectedNotice::Silent
+)]
+#[case::an_ordinary_regex_against_a_whole_list_in_a_condition(
+    "rule r when Cat NOT IN [/^a+$/] { Cat EXISTS }",
+    Status::SKIP,
+    ExpectedNotice::Absorbed
+)]
+#[case::a_comparable_element_beside_the_catastrophic_one(
+    "rule r when Mixed[*] NOT IN [/(?!x)((a+)+)b/] { Mixed EXISTS }",
+    Status::SKIP,
+    ExpectedNotice::Silent
+)]
+#[case::the_whole_list_spelling_is_untouched(
+    "rule r { Cat NOT IN [/(?!x)((a+)+)b/] }",
+    Status::PASS,
+    ExpectedNotice::Passed
+)]
+fn a_spent_backtracking_budget_is_not_an_incomparable_pair(
+    #[case] rules: &str,
+    #[case] expected: Status,
+    #[case] expected_notice: ExpectedNotice,
+) -> Result<()> {
+    // Thirty `a` characters is the length at which `(?!x)((a+)+)b` exhausts the budget, the same
+    // subject `a_regex_that_exceeds_the_backtrack_limit_fails_the_clause_instead_of_aborting` uses.
+    // `Mixed` carries one element the pattern answers on, because one comparable pair is enough to
+    // silence the notice on its own and a cell has to be able to tell the two causes apart.
+    const INPUT: &str = r#"
+    {
+        Cat: ["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"],
+        Mixed: ["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "ok"]
+    }
+    "#;
+
+    let (status, notices) = deprecations_for_rules(rules, INPUT)?;
+
+    assert_eq!(
+        expected, status,
+        "`{}` changed verdict; this is a diagnostics fix and must move no status",
+        rules
+    );
+
+    assert_notice(rules, status, expected_notice, &notices);
+
+    Ok(())
+}
+
+/// Which stderr line a cell of the two tests above expects, so each one names the wording rather than
+/// only whether something arrived.
+///
+/// Three states rather than a `bool`, because the notice has two bodies and the difference between them
+/// is the defect f3eb258 fixed: one says the clause passed on the incomparability, and the other goes
+/// out where it did not pass and the file reports nothing. A boolean cannot tell a cell that got the
+/// wrong one from a cell that got the right one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ExpectedNotice {
+    /// No incomparable-membership notice at all.
+    Silent,
+    /// The notice for a clause the incomparability let pass.
+    Passed,
+    /// The notice for a clause that did not pass and whose failure the file does not report.
+    Absorbed,
+}
+
+/// Checks the membership notices a run recorded against what the cell expects.
+///
+/// Every matching notice is checked rather than one of them, because a cell that only looks for the
+/// wording it wants is satisfied by that notice arriving beside one carrying the other wording, which
+/// is a state where an author reading the wrong one is told the wrong thing.
+fn assert_notice(rules: &str, status: Status, expected: ExpectedNotice, notices: &[String]) {
     let membership: Vec<&String> = notices
         .iter()
         .filter(|n| n.contains("could not be compared with any element"))
         .collect();
 
-    match expected_notice {
+    match expected {
         ExpectedNotice::Silent => assert!(
             membership.is_empty(),
-            "`{}` reached {:?} and the file reports it, so the notice should have stayed silent; \
+            "`{}` reached {:?} with nothing for this notice to say, so it should have stayed silent; \
              recorded {:?}",
             rules,
             status,
@@ -9816,25 +9921,6 @@ fn the_incomparable_membership_notice_survives_a_failure_the_file_does_not_repor
             );
         }
     }
-
-    Ok(())
-}
-
-/// Which stderr line a cell of the test above expects, so each one names the wording rather than only
-/// whether something arrived.
-///
-/// Three states rather than a `bool`, because the notice has two bodies and the difference between them
-/// is the defect f3eb258 fixed: one says the clause passed on the incomparability, and the other goes
-/// out where it did not pass and the file reports nothing. A boolean cannot tell a cell that got the
-/// wrong one from a cell that got the right one.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ExpectedNotice {
-    /// No incomparable-membership notice at all.
-    Silent,
-    /// The notice for a clause the incomparability let pass.
-    Passed,
-    /// The notice for a clause that did not pass and whose failure the file does not report.
-    Absorbed,
 }
 
 /// `or` is decided by whichever disjunct can decide it, in either order.
