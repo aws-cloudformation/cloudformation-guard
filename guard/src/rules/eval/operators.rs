@@ -1287,8 +1287,19 @@ impl Comparator for InOperation {
                 // comparison was made of it at all. The written-out string arm has always had this one --
                 // `(None, Some)` decomposes a list left-hand side into one `string_in` per element, so an
                 // EMPTY list produces no results and the clause passes in both polarities -- and this arm
-                // had no way to say it. The count is what the aggregate below reads to stay silent.
-                let mut no_comparison = 0_usize;
+                // had no way to say it.
+                //
+                // THE VALUES AND NOT A COUNT, and a count is what shipped first. `QueryIn` carries `lhs`
+                // beside `lhs_unmatched`, and the negation wrapper derives the collided set as
+                // `lhs \ lhs_unmatched` -- so a value withheld from `diff` and left in `lhs` reads as
+                // MATCHED, which is the opposite of what withholding it meant. Dropping it from `diff`
+                // alone made `NOT IN` deny it: with a `Mismatch` of `[[], ["zzz"]]` against a `Str` of
+                // `"abc"`, `Mismatch[*] NOT IN Str` exited 19 reporting `provided value [[]] did match
+                // expected value in [["abc"]]` -- the empty list named as having matched a haystack nothing
+                // compared it against -- while `Mismatch[*] NOT IN "abc"` exits 0. Seventeen cells, every
+                // one an over-denial and every one silent, because the notice gate fires only on a PASS.
+                // So the set has to leave `lhs` as well, and these are the values that leave it.
+                let mut uncompared: Vec<Rc<PathAwareValue>> = Vec::new();
                 'each_lhs: for eachl in &lhs_selected {
                     let mut unanswerable_against: Option<(Rc<PathAwareValue>, StringContainment)> =
                         None;
@@ -1875,7 +1886,7 @@ impl Comparator for InOperation {
                     // against on its existing path, which is the same reason the skip above sits inside
                     // the loop rather than over it.
                     if !rhs_selected.is_empty() && uncompared_pairings == rhs_selected.len() {
-                        no_comparison += 1;
+                        uncompared.push(Rc::clone(eachl));
                         continue;
                     }
 
@@ -1923,41 +1934,56 @@ impl Comparator for InOperation {
                 // carries it -- `Empty IN "abc"` and `Empty NOT IN "abc"` are both exit 0 today and that arm
                 // pushes nothing.
                 //
+                // THE UNCOMPARED VALUES LEAVE `lhs`, not only `diff`, and this is the whole repair for the
+                // over-denials the first version of this fix created. `QueryIn` carries both sets, and the
+                // negation wrapper reads the collided set as `lhs \ lhs_unmatched` -- so any value present
+                // in `lhs` and absent from `lhs_unmatched` is, to that wrapper, a value that MATCHED. A
+                // value withheld from `diff` was therefore reported as a match against the very operand no
+                // comparison examined, and `NOT IN` denied it. `Mismatch[*] NOT IN Str` over
+                // `[[], ["zzz"]]` and `"abc"` was exit 19 against its literal's 0.
+                //
+                // `reverse_diff` compares by value, and that is sound here rather than merely convenient:
+                // whether a left-hand value is uncompared depends only on the value and on `rhs_selected`,
+                // so two equal left-hand values are always classified alike and removing one can never
+                // remove a compared sibling. A `Lists` of `[[], []]` is the case -- both empty lists are
+                // uncompared, and both leave.
+                //
                 // Every value, not any: with one left-hand value uncompared and another matched, the ones
                 // that WERE compared all matched and `Success` is the honest aggregate. That is the literal
                 // spelling's behavior too, since it unions per-value results and an empty list contributes
-                // none. This is the condition with a price attached, and it is measured rather than
-                // argued: with a `Lists` of `[[], ["abc"]]`, weakening this to `no_comparison > 0` takes
-                // `Lists[*] NOT IN Str` from 19 to 0 while `Lists[*] NOT IN "abc"` stays at 19 -- a
-                // denylist admitting a value one of its haystacks contains verbatim. `ListsRev` of
-                // `[["abc"], []]` moves with it, so the cell is not an artifact of which value the query
-                // reaches first. `an_uncompared_empty_list_does_not_silence_its_siblings` carries both.
+                // none. Suppressing on `uncompared` being non-empty instead would take
+                // `Lists[*] NOT IN Str` over `[[], ["abc"]]` from 19 to 0 while
+                // `Lists[*] NOT IN "abc"` stays at 19 -- a denylist admitting a value one of its haystacks
+                // contains verbatim. `an_uncompared_empty_list_does_not_silence_its_siblings` carries that
+                // cell, a compared-and-FAILING sibling for the over-denial above, and both element orders.
                 //
-                // `!lhs_selected.is_empty()` because `0 == 0` otherwise, which would silence the aggregate
-                // for a left-hand query that resolved to nothing and change a verdict this fix is not about.
+                // Derived from `lhs_compared` rather than from a count, so the two facts the aggregate needs
+                // -- which values to name, and whether any were compared at all -- cannot disagree. The
+                // `!lhs_selected.is_empty()` guard keeps a left-hand query that resolved to nothing on its
+                // existing path.
                 //
                 // WHY THE AGGREGATE NEEDS SUPPRESSING AT ALL, stated as the shape rather than as this
-                // instance, because the shape is worth recognising elsewhere. The `Success` above is decided
-                // by `diff.is_empty()`, and an empty `diff` has two causes that mean opposite things:
-                // everything that was asked matched, or nothing was asked. A predicate over the ABSENCE of
-                // recorded failures cannot separate those, so it reads "no comparison happened" as "every
-                // comparison succeeded" and answers PASS on `IN` with a match that examined nothing. That is
-                // the same conflation `compared_nothing` guards in `eval.rs`, one level up, where the notice
-                // fires precisely when a clause is about to pass on the strength of no per-value result at
-                // all. Any counter of failures used as a verdict has this hole; the fix is to track the
-                // third state rather than to infer it from the first two being empty.
-                let nothing_was_compared =
-                    !lhs_selected.is_empty() && no_comparison == lhs_selected.len();
+                // instance, because the shape is worth recognising elsewhere -- and this fix got caught by
+                // it twice. The `Success` above is decided by `diff.is_empty()`, and an empty `diff` has two
+                // causes that mean opposite things: everything that was asked matched, or nothing was asked.
+                // A predicate over the ABSENCE of recorded failures cannot separate those, so it reads "no
+                // comparison happened" as "every comparison succeeded". `lhs \ lhs_unmatched` in the
+                // negation wrapper is the SAME predicate one consumer along, and tracking the third state
+                // for the verdict while leaving the wrapper to infer it from two empty sets is what produced
+                // the over-denials. Any absence-derived set has this hole, and a fix has to reach every
+                // consumer of it, not just the one that motivated the fix.
+                let lhs_compared = reverse_diff(uncompared, &lhs_selected);
+                let nothing_was_compared = !lhs_selected.is_empty() && lhs_compared.is_empty();
 
                 results.extend(unanswerable);
                 if !unanswerable_and_nothing_unmatched && !nothing_was_compared {
                     results.push(if diff.is_empty() {
                         ValueEvalResult::ComparisonResult(ComparisonResult::Success(
-                            Compare::QueryIn(QueryIn::new(diff, lhs_selected, rhs_selected)),
+                            Compare::QueryIn(QueryIn::new(diff, lhs_compared, rhs_selected)),
                         ))
                     } else {
                         ValueEvalResult::ComparisonResult(ComparisonResult::Fail(Compare::QueryIn(
-                            QueryIn::partly_matched(diff, collides, lhs_selected, rhs_selected),
+                            QueryIn::partly_matched(diff, collides, lhs_compared, rhs_selected),
                         )))
                     });
                 }

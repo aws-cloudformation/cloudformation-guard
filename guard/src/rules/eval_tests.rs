@@ -10359,8 +10359,57 @@ fn the_in_polarity_of_a_queried_scalar_right_operand_has_no_repair_in_this_arm(
 ///
 /// The `IN` cells are here because they are what the repair is for and they must move together with
 /// nothing else: both spellings PASS, agreeing with their literals, where before the repair both were FAIL.
+///
+/// # The sibling that MATCHES could not catch the defect this test is named for
+///
+/// `Lists` holds `["abc"]` against a `Str` of `"abc"` -- a sibling that is CONTAINED. So `diff` comes out
+/// empty, `lhs_unmatched` comes out empty, and the negation wrapper's `lhs \ lhs_unmatched` returns all of
+/// `lhs` whether or not the uncompared value was removed from it. Every cell here passed against a build
+/// that withheld the value from `diff` and left it in `lhs`, which is the actual defect: `QueryIn` carries
+/// both sets, the wrapper derives "collided" from their difference, and a value missing from one and
+/// present in the other reads as MATCHED. Seventeen `NOT IN` cells over-denied silently on that build and
+/// this table was green for all of them. It gave the right answer for the wrong reason.
+///
+/// `Mismatch` is the shape that discriminates: `[[], ["zzz"]]` against `"abc"`, one uncompared entry and one
+/// entry that IS compared and does NOT match. Now `diff` holds `["zzz"]`, so `lhs_unmatched` is non-empty,
+/// and `lhs \ lhs_unmatched` is exactly the leftover uncompared value -- non-empty, read as a collision,
+/// `NOT IN` denies. `Mismatch[*] NOT IN Str` was 19 on that build with `Mismatch[*] NOT IN "abc"` at 0
+/// beside it, and the report named `[[]]` as having matched `[["abc"]]`.
+///
+/// One right-hand string the sibling does not contain is the whole difference between a table that can see
+/// this class and one that cannot. `Zstr` is `"zzz"`, which `Lists`'s own `["abc"]` sibling does not contain,
+/// so it discriminates for the `Lists` fixture too and both fixtures carry the shape.
 #[rstest::rstest]
-// THE GUARD. One uncompared value, one matched sibling: the match is reported and `NOT IN` denies.
+// THE GUARD THAT DISCRIMINATES: one uncompared value, one sibling compared that does NOT match. The
+// uncompared value must not be reported as a match, so `NOT IN` must PASS -- these are FAIL on a build that
+// removes it from `diff` alone.
+#[case::an_unmatched_sibling_does_not_make_the_uncompared_value_a_match(
+    "Mismatch[*] NOT IN Str",
+    Status::PASS
+)]
+#[case::an_unmatched_sibling_does_not_make_the_uncompared_value_a_match_reversed(
+    "MismatchRev[*] NOT IN Str",
+    Status::PASS
+)]
+// Their literals, which is what those two are made to agree with.
+#[case::an_unmatched_sibling_written_out("Mismatch[*] NOT IN \"abc\"", Status::PASS)]
+#[case::an_unmatched_sibling_written_out_reversed("MismatchRev[*] NOT IN \"abc\"", Status::PASS)]
+// The same shape reached from the OTHER fixture, by naming a string its sibling does not contain. This is
+// the one-line change that would have caught the defect in the original table.
+#[case::a_matched_fixture_against_a_string_it_does_not_contain(
+    "Lists[*] NOT IN Zstr",
+    Status::PASS
+)]
+#[case::a_matched_fixture_against_a_string_it_does_not_contain_written_out(
+    "Lists[*] NOT IN \"zzz\"",
+    Status::PASS
+)]
+// And the `IN` polarity of the discriminating shape, so a repair cannot move one polarity only.
+#[case::an_unmatched_sibling_fails_in("Mismatch[*] IN Str", Status::FAIL)]
+#[case::an_unmatched_sibling_fails_in_written_out("Mismatch[*] IN \"abc\"", Status::FAIL)]
+// THE GUARD. One uncompared value, one matched sibling: the match is reported and `NOT IN` denies. Kept
+// because it pins the opposite verdict for the opposite sibling, but it cannot see the wrapper defect --
+// see the note above.
 #[case::a_matched_sibling_still_denies("Lists[*] NOT IN Str", Status::FAIL)]
 #[case::a_matched_sibling_still_denies_reversed("ListsRev[*] NOT IN Str", Status::FAIL)]
 // The literals the two above are made to agree with.
@@ -10394,12 +10443,24 @@ fn an_uncompared_empty_list_does_not_silence_its_siblings(
     // `Lists` and `ListsRev` are the same two entries in both orders. `Empties` is the all-uncompared
     // shape, two empty lists, which is what distinguishes suppressing the aggregate from dropping it
     // whenever anything was skipped.
+    //
+    // `Mismatch` and `MismatchRev` are the shape that discriminates the wrapper defect: the sibling is
+    // `["zzz"]`, which `Str` does NOT contain, so the sibling reaches `diff` and leaves `lhs_unmatched`
+    // non-empty. Only then does `lhs \ lhs_unmatched` expose an uncompared value still sitting in `lhs`.
+    // With a contained sibling both sets come out empty and the difference is invisible, which is why the
+    // original table passed against the buggy build.
+    //
+    // `Zstr` gives the `Lists` fixture the same discriminating power without a second fixture: a string
+    // its `["abc"]` sibling does not contain.
     const INPUT: &str = r#"
     {
         Lists: [[], ["abc"]],
         ListsRev: [["abc"], []],
+        Mismatch: [[], ["zzz"]],
+        MismatchRev: [["zzz"], []],
         Empties: [[], []],
         Str: "abc",
+        Zstr: "zzz",
         D13: [1, 3]
     }
     "#;
