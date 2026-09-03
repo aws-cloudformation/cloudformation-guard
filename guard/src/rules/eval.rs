@@ -234,14 +234,6 @@ fn empty_reference_message(negated: bool) -> String {
     )
 }
 
-/// Notice for a comparison that passed without comparing anything, because the value it selected was
-/// an empty collection.
-///
-/// `docs/QUERY_AND_FILTERING.md` lists `Tags: []` alongside a missing key and an empty map as a
-/// retrieval error, and says all retrieval errors are failures. The other two do fail; this one passes,
-/// which makes it the odd one out rather than a design choice. It is not changed in this release
-/// because the change turns a passing run into a failing one, and a rule author deserves to hear about
-/// that before a pipeline does.
 /// True when no left-hand value can be compared with any element of the right-hand list.
 ///
 /// False the moment one pair is comparable, so a mixed list that contains anything of the right kind is
@@ -358,6 +350,14 @@ fn incomparable_membership(lhs: &[QueryResult], rhs: &[QueryResult]) -> bool {
     true
 }
 
+/// Notice for a comparison that passed without comparing anything, because the value it selected was
+/// an empty collection.
+///
+/// `docs/QUERY_AND_FILTERING.md` lists `Tags: []` alongside a missing key and an empty map as a
+/// retrieval error, and says all retrieval errors are failures. The other two do fail; this one passes,
+/// which makes it the odd one out rather than a design choice. It is not changed in this release
+/// because the change turns a passing run into a failing one, and a rule author deserves to hear about
+/// that before a pipeline does.
 fn vacuous_comparison_notice(context: &str) -> String {
     format!(
         "DEPRECATION: {} passed without comparing anything, because the query selected an empty \
@@ -1551,9 +1551,9 @@ fn binary_operation<'value, 'loc: 'value>(
     // condition or a filter predicate that fails does not fail the file: `eval_conjunction_clauses`
     // counts the FAIL, `eval_rule` maps every non-PASS condition to SKIP, and the rule or the selection
     // it guards is dropped at exit 0. Measured on `Ports: [1, 2]`: `when Ports NOT IN [1, 3]` exits 0
-    // with an empty stdout and an empty stderr, while the same clause asserted exits 19. So the one
-    // shape the notice exists for -- a green file that quietly stopped checking -- was the shape it did
-    // not reach.
+    // with an empty report -- and, before this, an empty stderr with it -- while the same clause
+    // asserted exits 19. So the one shape the notice exists for, a green file that quietly stopped
+    // checking, was the shape it did not reach.
     //
     // `ClauseRole` is exactly the right question to ask, and not by coincidence: it is threaded to every
     // leaf clause so that a clause whose failure would be absorbed carries `Gate`. That makes
