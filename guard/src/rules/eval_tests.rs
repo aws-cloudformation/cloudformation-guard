@@ -16248,23 +16248,48 @@ fn a_matched_subset_earns_no_whole_value_refusal_the_operator_never_built(
 /// its cell 2 paired `[7]` against `[[7.0]]`, which is `(Int, List)` and refuses at element
 /// granularity, so the cell measured the element walk and passed for the wrong reason.
 ///
-/// Cells 1 and 2 are the two ways the operator's walk stops early, and both are here because a fix
-/// keyed on one would pass a table holding only the other -- the same reason the scalar test carries
-/// its `Float`/`Int` pair.
+/// Cells 1 and 2 are the two ways the operator's walk stops early. Only ONE of them is separable, and
+/// the reason recorded here previously was inverted -- see below, because it is the kind of wrong
+/// reason a reader would act on.
 ///
-/// Cell 1 stops at `PartialEq`: the first entry IS the left value, so the operator breaks there and
-/// never reaches `["a", "b"]`. The predicate did, and `compare_eq` zips two length-2 lists into
-/// `compare_eq([1], "a")`, a refusal on kinds.
+/// Cell 1 stops at the first entry, which IS the left value, so the operator breaks there and never
+/// reaches `["a", "b"]`. The predicate did, and `compare_eq` zips two length-2 lists into
+/// `compare_eq([1], "a")`, a refusal on kinds. It does NOT establish that the `PartialEq` check is
+/// what stopped the walk; nothing can. See the redundancy note below.
 ///
 /// Cell 2 stops one step later, at `compare_eq` answering `Ok(true)` for operands that are not
 /// `PartialEq`-equal: `[r[1,1], r[2,2]]`, single-point ranges that `compare_eq` relates to `1` and
 /// `2` while `PartialEq` does not.
 ///
-/// A `Float` entry does NOT work here and an earlier draft used one. `PartialEq` has no
-/// `(Int, Float)` arm, so `1` against `1.0` falls through to `compare_eq` from BOTH cells and
-/// distinguishes nothing -- measured, by mutating the walk's `Ok(true) => return Matched` arm and
-/// finding the `Float` version of this cell still green. Ranges are the asymmetry that works,
-/// because `PartialEq` covers `(RangeInt, RangeInt)` and nothing relating a range to a scalar.
+/// # The reason a `Float` entry does not work, corrected
+///
+/// An earlier revision of this comment said `PartialEq` has "no `(Int, Float)` arm", so `1` against
+/// `1.0` reached `compare_eq` from both cells. That is backwards, and the correction matters more than
+/// the original claim did. `PartialEq`'s catch-all delegates to `compare_values`, which has explicit
+/// `(Int, Float)` and `(Float, Int)` arms, so `Int(7) == Float(7.0)` is TRUE *through `PartialEq`* --
+/// measured directly. The `Float` cell therefore stopped at the FIRST early return, not the second,
+/// which is the opposite of what was recorded.
+///
+/// The rule to pick a discriminator by is correspondingly opposite. "Choose a type `PartialEq` lacks
+/// an explicit arm for" selects nearly every scalar pair and is almost always wrong, because the
+/// fall-through relates anything `compare_values` can order -- following it leads a reader straight
+/// back to `Float`. The rule is: choose a pair `compare_values` REFUSES and `compare_eq` relates by
+/// some other route. A single-point `RangeInt` against an `Int` qualifies, because `compare_values`
+/// will not order a range against a scalar while `compare_eq` answers range membership.
+///
+/// # The `PartialEq` return is redundant, so no cell can bind it
+///
+/// Measured over every explicit arm of `PartialEq` plus its fall-through -- `(Map, Map)`,
+/// `(List, List)`, `(Bool, Bool)`, `(String, Regex)`, `(Regex, Regex)`, the three range arms,
+/// `(Null, Null)`, `(Char, Char)`, `(Int, Int)`, `(Int, Float)`: wherever `PartialEq` answers true,
+/// `compare_eq` answers `Ok(true)` as well. There is NO pair the first early return catches that the
+/// second would not. So deleting `if elem == each { return Matched }` from the walk changes no verdict
+/// and reddens no test, and a cell claiming to pin it cannot exist. Only the reverse asymmetry is
+/// real, which is what cell 2 uses.
+///
+/// This is a fact about the operator, not a gap in the table. Stated here because the natural reading
+/// of "cells 1 and 2 are the two ways the walk stops early" is that a mutation of either return is
+/// caught, and only one is.
 ///
 /// Cell 3 is the discriminator and must stay `true`. `[["x","y"], ["a","b"]]` matches neither entry,
 /// so the operator's walk runs to completion and both of its kind refusals are owed. A fix that
@@ -16281,12 +16306,17 @@ fn the_whole_value_pairing_stops_where_the_operator_stops() {
         PathAwareValue::Int((Path::new(path.to_string(), 0, 0), value))
     }
 
-    // A single-point inclusive int range. `compare_eq` relates an `Int` to a range containing it;
-    // `PartialEq` does not, because its arms cover `(RangeInt, RangeInt)` and there is no
-    // `(Int, RangeInt)`. That asymmetry is what lets cell 2 reach the walk's SECOND early return
-    // without tripping its first, and an `Int`/`Float` pair cannot do it -- `PartialEq` has no
-    // `(Int, Float)` arm either, so `1` against `1.0` reaches `compare_eq` from both cells and
-    // distinguishes nothing.
+    // A single-point inclusive int range. `compare_eq` relates an `Int` to a range containing it and
+    // `PartialEq` does not -- measured, `Int(7) == RangeInt[7,7]` is false in both directions, because
+    // `PartialEq`'s catch-all asks `compare_values` and that refuses to order a range against a
+    // scalar. That asymmetry is what lets cell 2 reach the walk's SECOND early return without
+    // tripping its first.
+    //
+    // An `Int`/`Float` pair cannot do it, and the reason is the OPPOSITE of what this comment said:
+    // `PartialEq` DOES relate them, through the same `compare_values` fall-through, which carries
+    // explicit `(Int, Float)` and `(Float, Int)` arms. So `1` against `1.0` stopped at the FIRST early
+    // return, not the second. Pick a discriminator by what `compare_values` refuses, never by which
+    // arms `PartialEq` spells out.
     fn range(path: &str, at: i64) -> PathAwareValue {
         use crate::rules::values::{RangeType, LOWER_INCLUSIVE, UPPER_INCLUSIVE};
         PathAwareValue::RangeInt((
@@ -16336,7 +16366,7 @@ fn the_whole_value_pairing_stops_where_the_operator_stops() {
         )
     };
 
-    let stops_on_partialeq = incomparable_membership(
+    let stops_on_a_matched_entry = incomparable_membership(
         &resolved(left()),
         &literal(list(
             "/Eq/0",
@@ -16387,18 +16417,22 @@ fn the_whole_value_pairing_stops_where_the_operator_stops() {
     assert_eq!(
         (false, false, true),
         (
-            stops_on_partialeq,
+            stops_on_a_matched_entry,
             stops_on_compare_eq,
             walks_the_whole_denylist
         ),
         "first: the first entry IS the left value, so `contained_in`'s whole-list walk breaks there \
-         on `PartialEq` and the `[\"a\",\"b\"]` after it is a pairing the operator never built. \
-         second: `[[1.0], [2.0]]` is not `PartialEq`-equal to `[[1], [2]]` but `compare_eq` zips it \
-         to `1` against `1.0` and answers `Ok(true)`, which is the OTHER early return -- a fix keyed \
-         on `PartialEq` alone reddens here. third: `[[\"x\",\"y\"], [\"a\",\"b\"]]` matches \
-         neither entry, so the walk runs to completion and both of its kind refusals are owed; \
-         skipping this loop wholesale cannot pass this cell. Every ELEMENT pairing in all three cells \
-         is `Ok(false)` on a length mismatch, so nothing but the whole-value walk can set these"
+         and the `[\"a\",\"b\"]` after it is a pairing the operator never built. It does not say WHICH \
+         early return stopped it, and no cell can: wherever `PartialEq` holds `compare_eq` answers \
+         `Ok(true)` too, so the `elem == each` check is redundant and deleting it reddens nothing. \
+         second: `[r[1,1], r[2,2]]` is NOT `PartialEq`-equal to `[[1], [2]]` -- `compare_values` will \
+         not order a range against a scalar -- while `compare_eq` relates them by range membership, so \
+         this cell reaches the `Ok(true)` return alone and reddens when that return is removed. An \
+         `Int`/`Float` pair cannot do this: `PartialEq` DOES relate them through `compare_values`. \
+         third: `[[\"x\",\"y\"], [\"a\",\"b\"]]` matches neither entry, so the walk runs to completion \
+         and both of its kind refusals are owed; skipping this loop wholesale cannot pass this cell. \
+         Every ELEMENT pairing in all three cells is `Ok(false)` on a length mismatch, so nothing but \
+         the whole-value walk can set these"
     );
 }
 
@@ -16429,15 +16463,43 @@ fn the_whole_value_pairing_stops_where_the_operator_stops() {
 /// matching entry. On the queried path `rhs_values_paired_with` drops a right-hand value that matches,
 /// so the arm is never entered for one; the literal path returns the whole slice.
 ///
-/// Cells 1 and 2 are the two ways `is_one_of` returns `Matched` early, and both are here because a fix
-/// keyed on only one of them would pass a table holding only the other. Cell 1 stops at
-/// `elem == each`, the `PartialEq` check. Cell 2 stops one line later at `compare_eq(..) == Ok(true)`,
-/// reached with a `Float` of `7.0` against an `Int` of `7` -- `compare_eq` has an `(Int, Float)` arm,
-/// so the two are equal without being `PartialEq`-identical.
+/// Cells 1 and 2 are the two ways `is_one_of` returns `Matched` early, and only ONE of them is
+/// separable. Cell 1 stops on a matching first entry; cell 2 stops one line later at
+/// `compare_eq(..) == Ok(true)` on operands `PartialEq` does not relate.
 ///
 /// Cell 3 is the discriminator and must stay `true`. `99` matches neither entry, so the operator walks
 /// the whole denylist and its `(Int, List)` refusal is genuinely owed. A fix that suppressed this arm
 /// wholesale, rather than stopping where the operator stops, reddens here.
+///
+/// # A `Float` entry was used here and did not discriminate
+///
+/// Cell 2 carried a `Float` of `7.0` against an `Int` of `7`, on the reading that `compare_eq` has an
+/// `(Int, Float)` arm "so the two are equal without being `PartialEq`-identical". The second half is
+/// false. `PartialEq`'s catch-all delegates to `compare_values`, which carries explicit `(Int, Float)`
+/// and `(Float, Int)` arms, so `Int(7) == Float(7.0)` is TRUE through `PartialEq` -- measured directly.
+/// The cell stopped at the FIRST early return, the same one cell 1 uses, and pinned nothing cell 1 did
+/// not.
+///
+/// Measured, on this test as it stood: deleting `if elem == each { return Matched }` left it green, and
+/// deleting `Ok(true) => return Matched` left it green as well, while the positive control -- making the
+/// `Err` arm record no refusal -- reddened cell 3. So cells 1 and 2 bound NEITHER early return and only
+/// cell 3 bound anything.
+///
+/// A single-point `RangeInt` is the asymmetry that works, and the rule it comes from is the opposite of
+/// the one recorded before: choose a pair `compare_values` REFUSES that `compare_eq` relates by some
+/// other route, never a type whose `PartialEq` arm merely is not spelled out. `compare_values` will not
+/// order a range against a scalar, so `Int(7) == RangeInt[7,7]` is false, while `compare_eq` answers
+/// range membership.
+///
+/// # Cell 1 still cannot bind the `PartialEq` return, and that is a property of the operator
+///
+/// Measured over every explicit arm of `PartialEq` plus its fall-through: wherever `PartialEq` answers
+/// true, `compare_eq` answers `Ok(true)` too. No pair the first early return catches escapes the
+/// second, so deleting `elem == each` changes no verdict anywhere and no cell in any table can redden
+/// for it. Cell 1 is therefore coverage for "a matched entry stops the walk", not evidence about which
+/// check did the matching -- which is why its binding is no longer named after `PartialEq`. Stated
+/// rather than left implicit, because "cells 1 and 2 are the two ways it returns early" reads as a
+/// promise that a mutation of either is caught.
 #[test]
 fn a_short_circuited_scalar_pairing_earns_no_refusal() {
     use crate::rules::path_value::Path;
@@ -16446,8 +16508,20 @@ fn a_short_circuited_scalar_pairing_earns_no_refusal() {
         PathAwareValue::Int((Path::new(path.to_string(), 0, 0), value))
     }
 
-    fn float(path: &str, value: f64) -> PathAwareValue {
-        PathAwareValue::Float((Path::new(path.to_string(), 0, 0), value))
+    // A single-point inclusive int range, which `compare_eq` relates to the `Int` it contains while
+    // `PartialEq` does not -- its catch-all asks `compare_values`, and that refuses to order a range
+    // against a scalar. That is the one asymmetry between the walk's two early returns, so it is the
+    // only way cell 2 can reach the second without tripping the first.
+    fn range(path: &str, at: i64) -> PathAwareValue {
+        use crate::rules::values::{RangeType, LOWER_INCLUSIVE, UPPER_INCLUSIVE};
+        PathAwareValue::RangeInt((
+            Path::new(path.to_string(), 0, 0),
+            RangeType {
+                lower: at,
+                upper: at,
+                inclusive: LOWER_INCLUSIVE | UPPER_INCLUSIVE,
+            },
+        ))
     }
 
     fn list(path: &str, elements: Vec<PathAwareValue>) -> PathAwareValue {
@@ -16466,14 +16540,14 @@ fn a_short_circuited_scalar_pairing_earns_no_refusal() {
         )))]
     };
 
-    let stops_on_partialeq = incomparable_membership(
+    let stops_on_a_matched_entry = incomparable_membership(
         &[QueryResult::Resolved(Rc::new(int("/Uint/0", 7)))],
         &denylist("Eq", int("/Eq/0/0", 7)),
     );
 
     let stops_on_compare_eq = incomparable_membership(
         &[QueryResult::Resolved(Rc::new(int("/Uint/0", 7)))],
-        &denylist("Cmp", float("/Cmp/0/0", 7.0)),
+        &denylist("Cmp", range("/Cmp/0/0", 7)),
     );
 
     let walks_the_whole_denylist = incomparable_membership(
@@ -16484,16 +16558,21 @@ fn a_short_circuited_scalar_pairing_earns_no_refusal() {
     assert_eq!(
         (false, false, true),
         (
-            stops_on_partialeq,
+            stops_on_a_matched_entry,
             stops_on_compare_eq,
             walks_the_whole_denylist
         ),
-        "first: `7` equals the first entry by `PartialEq`, so `is_one_of` returns `Matched` there and \
-         the `[9]` after it is a pairing the operator never built. second: `7` equals a `Float` of \
-         `7.0` through `compare_eq`'s `(Int, Float)` arm, which is the OTHER early return, so a fix \
-         keyed on `PartialEq` alone reddens here. third: `99` matches neither entry, so the operator \
-         walks the whole denylist and the `(Int, List)` refusal is owed -- suppressing this arm \
-         wholesale rather than stopping where the operator stops cannot pass this cell"
+        "first: `7` matches the first entry, so `is_one_of` returns `Matched` there and the `[9]` after \
+         it is a pairing the operator never built. It does not say WHICH early return stopped it, and \
+         no cell can: wherever `PartialEq` holds `compare_eq` answers `Ok(true)` too, so `elem == each` \
+         is redundant and deleting it reddens nothing. second: `7` is NOT `PartialEq`-equal to \
+         `RangeInt[7,7]` -- `compare_values` will not order a range against a scalar -- while \
+         `compare_eq` relates them by range membership, so this cell reaches the `Ok(true)` return \
+         alone and reddens when that return is removed. A `Float` of `7.0` cannot do this and was used \
+         here: `PartialEq` DOES relate it to `7`, through the same `compare_values`. third: `99` \
+         matches neither entry, so the operator walks the whole denylist and the `(Int, List)` refusal \
+         is owed -- suppressing this arm wholesale rather than stopping where the operator stops cannot \
+         pass this cell"
     );
 }
 
@@ -16797,7 +16876,23 @@ fn a_subset_that_holds_earns_no_refusal_from_its_own_element_pairs() {
 /// down the same match arm sets `refused` for every non-empty left-hand list under `both_queried`, and
 /// the loop body never runs for an empty one, so a cell asserting `true` would pass whether the gate
 /// admitted that arm or not. `element_pairings_are_built_only_by_the_arms_that_decompose` binds all
-/// four arms directly, where they are visible.
+/// four arms directly, where they are visible. Measured rather than argued: forcing that arm to `false`
+/// reddens the helper's cell 1 and moves nothing here.
+///
+/// # What these cells do NOT pin
+///
+/// Each cell above was checked against a mutation of its OWN arm and of the neighbouring ones, because
+/// a cell that reddens under every mutation is riding along rather than discriminating. Flipping each
+/// of the four arms in turn moves exactly one cell here and one in the helper's table, and disabling
+/// the `both_queried` shape refusal below the loop or the `(List, List)` whole-value gate beside it
+/// reddens four and seven OTHER tests while leaving every cell here green -- so none of these cells
+/// rests on those two conditions.
+///
+/// One dependency is real and is recorded rather than hidden. Cell 4's `false` needs
+/// `operators::membership_pairing_refused` to answer false for the matched subset `[7]` against `[7]`;
+/// forcing that helper to return `true` reddens cell 4 along with eighteen other tests. So cell 4
+/// isolates the element loop GIVEN that the subset matches, not unconditionally. Its own discriminator
+/// is still its own -- the `(Some, None)` arm's `any(is_list)` half, which no other cell here moves.
 #[test]
 fn an_element_pairing_the_arm_does_not_build_earns_no_refusal() {
     use crate::rules::path_value::Path;
