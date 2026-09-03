@@ -34,6 +34,21 @@ pub mod writer;
 /// Scanning byte by byte is safe here even though the buffer is UTF-8 text: no continuation byte can be
 /// mistaken for the start of a break, because continuation bytes are `0x80..=0xBF` and every byte tested
 /// above is either ASCII or a lead byte above `0xBF`.
+///
+/// NUL is not here and must not be added. libyaml's `IS_BREAKZ!` is `IS_BREAK` *or* `IS_Z`, and `IS_Z` is
+/// `b'\0'` -- but `SKIP_LINE` tests `IS_CRLF` and `IS_BREAK`, never `IS_BREAKZ`, so a NUL does not
+/// increment libyaml's line counter. `IS_BREAKZ!` is the macro to reach for when asking "break or end of
+/// input", which is a different question, and taking it as the definition of a line break would make this
+/// function count lines the loader does not. Pinned by `a_nul_byte_is_not_a_line_break`.
+///
+/// This is the cursor, and it mirrors libyaml because it indexes text libyaml has already read. It is not
+/// the rules parser's line index. `LineIndex` in `rules/parser.rs` counts `\n` and bare `\r` only, and
+/// that is correct there and must stay: the guard grammar reads a NEL as ordinary text, because
+/// `multispace1` accepts `" \t\r\n"` and nothing wider. Teaching `LineIndex` these three breaks would
+/// desynchronize reported positions from what the parser actually treats as a line -- measured, a rules
+/// file using NEL as its line ending exits 5 at `line 1 column 11` in every spelling. Two different
+/// notions of "line" that must not be unified: this one follows the document loader, that one follows the
+/// grammar.
 fn break_width(bytes: &[u8], at: usize) -> Option<usize> {
     match bytes[at] {
         // CRLF is one ending, so step over both. Checked before the single-byte arm below.
@@ -68,10 +83,16 @@ fn break_width(bytes: &[u8], at: usize) -> Option<usize> {
 /// which of the two is mistaken.
 ///
 /// Everything `str::lines` gets right is kept: a terminator at the end of the file adds no empty line,
-/// and a blank line in the middle is a line. Collapsing either renumbers the rest of the excerpt. The
-/// trailing case is the one a naive extension gets wrong, because `start` has to clear *every* byte of
-/// the terminator -- step one byte past a three-byte LS and `start` lands on `\x80`, and the file grows
-/// a final line made of the tail of a separator.
+/// and a blank line in the middle is a line. Collapsing either renumbers the rest of the excerpt.
+///
+/// `start` has to clear *every* byte of the terminator, and getting that wrong does not produce a wrong
+/// line number -- it panics. Recognize a three-byte LS but step one byte and `start` lands on `\x80`,
+/// mid-character, and the next `&buffer[start..at]` is a slice at a boundary that is not a character
+/// boundary: `start byte index 4 is not a char boundary; it is inside '\u{2028}'`. Measured on all four
+/// of `one<LS>two<LS>`, `one<LS>two`, `one<NEL>two<NEL>` and `one<NEL>two`, so it is not confined to a
+/// trailing separator -- a single multi-byte break anywhere in the file is enough, reaching the panic
+/// either at the in-loop push or at the final one. That is why the width comes from `break_width` rather
+/// than from a fixed step.
 ///
 /// Eager rather than an iterator, because the result is a `Vec` of slices into a buffer that is already
 /// in memory, and `ReadCursor` caches every line it reads anyway.
@@ -432,6 +453,49 @@ mod tests {
                 name
             );
             assert_eq!(None, cursor.next(), "and there is no second line: {}", name);
+        }
+    }
+
+    /// A NUL byte is not a line break, because libyaml does not count one as a line.
+    ///
+    /// The trap is one macro away. `IS_BREAKZ!` is `IS_BREAK` *or* `IS_Z`, and `IS_Z` is `b'\0'`, so a
+    /// reader taking `IS_BREAKZ!` for the definition of a line break would add NUL to the five. But
+    /// `SKIP_LINE` -- the function that actually advances libyaml's line counter -- tests `IS_CRLF` and
+    /// `IS_BREAK`, and neither branch tests `IS_BREAKZ`. `IS_BREAKZ!` answers "break or end of input",
+    /// which is what a scanner wants at a boundary and not what a line counter wants.
+    ///
+    /// Getting this wrong splits one line into two and renumbers every line after it, which is the same
+    /// symptom as counting one break too few, in the other direction.
+    ///
+    /// No document that reaches this function can contain a NUL today: the loader refuses one outright,
+    /// exit 5 with a parse error naming the file, so nothing is excerpted and `ReadCursor` is never
+    /// constructed. Measured, not assumed. So this is a guard on `break_width` against a future edit
+    /// rather than coverage of a reachable input, and it is asserted at this level because that is the
+    /// level the mistake would be made at -- there is no end-to-end case that could catch it.
+    #[test]
+    fn a_nul_byte_is_not_a_line_break() {
+        for (name, text) in [
+            ("a NUL in the middle", "one\0two"),
+            ("a NUL at the end", "one\0"),
+            ("a NUL beside a real break", "one\0\ntwo"),
+        ] {
+            let mut cursor = ReadCursor::new(text);
+            let mut read = Vec::new();
+            while let Some(line) = cursor.next() {
+                read.push(line);
+            }
+            let expected: Vec<(usize, &str)> = match name {
+                // The `\n` is the only break, so the NUL stays inside line 1.
+                "a NUL beside a real break" => vec![(1, "one\0"), (2, "two")],
+                _ => vec![(1, text)],
+            };
+            assert_eq!(
+                expected,
+                read,
+                "{}: a NUL does not end a line, because libyaml's SKIP_LINE never tests IS_Z: {:?}",
+                name,
+                text.as_bytes()
+            );
         }
     }
 }
