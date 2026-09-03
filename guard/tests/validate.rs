@@ -1657,35 +1657,15 @@ mod validate_tests {
     /// requires each locator to name the directory that tells the two files apart. What was lost is
     /// that the two notices were the same two characters, and the reader could locate neither clause.
     ///
-    /// `a12ff5fd` stated that more broadly than it holds -- "each rules file gets its own `RootScope`
-    /// and so its own `BTreeSet`, so two notices are written either way" -- and a commit message cannot
-    /// be amended, so the correction lives here.
-    ///
-    /// It is true of the single-line path, which this cell runs. That path writes each scope's notices
-    /// straight to stderr as it finishes the file (`validate.rs:981`), so it holds no set and collapses
-    /// nothing; two identical notices are two lines.
-    ///
-    /// It is false of `--structured`. All four of those formats write one document covering every data
-    /// file and every rules file, and hold a single `BTreeSet` across the whole of it --
-    /// `structured.rs:133` for json, yaml and sarif, `xml.rs:25` for junit -- so two byte-identical
-    /// notices dedupe to one. Measured, with only the validate-side locator returned to a basename at
-    /// `b8d3901e`:
-    ///
-    ///     single-line   2 notices, 1 distinct locator
-    ///     -o json       1 notice
-    ///     -o yaml       1 notice
-    ///     -o sarif      1 notice
-    ///     -o junit      1 notice
-    ///
-    /// against 2 notices and 2 distinct locators in all five at `b8d3901e` itself. So for those four
-    /// formats the count *was* a symptom, and one of the two rules files' notices was dropped outright
-    /// rather than merely rendered illegibly.
+    /// "On this path" is the qualifier `a12ff5fd` left off, and the correction is recorded where the
+    /// mechanism is, on the shared `BTreeSet` in `reporters/validate/structured.rs`. In short: the
+    /// single-line path this cell runs writes each scope's notices as it finishes the file and has no
+    /// set to collapse anything, while all four structured formats hold one set across the document and
+    /// dedupe two byte-identical notices to one. So the count is a symptom there and not here.
     ///
     /// The single-line path rather than `--structured`, deliberately: this fixes the locator, and
     /// asserting it through the structured path would make this cell depend on the notices reaching
     /// that path at all, which is a different defect with its own cell above. Red for one reason each.
-    /// `a_deprecation_notice_reaches_the_structured_reporters` is where the counts above would go if
-    /// they are ever worth pinning.
     #[test]
     fn two_rules_files_sharing_a_basename_get_distinct_locators() {
         let mut reader = Reader::default();
@@ -1765,6 +1745,12 @@ mod validate_tests {
     /// and would say nothing about the early return. The resolver error is asserted too, so the reason
     /// the arm was taken is pinned rather than assumed from the status alone.
     ///
+    /// Junit only, and the other three structured formats would be actively misleading here. They go
+    /// through `CommonStructuredReporter`, which does not return early on an eval error -- it stashes it
+    /// in `first_error` and carries on to its own drain (`structured.rs:154`). So a json, yaml or sarif
+    /// case over this same fixture reaches the `Ok`-arm equivalent, passes with the junit drain removed,
+    /// and would eventually go red for something else entirely.
+    ///
     /// One notice, not two. `notice_then_error.guard` has one clause that warns, so a count is exact
     /// here rather than a floor -- the run either carried the notice past the early return or it did
     /// not.
@@ -1808,7 +1794,7 @@ mod validate_tests {
             stdout
         );
         assert!(
-            stdout.contains("Could not resolve variable by name undeclared_reference"),
+            stdout.contains("Could not resolve variable by name undeclared_name"),
             "and the error must be the unresolved reference, so the arm was taken for the reason \
              this fixture is built on. Got {:?}",
             stdout

@@ -1393,17 +1393,20 @@ mod test_command_tests {
     ///
     /// `test -d` located a rules file by `GuardFile::prefix`, the file name with `.guard` or `.ruleset`
     /// stripped, which was the coarsest of the three names this repository gave a rules file: it drops
-    /// the directory *and* the extension, so `first/x.guard` and `second/x.guard` both parsed as `x`,
-    /// and so did `x.guard` and `x.ruleset` in one directory -- a pair the test-file pairing code
-    /// explicitly calls out as real. Walking a directory is the invocation aws-guard-rules-registry CI
-    /// uses, so the collision landed on the corpus most likely to hit it.
+    /// the directory *and* the extension, so `first/x.guard` and `second/x.guard` both parsed as `x`.
+    /// Walking a directory is the invocation aws-guard-rules-registry CI uses, so the collision landed
+    /// on the corpus most likely to hit it. Dropping the extension too is what made `prefix` worse than
+    /// a basename, and the pair showing that is `ra/x.guard` beside `rb/x.ruleset` -- across
+    /// directories, since within one the pairing tie-break leaves `x.ruleset` with no test files and
+    /// both walks skip it. The note on the fix site in `test.rs` carries that measurement.
     ///
-    /// The count is not the symptom on this path. `handle_plaintext_directory` builds a
-    /// `GenericReporter` per rules file and each one writes its own diagnostics set, so two notices are
-    /// written either way; what was lost is that they were the same bytes, leaving the reader unable to
-    /// locate either clause. So this counts *distinct* lines, and then requires each locator to name
-    /// the directory that tells the two files apart -- an inequality assertion on its own would be
-    /// satisfied by two lines differing for any incidental reason.
+    /// The count is not the symptom on this path, and is deliberately not asserted.
+    /// `handle_plaintext_directory` builds a `GenericReporter` per rules file and each one writes its
+    /// own diagnostics set, so the count is 2 before the fix and 2 after -- an assertion on it passes
+    /// with the site reverted and would be pure noise in the failure output. What was lost is that the
+    /// two lines were the same bytes, leaving the reader unable to locate either clause. So this counts
+    /// *distinct* lines, and then requires each locator to name the directory that tells the two files
+    /// apart: distinctness alone would be satisfied by two lines differing for any incidental reason.
     ///
     /// `single-line-summary` only, deliberately. The structured formats reach
     /// `handle_structured_directory_report`, which is separate code with its own locator call and its
@@ -1435,22 +1438,14 @@ mod test_command_tests {
             .filter(|l| l.contains("DEPRECATION"))
             .collect();
 
-        assert_eq!(
-            notices.len(),
-            2,
-            "one notice per rules file, since this path builds a reporter and a diagnostics set per \
-             file; got {:?} from stderr {:?}",
-            notices,
-            stderr
-        );
-
         let distinct: std::collections::BTreeSet<&&str> = notices.iter().collect();
         assert_eq!(
             distinct.len(),
             2,
             "the two notices must differ; identical lines mean the locator dropped the only thing \
-             that tells these two files apart, got {:?}",
-            notices
+             that tells these two files apart, got {:?} from stderr {:?}",
+            notices,
+            stderr
         );
 
         for parent in ["first", "second"] {
@@ -1571,6 +1566,182 @@ mod test_command_tests {
                 located,
                 matched,
                 notices
+            );
+        }
+    }
+
+    /// The directory for the two cells below.
+    ///
+    /// Two subdirectories holding a byte-identical comment-only `declares_nothing.guard` -- a file that
+    /// declares no rules at all -- each with a `tests/` suite expecting a rule. Comment-only rather than
+    /// `let x = 1`: an assignment parses to `Ok(Some(RulesFile))` with zero rules and takes the arm that
+    /// pushes a per-file report entry, so nothing is lost there. Only a file parsing to `Ok(None)` takes
+    /// `report_expectations_against_no_rules`, which is the site under test.
+    const NO_RULES_DIR: &str = "resources/test-command/no-rules-same-basename-dirs";
+
+    /// The rules file both subdirectories hold.
+    const NO_RULES_FILE: &str = "declares_nothing.guard";
+
+    /// The rule name both suites expect and neither file declares.
+    const NO_RULES_EXPECTATION: &str = "some_rule";
+
+    /// Two rules files that declare nothing get two distinct records, walking one directory.
+    ///
+    /// `report_expectations_against_no_rules` named the file with `file_name_of`, the basename, and this
+    /// is the arm where that costs the most: `Ok(None)` pushes no `TestResult`, so the structured
+    /// document is `[]` and holds no `rule_file` field to recover the name from. The sentence is the
+    /// whole record of what was dropped.
+    ///
+    /// The plaintext walk keeps one diagnostics set per rules file, so the count is 2 either way and is
+    /// not asserted here, for the reason the deprecation-notice cell above gives. What the basename cost
+    /// on this channel is that the two lines were the same bytes.
+    ///
+    /// Its structured sibling below is the same fix site, not a second one -- both walks call the one
+    /// function -- so a revert reddens both. They are separate cells because the two channels lose
+    /// different things: this one loses the ability to tell two records apart, that one loses a record.
+    #[test]
+    fn two_rules_files_declaring_nothing_get_distinct_records_in_a_directory_walk() {
+        let mut reader = Reader::default();
+        let mut writer =
+            Writer::new_with_err(WBVec(vec![]), WBVec(vec![])).expect("Failed to create writer.");
+
+        let status_code = TestCommandTestRunner::default()
+            .directory(Option::from(NO_RULES_DIR))
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(
+            StatusCode::INCORRECT_STATUS_ERROR,
+            status_code,
+            "an expectation that could not be evaluated is an error, and both files dropped one"
+        );
+
+        let stderr = writer.err_to_stripped().expect("failed to read stderr");
+        let reports: Vec<&str> = stderr
+            .lines()
+            .filter(|l| l.contains("declares no rules, so the expectation for"))
+            .collect();
+
+        let distinct: std::collections::BTreeSet<&&str> = reports.iter().collect();
+        assert_eq!(
+            distinct.len(),
+            2,
+            "the two records must differ; identical lines mean the name dropped the only thing that \
+             tells these two files apart, and this sentence is the only record either file gets. Got \
+             {:?} from stderr {:?}",
+            reports,
+            stderr
+        );
+
+        for parent in ["first", "second"] {
+            let located = reported_path(NO_RULES_DIR, &[parent, NO_RULES_FILE]);
+            let matched: Vec<&&str> = reports.iter().filter(|r| r.contains(&located)).collect();
+
+            assert_eq!(
+                1,
+                matched.len(),
+                "expected exactly one record naming `{}`, got {:?} from {:?}",
+                located,
+                matched,
+                reports
+            );
+        }
+    }
+
+    /// The structured walk reports both files that declared no rules, not one.
+    ///
+    /// This is the channel where the basename lost a record outright rather than making one illegible.
+    /// `handle_structured_directory_report` keeps a single `Diagnostics` set across the walk, and
+    /// `Ok(None)` contributes no `TestResult`, so two files that both declared nothing produced one
+    /// stderr line and a document of `[]`. Two dropped expectations, one record between them, naming
+    /// neither directory, and nothing anywhere else in the run to recover the second from.
+    ///
+    /// The count is asserted first, and the document is asserted to be exactly `[]` rather than merely
+    /// non-empty: `[]` is what makes the stderr line the only record, and if that stops being true this
+    /// cell is measuring something else and should be re-read rather than trusted.
+    ///
+    /// All three structured formats. The count is decided before the format is chosen, so covering only
+    /// json would leave two formats asserting nothing about a defect they shared.
+    #[rstest]
+    #[case("json")]
+    #[case("yaml")]
+    #[case("junit")]
+    fn a_structured_directory_walk_reports_every_file_that_declared_no_rules(#[case] output: &str) {
+        // `stripped` and `err_to_stripped` each consume the writer, so one run answers for one stream.
+        let run = || {
+            let mut reader = Reader::default();
+            let mut writer = Writer::new_with_err(WBVec(vec![]), WBVec(vec![]))
+                .expect("Failed to create writer.");
+
+            let status_code = TestCommandTestRunner::default()
+                .directory(Option::from(NO_RULES_DIR))
+                .output_format(output)
+                .run(&mut writer, &mut reader);
+
+            (status_code, writer)
+        };
+
+        let (status_code, out_writer) = run();
+        let (_, err_writer) = run();
+
+        assert_eq!(
+            StatusCode::INCORRECT_STATUS_ERROR,
+            status_code,
+            "an expectation that could not be evaluated is an error, and both files dropped one"
+        );
+
+        let stdout = out_writer.stripped().expect("failed to read stdout");
+        if output == "json" {
+            assert_eq!(
+                stdout.trim(),
+                "[]",
+                "the premise of this cell is that the report carries no entry for either file, so the \
+                 stderr record is the only one. A non-empty document means that premise no longer \
+                 holds and the assertion below is measuring something else. Got {:?}",
+                stdout
+            );
+        }
+        assert!(
+            !stdout.contains("declares no rules"),
+            "the record belongs on stderr, not inside the document consumers parse, got {:?}",
+            stdout
+        );
+
+        let stderr = err_writer.err_to_stripped().expect("failed to read stderr");
+        let reports: Vec<&str> = stderr
+            .lines()
+            .filter(|l| l.contains("declares no rules, so the expectation for"))
+            .collect();
+
+        assert_eq!(
+            reports.len(),
+            2,
+            "two files each dropped an expectation for `{}`, so two records; one means the walk's \
+             single diagnostics set collapsed them because both files reported the same name, and the \
+             document carries nothing to recover the other from. Got {:?} from stderr {:?}",
+            NO_RULES_EXPECTATION,
+            reports,
+            stderr
+        );
+
+        let distinct: std::collections::BTreeSet<&&str> = reports.iter().collect();
+        assert_eq!(
+            distinct.len(),
+            2,
+            "and they must differ, so the count above was not met by a duplicate, got {:?}",
+            reports
+        );
+
+        for parent in ["first", "second"] {
+            let located = reported_path(NO_RULES_DIR, &[parent, NO_RULES_FILE]);
+            let matched: Vec<&&str> = reports.iter().filter(|r| r.contains(&located)).collect();
+
+            assert_eq!(
+                1,
+                matched.len(),
+                "expected exactly one record naming `{}`, got {:?} from {:?}",
+                located,
+                matched,
+                reports
             );
         }
     }

@@ -4,19 +4,19 @@
 # `-o junit` is the only format whose deprecation set lives inside `get_test_case`, which returns early
 # when `eval_rules_file` hands back an error. That early return has to carry the notices too, and this
 # fixture is the input that reaches it: `eval_rules_file` evaluates every rule before returning, so
-# `incomparable_membership` records its notice and `unresolved_reference` then errors out.
+# `incomparable_membership` records its notice and `uses_undeclared` then errors out.
 #
 # Both halves are load-bearing. Without the first rule there is no notice for the early return to drop;
 # without the second the run leaves through the `Ok` arm, whose own drain would answer for it and the
 # cell could not tell the two arms apart.
 #
-# `%undeclared_reference` is declared nowhere, which is the rules author's mistake and exits 5 rather
-# than -1. `malformed-rule.guard` in this directory is the same shape without the notice.
+# `%undeclared_name` is declared nowhere, which is the rules author's mistake and exits 5 rather than
+# -1. `malformed-rule.guard` in this directory is the same shape without the notice.
 #
 rule incomparable_membership {
     Name not IN [10, 50, 100]
 }
 
-rule unresolved_reference {
-    %undeclared_reference.Properties.Name exists
+rule uses_undeclared {
+    %undeclared_name == 1
 }
