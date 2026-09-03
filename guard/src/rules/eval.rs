@@ -583,6 +583,15 @@ fn incomparable_membership(lhs: &[QueryResult], rhs: &[QueryResult]) -> bool {
                 // rhsl { .. } }` here walked the whole cross product and counted the rest -- the same
                 // class as the whole-value residual below, one granularity down.
                 //
+                // PRE-EXISTING at `1b81431c`, and not a regression of the range that repaired it. The
+                // nested walk sat three lines above the line that range changed, which is close enough
+                // to read as introduced by it, so the provenance is stated rather than left to a
+                // reader's inference. Recorded HERE, in the tree, rather than only in a commit message:
+                // the first version of this sentence lived in a message, a history rewrite dropped it,
+                // and a reader opening this file in a year has the tree and not the log. Cited by
+                // construct -- `elements_not_matched` asking `is_one_of` per element -- because the line
+                // coordinates for this arm have already moved once in this round.
+                //
                 // `operators::membership_pairing_refused` is the fix, and the shape is the point: it
                 // runs `is_one_of`'s OWN loop and reports what the pairings that loop built said. The
                 // obvious alternative is to copy the walk's stop condition into this arm -- `if right
@@ -782,10 +791,53 @@ fn incomparable_membership(lhs: &[QueryResult], rhs: &[QueryResult]) -> bool {
                 // `contained_in`'s `rest` arm against a list: the left value is the operand `compare_eq`
                 // receives, so the value and the element it contributes are the same thing and nothing
                 // is missing at a second granularity.
+                //
+                // THE THIRD SITE OF THE SHORT-CIRCUIT CLASS, closed the same way as the two above. This
+                // loop used to walk every entry of `rhsl`; `contained_in`'s scalar arm `break`s on the
+                // first entry that matches, so the entries after a match are pairings the operator never
+                // built. Three arms, three instances of one divergence -- the predicate walking further
+                // than the operator did -- and closing two while documenting the third would have left
+                // the module with two rules instead of one.
+                //
+                // `operators::membership_pairing_refused` with a one-element left side, because the
+                // operator's walk for a scalar IS `is_one_of` over the same slice. Same shared-walk shape
+                // as the element-loop repair: it runs the operator's loop and reads what the pairings that
+                // loop built said, rather than restating the stop condition here.
+                //
+                // IT WAS MEASURED LATENT AND REPAIRED ANYWAY, which is `membership_stops_after`'s own
+                // rule and is followed here deliberately rather than re-decided. That note reads: "LATENT,
+                // AND REPAIRED ANYWAY ... the suppression lives in a different function from the
+                // divergence, though, so changing what either short-circuit fires on -- or adding a third
+                // beside them -- makes it live with nothing in the tree to flag it." Verbatim true of this
+                // arm: the verdict gate in `binary_operation` is what suppressed it, and the gate is not
+                // in this function.
+                //
+                // The measurement, kept because it is what the repair rests on rather than a guess about
+                // reach. Over a 23,496-clause grid, closing this moved 66 predicate answers and ZERO
+                // notices -- 12,771 before and after, 0 gained, 0 exit-code movement, 0 stdout movement.
+                // The predicate figure came from an instrumented binary computing the arm under both
+                // policies in one run, so a change the gate hides is still counted, and every clause
+                // reached the predicate, so the denominator was complete. `a_short_circuited_scalar_
+                // pairing_earns_no_refusal` is the cell that binds it; nothing in the suite did before.
+                //
+                // Why the gate caught all 66. The over-count needs a denylist entry that MATCHES the left
+                // value, or the walk does not stop early, and a later entry INCOMPARABLE to it, or the
+                // skipped pairing refuses nothing. A matched value fails `NOT IN`, so only a sibling can
+                // carry the clause -- but `compare_eq`'s comparability splits roughly into a numeric class
+                // and a textual one, and mixing them is what makes the skipped pairing refuse, so a
+                // sibling comparable to the offending entry sits in the other class from the matched entry
+                // and refuses against that instead, earning the notice on its own account.
+                //
+                // THAT ARGUMENT EXPLAINS THE MEASUREMENT RATHER THAN STANDING IN FOR IT. It is the shape
+                // of argument that was wrong twice on this branch -- the whole-value residual was called
+                // latent on a per-value reading of the gate, and the `(List, right)` arm records the
+                // identical error about its own repair. Six hand-built attempts at a non-refusing sibling
+                // all kept the notice, which is evidence and not proof. "Latent" was a property of the
+                // measured population, and that is the reason this is repaired rather than left resting
+                // on it.
                 (left, PathAwareValue::List((_, rhsl))) => {
-                    for right in rhsl {
-                        refused |= pair_refused(left, right);
-                    }
+                    refused |=
+                        operators::membership_pairing_refused(std::slice::from_ref(left), rhsl);
                 }
 
                 // Two values neither of which decomposes, which `contained_in` hands to `match_value`.

@@ -16220,6 +16220,101 @@ fn a_matched_subset_earns_no_whole_value_refusal_the_operator_never_built(
     Ok(())
 }
 
+/// A scalar left value earns no refusal from denylist entries its walk never reached.
+///
+/// The third and last site of the short-circuit class. `incomparable_membership`'s
+/// `(left, List)` arm used to walk every entry of `rhsl`; `contained_in`'s scalar arm `break`s on
+/// the first entry that matches, so the entries after a match are pairings the operator never built.
+///
+/// # Asserted at the PREDICATE, because the notice cannot see it
+///
+/// Measured over a 23,496-clause grid, closing this arm moves 66 predicate answers and zero notices.
+/// The verdict gate suppresses every instance: reaching the over-count needs a denylist entry that
+/// MATCHES the left value, a matched value fails `NOT IN`, so only a sibling can carry the clause --
+/// and the mixed comparability classes that make the skipped pairing refuse make that sibling refuse
+/// too, on its own account.
+///
+/// So a cell watching an exit code or a notice would pass with the defect in, which is why this calls
+/// `incomparable_membership` directly. That is the same reason
+/// `the_membership_notice_stops_pairing_where_the_operator_stops` asserts a pair set rather than a
+/// verdict, and it is what makes this repair checkable at all rather than a change with nothing to
+/// show. Nothing in the suite bound this arm before: with the fix applied and this test absent, the
+/// lib target reads the same total as without it.
+///
+/// # The cells
+///
+/// A LITERAL right-hand side in every cell, because that is the only path that reaches the arm with a
+/// matching entry. On the queried path `rhs_values_paired_with` drops a right-hand value that matches,
+/// so the arm is never entered for one; the literal path returns the whole slice.
+///
+/// Cells 1 and 2 are the two ways `is_one_of` returns `Matched` early, and both are here because a fix
+/// keyed on only one of them would pass a table holding only the other. Cell 1 stops at
+/// `elem == each`, the `PartialEq` check. Cell 2 stops one line later at `compare_eq(..) == Ok(true)`,
+/// reached with a `Float` of `7.0` against an `Int` of `7` -- `compare_eq` has an `(Int, Float)` arm,
+/// so the two are equal without being `PartialEq`-identical.
+///
+/// Cell 3 is the discriminator and must stay `true`. `99` matches neither entry, so the operator walks
+/// the whole denylist and its `(Int, List)` refusal is genuinely owed. A fix that suppressed this arm
+/// wholesale, rather than stopping where the operator stops, reddens here.
+#[test]
+fn a_short_circuited_scalar_pairing_earns_no_refusal() {
+    use crate::rules::path_value::Path;
+
+    fn int(path: &str, value: i64) -> PathAwareValue {
+        PathAwareValue::Int((Path::new(path.to_string(), 0, 0), value))
+    }
+
+    fn float(path: &str, value: f64) -> PathAwareValue {
+        PathAwareValue::Float((Path::new(path.to_string(), 0, 0), value))
+    }
+
+    fn list(path: &str, elements: Vec<PathAwareValue>) -> PathAwareValue {
+        PathAwareValue::List((Path::new(path.to_string(), 0, 0), elements))
+    }
+
+    // `[<match>, [9]]`. The nested list is what `compare_eq` refuses a scalar against, and it sits
+    // AFTER the matching entry so the operator's `break` is what decides whether it is ever compared.
+    let denylist = |tag: &str, first: PathAwareValue| {
+        vec![QueryResult::Literal(Rc::new(list(
+            &format!("/{tag}/0"),
+            vec![
+                first,
+                list(&format!("/{tag}/0/1"), vec![int("/D/0/1/0", 9)]),
+            ],
+        )))]
+    };
+
+    let stops_on_partialeq = incomparable_membership(
+        &[QueryResult::Resolved(Rc::new(int("/Uint/0", 7)))],
+        &denylist("Eq", int("/Eq/0/0", 7)),
+    );
+
+    let stops_on_compare_eq = incomparable_membership(
+        &[QueryResult::Resolved(Rc::new(int("/Uint/0", 7)))],
+        &denylist("Cmp", float("/Cmp/0/0", 7.0)),
+    );
+
+    let walks_the_whole_denylist = incomparable_membership(
+        &[QueryResult::Resolved(Rc::new(int("/Other/0", 99)))],
+        &denylist("Miss", int("/Miss/0/0", 7)),
+    );
+
+    assert_eq!(
+        (false, false, true),
+        (
+            stops_on_partialeq,
+            stops_on_compare_eq,
+            walks_the_whole_denylist
+        ),
+        "first: `7` equals the first entry by `PartialEq`, so `is_one_of` returns `Matched` there and \
+         the `[9]` after it is a pairing the operator never built. second: `7` equals a `Float` of \
+         `7.0` through `compare_eq`'s `(Int, Float)` arm, which is the OTHER early return, so a fix \
+         keyed on `PartialEq` alone reddens here. third: `99` matches neither entry, so the operator \
+         walks the whole denylist and the `(Int, List)` refusal is owed -- suppressing this arm \
+         wholesale rather than stopping where the operator stops cannot pass this cell"
+    );
+}
+
 /// Element pairings the operator short-circuited past earn no refusal either.
 ///
 /// The element-granularity twin of
