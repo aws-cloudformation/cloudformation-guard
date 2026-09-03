@@ -342,8 +342,30 @@ fn incomparable_membership(lhs: &[QueryResult], rhs: &[QueryResult]) -> bool {
     }
     for value in &lhs_values {
         for element in &elements {
-            if compare_eq(value, element).is_ok() {
-                return false;
+            match compare_eq(value, element) {
+                // A pair the comparison answered. Nothing here was undecidable.
+                Ok(_) => return false,
+                // Not every `Err` is an incomparability, and this one is not. `fancy_regex` returns a
+                // `Result` from `is_match` because its backtracking engine can run out of budget, so a
+                // `String` against a `Regex` -- a pair `compare_eq` has an arm for, and builds the
+                // pattern for -- refuses with `RegexError` after comparing operands of perfectly
+                // comparable kinds. Counted as incomparability, it produced a notice whose stated
+                // reason was wrong: the engine quit, the values were fine, and rewriting the operands
+                // to "values of the same kind" would not change anything.
+                //
+                // Silences the notice rather than reporting something else, because these clauses are
+                // already answered elsewhere: `match_value` promotes `RegexError`, so the clause fails
+                // and says the regular expression could not be evaluated.
+                // `a_regex_that_exceeds_the_backtrack_limit_fails_the_clause_instead_of_aborting` pins
+                // that. This notice has nothing to add to it.
+                //
+                // Narrow on purpose. `(List, Regex)` is not an arm at all, so the whole-list spelling
+                // never reaches the engine and keeps refusing with `NotComparable` -- which this still
+                // counts, and which the section above calls out as a false alarm of a different kind.
+                // Widening it to every `Err` would silence that class here instead of where it is
+                // documented to be fixed.
+                Err(Error::RegexError(_)) => return false,
+                Err(_) => {}
             }
         }
     }
