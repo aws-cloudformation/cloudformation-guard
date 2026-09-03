@@ -9810,6 +9810,174 @@ fn an_empty_left_hand_list_is_vacuously_in_every_spelling_of_a_denylist(
     Ok(())
 }
 
+/// The vacuous subset reading belongs to a right operand that denotes a SET, and a string does not.
+///
+/// Why this exists. `9bcf2053` gave the empty left-hand list a vacuous match at the top of the
+/// right-hand loop with no test on the right operand, and licensed the omission with "there is no
+/// reading of the right operand for this case to get wrong". That is true of a list-valued right
+/// operand, which is the only shape its supporting argument examines, and false of a string. `IN`
+/// against a string is substring containment, not set membership -- `found_in_string` and the
+/// `(None, Some)` string arm exist for that relation alone -- and no subset reading applies to a
+/// haystack. So the property-name and literal spellings of one question came apart: `Empty NOT IN Str`
+/// exited 19 while `Empty NOT IN "abc"`, the same string written out, exited 0. The failing report read
+/// `provided value [[]] did match expected value in [["abc"]]`, a match against a string nothing
+/// compared.
+///
+/// Which of the two answers is right, and it is not a convention chosen here. `found_in_string` returns
+/// `NoneFound` for an empty left-hand list on purpose, and the reason recorded above it is that this
+/// keeps its existing answer -- `NOT IN` over nothing passes -- rather than adding a second vacuous
+/// pass to the one `vacuous_comparison_notice` is already deprecating. That decision predates this
+/// branch, the literal spelling has always delivered it, and these cells make the query spelling
+/// deliver it too.
+///
+/// Where the boundary actually falls, measured against the literal spelling of each right-operand kind
+/// rather than argued. A list literal denies an empty list, so every query spelling that resolves to a
+/// list must too, and the `D13` cells of
+/// `an_empty_left_hand_list_is_vacuously_in_every_spelling_of_a_denylist` are that. For the three
+/// non-list kinds the literal spellings are here beside their query spellings:
+///
+/// ```text
+///                       IN   NOT IN   mechanism
+/// [1, 3]                 0     19     vacuous subset match
+/// ["abc"]                0     19     vacuous subset match
+/// [{"k": 1}]             0     19     vacuous subset match
+/// "abc"                  0      0     string arm decomposes an empty list into no comparison at all
+/// 5                     19     19     NotComparable, fails closed in both polarities
+/// true                  19     19     NotComparable, fails closed in both polarities
+/// {"k": 1}              19     19     NotComparable, fails closed in both polarities
+/// ```
+///
+/// So `NOT IN` against a map or a non-string scalar literal is 19, and the vacuous match makes the
+/// query spelling AGREE with it. Those cells were never the regression, which is why `Map`, `Maps[*]`,
+/// `Maps[0]`, `N` and `B` are FAIL here with their literals beside them: reverting them to the parent's
+/// 0 would have re-opened a divergence rather than closed one. Only the string column disagrees, and
+/// only in the `NOT IN` polarity, which is exactly the width of the fix.
+///
+/// AND NO REPAIR CONFINED TO THIS ARM CAN SERVE BOTH STRING SPELLINGS, which is the construction
+/// `27383c98` established and the reason `Strs[*]` sits in this table at PASS rather than being fixed
+/// too. `Strs` is `["abc"]`, one entry, so `Strs[*]` and `Strs[0]` resolve to the inner string `"abc"`
+/// -- the same value `Str` resolves to -- and `compare` receives one identical value either way. The
+/// oracle owes them opposite verdicts. `Str` IS the haystack, so its answer is the literal `"abc"`'s
+/// answer, PASS. `Strs[*]` names the entry set `{"abc"}`, so its answer is the literal `["abc"]`'s
+/// answer, FAIL. Anything written at that site moves both together, so at most one can be right, and
+/// the pair is in the table with `Empty NOT IN Strs` -- FAIL, from `contained_in`'s list arm, untouched
+/// -- so the disagreement is visible without reading a comment.
+///
+/// Which one we serve, and why that is not a coin flip. `Str` at 19 is an OVER-denial: it denies a
+/// value nothing named and reports a match against a string no comparison examined. `Strs[*]` at 0 is
+/// an under-denial of a convention `vacuous_comparison_notice` is deprecating anyway. The comment above
+/// the collision arm in `operators.rs` already states that over-denial is the worse direction for a
+/// policy tool, and `Str` at 0 is additionally the answer `found_in_string` documents and the parent
+/// shipped. Both reasons point the same way.
+///
+/// Rejected: gating on `rhs_selected.len() > 1` as well, which would fix `Strs2[*]` -- a two-entry
+/// string denylist -- while leaving `Strs[*]` at PASS. It buys one cell and makes the verdict depend on
+/// how many entries the denylist happens to hold, so a rule would pass against a one-entry denylist and
+/// fail against a two-entry one with nothing in the clause to explain it. `Strs2[*]` is here at PASS
+/// rather than FAIL to record that this is a residual and not an oversight.
+///
+/// The `IN` polarity is here because the fix moves it too, and the cell that is still wrong is named
+/// rather than omitted. Restoring the parent's answer for a string right operand restores both halves
+/// of it: `Empty IN Str` goes back to FAIL, where `Empty IN "abc"` is PASS. That divergence predates
+/// this branch -- measured at `27383c98`, where `Empty IN Str` is exit 19 -- and closing it needs the
+/// `(None, Some)` string arm, which produces no comparison at all for an empty left-hand list and so
+/// passes both polarities. This arm cannot reach PASS/PASS: skipping the value gives PASS on `IN` and
+/// FAIL on `NOT IN`, and recording it gives the reverse. So the sibling is recorded, not fixed.
+#[rstest::rstest]
+// THE REGRESSION. A string right operand, in every spelling that reaches the two-query arm. All PASS,
+// which is what the written-out spelling below has always answered.
+#[case::an_empty_list_is_not_vacuously_in_a_string("Empty NOT IN Str", Status::PASS)]
+#[case::an_empty_list_is_not_vacuously_in_a_right_expanded_string_entry(
+    "Empty NOT IN Strs[*]",
+    Status::PASS
+)]
+#[case::an_empty_list_is_not_vacuously_in_a_single_indexed_string_entry(
+    "Empty NOT IN Strs[0]",
+    Status::PASS
+)]
+#[case::an_empty_list_is_not_vacuously_in_a_two_entry_right_expanded_string_denylist(
+    "Empty NOT IN Strs2[*]",
+    Status::PASS
+)]
+// The spelling that was always right, and the one the four above are made to agree with.
+#[case::an_empty_list_is_not_vacuously_in_a_string_literal("Empty NOT IN \"abc\"", Status::PASS)]
+// THE PAIR, and the residual. `Strs` is a list, so this reaches `contained_in`'s list arm and denies
+// vacuously; `Strs[*]` resolves to the same `"abc"` that `Str` does and cannot be told apart from it, so
+// it keeps the string answer. One of the two is wrong and no predicate over the value can fix which.
+#[case::an_empty_list_is_vacuously_in_an_unexpanded_string_denylist(
+    "Empty NOT IN Strs",
+    Status::FAIL
+)]
+#[case::an_empty_list_is_vacuously_in_a_string_list_literal("Empty NOT IN [\"abc\"]", Status::FAIL)]
+// A MAP RIGHT OPERAND WAS NOT THE REGRESSION, and its literal is the evidence. `Empty NOT IN {"k": 1}`
+// is 19 because a list against a map is `contained_in`'s incomparable catch-all and `NotComparable`
+// fails closed, so the vacuous match agrees with the written-out spelling here rather than diverging
+// from it. Reverting these to the parent's PASS would have opened a divergence.
+#[case::an_empty_list_is_vacuously_in_a_map("Empty NOT IN Map", Status::FAIL)]
+#[case::an_empty_list_is_vacuously_in_a_map_literal("Empty NOT IN {\"k\": 1}", Status::FAIL)]
+#[case::an_empty_list_is_vacuously_in_a_right_expanded_map_entry(
+    "Empty NOT IN Maps[*]",
+    Status::FAIL
+)]
+#[case::an_empty_list_is_vacuously_in_a_single_indexed_map_entry(
+    "Empty NOT IN Maps[0]",
+    Status::FAIL
+)]
+#[case::an_empty_list_is_vacuously_in_a_map_list_literal("Empty NOT IN [{\"k\": 1}]", Status::FAIL)]
+// A NON-STRING SCALAR RIGHT OPERAND, same story and the same evidence: `5` and `true` written out are
+// both 19, so the query spellings agree with them.
+#[case::an_empty_list_is_vacuously_in_an_int("Empty NOT IN N", Status::FAIL)]
+#[case::an_empty_list_is_vacuously_in_an_int_literal("Empty NOT IN 5", Status::FAIL)]
+#[case::an_empty_list_is_vacuously_in_a_bool("Empty NOT IN B", Status::FAIL)]
+#[case::an_empty_list_is_vacuously_in_a_bool_literal("Empty NOT IN true", Status::FAIL)]
+// THE `IN` POLARITY. The string exclusion restores the parent in both directions, so `Str` is FAIL here
+// where its literal is PASS. That divergence is older than this branch and is recorded rather than
+// closed; see the note above for why this arm cannot reach PASS on both polarities at once.
+#[case::an_empty_list_is_not_in_a_string("Empty IN Str", Status::FAIL)]
+#[case::an_empty_list_is_not_in_a_right_expanded_string_entry("Empty IN Strs[*]", Status::FAIL)]
+#[case::an_empty_list_is_in_a_string_literal("Empty IN \"abc\"", Status::PASS)]
+#[case::an_empty_list_is_in_an_unexpanded_string_denylist("Empty IN Strs", Status::PASS)]
+// The list control, so a change credited with the string cells has not moved the shape the vacuous
+// match is actually for.
+#[case::an_empty_list_is_vacuously_in_a_right_expanded_int_denylist(
+    "Empty NOT IN D13[*]",
+    Status::FAIL
+)]
+#[case::an_empty_list_is_in_a_right_expanded_int_denylist("Empty IN D13[*]", Status::PASS)]
+fn the_vacuous_subset_reading_belongs_to_a_right_operand_that_denotes_a_set(
+    #[case] clause: &str,
+    #[case] expected: Status,
+) -> Result<()> {
+    // `Strs` holds exactly one entry so that `Strs[0]` and `Strs[*]` deliver the value `Str` delivers,
+    // which is what makes the impossibility measurable rather than asserted. `Strs2` holds two so that
+    // the rejected arity-keyed repair has a cell it would move. `Maps` mirrors `Strs` for the map kind,
+    // where the literal spelling turns out to agree and no impossibility arises.
+    const INPUT: &str = r#"
+    {
+        Empty: [],
+        Str: "abc",
+        Strs: ["abc"],
+        Strs2: ["abc", "zzz"],
+        Map: {"k": 1},
+        Maps: [{"k": 1}],
+        N: 5,
+        B: true,
+        D13: [1, 3]
+    }
+    "#;
+
+    let rules = format!("rule membership {{ {clause} }}");
+
+    assert_eq!(
+        expected,
+        rule_status_in(&rules, INPUT, "membership")?,
+        "clause: {}",
+        clause
+    );
+
+    Ok(())
+}
+
 /// A range inside a list literal is a range for a list-valued left-hand side too.
 ///
 /// `d7f01ec` made a range nested in a list literal behave like a range, and it did so in

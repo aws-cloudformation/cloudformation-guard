@@ -1180,12 +1180,12 @@ impl Comparator for InOperation {
                     let mut unanswerable_membership: Option<(Rc<PathAwareValue>, String)> = None;
                     let mut element_collision = false;
                     for eachr in &rhs_selected {
-                        // The vacuous match, asked before the right operand is examined because the
-                        // answer does not depend on it.
+                        // The vacuous match, for a right operand that denotes a SET of candidate values.
+                        // A string does not, which is the one exclusion below.
                         //
-                        // An empty left-hand list is vacuously a subset of anything, so it passes `IN`
-                        // and fails `NOT IN`. `contained_in` supplies that from its list-against-list
-                        // arm, where an empty left-hand list yields an empty diff and so a Success, and
+                        // An empty left-hand list is vacuously a subset of a set, so it passes `IN` and
+                        // fails `NOT IN`. `contained_in` supplies that from its list-against-list arm,
+                        // where an empty left-hand list yields an empty diff and so a Success, and
                         // `4609b60e` made it survive a denylist holding a nested list. It cannot arrive
                         // when the right operand resolves to scalars, which is what `[*]` and `[0]` do to
                         // a denylist of scalars: a list against a scalar is `contained_in`'s incomparable
@@ -1194,22 +1194,60 @@ impl Comparator for InOperation {
                         // `Empty NOT IN D13[*]` exited 0 -- the same two values, and the `[*]` deciding
                         // whether the denial happened.
                         //
-                        // Unlike the bypass further down, this one is repairable here, and the test that
-                        // separates them is the pair that makes that one impossible. `Denies[0]` and
-                        // `Denies[*]`, over a `Denies` of `[[1, 3]]`, hand this arm one identical value
-                        // while owing opposite verdicts for a non-empty left-hand side. For an empty one
-                        // they owe the SAME verdict, because a vacuous subset is a subset of the entry
-                        // set `{[1, 3]}` and of the member set `{1, 3}` alike. That independence is why
-                        // the question is asked here rather than keyed on `eachr`'s shape: there is no
-                        // reading of the right operand for this case to get wrong.
+                        // NOT A STRING, and the first version of this check had no test on the right
+                        // operand at all, licensed by "there is no reading of the right operand for this
+                        // case to get wrong". That was argued from a list-valued right operand, which is
+                        // the only shape the argument examines, and stated universally. It is false of a
+                        // string: `IN` against a string is substring containment -- the relation
+                        // `found_in_string` and the `(None, Some)` string arm exist for -- and a haystack
+                        // is not a set for anything to be a subset of. `found_in_string` declines the
+                        // vacuous reading deliberately, returning `NoneFound` for an empty left-hand list
+                        // so that `NOT IN` over nothing keeps passing rather than adding a second vacuous
+                        // pass to the one `vacuous_comparison_notice` is deprecating. This check ran
+                        // first and overrode it, so one question answered two ways: `Empty NOT IN Str`
+                        // exited 19 while `Empty NOT IN "abc"`, the same string written out, exited 0,
+                        // and the report claimed a match against a string nothing compared.
+                        //
+                        // The string kind and not "not a list", because the boundary is where the
+                        // written-out spelling already is. Measured, against an `Empty` of `[]`:
+                        //
+                        //     [1, 3]      IN  0   NOT IN 19   vacuous subset match
+                        //     "abc"       IN  0   NOT IN  0   no comparison is made at all
+                        //     5           IN 19   NOT IN 19   NotComparable, fails closed both ways
+                        //     true        IN 19   NOT IN 19   NotComparable, fails closed both ways
+                        //     {"k": 1}    IN 19   NOT IN 19   NotComparable, fails closed both ways
+                        //
+                        // `NOT IN` against a map or a non-string scalar is 19 written out, so this check
+                        // makes those query spellings AGREE with their literal. Excluding them as well
+                        // would open a divergence rather than close one, and `Empty NOT IN Map` at 19 is
+                        // therefore correct rather than the regression it looks like beside the string
+                        // cell.
+                        //
+                        // AND NO REPAIR HERE CAN SERVE BOTH STRING SPELLINGS, by the construction
+                        // `27383c98` established for the arm further down. `Strs` of `["abc"]` has one
+                        // entry, so `Strs[*]` and `Strs[0]` resolve to the inner string -- the same value
+                        // `Str` resolves to -- and this loop receives one identical value either way,
+                        // while the oracle owes them opposite verdicts: `Str` IS the haystack and answers
+                        // as `"abc"` does, PASS; `Strs[*]` names the entry set and answers as `["abc"]`
+                        // does, FAIL. So at most one can be right, and the string is served rather than
+                        // the entry set for two reasons pointing the same way. `Str` at 19 is an
+                        // over-denial, which the arm below already records as the worse direction for a
+                        // policy tool, and `Str` at 0 is the answer `found_in_string` documents and the
+                        // parent shipped. `Empty NOT IN Strs[*]` at PASS is the residual that leaves, and
+                        // it sits in the table beside `Empty NOT IN Strs` at FAIL so the disagreement is
+                        // visible without reading this.
+                        //
+                        // Rejected: also gating on `rhs_selected.len() > 1`, which fixes a two-entry
+                        // string denylist while leaving the one-entry spelling above. It buys one cell by
+                        // making the verdict depend on how many entries the denylist happens to hold, so
+                        // a rule would pass against `["abc"]` and fail against `["abc", "zzz"]` with
+                        // nothing in the clause to explain it.
                         //
                         // A match, not a collision. The collision arm below asks whether the denylist
                         // names one of the left-hand elements, and an empty list has none to name, so no
                         // loop over `elements` can ever record one. What the convention says is that the
                         // empty list matched, so a match is what this reports, and `NOT IN` derives the
-                        // denial by negation exactly as it does for the unexpanded spelling. It also
-                        // means this cannot over-deny: it adds a match for one left-hand value and reads
-                        // nothing about the denylist.
+                        // denial by negation exactly as it does for the unexpanded spelling.
                         //
                         // Inside the loop rather than above it, so a left-hand value with no right-hand
                         // results to compare against is untouched, which is how the list-against-list
@@ -1220,10 +1258,14 @@ impl Comparator for InOperation {
                         // `NOT IN` correctly.
                         // `an_empty_left_hand_list_is_vacuously_in_every_spelling_of_a_denylist` pins
                         // those as the mirror, with a non-empty list that must keep answering by what the
-                        // denylist names.
-                        if let PathAwareValue::List((_, elements)) = &**eachl {
-                            if elements.is_empty() {
-                                continue 'each_lhs;
+                        // denylist names, and
+                        // `the_vacuous_subset_reading_belongs_to_a_right_operand_that_denotes_a_set` pins
+                        // the right-operand kinds with each kind's literal spelling beside it.
+                        if !matches!(&**eachr, PathAwareValue::String(_)) {
+                            if let PathAwareValue::List((_, elements)) = &**eachl {
+                                if elements.is_empty() {
+                                    continue 'each_lhs;
+                                }
                             }
                         }
 
