@@ -12510,6 +12510,13 @@ fn the_incomparable_membership_notice_is_emitted_where_fail_closed_moves_the_cla
 /// expectations, most of them suppression tests expecting SKIP, against 0 failed rules at the base.
 /// `ECR_REPO_SCAN_ON_PUSH` fails on a compliant template that way.
 ///
+/// That figure is the GATE path's, reached by `==` and `!=`, which is why the idiom above is an `==`
+/// clause. The membership path costs something different and no comment recorded it: promoting
+/// `is_one_of`'s `Err(_)` arm leaves the registry corpus byte-identical at 576794 bytes with all five
+/// notices and 0 failed rules, and moves 19 clause verdicts from exit 0 to exit 19. `Unanswerable`'s
+/// doc in `operators.rs` carries both, and why a verdict-neutral version needs a state the result type
+/// is split to avoid.
+///
 /// So `Unanswerable` splits the two causes and only `EngineGaveUp` fails a gate closed. That leaves the
 /// kind-mismatch half open, tracked in `docs/KNOWN_ISSUES.md`, whose repair still needs those registry
 /// rules changed first -- exactly the precondition `incomparable_membership_notice` already records.

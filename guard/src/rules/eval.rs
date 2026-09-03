@@ -2264,6 +2264,13 @@ fn binary_operation<'value, 'loc: 'value>(
     // precondition `incomparable_membership_notice` already records -- those rules have to change first
     // -- and the notice is what covers it meanwhile. `Unanswerable` carries the split.
     //
+    // That 143 is the cost of reading `IncomparableKinds` as an undecidable GATE, reached by `==` and
+    // `!=` -- which is why the `ScanOnPush` idiom is its canonical shape. It is NOT the cost of
+    // promoting the membership refusal, which is registry-free: measured at `1ba4648d`, promoting
+    // `is_one_of`'s `Err(_)` arm alone leaves the corpus byte-identical at 576794 bytes with all five
+    // notices and 0 failed rules, and moves 19 clause verdicts instead. `Unanswerable`'s own doc in
+    // `operators.rs` carries both figures and why neither route is open to a diagnostic fix.
+    //
     // The caller's fold is respected rather than preempted, which is the second thing `match_all` is read
     // for here, and both quantifiers have a value that decides the clause without the undecided ones.
     // `undecided_gate` holds the table and says which arm answers what.

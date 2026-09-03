@@ -242,6 +242,40 @@ pub(crate) struct NotComparable {
 /// `docs/KNOWN_ISSUES.md` already tracks that suppression as a defect whose repair needs those rules
 /// changed first, and this keeps that boundary exactly where it was.
 ///
+/// WHICH PATH THAT FIGURE COVERS, because three comments cite it beside a decision about a different
+/// one. The 143 is the cost of reading `IncomparableKinds` as an undecidable GATE, which is why
+/// `ScanOnPush == 'False' OR ScanOnPush == false` is its canonical shape: an `==` clause, answered by
+/// `EqOperation`. It is not the cost of promoting the membership refusal. `is_one_of` -- the only place
+/// a kind mismatch is discarded on the `IN` path, at its `Err(_) => {}` -- is reached from exactly two
+/// sites, `contained_in`'s membership loop and the `(None, None)` arm's element loop, and `EqOperation`
+/// reaches neither. Measured at `1ba4648d` by promoting that one arm and nothing else: the pinned
+/// aws-guard-rules-registry corpus comes back byte-identical, 576794 bytes of stdout, all five
+/// DEPRECATION lines present and 0 failed rules. The membership promotion is registry-free, and a
+/// reader who takes the 143 as covering it will believe the opposite.
+///
+/// WHAT IT DOES COST, which no comment recorded. 19 clauses of a 676-clause sweep of the membership
+/// shapes move from exit 0 to exit 19: `Pair NOT IN Ubool`, `Ports NOT IN Umap`, `Nest NOT IN D13[*]`,
+/// `AbList[*] NOT IN Uint`, `Deep NOT IN Umap`, `some AbList[*] NOT IN D13[*]` and thirteen more. Each
+/// is a clause that passed on a refusal and now fails closed, which is the answer `docs/CLAUSES.md`
+/// gives for a comparison across kinds that are not both numeric, so the 19 move toward correctness
+/// rather than away. They are verdict changes even so, and they are what this change has to be argued
+/// against -- not the registry, which does not move.
+///
+/// AND WHY NEITHER ROUTE IS AVAILABLE TO A DIAGNOSTIC FIX, which is a stronger statement than
+/// "deferred" and is measured rather than argued. `incomparable_membership` exists because the notice
+/// has to know that a pairing refused while the clause still passed, and the result the operator
+/// returns cannot say that: instrumented immediately after `cmp.compare`, every notice-emitting clause
+/// carries zero `NotComparable` results, literal-right-hand shapes included, which are what the
+/// registry's five are. Carrying it needs one of two things. Promoting the refusal is the route above:
+/// 19 verdicts, and it is the `docs/KNOWN_ISSUES.md` change gated on those registry rules. Carrying it
+/// WITHOUT changing a verdict needs a state meaning "no match, something refused, and do not fail
+/// closed" -- a fourth `Membership` variant threaded through `Compare`, `ComparisonResult`,
+/// `ValueEvalResult` and `QueryIn`/`ListIn`, 167 non-test sites at this commit -- and that state is
+/// exactly the "refused but passing" distinction this enum was split to keep out of the result type. So
+/// the separate predicate is not an accident a tidier design removes. It is the mechanism by which the
+/// result type stays free of that distinction, the drift risk it carries is a cost of that choice, and
+/// `membership_stops_after` calling the arm's own functions is the mitigation for the risk rather than
+/// a workaround for a missing refactor.
 /// [`Unanswerable::EngineGaveUp`] has no such constituency. The operands were of kinds the comparator
 /// has an arm for and the engine quit part way, so no rule can be relying on the answer -- there is no
 /// answer to rely on, and the same clause decides differently as the subject gets longer.
