@@ -10410,9 +10410,29 @@ fn the_incomparable_membership_notice_is_emitted_where_fail_closed_moves_the_cla
 /// broke: a regex `compare_eq` could not evaluate "is read rather than discarded, which is what makes
 /// `Port in [/re/]` answer the same way as `Port == /re/`".
 ///
-/// `Silent` rather than the did-not-pass wording, and that is measured rather than derived. The clause
-/// now fails AND the report names the regex, so the visibility gate suppresses the notice; the recorded
-/// deprecation count for this cell is zero.
+/// # Why `Silent` is right on the gate cells, which say nothing at all
+///
+/// An earlier revision justified `Silent` here with "the clause now fails AND the report names the regex".
+/// The first half holds everywhere; the second is true only of the assertion cells. Measured on the gate
+/// cells: `rule r when Cat[*] NOT IN [/re/] { Cat EXISTS }` exits 0 with **zero bytes on stdout and zero on
+/// stderr**, and so does the `[[/re/]]` spelling, whose `(List, List)` pair reaches the engine through the
+/// zip. Asserted, the same clause exits 19 with about 500 bytes naming the regex. So two of these cells
+/// pin a run that reports nothing whatsoever about a clause the tool could not evaluate, and a
+/// justification resting on the report was resting on the wrong role.
+///
+/// `Silent` stands anyway, and not by inertia. This notice makes one claim -- a future release fails closed
+/// where this one passes -- and both halves of it are false here. The pair was comparable in kind and the
+/// engine gave up, so there is no incomparable pair to warn about; and the clause does not pass, so the
+/// fail-closed change does not move it. `!=` already fails closed, and a gate reaching `NotComparable`
+/// skips its rule at exit 0 exactly as this one does, before and after. A notice would be two false
+/// sentences bought to fill a silence.
+///
+/// **The silence is a real defect and it is not this one.** A `when` condition that could not be evaluated
+/// vanishes: no verdict, no report line, no diagnostic. That is a reporting gap, it predates every commit
+/// on this branch, and closing it means making an unevaluatable gate visible in the report rather than
+/// borrowing a deprecation notice to stand in for it. Left alone here deliberately, because a diagnostics
+/// change that moves report text is a different change with a different blast radius -- and recorded here
+/// so the next reader finds the measurement rather than re-deriving it from a green cell.
 #[rstest::rstest]
 // The pattern is `CATASTROPHIC`, spelled out because a `#[case]` attribute cannot interpolate a const.
 #[case::a_catastrophic_regex_in_a_condition(
