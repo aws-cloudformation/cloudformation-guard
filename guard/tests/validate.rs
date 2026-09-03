@@ -1277,29 +1277,34 @@ mod validate_tests {
         );
     }
 
-    /// The notice survives where the file says nothing: a `when` condition that fails.
+    /// A `NOT IN` condition that fails gets no notice, however quiet the run it leaves behind.
     ///
-    /// The notice above goes out on a clause that passed, and until this it went out only there. The
-    /// suppression was justified with "a clause with a failing value already exits the file 19, so the
-    /// author is already looking at it", and that is false of a condition. A failing condition is not a
-    /// failing file: `eval_conjunction_clauses` counts the FAIL, `eval_rule` maps every non-PASS
-    /// condition to SKIP, and the rule it guards is dropped. So the run this fixture makes exits 0 with
-    /// an empty report while the body it dropped -- `Encrypted == true` against `Encrypted: false` --
-    /// would have failed. That is the silent green the notice exists to announce, and it was the one
-    /// place the notice did not reach.
+    /// This asserted the opposite until the premise under it was checked, and the premise is worth keeping
+    /// because it is genuinely tempting. The condition here fails, a failing condition skips its rule, and
+    /// the file exits 0 with an empty report while the body it dropped would have failed. Silent green --
+    /// so the notice looks like the author's only sight of the clause, and suppressing it looks like losing
+    /// the one warning that mattered.
+    ///
+    /// What that misses is what the notice claims. It says a future release fails closed where this one
+    /// passes, and this condition does not pass, so the change does not move it. That is measurable rather
+    /// than arguable: `!=` fails closed today, and a condition reaching `NotComparable` skips its rule at
+    /// exit 0 exactly as this one does. Before and after are both green, so a notice here warns about a
+    /// non-event -- and it cost two false sentences to print, since the body written for it said "Nothing
+    /// in the report says so" while the report names this clause whenever a later clause in the same rule
+    /// fails, and said the pair "currently reads as not a member" even where the pair already errors out.
     ///
     /// An integration test rather than only a unit one, because the unit helper reads
-    /// `RootScope::deprecations` directly and cannot see either half of what makes this a defect: the
-    /// exit code, and an empty report beside a notice on stderr.
+    /// `RootScope::deprecations` directly and cannot see the two things that make this shape look like a
+    /// defect: the exit code, and the empty report.
     ///
-    /// The wording is asserted, not just the presence. The notice for a clause that passed says
-    /// "passed because ..."; on this clause that sentence is false, and printing it here would
-    /// reinstate the contradiction the gate was added to remove.
+    /// `clauses_whose_answer_changes_later_warn_now` is the positive half, on a clause that does pass. This
+    /// asserting an absence is only meaningful beside it -- on its own it would be satisfied by a build that
+    /// never emits this notice at all.
     #[test]
-    fn a_notice_survives_the_failure_a_when_condition_absorbs() {
+    fn a_notice_stays_away_from_the_failure_a_when_condition_absorbs() {
         // The same run twice, because `Writer::stripped` and `Writer::err_to_stripped` each consume the
-        // writer, so one run answers for one stream. Both halves are the defect: an empty report, and a
-        // notice on stderr that is the only thing standing in for it.
+        // writer, so one run answers for one stream. Both are asserted: the report says nothing about the
+        // clause, and neither does stderr.
         let mut reader = Reader::default();
         let mut writer =
             Writer::new_with_err(WBVec(vec![]), WBVec(vec![])).expect("Failed to create writer.");
@@ -1313,13 +1318,13 @@ mod validate_tests {
         assert_eq!(
             StatusCode::SUCCESS,
             status_code,
-            "the notice must not change the verdict; a failing condition still skips its rule"
+            "a failing condition still skips its rule; this fixture is green before and after the change"
         );
 
         let output = writer.stripped().expect("failed to read the writer");
         assert!(
             !output.contains("ports_not_denied") && !output.contains("Encrypted"),
-            "the report must stay silent -- that silence is what the notice compensates for; got {:?}",
+            "the report stays silent on a skipped rule; got {:?}",
             output
         );
 
@@ -1344,24 +1349,12 @@ mod validate_tests {
             .lines()
             .filter(|l| l.contains("DEPRECATION"))
             .collect();
-        assert_eq!(
-            1,
-            notices.len(),
-            "expected the one notice for the condition, got {:?} from stderr {:?}",
+        assert!(
+            notices.is_empty(),
+            "the condition failed, so the coming change leaves it where it is and there is nothing for \
+             this notice to announce; got {:?} from stderr {:?}",
             notices,
             stderr
-        );
-        assert!(
-            notices[0].contains("could not be compared with any element")
-                && notices[0].contains("Ports"),
-            "the notice must be the incomparable-membership one and must name the condition's \
-             property; got {:?}",
-            notices[0]
-        );
-        assert!(
-            notices[0].contains("did not pass") && !notices[0].contains("passed because"),
-            "this clause did not pass, so the notice must not be the one that says it did; got {:?}",
-            notices[0]
         );
     }
 

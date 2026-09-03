@@ -1,12 +1,21 @@
 #
-# A `NOT IN` clause whose value cannot be compared with any element of the list, in the one place its
-# failure costs this run nothing it reports: a `when` condition.
+# A `NOT IN` clause that fails as a `when` condition, which is the shape the notice must NOT go out on.
 #
-# The condition fails -- element-wise `1` is in `[1, 3]` -- and a failing condition is not a failing
-# file. `eval_conjunction_clauses` counts the FAIL, `eval_rule` maps every non-PASS condition to SKIP,
-# and the body is dropped. So `Encrypted == true`, which this template violates, never runs, and the
-# file exits 0 with an empty report. The deprecation notice on stderr is the author's only sight of the
-# clause, which is why it must not be suppressed here.
+# The condition fails -- element-wise `1` is in `[1, 3]` -- and a failing condition is not a failing file.
+# `eval_conjunction_clauses` counts the FAIL, `eval_rule` maps every non-PASS condition to SKIP, and the
+# body is dropped. So `Encrypted == true`, which this template violates, never runs and the file exits 0
+# with an empty report.
+#
+# That silence reads like a reason to warn, and a previous revision did. It is not. The notice says a
+# future release fails closed where this one passes, and this condition does not pass, so the change moves
+# nothing here: `!=` already fails closed, and a condition that reaches `NotComparable` skips its rule at
+# exit 0 exactly as this one does. Warning would also require saying something false. The body written for
+# it claimed "Nothing in the report says so", and the report names this very clause whenever another clause
+# in the same rule fails -- add `Encrypted == false` beside the block and stdout prints the gate's own
+# comparison at exit 19.
+#
+# So this fixture pins an absence, and the notice's true positives are pinned on
+# `vacuous_and_incomparable_clauses.guard`, where the clause passes.
 #
 rule ports_not_denied when Resources.A.Properties.Ports NOT IN [1, 3] {
     Resources.A.Properties.Encrypted == true

@@ -240,8 +240,8 @@ fn empty_reference_message(negated: bool) -> String {
 /// left alone -- that case decides on the comparable element and is not changing.
 ///
 /// Half of the condition, not all of it. True here means the clause's answer *could* have come from the
-/// incomparability, and the caller still has to read the verdict. See `binary_operation`, which uses the
-/// verdict to pick between two notice bodies, or to emit neither.
+/// incomparability, and the caller still has to read the verdict, because only a clause that passed on
+/// such a pair is one the coming fail-closed release moves. See `binary_operation`.
 ///
 /// # This predicate is wrong, in both directions, and known to be
 ///
@@ -286,14 +286,11 @@ fn empty_reference_message(negated: bool) -> String {
 /// not.** Zero remain where the notice contradicts a failing verdict; that class is what the
 /// verdict gate in `binary_operation` closed.
 ///
-/// Two things about those counts after the gate stopped being verdict-only. A clause that did not pass
-/// can be noticed again where nothing reports it, so the classification above no longer covers every
-/// emission -- but the contradiction stays closed by construction rather than by suppression, because
-/// that case gets [`absorbed_incomparable_membership_notice`], which does not claim the clause passed.
-/// And the 7 false alarms are a property of this predicate, not of the wording it feeds, so a false
-/// alarm can now reach an unreported failing clause too. That widens the noise this section describes;
-/// it does not add a new kind of it. Both bodies are worded to survive it: neither says the
-/// incomparability *caused* the clause's answer, because on a failing clause it did not.
+/// Those counts hold for the gate as it stands, and it is worth saying why a revision in between put
+/// emissions outside them. The classification is over clauses that *passed*, which is the whole set this
+/// notice goes out on; a revision that noticed failing gate-role clauses as well produced notices the
+/// classification does not cover. Reverting that gate brings every emission back inside it, and the 10
+/// false negatives are still 10, because a clause that does not pass is not one the change moves.
 ///
 /// # Aligning it is the right fix, and must wait for the `[*]` bypass
 ///
@@ -437,30 +434,6 @@ fn incomparable_membership_notice(context: &str) -> String {
         "DEPRECATION: {} passed because the value could not be compared with any element of the list, \
          which is currently read as \"not a member\". A future release fails closed here, as `!=` \
          already does. Compare against values of the same kind, or use `!=` if that is the intent.",
-        context
-    )
-}
-
-/// The same notice for a clause that did *not* pass and that nothing in the report names.
-///
-/// A second wording rather than the one above, because the one above says the clause passed and this one
-/// goes out where it did not. Printing "passed because ..." next to a failure is the defect that put the
-/// verdict in this gate to begin with, and reaching the same sentence by a wider route would reinstate
-/// it. Reached only as a [`ClauseRole::Gate`], so the file is not reporting this clause at all; see
-/// `binary_operation` for why that is the line the suppression is drawn on.
-///
-/// Says nothing about *why* the clause failed, deliberately. The incomparability did not cause it: this
-/// notice's premise is a whole-value comparison, while `contained_in` decides a list element by element,
-/// and a clause that fails there fails on an element the denylist names or on one of the guards around
-/// it. What is true, and all this claims, is that the clause holds an incomparable pair, that its answer
-/// is not in the report, and that the read of such a pair is changing.
-fn absorbed_incomparable_membership_notice(context: &str) -> String {
-    format!(
-        "DEPRECATION: {} did not pass, and it holds a value that could not be compared with any \
-         element of the list -- a pair `NOT IN` currently reads as \"not a member\". Nothing in the \
-         report says so: a `when` condition or filter predicate that fails skips what it guards, so \
-         the file can still exit 0. A future release fails closed here, as `!=` already does. Compare \
-         against values of the same kind, or use `!=` if that is the intent.",
         context
     )
 }
@@ -1265,11 +1238,10 @@ fn binary_operation<'value, 'loc: 'value>(
     // an incomparable operand looks exactly like a real one. Only `NOT IN` reaches this, so the extra
     // comparisons cost nothing on any other clause.
     //
-    // It has to be emitted after, because the verdict decides which notice this is. One of the two
-    // wordings says the clause *passed* on the incomparability, and gated on the incomparability alone
-    // it printed that beside a FAIL, which is the opposite of what happened. Measured across 231
-    // `NOT IN` shapes: 177 reach the notice, 146 pass and 31 fail, and every one of the 31 printed the
-    // passed wording.
+    // It has to be emitted after, because the notice says the clause *passed* on the incomparability and
+    // there is no verdict here to check that against. Gated on the incomparability alone it printed that
+    // beside a FAIL, which is the opposite of what happened. Measured across 231 `NOT IN` shapes: 177
+    // reach the notice, 146 pass and 31 fail, and every one of the 31 printed it.
     let membership_is_incomparable =
         cmp.1 && cmp.0 == CmpOperator::In && incomparable_membership(&lhs, rhs);
     let results = cmp.compare(&lhs, rhs)?;
@@ -1610,34 +1582,46 @@ fn binary_operation<'value, 'loc: 'value>(
     // asserted exits 19. So the one shape the notice exists for, a green file that quietly stopped
     // checking, was the shape it did not reach.
     //
-    // `ClauseRole` is exactly the right question to ask, and not by coincidence: it is threaded to every
-    // leaf clause so that a clause whose failure would be absorbed carries `Gate`. That makes
-    // "unreported" a property already in hand rather than one inferred here.
+    // The role is deliberately not consulted. A previous revision asked it instead of the verdict, on
+    // the reading that `ClauseRole` carries whether the file reports the clause, so a failing `Gate`
+    // could be noticed as an absorbed failure. `ClauseRole`'s own documentation says what it answers --
+    // whether an *unevaluatable* clause FAILs or SKIPs -- and reportedness is not it. Two `Assertion`
+    // routes absorb a failure at exit 0, a disjunct beside a passing disjunct and `some`, so the role
+    // does not even correlate with reportedness in one direction.
     //
-    // The mixed clause decides the two directions apart, and it is reachable rather than hypothetical:
-    // `Resources.*.Properties.Ports NOT IN [1, 3]` over `A: [1, 2]` and `B: [7, 8]` fails on one value
-    // and passes on the other. Asserted, the report names it at exit 19 and the notice would land
-    // beside a failure it contradicts. As a condition, nothing names it at all. Same clause, opposite
-    // answers, and visibility is what separates them.
+    // Nor can reportedness be obtained here by asking something else, which is the more useful half. It
+    // is a function of statuses this function returns before anything computes: an `or` is decided by a
+    // sibling disjunct that may not have run -- `eval_conjunction_clauses` short-circuits on the first
+    // PASS, so in `Other == 5 or Ports NOT IN [1, 3]` the second disjunct is never evaluated at all --
+    // and a gate clause appears in the report exactly when some later clause in the same rule fails.
+    // Measured: with the failing sibling inside the rule the report names the gate clause, and with it
+    // moved to a second rule the report does not. Neither fact exists yet at this line.
     //
-    // What widening costs, measured rather than reasoned about. Over the full product of the 15-cell
-    // corpus document -- every property as the left-hand side against every property as the denylist,
-    // 100 shapes in both roles, run under this commit and its base -- no clause gains the passed
-    // wording, no verdict moves, no report changes, and 19 gate-role clauses gain the absorbed one. The
-    // 31 false positives the verdict gate removed were counted by a harness that is not in the tree, so
-    // whether any of them was a gate cannot be recovered from it; what can be said is that none of them
-    // comes back carrying the sentence that made it wrong.
+    // It is not needed. The notice says a future release fails closed where this one passes, so it
+    // belongs on the clauses whose answer that change moves. A clause that does not pass today does not
+    // move, and that is measured rather than argued: `!=` already fails closed, so the destination is
+    // observable now, and a clause that already reaches `NotComparable` answers the same as one that
+    // fails on a named element -- FAIL asserted, and the rule skipped at exit 0 as a gate.
+    // `the_notice_fires_exactly_where_fail_closed_moves_the_answer` pins that against the fail-closed
+    // spelling of each shape, so it goes red if the language stops agreeing.
     //
-    // Matched on the pair rather than short-circuited, so adding a role forces this decision to be made
-    // for it instead of falling into whichever branch was written first.
-    if membership_is_incomparable {
-        match (clause_passed(&outcome), role) {
-            (true, _) => eval_context.record_deprecation(incomparable_membership_notice(&context)),
-            (false, ClauseRole::Gate) => {
-                eval_context.record_deprecation(absorbed_incomparable_membership_notice(&context))
-            }
-            (false, ClauseRole::Assertion) => {}
-        }
+    // So the gate is the verdict, and the verdict alone -- which is what it was before the role joined it.
+    //
+    // `some` was examined as a reason to read the verdict as any-value-passed rather than every-value,
+    // since a `some` clause reaches PASS on one value while an `all(PASS)` reading calls that not passing.
+    // It is not one, and the reason is a property of the predicate above rather than a judgment: it
+    // answers false the moment one pair is comparable, and a value can only collide with an element it is
+    // comparable with. So wherever it fires on operands genuinely beyond comparison, no value collides and
+    // every value passes, and the two readings agree. They differ only where a list left-hand side is
+    // incomparable as a whole while its elements are not, which is the whole-value false-alarm class this
+    // predicate documents -- `some Resources.*.Properties.Ports NOT IN [1, 3]` over `[1, 2]` and `[7, 8]`,
+    // where every pair `contained_in` compared is int against int. Measured: `some Vals.*.V NOT IN
+    // ["unset"]` over `1` and `"unset"`, the mixed shape with a real incomparability in it, records no
+    // notice at all, because `"unset"` against `"unset"` is comparable and the predicate stops there.
+    // Reading the verdict as any-value-passed would therefore add notices to the false-alarm class and to
+    // nothing else.
+    if membership_is_incomparable && clause_passed(&outcome) {
+        eval_context.record_deprecation(incomparable_membership_notice(&context));
     }
 
     Ok(outcome)
@@ -1645,18 +1629,18 @@ fn binary_operation<'value, 'loc: 'value>(
 
 /// True when the clause reached PASS on every value it decided.
 ///
-/// The whole clause rather than any one value, because the notice this feeds makes a claim about the
-/// clause -- "<clause> passed" -- and a clause with one failing value has not passed. So a mixed clause
-/// is not a passing one here, and it gets the other wording or no notice at all depending on whether
-/// anything reports it; `binary_operation` decides that and says why.
+/// The whole clause rather than any one value, because the notice this gates makes a claim about the
+/// clause -- "<clause> passed" -- and a clause with one failing value has not passed.
 ///
-/// A mixed clause is reachable, and the sweep this predicate was written against did not reach one:
-/// across 231 `NOT IN` shapes, the 177 that reach the notice each recorded either all PASS or all FAIL.
-/// `Resources.*.Properties.Ports NOT IN [1, 3]` over `A: [1, 2]` and `B: [7, 8]` is one -- the
-/// collision fails `A` and the incomparability passes `B` -- and
-/// `the_incomparable_membership_notice_survives_a_failure_the_file_does_not_report` carries it in both
-/// roles. What the sweep established is narrower than "no mixed clause exists": it is that none of
-/// those 177 shapes was mixed.
+/// Every value rather than any one of them, which matters for a `some` query, whose own fold needs only
+/// one. It looks like the wrong reading for such a query and is not, because of where
+/// `incomparable_membership` can fire: it answers false as soon as one pair is comparable, and a value
+/// only collides with an element it can be compared with, so wherever it fires on operands genuinely
+/// beyond comparison there is no collision and every value passes. The two readings can disagree only in
+/// its whole-value false-alarm class -- a list incomparable entire whose elements are not -- so reading
+/// any-value-passed here would widen that class and reach no clause outside it. Measured: `some Vals.*.V
+/// NOT IN ["unset"]` over `1` and `"unset"`, a mixed clause holding a real incomparability, records no
+/// notice under either reading, because the predicate stops at `"unset"` against `"unset"`.
 ///
 /// An empty result is not a pass. Nothing decided means nothing passed, and a notice saying otherwise
 /// would be the same defect with a different cause. Unreachable from the notice as things stand --

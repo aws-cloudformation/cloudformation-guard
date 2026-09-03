@@ -10207,81 +10207,110 @@ fn the_incomparable_membership_notice_is_only_emitted_for_a_clause_that_passed(
     Ok(())
 }
 
-/// The notice is suppressed only where the file already reports the clause, which a `when` condition
-/// does not.
+/// The notice goes out exactly where the coming fail-closed release changes the clause's answer.
 ///
-/// The suppression above is gated on the verdict, and justified with "a clause with a failing value
-/// already exits the file 19, so the author is already looking at it". That holds for an assertion and
-/// is false for a gate. `eval_conjunction_clauses` absorbs a failing condition and `eval_rule` maps
-/// every non-PASS condition to SKIP, so a `NOT IN` condition that fails skips the rule it guards and
-/// the file exits 0. Measured on `Ports: [1, 2]` with the release binary: `rule r when Ports NOT IN
-/// [1, 3] { ... }` exits 0 with zero bytes on stdout and zero on stderr, while the same clause
-/// asserted exits 19. The verdict-only gate therefore removed the only sight of the clause the author
-/// had, in the silent-green case the notice exists for.
+/// A previous revision gated this on whether the file *reports* the clause, and reached that gate
+/// through `ClauseRole`: a failing `Gate` was noticed because `eval_conjunction_clauses` absorbs a
+/// failing condition and `eval_rule` maps every non-PASS condition to SKIP, so the rule it guards is
+/// dropped at exit 0. Both halves of that are wrong, and the second is wrong in a way the first hides.
 ///
-/// So the question is not what the verdict was, it is whether the file reports it. `ClauseRole` is
-/// already that answer: it is threaded to every leaf clause precisely so a clause whose failure would
-/// be absorbed carries `Gate`, and `the_role_reaching_a_leaf_clause_survives_every_nesting` pins the
-/// threading. Filter predicates carry it too -- `check_and_delegate` evaluates them as `Gate` -- which
-/// is why the last cell is a filter that selected nothing: the five aws-guard-rules-registry clauses
-/// this notice was written for are filter predicates.
+/// `ClauseRole` does not carry reportedness. Its own documentation says what it answers -- whether an
+/// *unevaluatable* clause FAILs or SKIPs -- and that is a different question. Two `Assertion`-role
+/// routes absorb a failure at exit 0: a disjunct beside a passing disjunct, and `some`. Neither
+/// carries `Gate`, so a reportedness gate reached through the role misses both. Nor could the role be
+/// swapped for something better, because reportedness is not known where this notice is built. It is
+/// a function of statuses computed strictly later: a sibling disjunct that decides an `or` may not have
+/// run yet -- `eval_conjunction_clauses` short-circuits on the first PASS, so `Other == 5 or Ports NOT
+/// IN [1, 3]` never evaluates the second disjunct at all -- and a gate clause is reported or not
+/// according to whether some *later* clause in the same rule fails. Measured: with the failing sibling
+/// in the same rule the report names the gate clause, and with it moved to another rule the report does
+/// not. Nothing reachable from `binary_operation` can see either.
 ///
-/// The cells that changed answer are the two `absorb` ones and the filter. The rest are controls, and
-/// each pins a different half of the boundary:
+/// The gate does not need reportedness, because that was never the question the notice asks. The notice
+/// warns that a future release fails closed where this one passes, so it belongs on the clauses whose
+/// answer that change *moves*, and on no others. A clause that does not pass today does not move: `!=`
+/// already fails closed, so the destination is measurable now, and a clause that already reaches
+/// `NotComparable` answers the same as one that fails on a named element. Asserted, both FAIL; gated,
+/// both SKIP the rule at exit 0. `the_notice_fires_exactly_where_fail_closed_moves_the_answer` measures
+/// that against the fail-closed spelling of each shape rather than deriving it, so it fails if the
+/// language ever stops agreeing.
+///
+/// So the gate is the verdict alone, which is what it was before the role joined it. `some` was examined
+/// as a reason to read that verdict as any-value-passed instead of every-value, and rejected on a
+/// measurement rather than a preference: see `clause_passed`, and `a_some_clause_one_value_of_which_fails`
+/// below for the shape.
+///
+/// The cells that changed answer when the role left this gate are the two former `absorb` ones, the
+/// filter, and `an_already_fail_closed_gate`. The rest are controls, and each pins a different edge:
 ///
 /// - `an_assertion_that_fails` keeps f3eb258's guarantee: the file names that clause at exit 19, so a
 ///   notice claiming it passed would contradict the line the author greps.
 /// - `a_passing_gate_beside_a_failing_body` exits 19 for a *different* clause. Suppression is per
 ///   clause and not per file, so this notice must survive an exit 19 it is not about.
-/// - `a_gate_that_fails_on_comparable_values` fails as a gate with nothing incomparable in it. The
-///   role must not become a licence to notice every failing gate.
+/// - `a_gate_that_fails_on_comparable_values` fails as a gate with nothing incomparable in it, so the
+///   predicate must not become a licence to notice every failing gate.
+/// - `an_already_fail_closed_gate` is the cell the role gate got wrong on its own terms. `Cfg NOT IN
+///   Scalar` reaches `NotComparable` and so fails closed in this release already, which makes the
+///   notice's premise that the pair "is currently read as not a member" false there. The 15-cell test
+///   above carries the same shape as `a_scalar_denylist_that_already_fails_closed` and could not catch
+///   this one, because `status_and_deprecations` wraps every cell in `rule r { .. }` and so only ever
+///   measures the `Assertion` role.
 ///
-/// The mixed clause the comment above called unreached is `Resources.*.Properties.Ports NOT IN
-/// [1, 3]` over `A: [1, 2]` and `B: [7, 8]`: one value fails on the collision, the other passes with
-/// the incomparability, and the two cells here are that clause in each role. Visibility decides them
-/// in opposite directions, which is the point of having both.
+/// The mixed clause is `Resources.*.Properties.Ports NOT IN [1, 3]` over `A: [1, 2]` and `B: [7, 8]`:
+/// one value fails on the collision, the other passes with the incomparability. It appears three times
+/// -- asserted, gated, and with `some` -- because `match_all` and not the role is what decides it.
 ///
 /// Through `status_and_deprecations`' sibling rather than `recorded_comparison_messages`, for the
 /// reason given on that helper: a notice never enters the record tree.
 #[rstest::rstest]
-// Assertions. Unchanged by the role, because an assertion's failure is reported.
+// Clauses that reach PASS on the incomparability. These are the ones the change moves.
 #[case::an_assertion_that_passes(
     "rule r { Resources.B.Properties.Ports NOT IN [1, 3] }",
     Status::PASS,
     ExpectedNotice::Passed
 )]
-#[case::an_assertion_that_fails(
-    "rule r { Resources.A.Properties.Ports NOT IN [1, 3] }",
-    Status::FAIL,
-    ExpectedNotice::Silent
-)]
-// Gates. A failure here is absorbed, so the notice is all the author gets.
 #[case::a_gate_that_passes(
     "rule r when Resources.A.Properties.Ports NOT IN [7, 8] { Resources.A.Properties.Ports EXISTS }",
     Status::PASS,
     ExpectedNotice::Passed
 )]
-#[case::a_gate_that_absorbs_its_failure(
+// `some` reaches PASS on one value while another fails, and the notice stays with the verdict rather
+// than following the clause's own fold. Silent, and the reason is a property of the predicate rather
+// than a preference: it answers false as soon as one pair is comparable, and a value only collides with
+// an element it is comparable with, so a mixed clause carrying a real incomparability cannot reach here
+// at all. Only the whole-value false-alarm class can, which is what this cell is -- every pair
+// `contained_in` compared is int against int. See `clause_passed`.
+#[case::a_some_clause_one_value_of_which_fails(
+    "rule r { some Resources.*.Properties.Ports NOT IN [1, 3] }",
+    Status::PASS,
+    ExpectedNotice::Silent
+)]
+// Clauses that do not pass. The change leaves every one of these where it is.
+#[case::an_assertion_that_fails(
+    "rule r { Resources.A.Properties.Ports NOT IN [1, 3] }",
+    Status::FAIL,
+    ExpectedNotice::Silent
+)]
+#[case::a_gate_that_fails(
     "rule r when Resources.A.Properties.Ports NOT IN [1, 3] { Resources.A.Properties.Ports EXISTS }",
     Status::SKIP,
-    ExpectedNotice::Absorbed
+    ExpectedNotice::Silent
 )]
-// The mixed clause, in both roles.
 #[case::a_mixed_clause_asserted(
     "rule r { Resources.*.Properties.Ports NOT IN [1, 3] }",
     Status::FAIL,
     ExpectedNotice::Silent
 )]
-#[case::a_mixed_clause_that_absorbs_its_failure(
+#[case::a_mixed_clause_gated(
     "rule r when Resources.*.Properties.Ports NOT IN [1, 3] { Resources.A.Properties.Ports EXISTS }",
     Status::SKIP,
-    ExpectedNotice::Absorbed
+    ExpectedNotice::Silent
 )]
 // A filter predicate is a gate as well, and this one narrowed the selection to nothing.
 #[case::a_filter_predicate_that_selected_nothing(
     "rule r { Resources.*[ Properties.Ports NOT IN [1, 3, 7, 9] ].Properties.Ports EXISTS }",
     Status::SKIP,
-    ExpectedNotice::Absorbed
+    ExpectedNotice::Silent
 )]
 // Controls.
 #[case::a_passing_gate_beside_a_failing_body(
@@ -10294,15 +10323,24 @@ fn the_incomparable_membership_notice_is_only_emitted_for_a_clause_that_passed(
     Status::SKIP,
     ExpectedNotice::Silent
 )]
-fn the_incomparable_membership_notice_survives_a_failure_the_file_does_not_report(
+#[case::an_already_fail_closed_gate(
+    "rule r when Cfg NOT IN Scalar { Resources.A.Properties.Ports EXISTS }",
+    Status::SKIP,
+    ExpectedNotice::Silent
+)]
+fn the_incomparable_membership_notice_is_emitted_where_fail_closed_moves_the_clause(
     #[case] rules: &str,
     #[case] expected: Status,
     #[case] expected_notice: ExpectedNotice,
 ) -> Result<()> {
     // `A` collides with `[1, 3]` element-wise and `B` does not, so one document serves the assertion
-    // cells, the gate cells and the mixed clause that needs both answers at once.
+    // cells, the gate cells and the mixed clause that needs both answers at once. `Cfg` and `Scalar`
+    // are a pair `compare_eq` has no arm for, which is how `an_already_fail_closed_gate` reaches the
+    // `NotComparable` this release already refuses on.
     const INPUT: &str = r#"
     {
+        Cfg: { a: 1 },
+        Scalar: "a",
         Resources: {
             A: { Properties: { Ports: [1, 2] } },
             B: { Properties: { Ports: [7, 8] } }
@@ -10381,10 +10419,14 @@ fn the_incomparable_membership_notice_survives_a_failure_the_file_does_not_repor
     Status::FAIL,
     ExpectedNotice::Silent
 )]
+// Silent because the clause does not pass, not because the pair is comparable: `(List, Regex)` is not
+// a `compare_eq` arm, so the whole-list comparison is a real incomparability and the predicate fires.
+// It was the did-not-pass wording while a failing gate was noticed, and that wording is gone with the
+// gate that reached it -- a gate that fails answers the same before and after the fail-closed change.
 #[case::an_ordinary_regex_against_a_whole_list_in_a_condition(
     "rule r when Cat NOT IN [/^a+$/] { Cat EXISTS }",
     Status::SKIP,
-    ExpectedNotice::Absorbed
+    ExpectedNotice::Silent
 )]
 #[case::a_comparable_element_beside_the_catastrophic_one(
     "rule r when Mixed[*] NOT IN [/(?!x)((a+)+)b/] { Mixed EXISTS }",
@@ -10428,18 +10470,23 @@ fn a_spent_backtracking_budget_is_not_an_incomparable_pair(
 /// Which stderr line a cell of the two tests above expects, so each one names the wording rather than
 /// only whether something arrived.
 ///
-/// Three states rather than a `bool`, because the notice has two bodies and the difference between them
-/// is the defect f3eb258 fixed: one says the clause passed on the incomparability, and the other goes
-/// out where it did not pass and the file reports nothing. A boolean cannot tell a cell that got the
-/// wrong one from a cell that got the right one.
+/// Two states rather than a `bool`, and the second carries the wording rather than only presence,
+/// because the defect f3eb258 fixed was a notice that said "passed because" beside a clause that had
+/// failed. A cell asserting presence alone is satisfied by that notice, so `Passed` checks the sentence
+/// as well.
+///
+/// There were three states while a non-passing clause could be noticed too, for a body that said the
+/// clause did not pass and that nothing reported it. Both halves of that body were false in reachable
+/// cases -- the report names a failing gate whenever a later clause in the same rule fails, and a pair
+/// that already reaches `NotComparable` is not one "currently read as not a member" -- and the class it
+/// went out on does not move under the coming change at all. The body and the state went together with
+/// the gate that reached them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ExpectedNotice {
     /// No incomparable-membership notice at all.
     Silent,
     /// The notice for a clause the incomparability let pass.
     Passed,
-    /// The notice for a clause that did not pass and whose failure the file does not report.
-    Absorbed,
 }
 
 /// Checks the membership notices a run recorded against what the cell expects.
@@ -10480,24 +10527,104 @@ fn assert_notice(rules: &str, status: Status, expected: ExpectedNotice, notices:
                 membership
             );
         }
-        ExpectedNotice::Absorbed => {
-            assert!(
-                !membership.is_empty(),
-                "`{}` failed where nothing reports it, so the notice is the only sight of the clause \
-                 the author has and must be emitted; recorded {:?}",
-                rules,
-                notices
-            );
-            assert!(
-                membership
-                    .iter()
-                    .all(|n| n.contains("did not pass") && !n.contains("passed because")),
-                "`{}` did not pass, so no membership notice may claim it did; recorded {:?}",
-                rules,
-                membership
-            );
-        }
     }
+}
+
+/// The notice fires on exactly the clauses the coming fail-closed change moves, measured rather than
+/// asserted.
+///
+/// The table above says which cells expect a notice, and a table can be wrong in the same direction as
+/// the code it checks -- which is how the previous gate shipped: it was widened to a class of clauses,
+/// the cells for that class were written to expect the notice, and both agreed on a claim that was
+/// false. Nothing in that suite measured the property the notice actually asserts.
+///
+/// This does, and `!=` is what makes it possible. The notice's own text names it -- "a future release
+/// fails closed here, as `!=` already does" -- and for a scalar left-hand side against a one-element
+/// denylist, `X NOT IN [v]` and `X != v` ask exactly the same question of exactly the same pair. One
+/// answers it by reading an incomparable pair as "not a member" and the other by refusing it, so the pair
+/// of spellings is this release's before and after. Each cell evaluates both and compares the statuses,
+/// so "does this clause move" is read off the language rather than taken from a table, and the notice
+/// expectation is checked against that measurement. The two assertions are independent: a change to the
+/// gate cannot satisfy the first, and a change to `!=` cannot satisfy the second.
+///
+/// **One element in the denylist and a scalar on the left, both required.** A second element gives the
+/// clause a pair `!=` never sees, so the two spellings stop being the same question. And a list left-hand
+/// side makes `incomparable_membership` compare the whole value where `contained_in` compares elements,
+/// which is the divergence that produces this predicate's documented false alarms -- a cell built that way
+/// would measure the predicate's premise rather than the clause.
+///
+/// Substituting the right-hand side for one nothing can be compared with was tried first and is wrong,
+/// which is worth recording because it looks equivalent. `NOT IN` over such an operand does not fail
+/// closed; it passes, for the same reason the notice exists. Measured: `Str NOT IN Umap` over `{"k": 1}`
+/// exits 0 with the notice, so a cell asserting it as the fail-closed destination compares PASS against
+/// PASS and concludes that nothing moves.
+#[rstest::rstest]
+// A scalar that passes because the one element cannot be compared with it. `!=` refuses that pair, so
+// this is a clause the change moves.
+#[case::a_clause_that_passes_on_the_incomparability("Str", "1", true)]
+// A scalar the denylist names. Both spellings fail, so it does not move.
+#[case::a_clause_the_denylist_names("Int", "1", false)]
+// A scalar the denylist does not name, compared with an element it can be compared with. Both pass, and
+// the predicate never fires; the control for "moves" and "notice" agreeing on false for two reasons.
+#[case::a_clause_decided_on_comparable_values("Int", "2", false)]
+fn the_notice_fires_exactly_where_fail_closed_moves_the_answer(
+    #[case] lhs: &str,
+    #[case] denied: &str,
+    #[case] moves: bool,
+) -> Result<()> {
+    const INPUT: &str = r#"
+    {
+        Str: "a",
+        Int: 1
+    }
+    "#;
+
+    let clause = format!("{lhs} NOT IN [{denied}]");
+    let (live_status, notices) = deprecations_for_rules(&format!("rule r {{ {clause} }}"), INPUT)?;
+
+    // The same question asked with the operator that already refuses what this one reads as a non-match.
+    let fail_closed = format!("rule r {{ {lhs} != {denied} }}");
+    let (fail_closed_status, _) = deprecations_for_rules(&fail_closed, INPUT)?;
+
+    assert_eq!(
+        moves,
+        live_status != fail_closed_status,
+        "`{}` reached {:?} and its fail-closed spelling `{}` reached {:?}, so the coming change {} \
+         this clause; the cell says it {}",
+        clause,
+        live_status,
+        fail_closed,
+        fail_closed_status,
+        match live_status != fail_closed_status {
+            true => "moves",
+            false => "leaves",
+        },
+        match moves {
+            true => "moves",
+            false => "does not move",
+        }
+    );
+
+    let emitted = notices
+        .iter()
+        .any(|n| n.contains("could not be compared with any element"));
+    assert_eq!(
+        moves,
+        emitted,
+        "`{}` is a clause the change {}, so the notice should {}; recorded {:?}",
+        clause,
+        match moves {
+            true => "moves",
+            false => "leaves where it is",
+        },
+        match moves {
+            true => "have been emitted",
+            false => "have stayed silent",
+        },
+        notices
+    );
+
+    Ok(())
 }
 
 /// `or` is decided by whichever disjunct can decide it, in either order.
