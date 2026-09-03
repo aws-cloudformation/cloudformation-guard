@@ -16031,3 +16031,77 @@ fn an_empty_left_hand_list_earns_no_whole_value_refusal_the_operator_never_built
          `contained_in` skips its membership loop for an empty `lhsl` and builds no pairing to refuse"
     );
 }
+
+/// Only the two-query arm truncates, and this binds the CALL SITE rather than the helper.
+///
+/// `the_membership_notice_stops_pairing_where_the_operator_stops` hands
+/// `rhs_values_paired_with` its `both_queried` argument as a literal `true` or `false`, so it pins what
+/// the helper does with each answer and cannot see which answer the caller supplies. Mutation testing at
+/// the call site separates the two: replacing `both_queried` with `true` leaves the whole lib suite
+/// green, and so does deleting the call and walking `&rhs_values` directly. Only the endpoint mutation
+/// was caught by anything.
+///
+/// One value triple, two cells differing ONLY in `Literal` versus `Resolved` on the left, which is what
+/// isolates the argument from everything else. The needle `"ab"` is contained in `"xxabxx"`, so
+/// `found_in_string` answers `All` and the operator stops there; the `5` after it is the pairing that
+/// refuses, `compare_eq(String, Int)` being `NotComparable`. Queried, the stop applies and the prefix
+/// excludes it, so nothing is counted and the answer is false. Literal, the walk is not truncated at all,
+/// the `5` is reached, and the answer is true.
+///
+/// It catches both mutations, which the shape is chosen for. `both_queried` to `true` truncates the
+/// literal cell and turns its true into false. Deleting the call walks everything in the queried cell and
+/// turns its false into true. A cell built on a single right-hand value would catch neither, because a
+/// one-element slice truncated at its only stop and a one-element slice walked whole differ in nothing a
+/// refusal can be read out of.
+///
+/// It survives the exclusive endpoint rather than depending on it. Under the inclusive `[..=at]` the
+/// queried cell's prefix was `["xxabxx"]`, and `compare_eq("ab", "xxabxx")` answers `Ok(false)`, so
+/// nothing refused; under `[..at]` the prefix is empty and nothing is walked. False either way, for two
+/// different reasons.
+///
+/// The shape is a peer's, arrived at independently while auditing the same function, and used here rather
+/// than reinvented.
+#[test]
+fn only_the_two_query_arm_truncates_the_denylist_walk() {
+    use crate::rules::path_value::Path;
+
+    fn string_at(path: &str, value: &str) -> Rc<PathAwareValue> {
+        Rc::new(PathAwareValue::String((
+            Path::new(path.to_string(), 0, 0),
+            value.to_string(),
+        )))
+    }
+
+    fn int_at(path: &str, value: i64) -> Rc<PathAwareValue> {
+        Rc::new(PathAwareValue::Int((
+            Path::new(path.to_string(), 0, 0),
+            value,
+        )))
+    }
+
+    let needle = string_at("/MatchStr/0", "ab");
+    let haystack_then_int: [_; 2] = [
+        QueryResult::Resolved(string_at("/HayInt/0", "xxabxx")),
+        QueryResult::Resolved(int_at("/HayInt/1", 5)),
+    ];
+
+    let queried_left = incomparable_membership(
+        &[QueryResult::Resolved(Rc::clone(&needle))],
+        &haystack_then_int,
+    );
+
+    let literal_left = incomparable_membership(
+        &[QueryResult::Literal(Rc::clone(&needle))],
+        &haystack_then_int,
+    );
+
+    assert_eq!(
+        (false, true),
+        (queried_left, literal_left),
+        "queried: `\"ab\"` is contained in `\"xxabxx\"`, so the operator stops there and the prefix \
+         excludes the stopping pairing, leaving the refusing `5` outside the walk. literal: the arm is \
+         `(Some, None)`, which walks every right-hand value with no short-circuit, so the `5` is reached \
+         and its `NotComparable` is genuinely owed. Only the call site's `both_queried` distinguishes \
+         these two, and passing a constant in its place makes them agree"
+    );
+}
