@@ -1,0 +1,78 @@
+---
+- input:
+    Parameters: {}
+  expectations:
+    rules:
+      assert_default_parameters_exists: SKIP
+      assert_default_parameter_configuration: SKIP
+      assert_ConstraintDescription: SKIP
+- input:
+    Description: "Test if default parameters exists PASS"
+    Parameters:
+      Parameter1: {}
+      Parameter2: {}
+      Stage: {}
+  expectations:
+    rules:
+      assert_default_parameters_exists: PASS
+      assert_default_parameter_configuration: FAIL
+      assert_ConstraintDescription: SKIP
+- input:
+    Description: "Test if default parameters exists FAILED "
+    Parameters:
+      Parameter1: {}
+      Parameter3: {}
+      Stage: {}
+  expectations:
+    rules:
+      assert_default_parameters_exists: FAIL
+      assert_default_parameter_configuration: SKIP
+      assert_ConstraintDescription: SKIP
+- input:
+    Description: "correct Parameter configuration"
+    Parameters:
+      Parameter1:
+        Description: 'Parameter1'
+        Type: String
+        AllowedPattern: '[a-z0-9]+'
+        ConstraintDescription: "Invalid input. Allowed Pattern = '[a-z0-9]+'. Parameter must not be empty."
+      Parameter2:
+        Description: 'Parameter2'
+        Type: String
+        AllowedPattern: '[a-z0-9]+'
+        ConstraintDescription: "Invalid input. Allowed Pattern = '[a-z0-9]+'. Parameter must not be empty."
+      Stage:
+        Type: String
+        Description: 'Stage setting'
+        AllowedValues:
+          - stage1
+          - stage2
+          - stage3
+  expectations:
+    rules:
+      assert_default_parameters_exists: PASS
+      assert_default_parameter_configuration: PASS
+      assert_ConstraintDescription: PASS
+- input:
+    Description: "wrong configuration Parameter1 (Missing Type and ConstraintDescription)"
+    Parameters:
+      Parameter1:
+        Description: 'Parameter1'
+        AllowedPattern: '[a-z0-9]+'
+      Parameter2:
+        Description: 'Parameter2'
+        Type: String
+        AllowedPattern: '[a-z0-9]+'
+        ConstraintDescription: "Invalid input. Allowed Pattern = '[a-z0-9]+'. Parameter must not be empty."
+      Stage:
+        Type: String
+        Description: 'Stage setting'
+        AllowedValues:
+          - stage1
+          - stage2
+          - stage3
+  expectations:
+    rules:
+      assert_default_parameters_exists: PASS
+      assert_default_parameter_configuration: FAIL
+      assert_ConstraintDescription: FAIL
