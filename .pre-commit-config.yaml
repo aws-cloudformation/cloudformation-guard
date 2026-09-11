@@ -1,3 +1,13 @@
+# The commitizen hook below runs at the `commit-msg` stage, and `pre-commit install`
+# installs only the `pre-commit` stage unless it is told otherwise. Without this
+# line the hook is configured, reported by `pre-commit run --all-files` as skipped,
+# and never actually checks a commit message. Contributors who already ran
+# `pre-commit install` before this change need to run it again to pick up the new
+# hook type.
+default_install_hook_types:
+-   pre-commit
+-   commit-msg
+
 repos:
 -   repo: https://github.com/aws-cloudformation/cloudformation-guard
     rev: pre-commit-v0.0.2
@@ -12,3 +22,7 @@ repos:
                 - --operation=test
                 - --dir=pre_commit_hooks_tests/resources/
             files: ^pre_commit_hooks_tests/resources.*
+-   repo: https://github.com/commitizen-tools/commitizen
+    rev: v4.10.1
+    hooks:
+        -   id: commitizen

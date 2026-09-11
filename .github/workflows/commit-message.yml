@@ -1,0 +1,61 @@
+name: Commit Message
+
+# Pull requests are squash-merged here: 59 of the last 60 commits on main end in
+# `(#NNN)` and none is a merge commit, so the pull request title is what becomes
+# the commit message. Checking the title is therefore checking what lands.
+#
+# This is a workflow of its own rather than a job in pr.yml because pr.yml carries
+# `paths-ignore: guard/ts-lib/**`, so a pull request touching only that directory
+# does not run it. The title of such a pull request still lands on main and still
+# wants checking.
+#
+# Individual commits on the branch are deliberately not checked. They are squashed
+# away, so requiring each one to be well-formed would reject work in progress
+# without protecting anything. If the merge strategy ever changes to merge commits
+# or rebase, that reasoning stops holding and the `commitizen-branch` hook from the
+# same upstream repository is the thing to add.
+on:
+  pull_request:
+    # `edited` matters: it is what re-runs the check after a title is corrected.
+    types: [opened, edited, reopened, synchronize]
+
+permissions:
+  contents: read
+
+jobs:
+  conventional-title:
+    name: Pull request title follows Conventional Commits
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+      - run: pip install -r requirements-dev.txt
+      - name: Check the pull request title
+        env:
+          # Passed through the environment rather than interpolated into the script.
+          # A title is author-controlled text, and `${{ ... }}` is substituted before
+          # the shell sees the line, so interpolating it directly would let a title
+          # containing shell syntax run as part of this step.
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          printf '%s\n' "$PR_TITLE" > "$RUNNER_TEMP/pr-title.txt"
+          # No `--allow-abort`, and `--allowed-prefixes` with an empty list. Each of
+          # those two defaults lets a title through without its format being checked,
+          # and the title is what becomes the squash commit on main.
+          #
+          # `cz check` skips the Conventional Commits regex outright for a message
+          # beginning with one of its default allowed prefixes (Merge, Revert, Pull
+          # request, fixup!, squash!, amend!), so `Merge pull request #1 from nonsense`
+          # passes unchecked. Those prefixes are there for messages git itself writes
+          # during a merge or a rebase, which a pull request title is not. Passing the
+          # flag with no values leaves the set empty, so nothing is exempt.
+          #
+          # `--allow-abort` permits an empty message, the way a commit is abandoned from
+          # an editor. Git comment lines are stripped before the regex runs, so a title
+          # of `# invalid title` reduces to an empty message, which `--allow-abort` then
+          # accepts.
+          #
+          # A rejected title exits 14, not 1.
+          cz check --commit-msg-file "$RUNNER_TEMP/pr-title.txt" --allowed-prefixes
