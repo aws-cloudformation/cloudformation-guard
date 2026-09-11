@@ -4,9 +4,8 @@ use std::io::Write;
 
 use enumflags2::BitFlags;
 
-use crate::commands::tracker::StatusContext;
 use crate::commands::validate::{OutputFormatType, Reporter};
-use crate::rules::{EvaluationType, Status};
+use crate::rules::Status;
 
 use super::common::*;
 use super::summary_table::SummaryType;
@@ -26,98 +25,6 @@ impl GenericSummary {
 }
 
 impl Reporter for GenericSummary {
-    fn report(
-        &self,
-        writer: &mut dyn Write,
-        _: Option<Status>,
-        failed_rules: &[&StatusContext],
-        passed_or_skipped: &[&StatusContext],
-        longest_rule_name: usize,
-        rules_file: &str,
-        data_file: &str,
-        _: &Traversal<'_>,
-        output_format_type: OutputFormatType,
-    ) -> crate::rules::Result<()> {
-        let renderer = match output_format_type {
-            OutputFormatType::SingleLineSummary => Box::new(SingleLineSummary {
-                summary_table: self.summary_table,
-            }) as Box<dyn GenericReporter>,
-            OutputFormatType::JSON => {
-                Box::new(StructuredSummary::new(StructureType::JSON)) as Box<dyn GenericReporter>
-            }
-            OutputFormatType::YAML => {
-                Box::new(StructuredSummary::new(StructureType::YAML)) as Box<dyn GenericReporter>
-            }
-            OutputFormatType::Junit => unreachable!(),
-            OutputFormatType::Sarif => unreachable!(),
-        };
-        let failed = if !failed_rules.is_empty() {
-            let mut by_rule = HashMap::with_capacity(failed_rules.len());
-            for each_failed_rule in failed_rules {
-                for each_failed_clause in find_all_failing_clauses(each_failed_rule) {
-                    match each_failed_clause.eval_type {
-                        EvaluationType::Clause | EvaluationType::BlockClause => {
-                            if each_failed_clause.eval_type == EvaluationType::BlockClause {
-                                match &each_failed_clause.msg {
-                                    Some(msg) => {
-                                        if msg.contains("DEFAULT") {
-                                            continue;
-                                        }
-                                    }
-
-                                    None => {
-                                        continue;
-                                    }
-                                }
-                            }
-                            by_rule
-                                .entry(each_failed_rule.context.clone())
-                                .or_insert(Vec::new())
-                                .push(extract_name_info(
-                                    &each_failed_rule.context,
-                                    each_failed_clause,
-                                )?);
-                        }
-
-                        _ => {}
-                    }
-                }
-            }
-            by_rule
-        } else {
-            HashMap::new()
-        };
-
-        let as_vec = passed_or_skipped.to_vec();
-        let (skipped, passed): (Vec<&StatusContext>, Vec<&StatusContext>) =
-            as_vec.iter().partition(|status| match status.status {
-                // This uses the dereference deep trait of Rust
-                Some(Status::SKIP) => true,
-                _ => false,
-            });
-        // The StatusContext path carries no record tree, so there is nothing to mine a reason
-        // from: every skip here is reported without one. This is the pre-record reporting path;
-        // the record-based path in `common::report_from_events` is where reasons come from.
-        let skipped = skipped
-            .iter()
-            .map(|s| (s.context.clone(), None))
-            .collect::<SkippedRules>();
-        let passed = passed
-            .iter()
-            .map(|s| s.context.clone())
-            .collect::<HashSet<String>>();
-        renderer.report(
-            writer,
-            rules_file,
-            data_file,
-            failed,
-            passed,
-            skipped,
-            longest_rule_name,
-        )?;
-        Ok(())
-    }
-
     fn report_eval<'value>(
         &self,
         writer: &mut dyn Write,

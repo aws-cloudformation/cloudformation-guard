@@ -101,7 +101,7 @@ fn from_value<'value>(
 }
 
 impl<'value> Traversal<'value> {
-    pub(crate) fn root(&self) -> Option<&Node> {
+    pub(crate) fn root(&self) -> Option<&Node<'_>> {
         self.nodes.get("/")
     }
 
@@ -109,7 +109,7 @@ impl<'value> Traversal<'value> {
         &'traverse self,
         pointer: &str,
         node: &'traverse Node,
-    ) -> crate::rules::Result<TraversalResult> {
+    ) -> crate::rules::Result<TraversalResult<'traverse, 'traverse>> {
         if pointer.is_empty() || pointer == "0" {
             return Ok(TraversalResult::Value(node));
         }

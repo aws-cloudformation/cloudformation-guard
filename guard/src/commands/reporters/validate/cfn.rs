@@ -14,7 +14,6 @@ use crate::{
         reporters::validate::common::{
             populate_hierarchy_path_trees, IdentityHash, LocalResourceAggr, PathTree, RuleHierarchy,
         },
-        tracker::StatusContext,
         validate::{OutputFormatType, Reporter},
     },
     rules::{
@@ -61,27 +60,12 @@ pub(crate) struct CfnAware<'reporter> {
 }
 
 impl<'reporter> CfnAware<'reporter> {
-    pub(crate) fn new_with(next: &'reporter dyn Reporter) -> CfnAware {
+    pub(crate) fn new_with(next: &'reporter dyn Reporter) -> CfnAware<'reporter> {
         CfnAware { next: Some(next) }
     }
 }
 
 impl<'reporter> Reporter for CfnAware<'reporter> {
-    fn report(
-        &self,
-        _writer: &mut dyn Write,
-        _status: Option<Status>,
-        _failed_rules: &[&StatusContext],
-        _passed_or_skipped: &[&StatusContext],
-        _longest_rule_name: usize,
-        _rules_file: &str,
-        _data_file: &str,
-        _data: &Traversal<'_>,
-        _output_format_type: OutputFormatType,
-    ) -> rules::Result<()> {
-        Ok(())
-    }
-
     fn report_eval<'value>(
         &self,
         write: &mut dyn Write,

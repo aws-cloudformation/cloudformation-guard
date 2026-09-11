@@ -1,17 +1,14 @@
 use colored::*;
 use serde::Serialize;
 
-use crate::commands::tracker::StatusContext;
 use crate::rules::eval_context::{
-    find_skip_reason, BinaryCheck, BinaryComparison, ClauseReport, EventRecord, FileReport,
-    GuardClauseReport, InComparison, UnaryCheck, UnaryComparison, ValueComparisons,
-    ValueUnResolved,
+    find_skip_reason, BinaryCheck, BinaryComparison, ClauseReport, EventRecord, GuardClauseReport,
+    InComparison, UnaryCheck, UnaryComparison, ValueComparisons, ValueUnResolved,
 };
 
 use crate::rules::values::CmpOperator;
 use crate::rules::{
-    BlockCheck, ClauseCheck, EvaluationType, NamedStatus, QueryResult, RecordType, Status,
-    UnResolved,
+    BlockCheck, ClauseCheck, NamedStatus, QueryResult, RecordType, Status, UnResolved,
 };
 use fancy_regex::Regex;
 use lazy_static::*;
@@ -81,71 +78,6 @@ pub(super) trait GenericReporter: Debug {
         skipped: SkippedRules,
         longest_rule_len: usize,
     ) -> crate::rules::Result<()>;
-}
-
-#[derive(Debug)]
-#[allow(clippy::upper_case_acronyms)]
-pub(super) enum StructureType {
-    JSON,
-    YAML,
-}
-
-#[derive(Debug)]
-pub(super) struct StructuredSummary {
-    hierarchy_type: StructureType,
-}
-
-impl StructuredSummary {
-    pub(super) fn new(hierarchy_type: StructureType) -> Self {
-        StructuredSummary { hierarchy_type }
-    }
-}
-
-#[derive(Debug, Serialize)]
-struct DataOutput<'a> {
-    data_from: &'a str,
-    rules_from: &'a str,
-    not_compliant: HashMap<String, Vec<NameInfo<'a>>>,
-    not_applicable: HashSet<String>,
-    /// Omitted entirely when no skip carried a reason, which keeps the document shape identical
-    /// to what consumers parse today. BTreeMap rather than HashMap so the order is stable across
-    /// runs -- a reporter that reshuffles its own output on every invocation is unusable in a
-    /// diff.
-    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
-    not_applicable_reasons: BTreeMap<String, String>,
-    compliant: HashSet<String>,
-}
-
-impl GenericReporter for StructuredSummary {
-    fn report(
-        &self,
-        writer: &mut dyn Write,
-        rules_file_name: &str,
-        data_file_name: &str,
-        failed: HashMap<String, Vec<NameInfo<'_>>>,
-        passed: HashSet<String>,
-        skipped: SkippedRules,
-        _: usize,
-    ) -> crate::rules::Result<()> {
-        let not_applicable_reasons = skipped
-            .iter()
-            .filter_map(|(rule, reason)| reason.clone().map(|reason| (rule.clone(), reason)))
-            .collect::<BTreeMap<String, String>>();
-        let value = DataOutput {
-            rules_from: rules_file_name,
-            data_from: data_file_name,
-            not_compliant: failed,
-            compliant: passed,
-            not_applicable: skipped.into_keys().collect(),
-            not_applicable_reasons,
-        };
-
-        match &self.hierarchy_type {
-            StructureType::JSON => writeln!(writer, "{}", serde_json::to_string(&value)?),
-            StructureType::YAML => writeln!(writer, "{}", serde_yaml::to_string(&value)?),
-        }?;
-        Ok(())
-    }
 }
 
 lazy_static! {
@@ -435,71 +367,6 @@ pub(super) fn report_from_events(
     Ok(())
 }
 
-pub(super) fn extract_name_info<'a>(
-    rule_name: &'a str,
-    each_failing_clause: &StatusContext,
-) -> crate::rules::Result<NameInfo<'a>> {
-    if each_failing_clause.from.is_some() {
-        let value = each_failing_clause.from.as_ref().unwrap();
-        let (path, from): (String, serde_json::Value) = value.try_into()?;
-        Ok(NameInfo {
-            rule: rule_name,
-            path,
-            provided: Some(from),
-            expected: match &each_failing_clause.to {
-                Some(to) => {
-                    let (_, val): (String, serde_json::Value) = to.try_into()?;
-                    Some(val)
-                }
-                None => None,
-            },
-            comparison: each_failing_clause.comparator.map(|input| input.into()),
-            message: each_failing_clause
-                .msg
-                .as_ref()
-                .map_or("".to_string(), |e| {
-                    if !e.contains("DEFAULT") {
-                        e.clone()
-                    } else {
-                        "".to_string()
-                    }
-                }),
-            error: None,
-        })
-    } else {
-        //
-        // This is crappy, but we are going to extract information from the retrieval error message
-        // see path_value.rs for retrieval error messages.
-        // TODO merge the query interface to retrieve partial results along with errored one ones and then
-        //      change this logic based on the reporting changes. Today we bail out for the first
-        //      retrieval error, fast fail semantics
-        //
-
-        //
-        // No from is how we indicate retrieval errors.
-        //
-        let (path, error) =
-            each_failing_clause
-                .msg
-                .as_ref()
-                .map_or(
-                    ("".to_string(), "".to_string()),
-                    |msg| match PATH_FROM_MSG.captures(msg) {
-                        Ok(Some(cap)) => (cap["path"].to_string(), msg.clone()),
-                        Ok(None) => ("".to_string(), msg.clone()),
-                        Err(_) => panic!("Error while parsing retrieval errors"),
-                    },
-                );
-
-        Ok(NameInfo {
-            rule: rule_name,
-            path,
-            error: Some(error),
-            ..Default::default()
-        })
-    }
-}
-
 pub(super) fn colored_string(status: Option<Status>) -> ColoredString {
     let status = match status {
         Some(s) => s,
@@ -510,59 +377,6 @@ pub(super) fn colored_string(status: Option<Status>) -> ColoredString {
         Status::FAIL => "FAIL".red().bold(),
         Status::SKIP => "SKIP".yellow().bold(),
     }
-}
-
-pub(super) fn find_all_failing_clauses(context: &StatusContext) -> Vec<&StatusContext> {
-    let mut failed = Vec::with_capacity(context.children.len());
-    for each in &context.children {
-        if each.status.map_or(false, |s| s == Status::FAIL) {
-            match each.eval_type {
-                EvaluationType::Clause | EvaluationType::BlockClause => {
-                    failed.push(each);
-                    if each.eval_type == EvaluationType::BlockClause {
-                        failed.extend(find_all_failing_clauses(each));
-                    }
-                }
-
-                EvaluationType::Filter | EvaluationType::Condition => {
-                    continue;
-                }
-
-                _ => failed.extend(find_all_failing_clauses(each)),
-            }
-        }
-    }
-    failed
-}
-
-pub(super) fn print_compliant_skipped_info(
-    writer: &mut dyn Write,
-    passed: &HashSet<String>,
-    skipped: &HashSet<String>,
-    _: &str,
-    data_file_name: &str,
-) -> crate::rules::Result<()> {
-    if !passed.is_empty() {
-        writeln!(writer, "--")?;
-    }
-    for pass in passed {
-        writeln!(
-            writer,
-            "Rule [{}] is compliant for template [{}]",
-            pass, data_file_name
-        )?;
-    }
-    if !skipped.is_empty() {
-        writeln!(writer, "--")?;
-    }
-    for skip in skipped {
-        writeln!(
-            writer,
-            "Rule [{}] is not applicable for template [{}]",
-            skip, data_file_name
-        )?;
-    }
-    Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -706,13 +520,6 @@ where
     }
 
     Ok(())
-}
-
-#[derive(Debug, Serialize)]
-struct DataOutputNewForm<'a, 'v> {
-    data_from: &'a str,
-    rules_from: &'a str,
-    report: FileReport<'v>,
 }
 
 #[derive(Clone, Debug)]
