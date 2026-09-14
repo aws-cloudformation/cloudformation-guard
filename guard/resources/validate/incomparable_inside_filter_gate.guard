@@ -1,0 +1,22 @@
+#
+# An incomparable comparison inside a filter, under a gate that was decidable and decided.
+#
+# The registry idiom, reduced. `Metadata.suppress.* != "SOME_RULE"` is a filter clause, and against a
+# `suppress` entry written as a map it is a comparison the evaluator cannot make. A filter reads a
+# candidate it could not answer for as one that was not selected, so `%selected` comes back empty and
+# the gate `%selected !empty` is false. That gate asked how big a selection was and got a number.
+#
+# So the note must not fire. Measured over aws-guard-rules-registry at 6aca96e without the filter
+# boundary: 39 of its 193 rule and test pairs grew a note, every one of them this shape, and every one
+# of them telling an author their condition could not be answered when it could.
+#
+# Paired with `incomparable_condition_gate.guard`, where the incomparable comparison *is* the condition
+# and the note is right. The two differ in where the comparison sits and in nothing else.
+#
+let selected = Resources.*[ Type == "AWS::S3::Bucket"
+  Metadata.suppress.* != "SOME_RULE"
+]
+
+rule gate_reads_a_filtered_selection when %selected !empty {
+    Name == "definitely_not_this"
+}

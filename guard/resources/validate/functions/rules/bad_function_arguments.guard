@@ -1,0 +1,47 @@
+#
+# A scalar function argument that the data could not supply is a policy failure, not a broken tool.
+#
+# Every offending value below comes from bad_function_arguments.yaml. These used to be reported as
+# ParseError, which is the class the evaluator reserves for a malformed rules file: it is not
+# unevaluatable, so it aborted with "bailing" and the run exited 255 rather than 19. The rules file is
+# well formed, and REAL_VIOLATION below is a genuine finding that gets reported either way -- only the
+# exit code changed. A CI wrapper that reads 19 as "block the deploy" and 255 as "the tool broke" was
+# told by a non-compliant template to take the second branch, so a template author could suppress the
+# classification of their own violation by putting a -1 in a field some rule feeds to substring.
+#
+# converters.rs documents this same reclassification for the parse_* family and says why. substring,
+# join and regex_replace never got it.
+#
+let t = Resources.*[ Type == 'AWS::New::Service' ]
+let sg = Resources.*[ Type == 'AWS::EC2::SecurityGroup' ]
+
+rule REAL_VIOLATION when %sg !empty {
+    %sg.Properties.CidrIp != "0.0.0.0/0"
+}
+
+rule SUBSTRING_NEGATIVE_OFFSET when %t !empty {
+    let name = %t.Properties.Name
+    let offset = %t.Properties.NegativeOffset
+    let res = substring(%name, %offset, 3)
+    %res == "unreachable"
+}
+
+rule SUBSTRING_TEXT_OFFSET when %t !empty {
+    let name = %t.Properties.Name
+    let offset = %t.Properties.TextOffset
+    let res = substring(%name, %offset, 3)
+    %res == "unreachable"
+}
+
+rule JOIN_NUMERIC_DELIMITER when %t !empty {
+    let delimiter = %t.Properties.NumericDelimiter
+    let res = join(%t.Collection.*, %delimiter)
+    %res == "unreachable"
+}
+
+rule REGEX_REPLACE_NUMERIC_PATTERN when %t !empty {
+    let name = %t.Properties.Name
+    let pattern = %t.Properties.NumericPattern
+    let res = regex_replace(%name, %pattern, "x")
+    %res == "unreachable"
+}

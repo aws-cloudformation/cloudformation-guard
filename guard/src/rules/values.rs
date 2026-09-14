@@ -446,7 +446,9 @@ pub(crate) fn read_from(from_reader: &str) -> crate::rules::Result<MarkedValue> 
     match loader.load(from_reader.to_string()) {
         Ok(doc) => Ok(doc),
         Err(e) => match e {
-            Error::InternalError(..) => Err(e),
+            // Both are passed through rather than flattened into a `ParseError`, because the
+            // caller decides how to word them and needs to be able to tell them apart.
+            Error::InternalError(..) | Error::MissingDocument => Err(e),
             _ => Err(Error::ParseError(format!("{}", e))),
         },
     }

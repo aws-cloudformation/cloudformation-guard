@@ -55,8 +55,10 @@ impl<'input> Parser<'input> {
             let ret = convert_event(&*event, &(*self.pin.ptr).input);
             let location = system_mark_to_location((*event).start_mark);
 
+            // The delete has to happen before the conversion result is propagated, or an
+            // unconvertible event would leak the libyaml allocation on its way out.
             sys::yaml_event_delete(event);
-            Ok((ret, location))
+            Ok((ret?, location))
         }
     }
 }

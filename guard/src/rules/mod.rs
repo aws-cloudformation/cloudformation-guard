@@ -200,6 +200,23 @@ pub(crate) struct ComparisonClauseCheck {
     pub(crate) message: Option<String>,
     pub(crate) custom_message: Option<String>,
     pub(crate) status: Status,
+    /// True when the comparator could not apply the operator to these operands at all, as against
+    /// applying it and finding the claim false.
+    ///
+    /// The status is `FAIL` either way and that is not changing: an assertion that cannot be
+    /// answered is a failed assertion, and it already reports its reason. What this distinguishes is
+    /// the same operands reached as a `when` condition, where `FAIL` reads as "did not match" and
+    /// closes the gate silently -- the author's operator does not apply to their data and the run
+    /// says nothing. `RecordTracer::incomparable_reason_from_last_closed_record` reads it back so a
+    /// closed gate can say so.
+    ///
+    /// A `bool` beside the message rather than a distinct `ClauseCheck` variant, because every
+    /// reporter renders this record the same way and a new variant would have to be handled in each
+    /// of them to render identically. Skipped by serde for the same reason the notes go to stderr:
+    /// the JSON view of a record is what consumers parse, and this is the evaluator noting how it
+    /// reached a `FAIL` for its own later use, not part of this run's result.
+    #[serde(skip)]
+    pub(crate) operands_not_comparable: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -357,9 +374,74 @@ pub(crate) enum RecordType<'value> {
 pub(crate) trait RecordTracer<'value> {
     fn start_record(&mut self, context: &str) -> Result<()>;
     fn end_record(&mut self, context: &str, record: RecordType<'value>) -> Result<()>;
+
+    /// The explanation a clause recorded under the record closed most recently, if it recorded one.
+    ///
+    /// Read-only and read-back, which is the opposite of `record_diagnostic` and deliberately so: a
+    /// diagnostic must never influence a verdict, and this must never *be* a verdict. It supplies
+    /// text for a message that has already been decided.
+    ///
+    /// Defaults to `None` so a test double need not model the record tree. Only the recorder can answer it;
+    /// the scopes forward.
+    fn reason_from_last_closed_record(&self) -> Option<String> {
+        None
+    }
+
+    /// The reason a comparison under the record closed most recently could not compare its operands,
+    /// if one of them could not.
+    ///
+    /// Asked by the two gate sites about a whole condition, and existential on purpose, which is what
+    /// makes it safe to ask here rather than per branch. `reason_from_last_closed_record` has to be
+    /// asked per branch because it attributes a reason to one clause and the walk finds whichever was
+    /// written first; this asks whether the condition contains a comparison the evaluator could not
+    /// make at all, and every such comparison answers the same question the same way.
+    ///
+    /// Keyed on [`ComparisonClauseCheck::operands_not_comparable`] rather than on the presence of a
+    /// message. In a gate the two nearly coincide, and relying on that would mean the note fires
+    /// whenever some future clause records a message beside a `FAIL` -- inferring "could not be
+    /// evaluated" from a correlate, which is the mistake the branch already had to unpick once.
+    ///
+    /// Defaults to `None` on the same terms as the accessor above.
+    fn incomparable_reason_from_last_closed_record(&self) -> Option<String> {
+        None
+    }
+}
+
+/// What a variable lookup answers when no scope on the chain binds the name.
+///
+/// The two answers are far apart -- a clause that fails, or an error that ends the run and takes every
+/// other rule's findings with it -- and which is right depends on whether the name is one the rule text
+/// declares. A filter capture that matched no entry has no keys to show and nothing to report: an
+/// iteration capturing nothing is not an error, so the clause reading the name fails and the report
+/// still names every other rule's findings. A name the rule text never declares is a typo or a name
+/// belonging to another rule, which is a broken ruleset rather than a finding about the input.
+///
+/// Only a block knows which of the two it is, because only a block reads the capture names out of its
+/// own clauses, and the error is produced at the far end of the chain. So the answer travels with the
+/// lookup rather than being decided where it is needed.
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+pub(crate) enum UnboundName {
+    /// A block the lookup came out of declares the name as a filter capture.
+    EmptySelection,
+    /// No block does.
+    Error,
 }
 
 pub(crate) trait EvalContext<'value, 'loc: 'value>: RecordTracer<'value> {
+    /// Forget every key captured by a filter so far.
+    ///
+    /// Defaults to doing nothing, and only `RootScope` overrides it. It is called between top-level
+    /// rules, which is the boundary a capture must not cross: a capture belongs to the rule that made
+    /// it, and to the iteration inside that rule.
+    ///
+    /// A scope that does not own captures has nothing to forget, and deliberately does *not* reach up
+    /// and clear its parent's -- a rule referenced from inside another rule would otherwise discard the
+    /// captures of the rule that referenced it.
+    ///
+    /// Merged keys are forgotten along with captured ones. A merged key is a captured key that has
+    /// left the block that made it; the rule boundary is the same boundary for both.
+    fn reset_captures(&mut self) {}
+
     fn query(&mut self, query: &'value [QueryPart<'loc>]) -> Result<Vec<QueryResult>>;
     //fn resolve(&self, guard_clause: &GuardAccessClause<'_>) -> Result<Vec<QueryResult>>;
     fn find_parameterized_rule(
@@ -374,24 +456,80 @@ pub(crate) trait EvalContext<'value, 'loc: 'value>: RecordTracer<'value> {
     /// assertion and merely inapplicable when it is a `when` condition. Implementations
     /// that cache must key on `(rule_name, role)`, since the same rule reached from a body
     /// and from a gate are two different questions.
-    fn rule_status(&mut self, rule_name: &'value str, role: eval::ClauseRole) -> Result<Status>;
+    /// The rule's own answer, not a status.
+    ///
+    /// A status here cost a verdict: the cache stored `to_status(role)`, which maps
+    /// `Outcome::Unevaluatable` to SKIP for a gate, so a reference could not tell a rule that could
+    /// not be evaluated from one that did not apply and the enclosing rule was reported inapplicable.
+    fn rule_status(
+        &mut self,
+        rule_name: &'value str,
+        role: eval::ClauseRole,
+    ) -> Result<eval::Outcome>;
     fn resolve_variable(&mut self, variable_name: &'value str) -> Result<Vec<QueryResult>>;
+
+    /// Resolve `variable_name` for a lookup that started inside a nested block.
+    ///
+    /// Two things differ from `resolve_variable`.
+    ///
+    /// Keys merged out of a block that has already finished are withheld. Those keys are a union over
+    /// that block's iterations, while the clause asking is one iteration of another block, so answering
+    /// from the union lets one resource's key satisfy a second resource's clause. A key captured by a
+    /// filter in a scope whose iteration is still running is offered as usual: that key belongs to the
+    /// iteration doing the asking.
+    ///
+    /// `unbound` says what to answer if no scope on the chain binds the name, and it is the block the
+    /// lookup came out of that knows: see [`UnboundName`].
+    ///
+    /// Defaults to `resolve_variable`, which is the same thing for a scope that holds no merged keys
+    /// and produces no unresolved-variable error. A scope that only forwards lookups has to forward
+    /// this one too, or both distinctions are lost at that link in the chain.
+    fn resolve_variable_from_nested_block(
+        &mut self,
+        variable_name: &'value str,
+        _unbound: UnboundName,
+    ) -> Result<Vec<QueryResult>> {
+        self.resolve_variable(variable_name)
+    }
+
     fn add_variable_capture_key(
         &mut self,
         variable_name: &'value str,
         key: Rc<PathAwareValue>,
     ) -> Result<()>;
+
+    /// Take a key that a block which has now finished captured.
+    ///
+    /// Kept apart from `add_variable_capture_key` because the two differ in reach rather than in
+    /// content: the first is a key from the iteration that is running, this one a union over the
+    /// iterations of a block that has ended. `resolve_variable_from_nested_block` offers the first
+    /// and withholds this one.
+    ///
+    /// Defaults to `add_variable_capture_key`, so a scope that does not separate the two keeps the
+    /// behaviour it had.
+    fn add_merged_capture_key(
+        &mut self,
+        variable_name: &'value str,
+        key: Rc<PathAwareValue>,
+    ) -> Result<()> {
+        self.add_variable_capture_key(variable_name, key)
+    }
+
     fn add_variable_capture_index(&mut self, _: &str, _: Rc<PathAwareValue>) -> Result<()> {
         Ok(())
     }
 
-    /// Note that a clause took a path whose answer is going to change, without changing this run's
-    /// answer.
+    /// Note something the author should know that this run's answer does not carry.
     ///
-    /// Deliberately returns nothing, so a notice cannot influence a verdict: the evaluator can only
+    /// Two kinds so far: a clause took a path whose answer is going to change, and a condition that
+    /// could not be evaluated was absorbed by one that decided the gate on its own. Neither belongs
+    /// in the report, for the same reason -- the report on stdout is this run's result, and both of
+    /// these are about the rule text rather than about the input.
+    ///
+    /// Deliberately returns nothing, so a note cannot influence a verdict: the evaluator can only
     /// deposit a string, and no evaluation path reads one back. Defaulted to a no-op because the
     /// nested scopes forward it and the test doubles do not care.
-    fn record_deprecation(&mut self, _notice: String) {}
+    fn record_diagnostic(&mut self, _note: String) {}
 }
 
 pub(crate) trait EvaluationContext {

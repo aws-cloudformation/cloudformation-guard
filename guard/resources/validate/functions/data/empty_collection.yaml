@@ -1,0 +1,9 @@
+#
+# A bucket whose Grants list is present and holds nothing. Separate from template.yaml because the
+# count fixture there asserts an exact property count, and adding a key would move it.
+#
+Resources:
+  emptybucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      Grants: []

@@ -1,0 +1,18 @@
+#
+# A gate whose two conjuncts disagree about being answerable.
+#
+# `Enabled !EMPTY` is a defect in this rule text rather than a property of any input: EMPTY does not
+# apply to a bool, and the evaluator says so. `Name == "nope"` decides cleanly against a template
+# whose name is anything else.
+#
+# `Outcome::and` absorbs the violation, so the rule does not apply -- which is the right verdict, and
+# is what Kleene gives for `false AND unknown` -- and the absorbed conjunct's explanation goes with
+# it. Against a template with `Name: nope` the fold answers `Unevaluatable` instead, the rule fails,
+# and the type error is named. Whether the author is told their rule is malformed must not depend on
+# which template they happened to run it against, so the reason is recovered onto stderr, leaving the
+# verdict, the exit code and the report alone.
+#
+rule buckets_flagged_and_named when Enabled !EMPTY
+                                    Name == "nope" {
+    Resources.*.Properties.MustBeTrue == true
+}

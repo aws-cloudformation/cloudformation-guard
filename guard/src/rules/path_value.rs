@@ -48,6 +48,19 @@ impl std::fmt::Display for Location {
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub(crate) struct Path(pub(crate) String, pub(crate) Location);
 
+/// A key a document declared more than once inside one mapping.
+///
+/// Both locations are carried, not just the repeated one, because a warning that a key is duplicated
+/// without saying where is unusable on a template of any size: the reader needs the line they can
+/// see and the line that actually decided the value. A key name reused in two *different* mappings
+/// is ordinary and is not this.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct DuplicateKey {
+    pub(crate) path: String,
+    pub(crate) first: Location,
+    pub(crate) repeated: Location,
+}
+
 impl Path {
     #[cfg(test)]
     pub(crate) fn new(path: String, line: usize, col: usize) -> Path {
@@ -75,6 +88,16 @@ impl Path {
             Some(pos) => &self.0[pos + 1..],
             None => &self.0,
         }
+    }
+
+    /// True when this path locates nothing in the input.
+    ///
+    /// [`Path::root`] is the empty string, which is what a literal written in the rule text
+    /// carries -- it came from the ruleset, not from a position in the template. Reporters
+    /// render it as `[L:0,C:0]` and centre their context window on it, so a finding located
+    /// on an unlocated path shows the top of the file rather than the offending resource.
+    pub(crate) fn is_unlocated(&self) -> bool {
+        self.0.is_empty()
     }
 }
 
@@ -460,7 +483,26 @@ impl TryFrom<MarkedValue> for PathAwareValue {
 impl TryFrom<(MarkedValue, Path)> for PathAwareValue {
     type Error = Error;
 
+    /// Drops any duplicate keys the document held. Callers that report them use
+    /// `try_from_marked` instead; this exists for the ones with nowhere to report to.
     fn try_from(incoming: (MarkedValue, Path)) -> Result<Self, Self::Error> {
+        Self::try_from_marked(incoming, &mut vec![])
+    }
+}
+
+impl PathAwareValue {
+    /// The conversion, collecting the keys a mapping declared twice as it goes.
+    ///
+    /// This is where the duplicate is visible and nowhere earlier is: the loader keys its map on
+    /// `(String, Location)`, so two same-named keys at different lines are two separate entries and
+    /// both survive it. They collapse here, where the map is rebuilt keyed on the name alone, and
+    /// this is also the only point that holds the path the key was reached by. Collection is
+    /// per-mapping by construction, since the check is the insert into the map being built for one
+    /// mapping, so a name reused across two mappings cannot register.
+    pub(crate) fn try_from_marked(
+        incoming: (MarkedValue, Path),
+        duplicates: &mut Vec<DuplicateKey>,
+    ) -> Result<Self, Error> {
         let root = incoming.0;
         let path = incoming.1;
 
@@ -489,7 +531,8 @@ impl TryFrom<(MarkedValue, Path)> for PathAwareValue {
                 for (idx, each) in v.into_iter().enumerate() {
                     let sub_path = path.extend_usize(idx);
                     let loc = *each.location();
-                    let value = PathAwareValue::try_from((each, sub_path.with_location(loc)))?;
+                    let value =
+                        Self::try_from_marked((each, sub_path.with_location(loc)), duplicates)?;
                     result.push(value);
                 }
 
@@ -499,15 +542,47 @@ impl TryFrom<(MarkedValue, Path)> for PathAwareValue {
             MarkedValue::Map(map, loc) => {
                 let mut keys = Vec::with_capacity(map.len());
                 let mut values = indexmap::IndexMap::with_capacity(map.len());
+                let mut first_seen: indexmap::IndexMap<String, Location> =
+                    indexmap::IndexMap::with_capacity(map.len());
                 for ((each_key, loc), each_value) in map {
                     let sub_path = path.extend_string(&each_key);
                     let sub_path = sub_path.with_location(*each_value.location());
-                    let value = PathAwareValue::try_from((each_value, sub_path))?;
-                    values.insert(each_key.to_owned(), value);
-                    keys.push(PathAwareValue::String((
-                        path.with_location(loc),
-                        each_key.to_string(),
-                    )));
+                    let key_path = sub_path.0.clone();
+                    let value = Self::try_from_marked((each_value, sub_path), duplicates)?;
+                    // Pushed only when the insert added a new entry. `values` is an `IndexMap` and
+                    // dedups; `keys` did not, so a document with a repeated key left the two different
+                    // lengths -- and `eval_context` pairs them *positionally*
+                    // (`map.keys.iter().zip(map.values.values())`), so every entry after the duplicate
+                    // was bound to the wrong key.
+                    //
+                    // On a template declaring `A` twice, with `C` the only public bucket,
+                    // `Resources[ nm | Properties.Public == true ]` captured `nm` as "A" -- a bucket
+                    // whose `Public` is false -- and the last key was dropped entirely. Remove the
+                    // duplicate and the same rule captures "C". A rule that reports the wrong logical
+                    // id sends someone to the wrong resource.
+                    //
+                    // Only the key side was affected, which is why it needs a capture to see at all: a
+                    // value traversal such as `Resources.*[ Type == ... ] { ... }` never reads `keys`
+                    // and always found `C`.
+                    //
+                    // Last-write-wins on the value is unchanged, and the key keeps the position of its
+                    // first appearance, which is what `IndexMap` does for the value too.
+                    //
+                    // That same insert is what tells a duplicate from a first appearance, so the
+                    // collection below costs no second pass over the mapping.
+                    if values.insert(each_key.to_owned(), value).is_none() {
+                        first_seen.insert(each_key.to_owned(), loc);
+                        keys.push(PathAwareValue::String((
+                            path.with_location(loc),
+                            each_key.to_string(),
+                        )));
+                    } else if let Some(first) = first_seen.get(&each_key) {
+                        duplicates.push(DuplicateKey {
+                            path: key_path,
+                            first: *first,
+                            repeated: loc,
+                        });
+                    }
                 }
                 Ok(PathAwareValue::Map((
                     path.with_location(loc),
@@ -657,8 +732,8 @@ impl QueryResolver for PathAwareValue {
             QueryPart::This => self.select(all, &query[1..], resolver),
 
             QueryPart::Key(key) => {
-                match key.parse::<i64>() {
-                    Ok(index) => match self {
+                match list_index_of(self, key) {
+                    Some(index) => match self {
                         PathAwareValue::List((_, list)) => {
                             PathAwareValue::retrieve_index(self, index, list, query).map_or_else(
                                 |e| self.map_error_or_empty(all, e),
@@ -669,7 +744,7 @@ impl QueryResolver for PathAwareValue {
                         _ => self.map_some_or_error_all(all, query),
                     },
 
-                    Err(_) => match self {
+                    None => match self {
                         PathAwareValue::Map((path, map)) => {
                             //
                             // Variable interpolation support.
@@ -815,7 +890,23 @@ impl QueryResolver for PathAwareValue {
                             }
                         }
 
-                        LetValue::FunctionCall(_) => unreachable!(),
+                        // Not `unreachable!()` any more. It was true only because the parser could not
+                        // build a key filter with a function call on the right, and that was the defect --
+                        // the same input parsed as an ordinary filter over a property named `keys` and
+                        // returned a different verdict. Now that the parser builds it, an abort here would
+                        // be one panic away from any caller of this resolver.
+                        //
+                        // Resolving it is the live engine's job and it does resolve it, in
+                        // `eval_context::query_retrieval_with_converter`; this resolver has no function
+                        // machinery to reach for and no command path reaches this arm. So it says what it
+                        // cannot do rather than dying of it.
+                        LetValue::FunctionCall(function) => {
+                            return Err(Error::RetrievalError(format!(
+                                "A key filter with a function call on the right, {}, needs the evaluation \
+                                 context that resolves functions. This resolver does not have one.",
+                                function.name
+                            )))
+                        }
                     };
                     if query.len() > 1 {
                         let mut acc = Vec::with_capacity(selected.len());
@@ -1161,6 +1252,28 @@ fn compare_int_to_float(i: i64, f: f64) -> Option<Ordering> {
         Ordering::Equal if f > truncated => Ordering::Less,
         ordering => ordering,
     })
+}
+
+/// The index a [`QueryPart::Key`] stands for, and `None` when it stands for a key name.
+///
+/// `Items.0` is index access written without brackets, which is why a key is read as a number at all.
+/// A map takes that same text as a key name, and deciding on the text alone made any key that reads
+/// as an integer unaddressable: `Mappings.AccountToEnv."123456789012".Env` resolved to nothing on a
+/// template that has exactly that key, and quoting it in the rule changed nothing, because the quotes
+/// are gone by the time retrieval sees a `Key`. Quoting is how the language says "this is a name" --
+/// it is what `docs/KNOWN_ISSUES.md` prescribes for a key containing a dash -- so there was no
+/// spelling that worked. `"1.5"` resolved and `"80"` did not, which is the shape of an `i64` parse
+/// rather than of anything to do with maps.
+///
+/// Account ids, ports and status codes are all real map keys that read as integers, and a rule that
+/// names one silently matched nothing.
+///
+/// Both engines ask this question, so they get the same answer from one place.
+pub(crate) fn list_index_of(current: &PathAwareValue, key: &str) -> Option<i64> {
+    match current {
+        PathAwareValue::List(_) => key.parse::<i64>().ok(),
+        _ => None,
+    }
 }
 
 /// The offset an array index refers to in a collection of `len` elements, or `None` when it refers to

@@ -1,0 +1,10 @@
+#
+# The control for `absorbed_undecidable_condition.guard`: a gate that closes with nothing absorbed.
+#
+# One conjunct, decided, and false. The rule does not apply and there is nothing further to say about
+# it, so the run must be silent. A note here would fire on the ordinary case -- most gates in most
+# rulesets close because they were meant to -- and a note that common is one nobody reads.
+#
+rule buckets_named when Name == "nope" {
+    Resources.*.Properties.MustBeTrue == true
+}

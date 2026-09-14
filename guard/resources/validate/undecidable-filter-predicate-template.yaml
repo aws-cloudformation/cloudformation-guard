@@ -1,0 +1,8 @@
+# `Enabled` is a boolean so that `!EMPTY` on it cannot be answered, and `MustFail` is false so the clause
+# behind the filter has a real violation to report if the filter ever selects the resource.
+Resources:
+  V:
+    Type: AWS::EC2::Volume
+    Properties:
+      Enabled: true
+      MustFail: false

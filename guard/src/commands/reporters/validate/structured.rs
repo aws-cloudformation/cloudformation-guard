@@ -6,7 +6,9 @@ use crate::commands::validate::{parse_rules, DataFile, OutputFormatType, RuleFil
 use crate::commands::{ERROR_STATUS_CODE, FAILURE_STATUS_CODE};
 use crate::rules;
 use crate::rules::eval::eval_rules_file;
-use crate::rules::eval_context::{root_scope, simplified_json_from_root, FileReport};
+use crate::rules::eval_context::{
+    root_scope, simplified_json_from_root, FileReport, RuleFileError,
+};
 use crate::rules::exprs::RulesFile;
 use crate::rules::path_value::PathAwareValue;
 use crate::rules::Status;
@@ -28,6 +30,19 @@ pub struct StructuredEvaluator<'eval> {
 
 impl<'eval> StructuredEvaluator<'eval> {
     pub(crate) fn evaluate(&mut self) -> rules::Result<i32> {
+        // A rules file the parser rejects is dropped from `rules`, so no reporter ever sees it and
+        // nothing it would have reported becomes a finding. That left every format emitting the
+        // document a clean run emits: three empty verdict lists in json and yaml, `tests="0"
+        // failures="0" errors="0"` in junit, an empty `results` array in sarif. Exit 5 and the
+        // stderr text were the only signals, and the CI steps that consume these files -- a junit
+        // test reporter, `upload-sarif` under `if: always()` -- run regardless of exit status. An
+        // empty sarif `results` array does not read as "no news" either: uploading it resolves the
+        // alerts the previous run raised, so a typo in a rules file reads as "all policies pass".
+        //
+        // Collecting the failures here is what lets each reporter say so in its own vocabulary.
+        // The stderr write and the exit code are unchanged; this only adds to stdout.
+        let mut rule_file_errors: Vec<RuleFileError> = vec![];
+
         let rules = self.rule_info.iter().try_fold(
             vec![],
             |mut rules,
@@ -40,6 +55,10 @@ impl<'eval> StructuredEvaluator<'eval> {
                             file_name.underline()
                         ))?;
                         self.exit_code = ERROR_STATUS_CODE;
+                        rule_file_errors.push(RuleFileError {
+                            file_name: file_name.to_owned(),
+                            error: e.to_string(),
+                        });
                     }
                     Ok(Some(rule)) => rules.push((rule, file_name)),
                     Ok(None) => {}
@@ -68,6 +87,7 @@ impl<'eval> StructuredEvaluator<'eval> {
             OutputFormatType::Junit => Box::new(JunitReporter {
                 data: merged_data,
                 rules,
+                rule_file_errors: &rule_file_errors,
                 writer: self.writer,
                 exit_code: self.exit_code,
             }) as Box<dyn StructuredReporter>,
@@ -75,6 +95,7 @@ impl<'eval> StructuredEvaluator<'eval> {
                 Box::new(CommonStructuredReporter {
                     rules,
                     data: merged_data,
+                    rule_file_errors: &rule_file_errors,
                     writer: self.writer,
                     exit_code: self.exit_code,
                     output: self.output,
@@ -90,6 +111,7 @@ impl<'eval> StructuredEvaluator<'eval> {
 struct CommonStructuredReporter<'reporter> {
     rules: Vec<(RulesFile<'reporter>, &'reporter str)>,
     data: Vec<DataFile>,
+    rule_file_errors: &'reporter [RuleFileError],
     writer: &'reporter mut crate::utils::writer::Writer,
     exit_code: i32,
     output: OutputFormatType,
@@ -98,17 +120,32 @@ struct CommonStructuredReporter<'reporter> {
 impl<'reporter> StructuredReporter for CommonStructuredReporter<'reporter> {
     fn report(&mut self) -> rules::Result<i32> {
         let mut records = vec![];
+        let mut first_error = None;
         for each in &self.data {
             let mut file_report: FileReport = FileReport {
                 name: &each.name,
+                rule_file_errors: self.rule_file_errors.to_vec(),
                 ..Default::default()
             };
 
             for (rule, _) in &self.rules {
                 let mut root_scope = root_scope(rule, Rc::new(each.path_value.clone()));
 
-                if let Status::FAIL = eval_rules_file(rule, &mut root_scope, Some(&each.name))? {
-                    self.exit_code = FAILURE_STATUS_CODE;
+                // Not `?`. By the time an error comes back the rules that *could* be evaluated have
+                // their findings in the record, and returning here discarded the whole document: a JSON,
+                // YAML or SARIF consumer got one error line for a file whose other rules had real
+                // findings. The same defect as the single-line path had, in the path that machines read.
+                //
+                // The error is returned after the document is written, so the exit code still says the
+                // ruleset is broken rather than the template being non-compliant.
+                match eval_rules_file(rule, &mut root_scope, Some(&each.name)) {
+                    Ok(Status::FAIL) => self.exit_code = FAILURE_STATUS_CODE,
+                    Ok(_) => {}
+                    Err(e) => {
+                        if first_error.is_none() {
+                            first_error = Some(e);
+                        }
+                    }
                 }
 
                 let root_record = root_scope.reset_recorder().extract();
@@ -129,6 +166,24 @@ impl<'reporter> StructuredReporter for CommonStructuredReporter<'reporter> {
             _ => unreachable!(),
         };
 
-        Ok(self.exit_code)
+        match first_error {
+            // Classified the way the single-line path classifies it, and for the same reason: a name
+            // the rules file never declares is the author's mistake, not cfn-guard's. The document is
+            // already written above, so this only decides the code.
+            //
+            // `-o junit` reached `ERROR_STATUS_CODE` for this input already, because `JunitReporter`
+            // folds an eval error into the suite's `errors` total instead of returning `Err`. json,
+            // yaml and sarif came through here and exited -1. So one binary gave two answers about one
+            // rules file depending only on `-o`, and the format that disagreed with the other three
+            // was the one that had been looked at.
+            Some(e) if e.is_undeclared_name() => {
+                self.writer
+                    .write_err(format!("Error handling rule file, Error = {e}\n---"))?;
+
+                Ok(ERROR_STATUS_CODE)
+            }
+            Some(e) => Err(e),
+            None => Ok(self.exit_code),
+        }
     }
 }

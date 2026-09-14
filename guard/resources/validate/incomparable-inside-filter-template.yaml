@@ -1,0 +1,26 @@
+#
+# The shape aws-guard-rules-registry uses to suppress a rule, and the reason the incomparable-condition
+# note stops at a filter.
+#
+# `suppress` holds one map, `{SOME_RULE: because}`, not the bare string a reader would expect. So
+# `Metadata.suppress.*` in `incomparable_inside_filter_gate.guard`'s filter resolves to a map, and
+# comparing a map against a string is a comparison the evaluator cannot make. The filter reads that as
+# "this candidate was not selected", which excludes the bucket -- which is what suppressing it should do.
+#
+# The rule's own condition is `%selected !empty`, and it was answered: the selection is empty. Nothing
+# about the condition is undecidable, so the run must stay silent even though a comparison underneath it
+# could not be made.
+#
+# `Name` is what the body checks and it does not match, so a silent run has skipped a violation. That is
+# the cost of the filter's semantics and it is pre-existing; this fixture is about what is said, not
+# about what is checked.
+#
+Name: keep
+Resources:
+  bucket:
+    Type: AWS::S3::Bucket
+    Metadata:
+      suppress:
+        - SOME_RULE: because
+    Properties:
+      Whatever: 1

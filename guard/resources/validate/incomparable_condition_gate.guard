@@ -1,0 +1,22 @@
+#
+# A gate the comparator cannot answer, spelled so that it answers `Violated` rather than
+# `Unevaluatable`.
+#
+# `Port > "abc"` asks for an ordering between a number and a string. `compare_values` has no ordering
+# for that pair and says so, the comparator returns "not comparable", and the clause records a `FAIL`
+# carrying the comparator's own text. `FAIL` in a `when` condition reads as "did not match", so the gate
+# closes, the body below is never evaluated, and the run exits 0.
+#
+# The same author error as `absorbed_undecidable_condition.guard`'s `Enabled !EMPTY` -- an operator that
+# does not apply to the operands it was given -- reached through the comparator instead of through an
+# error the evaluator classifies as undecidable. That one exits 19 and names the type error. This one
+# said nothing at all on either stream until the note was added, so which of the two an author is told
+# about depended on which operator they had misused.
+#
+# The verdict is deliberately untouched. Routing the comparator's answer to `Unevaluatable` would fail
+# this closed at exit 19, and whether an undecidable gate should fail closed is a question this branch
+# has left open.
+#
+rule gate_cannot_compare_its_operands when Port > "abc" {
+    Name == "definitely_not_this"
+}

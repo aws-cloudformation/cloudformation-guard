@@ -1,11 +1,18 @@
-use crate::commands::{Executable, PRINT_JSON, PRINT_YAML, SUCCESS_STATUS_CODE};
+use crate::commands::validate::file_name_of;
+use crate::commands::{Executable, ERROR_STATUS_CODE, PRINT_JSON, PRINT_YAML, SUCCESS_STATUS_CODE};
 use crate::rules::Result;
 use crate::utils::reader::Reader;
 use crate::utils::writer::Writer;
 use clap::Args;
+use colored::Colorize;
 use std::fs::File;
+use std::path::Path;
 
 const ABOUT: &str = "Prints out the parse tree for the rules defined in the file.";
+/// Stands in for the file name when the rules came from stdin, so the parse-error message has
+/// something to name. `validate`'s payload path spells the same idea `RULES_STDIN[n]`; this command
+/// reads a single stream, so there is no index to carry.
+const STDIN_RULES_NAME: &str = "RULES_STDIN";
 const OUTPUT_HELP: &str = "Write to output file";
 const PRINT_JSON_HELP: &str = "Print output in JSON format. Use -p as the short flag";
 const PRINT_YAML_HELP: &str = "Print output in YAML format";
@@ -53,7 +60,41 @@ impl Executable for ParseTree {
         file.read_to_string(&mut content)?;
         let span = crate::rules::parser::Span::new_extra(&content, "");
 
-        let rules = crate::rules::parser::rules_file(span)?;
+        // Not `?`. A rules file the parser rejects is a mistake in that file, and `?` here carried the
+        // error to `main`'s catch-all, which exits -1 -- `INTERNAL_FAILURE` in the table at
+        // `guard/tests/utils.rs`. `validate` reports the same file as `ERROR_STATUS_CODE` from its own
+        // `Err` arm, so the two subcommands disagreed about whose fault one file was, and a CI step
+        // reading the code could not tell a bad ruleset from a broken tool.
+        //
+        // Reported here rather than left to `main` for the reason `validate` reports it itself: once a
+        // command classifies the error, `main`'s "Error occurred" prefix no longer describes what
+        // happened. The wording is `validate`'s, because agreeing on the wording is the same fix as
+        // agreeing on the code.
+        //
+        // A missing file still returns `Err` from `File::open` above and so keeps the -1 that
+        // `validate`, `test` and `parse-tree` already agree on.
+        let rules = match crate::rules::parser::rules_file(span) {
+            Ok(rules) => rules,
+            Err(e) => {
+                // The final component only, which is the name `validate` reports a rules file under
+                // (`file_name_of`, shared with it rather than reimplemented). Printing the path as
+                // given would put the caller's directory layout in the message, which is both noise
+                // and unassertable: the test-side path reducer normalises `.yaml`, `.yml` and `.json`
+                // and not `.guard`, so an expected string containing one would only hold for the
+                // checkout that produced it.
+                let name = match &self.rules {
+                    Some(path) => file_name_of(Path::new(path)),
+                    None => STDIN_RULES_NAME.to_string(),
+                };
+
+                writer.write_err(format!(
+                    "Parsing error handling rule file = {}, Error = {e}\n---",
+                    name.underline(),
+                ))?;
+
+                return Ok(ERROR_STATUS_CODE);
+            }
+        };
 
         match self.print_json {
             true => serde_json::to_writer_pretty(writer, &rules)?,

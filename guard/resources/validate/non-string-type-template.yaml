@@ -1,0 +1,6 @@
+# `Type` is a map rather than a string, so the reporter cannot name this resource's type.
+Resources:
+  Nested:
+    Type:
+      inner: not-a-string
+    key: wrong

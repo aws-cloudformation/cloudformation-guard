@@ -1,0 +1,20 @@
+#
+# A gate whose first branch cannot be answered and whose second one can, guarding a body that fails.
+#
+# `Enabled` is a boolean, so `!EMPTY` on it has no answer. `Name == "keep"` holds. A disjunction asks
+# for at least one satisfied branch, and it has one, so the gate opens and `MustBeTrue == true` runs
+# and fails.
+#
+# That is not what happened before the clause path carried `Outcome`. The undecidable branch left the
+# evaluator as an error, which returned from the conjunction immediately -- so the second branch was
+# never evaluated, the rule failed closed on its condition, and the violation inside the body went
+# unreported. The exit code was the same either way, which is why this needs an output assertion
+# rather than a status one: the improvement is that the finding appears, not that the file fails.
+#
+# `Outcome::or` absorbs only `Satisfied`, so this is not a general relaxation. A disjunction whose
+# branches are all undecidable is still undecidable, and a gate that cannot be decided still fails
+# its rule closed -- `unevaluatable_gate_guarding_a_violation.guard` is that case.
+#
+rule guarded when Enabled !EMPTY or Name == "keep" {
+    MustBeTrue == true
+}

@@ -206,6 +206,11 @@ fn pprint_failed_sub_tree(
                     from,
                     status: Status::FAIL,
                     to,
+                    // Not rendered. A comparison the evaluator could not make reports the same way as
+                    // one it made and found false, because as an assertion it is a failure either way
+                    // and `message` already carries the comparator's own text. The distinction is for
+                    // the gate sites, which read it back off the record.
+                    ..
                 }) => {
                     let custom_message = custom_message.as_ref().map_or("".to_string(), |s| {
                         format!(" Message = [{}]", s.replace('\n', ";"))

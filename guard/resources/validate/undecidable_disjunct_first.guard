@@ -1,0 +1,15 @@
+#
+# `violated_disjunct_first.guard` mirrored: the same two branches, the undecidable one written first.
+#
+# Same verdict, same exit code, and the same reason -- which is the point of the pair. Whichever order
+# the author wrote the branches in, the clause that could not be evaluated is `Enabled !EMPTY`, so
+# that is the clause the failure has to name.
+#
+# This spelling already reported the right reason before the fix, by luck: reading the explanation
+# back out of the closed condition record returned the first one recorded anywhere underneath, and
+# here the undecidable branch happens to be first. Its mirror image is what showed the attribution was
+# positional.
+#
+rule condition_reason_is_not_positional when Enabled !EMPTY or Port > "abc" {
+    Name == "definitely_not_this"
+}

@@ -1,0 +1,14 @@
+#
+# Data for `incomparable_condition_gate.guard` and its control `decidable_false_condition_gate.guard`,
+# whose gates differ only in what `Port` is compared against.
+#
+# `Port` is a number. Against `"abc"` the comparator cannot order the two and answers that it could not
+# compare them, which the evaluator reads as "did not match" and which closes the gate. Against `999`
+# the comparison is made and is false, which closes the gate too. Same verdict, same exit code, and
+# only one of the two is a defect in the rule text.
+#
+# `Name` is what both bodies check, and it does not match either of them, so a run that reports nothing
+# has genuinely skipped a violation rather than found nothing to report.
+#
+Port: 80
+Name: keep

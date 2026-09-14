@@ -42,8 +42,35 @@ pub(crate) fn json_parse(
         match entry {
             QueryResult::Literal(v) | QueryResult::Resolved(v) => {
                 if let PathAwareValue::String((path, val)) = &**v {
-                    let value = serde_yaml::from_str::<serde_yaml::Value>(val)?;
-                    aggr.push(Some(PathAwareValue::try_from((&value, path.clone()))?));
+                    // A string the parser refuses is `IncompatibleError`, and it names the property.
+                    //
+                    // Both errors here describe a value in the *template*, and both propagated
+                    // unchanged: the parse error as `YamlError`, the conversion as `InternalError`.
+                    // Neither class is recognised by `is_unevaluatable`, so a duplicate key in one
+                    // embedded string aborted the evaluation with "bailing" and the run exited 255 --
+                    // while a security group open to 0.0.0.0/0 in the same file was reported and
+                    // counted. Only the exit code was wrong, and that is the code a CI wrapper reads to
+                    // tell "block the deploy" from "the tool broke, retry it".
+                    //
+                    // A duplicate key is the ordinary case for this. RFC 8259 leaves duplicate names to
+                    // the implementation and most JSON readers keep the last one, so a template can
+                    // carry a policy that every other tool in the pipeline accepts.
+                    //
+                    // Neither message named the property, so an author with several embedded strings had
+                    // to guess which was at fault. The conversion error was worse: its own path is the
+                    // one inside the parsed value, which is empty at the root, and it printed
+                    // "for key in a map at ,".
+                    let value = serde_yaml::from_str::<serde_yaml::Value>(val).map_err(|e| {
+                        crate::Error::IncompatibleError(format!(
+                            "failed to parse the string at {path} as JSON: {e}"
+                        ))
+                    })?;
+                    let parsed = PathAwareValue::try_from((&value, path.clone())).map_err(|e| {
+                        crate::Error::IncompatibleError(format!(
+                            "failed to convert the parsed string at {path}: {e}"
+                        ))
+                    })?;
+                    aggr.push(Some(parsed));
                 } else {
                     aggr.push(None);
                 }

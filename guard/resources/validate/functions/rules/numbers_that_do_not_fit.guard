@@ -1,0 +1,29 @@
+#
+# A value the conversion could not represent must not be reported as a number.
+#
+# Both rules below passed at exit 0 on this data, and each one names the wrong answer it was given.
+#
+# `Budget` is 1.0e40. `parse_int` cast it with `as`, which clamps, so the conversion answered exactly
+# i64::MAX and the first rule -- which asserts the budget *is* 9223372036854775807 -- was satisfied. That
+# is the saturation stated as plainly as it can be: a budget of 1.0e40 was reported as the largest signed
+# 64-bit integer, and nothing in the output said a value had been clamped.
+#
+# `Overflow` is the string "1e400". `parse::<f64>()` answers Ok(infinity) for a literal that does not fit
+# rather than an error, so the second rule -- infinity is greater than 1.0e300 -- was satisfied too.
+#
+# The consequence both share is that two different numbers become the same one: 1.0e30 and 1.0e40 both
+# clamp to i64::MAX, and "1e400" and "9e999" both become infinity, so a rule asserting a pair is equal
+# passes on a pair that is not. That value-to-value shape needs a comparison with a function call on both
+# sides, which has an exit-code problem of its own, so it is covered separately.
+#
+let template = Resources.*[ Type == 'AWS::New::Service' ]
+
+rule BUDGET_IS_NOT_I64_MAX when %template !empty {
+    let budget = parse_int(%template.Properties.Budget)
+    %budget == 9223372036854775807
+}
+
+rule OVERFLOWING_STRING_IS_NOT_HUGE when %template !empty {
+    let overflow = parse_float(%template.Properties.Overflow)
+    %overflow > 1.0e300
+}

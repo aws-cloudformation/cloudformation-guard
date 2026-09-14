@@ -93,7 +93,7 @@ The above two clauses will `PASS` for the example template.
 
 `empty` can be used to check if string value queries have an empty string (`""`) defined.
 
-On a value that cannot be empty — a number or a boolean — `empty` has no answer, so the clause fails and the report names the path and the operator. `not empty` fails as well: an integer is not empty, but reporting it as non-empty would accept a clause that never checked anything. Only the clause fails; the rest of the rules in the file are still evaluated and reported.
+On a value that cannot be empty -- a number or a boolean -- `empty` has no answer, so the clause fails and the report names the path and the operator. `not empty` fails as well: an integer is not empty, but reporting it as non-empty would accept a clause that never checked anything. Only the clause fails; the rest of the rules in the file are still evaluated and reported.
 
 `exists` - Checks if each occurrence of the query exists.
 
@@ -108,7 +108,7 @@ The above clause will `PASS` for the example template as `BucketEncryption` is d
 
 #### Array indexes
 
-An index selects one element: `Items[0]` is the first and `Items[-1]` is the last, with `Items[-2]` the one before it. An index that names no element — past the end in either direction, or too large to be an offset at all — does not resolve, and the clause reports that rather than selecting a different element.
+An index selects one element: `Items[0]` is the first and `Items[-1]` is the last, with `Items[-2]` the one before it. An index that names no element -- past the end in either direction, or too large to be an offset at all -- does not resolve, and the clause reports that rather than selecting a different element.
 
 ```
 # the last tag, whatever the length of the list
@@ -224,6 +224,20 @@ The same explanation appears under `not_applicable_reasons` in `--output-format 
 
 A rule skipped because its condition was decided and simply not met prints no such line, so the message appears only where something needs attention. If you see it, the fix is in the rule or the input rather than in Guard: compare against a value of the same kind, or guard the clause so the mismatch is explicit.
 
+There is a second, narrower case that behaves differently, and the difference is worth knowing because the two read alike. Everything above is about a condition Guard *decided* and found not to hold. A condition Guard cannot evaluate at all is not the same thing: `EMPTY` on a number or a boolean, or a clause whose reference resolved to no values, has no answer in either polarity, and there is nothing for the rule to be applicable or inapplicable to.
+
+Those conditions fail their rule rather than making it inapplicable:
+
+```
+rule volumes_are_encrypted when Resources.*[ Type == 'AWS::EC2::Volume' ].Properties.Enabled !EMPTY {
+    Resources.*[ Type == 'AWS::EC2::Volume' ].Properties.Encrypted == true
+}
+```
+
+Against a template whose `Enabled` is `true`, this reports `FAIL` and exits `19`, naming the operation and the path that could not support it. Reporting the rule as not applicable would exit `0` and take the guarded check down with it, and a rule that never fires looks exactly like a rule that holds.
+
+So a condition Guard could not answer fails; a condition Guard answered in the negative, including the cross-kind comparison above, leaves the rule not applicable. If a rule starts failing on a condition where it used to be skipped, that is the case to look for: the fix is to compare against an operand the operator supports, or to make the condition express what should happen when the value is absent.
+
 Below are a couple of examples of clauses using binary operators:
 
 - Based on the Template-1 example template:
@@ -267,6 +281,16 @@ Resources.NewVolume.Properties.VolumeType IN [ 'io1','io2','gp3' ]
 ```
 
 > While these examples illustrate using `S3Bucket`, `NewVolume` in the query, often these are user defined and can be arbitrarily named in an IaC template. To write a rule that is generic and applies to all `AWS::S3::Bucket` resources defined in the template the most common form of query used is `Resources.*[ Type == ‘AWS::S3::Bucket’ ]` to select them. See [Guard: Query and Filtering](QUERY_AND_FILTERING.md) for details on usage and explore the examples directory.
+
+#### Escaping inside literals
+
+A backslash consumes the character after it, and what the pair contributes depends on which kind of literal it is in. A literal ends at the first delimiter that no backslash consumed, and it may not cross a line ending: a literal with no closing delimiter on its own line is a parse error naming the delimiter that is missing.
+
+A string literal understands two escapes. `\\` is one backslash, and a backslash before the quote that opened the literal is that quote, so `'it\'s'` and `'x\\'` are both writable. A backslash before anything else is not an escape and stays in the value, backslash included, which is what lets a regular expression written as a string keep its own escapes without doubling them -- `"^arn:(\w+):(\d+)$"` reaches the regex engine with `\w` and `\d` intact.
+
+A regular expression literal understands one escape, `\/`, which stands for a plain `/`. Every other backslash is left exactly as written, because the body is handed to a regex engine that has an escape layer of its own. That includes `\\`, which reaches the engine as the two characters that mean one literal backslash there; the pair closes itself, so a `/` after it ends the literal rather than being read as one more escaped delimiter.
+
+That last point changed, and a rule written for cfn-guard 3.2.x that spells `\\/` inside a regular expression no longer parses. See [Known Issues](KNOWN_ISSUES.md) for what to change it to.
 
 #### Comparing against a query that resolves to no values
 
