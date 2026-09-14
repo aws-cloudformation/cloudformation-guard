@@ -7302,50 +7302,227 @@ fn every_operator_and_operand_shape_agrees_with_a_stated_oracle() -> Result<()> 
     Ok(())
 }
 
-#[test]
-fn probe_vacuous_pass_record_shape() -> Result<()> {
-    fn dump(r: &EventRecord<'_>, depth: usize) {
-        let kind = match &r.container {
-            Some(RecordType::FileCheck(n)) => format!("FileCheck {:?}", n.status),
-            Some(RecordType::RuleCheck(n)) => format!("RuleCheck {:?}", n.status),
-            Some(RecordType::GuardClauseBlockCheck(b)) => {
-                format!("GuardClauseBlockCheck {:?}", b.status)
+/// A range inside a list literal is a range.
+///
+/// `contained_in` decided list membership with `Vec::contains`, which compares by `PartialEq`, and
+/// `PartialEq` is asked `element == value` -- the direction that has no range arm, and must not get
+/// one, because `eq` has to stay symmetric while membership does not. So a range nested in a list
+/// literal matched nothing, in either polarity. For a `Port` of 85, `Port in [r[80,90]]` failed and
+/// `Port not in [r[80,90]]` passed: a denylist of port ranges that admits every port.
+///
+/// Unwrapped, the same question was always answered correctly, because `Port in r[80,90]` reaches
+/// `compare_eq`, which is where the range table lives. Both spellings are asserted here, since the
+/// two agreeing is the actual property.
+///
+/// Every cell has its opposite, so a fix that made membership always true, or always false, fails
+/// rather than passing half the table.
+#[rstest::rstest]
+#[case::covering_range_wrapped("in [r[80,90]]", Status::PASS)]
+#[case::covering_range_unwrapped("in r[80,90]", Status::PASS)]
+#[case::covering_range_wrapped_negated("not in [r[80,90]]", Status::FAIL)]
+#[case::covering_range_unwrapped_negated("not in r[80,90]", Status::FAIL)]
+#[case::excluding_range_wrapped("in [r[10,20]]", Status::FAIL)]
+#[case::excluding_range_wrapped_negated("not in [r[10,20]]", Status::PASS)]
+#[case::range_beside_a_matching_value("in [r[10,20], 85]", Status::PASS)]
+#[case::range_beside_a_non_matching_value("in [r[10,20], 99]", Status::FAIL)]
+#[case::two_ranges_one_covering("in [r[10,20], r[80,90]]", Status::PASS)]
+#[case::two_ranges_neither_covering("in [r[10,20], r[30,40]]", Status::FAIL)]
+fn a_range_inside_a_list_literal_is_a_range(
+    #[case] clause: &str,
+    #[case] expected: Status,
+) -> Result<()> {
+    const INPUT: &str = r#"
+    {
+        Resources: {
+            Vol: {
+                Type: 'AWS::EC2::Volume',
+                Properties: { Port: 85 }
             }
-            Some(RecordType::ClauseValueCheck(ClauseCheck::Success)) => {
-                "ClauseValueCheck Success".to_string()
-            }
-            Some(RecordType::ClauseValueCheck(_)) => "ClauseValueCheck other".to_string(),
-            Some(other) => format!("{:?}", std::mem::discriminant(other)),
-            None => "none".to_string(),
-        };
-        println!(
-            "PROBE {}{} children={}",
-            "  ".repeat(depth),
-            kind,
-            r.children.len()
-        );
-        for c in &r.children {
-            dump(c, depth + 1);
         }
     }
-    for (label, data) in [
-        (
-            "empty list  Size: []",
-            r#"{ "Resources": { "V": { "Type": "AWS::EC2::Volume", "Properties": { "Size": [] } } } }"#,
-        ),
-        (
-            "normal pass Size: 50",
-            r#"{ "Resources": { "V": { "Type": "AWS::EC2::Volume", "Properties": { "Size": 50 } } } }"#,
-        ),
-    ] {
-        let rules =
-            "rule r {\n    Resources.*[ Type == 'AWS::EC2::Volume' ].Properties.Size == 50\n}\n";
-        let rules_file = RulesFile::try_from(rules)?;
-        let values = PathAwareValue::try_from(data)?;
-        let mut root = root_scope(&rules_file, Rc::new(values));
-        let status = eval_rules_file(&rules_file, &mut root, None)?;
-        println!("PROBE === {} -> {:?}", label, status);
-        dump(&root.reset_recorder().extract(), 0);
-    }
+    "#;
+
+    // A plain template rather than `format!`, following the convention above: the rule is mostly
+    // braces and the escaping reads worse than the rule it describes.
+    let rules = "rule ranged { Resources.Vol.Properties.Port CLAUSE }".replace("CLAUSE", clause);
+
+    assert_eq!(
+        expected,
+        rule_status_in(&rules, INPUT, "ranged")?,
+        "clause: Port {}",
+        clause
+    );
+
     Ok(())
 }
+
+/// The same regex inside a list literal, which panicked at a second and independent site.
+///
+/// `IN [/re/]` does not reach `compare_eq` first. `contained_in` asks `Vec`-style membership, which
+/// is `PathAwareValue::eq`, and that arm held `regex.is_match(s).unwrap()` under the comment "given
+/// that we have already validated the regular expression". The premise is false: validation at
+/// parse time proves the pattern compiles and says nothing about whether a match completes. So this
+/// spelling aborted at `path_value.rs` while the unwrapped one aborted at `operators.rs`.
+///
+/// `PartialEq` returns `bool` and cannot report an error, and the arm cannot be removed -- the map
+/// key filter in `QueryResolver::select` decides `keys == /re/` through it. So `eq` answers `false`
+/// and `contained_in` asks `compare_eq` as well, reading the error `eq` had to swallow. That is
+/// what makes these three spellings agree with the four above rather than reporting a plain
+/// mismatch.
+#[rstest::rstest]
+#[case::in_a_list("IN [/(?!x)((a+)+)b/]")]
+#[case::not_in_a_list("NOT IN [/(?!x)((a+)+)b/]")]
+#[case::in_a_mixed_list("IN [/(?!x)((a+)+)b/, 5]")]
+fn a_regex_in_a_list_literal_fails_the_clause_instead_of_aborting(#[case] rhs: &str) {
+    let clause = format!("Resources.*[ Type == 'AWS::EC2::Volume' ].Properties.Size {rhs}");
+
+    let outcome =
+        std::panic::catch_unwind(|| status_and_messages(clause.as_str(), THIRTY_AS).unwrap());
+
+    let (status, messages) = match outcome {
+        Ok(pair) => pair,
+        Err(..) => panic!("`{}` panicked instead of returning a verdict", clause),
+    };
+
+    assert_eq!(
+        Status::FAIL,
+        status,
+        "`{}` must fail the clause, and must agree with the unwrapped spelling: one input \
+         answering differently depending on whether the regex is bracketed is its own defect",
+        clause
+    );
+    assert!(
+        messages
+            .iter()
+            .any(|m| m.contains("regular expression could not be evaluated")),
+        "`{}` should give the same reason the unwrapped spelling gives; recorded {:?}",
+        clause,
+        messages
+    );
+}
+
+/// A regex that cannot be evaluated fails its clause instead of aborting the process.
+///
+/// `fancy_regex` returns a `Result` from `is_match` rather than a `bool`, because a backtracking
+/// engine can run out of budget instead of answering. A pattern needs a lookaround or a
+/// backreference to be put on that engine at all, and then a nested quantifier makes the work grow
+/// with the length of the subject. `compare_eq` passed that error up as `Error::RegexError`, and
+/// `match_value` had arms for `Ok` and for `Error::NotComparable` and met everything else with
+/// `_ => unreachable!()`. So `Size == /(?!x)((a+)+)b/` against thirty characters aborted at exit
+/// 101, and every other rule in the file lost its verdict with it.
+///
+/// The four spellings here are the ones that reach `match_value`. The unwrapped `IN` and `NOT IN`
+/// arrive through `contained_in`'s final arm rather than through `EqOperation`, which is a second
+/// route to the same panic and would not be covered by `==` alone.
+///
+/// `catch_unwind` is what makes the absence of the panic explicit. Asserting on the status alone
+/// would not: an aborting build never returns a status to assert on, so the assertion would be
+/// unreachable rather than false.
+#[rstest::rstest]
+#[case::equals("==")]
+#[case::not_equals("!=")]
+#[case::in_bare("IN")]
+#[case::not_in_bare("NOT IN")]
+fn a_regex_that_exceeds_the_backtrack_limit_fails_the_clause_instead_of_aborting(
+    #[case] operator: &str,
+) {
+    let clause = format!(
+        "Resources.*[ Type == 'AWS::EC2::Volume' ].Properties.Size {operator} {CATASTROPHIC}"
+    );
+
+    let outcome =
+        std::panic::catch_unwind(|| status_and_messages(clause.as_str(), THIRTY_AS).unwrap());
+
+    let (status, messages) = match outcome {
+        Ok(pair) => pair,
+        Err(..) => panic!("`{}` panicked instead of returning a verdict", clause),
+    };
+
+    assert_eq!(
+        Status::FAIL,
+        status,
+        "`{}` must fail the clause; the comparison has no answer, so neither polarity gets to \
+         claim one",
+        clause
+    );
+    assert!(
+        messages
+            .iter()
+            .any(|m| m.contains("regular expression could not be evaluated")),
+        "`{}` should say the regex could not be evaluated, so the author can find the pattern; \
+         recorded {:?}",
+        clause,
+        messages
+    );
+    assert!(
+        messages.iter().any(|m| m.contains("backtracking")),
+        "`{}` should carry fancy_regex's own reason rather than the `RegexError` wrapper's text, \
+         which claims a parse error for a pattern that parsed; recorded {:?}",
+        clause,
+        messages
+    );
+}
+
+/// The control: an ordinary regex is unaffected, in both spellings and both polarities.
+///
+/// The fix reaches every regex comparison, so the ordinary cases need pinning too -- an
+/// unevaluatable pattern reporting correctly is worth nothing if a pattern that matches stopped
+/// matching. `IN [/re/]` is included because it is the spelling whose membership loop was
+/// restructured.
+#[rstest::rstest]
+#[case::equals_matching("== /prod/", Status::PASS)]
+#[case::equals_not_matching("== /nomatch/", Status::FAIL)]
+#[case::not_equals_matching("!= /prod/", Status::FAIL)]
+#[case::not_equals_not_matching("!= /nomatch/", Status::PASS)]
+#[case::in_list_matching("IN [/prod/]", Status::PASS)]
+#[case::in_list_not_matching("IN [/nomatch/]", Status::FAIL)]
+#[case::not_in_list_matching("NOT IN [/prod/]", Status::FAIL)]
+#[case::not_in_list_not_matching("NOT IN [/nomatch/]", Status::PASS)]
+fn an_ordinary_regex_comparison_is_unchanged(#[case] comparison: &str, #[case] expected: Status) {
+    const INPUT: &str = r#"
+    {
+        Resources: {
+            V: { Type: 'AWS::EC2::Volume', Properties: { Size: 'prod-volume' } }
+        }
+    }
+    "#;
+
+    let clause = format!("Resources.*[ Type == 'AWS::EC2::Volume' ].Properties.Size {comparison}");
+    let (status, _) = status_and_messages(clause.as_str(), INPUT).unwrap();
+
+    assert_eq!(expected, status, "clause: {}", clause);
+}
+
+/// Every comparison message recorded anywhere in the evaluation tree.
+fn recorded_comparison_messages(record: &EventRecord<'_>, out: &mut Vec<String>) {
+    if let Some(RecordType::ClauseValueCheck(ClauseCheck::Comparison(check))) = &record.container {
+        if let Some(message) = &check.message {
+            out.push(message.clone());
+        }
+    }
+    for child in &record.children {
+        recorded_comparison_messages(child, out);
+    }
+}
+
+/// Runs one clause and returns the rule's status together with the comparison messages recorded.
+fn status_and_messages(clause: &str, input: &str) -> Result<(Status, Vec<String>)> {
+    let rules = format!("rule r {{\n  {clause}\n}}");
+    let rules_file = RulesFile::try_from(rules.as_str())?;
+    let value = PathAwareValue::try_from(input)?;
+    let mut root = root_scope(&rules_file, Rc::new(value));
+    let status = eval_rules_file(&rules_file, &mut root, None)?;
+    let mut messages = Vec::new();
+    recorded_comparison_messages(&root.reset_recorder().extract(), &mut messages);
+    Ok((status, messages))
+}
+
+const CATASTROPHIC: &str = "/(?!x)((a+)+)b/";
+
+const THIRTY_AS: &str = r#"
+{
+    Resources: {
+        V: { Type: 'AWS::EC2::Volume', Properties: { Size: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' } }
+    }
+}
+"#;

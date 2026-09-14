@@ -274,18 +274,38 @@ impl PartialEq for PathAwareValue {
 
             (PathAwareValue::Bool((_, b1)), PathAwareValue::Bool((_, b2))) => b1 == b2,
 
+            // `unwrap_or(false)` rather than `unwrap`, and the difference is a process abort.
+            //
+            // The `unwrap` carried the comment "given that we have already validated the regular
+            // expression", which is a false premise. Validation at parse time proves the pattern
+            // *compiles*; it says nothing about whether a match *completes*. `fancy_regex` returns
+            // a `Result` from `is_match` because a pattern with a lookaround or a backreference
+            // runs on its backtracking engine, and a nested quantifier can then exceed the
+            // backtrack limit on a long value -- `/(?!zzz)(\w+\s?)+!/` against eighty characters
+            // holding no `!` did it, at exit 101, for the whole file.
+            //
+            // `false` is a compromise and not the honest answer, so it is worth being plain about
+            // what it costs. `PartialEq` returns `bool` and cannot report anything, and the arms
+            // cannot simply go: the map key filter in `QueryResolver::select` decides
+            // `Metadata[ keys == /^aws/ ]` through them, which `aws_meta_appender` relies on, and
+            // five tests fail if they stop matching. So through `eq` a regex that cannot be
+            // evaluated reads as "not equal", and a key filter selects nothing for that key --
+            // indistinguishable from a pattern that genuinely did not match.
+            //
+            // Where a verdict can be reported, it is. The comparison operators do not come through
+            // here: `X == /re/` asks `compare_eq`, and `X in [/re/]` reaches `contained_in`, which
+            // asks `compare_eq` as well and reports its error. Both fail the clause and name the
+            // reason instead of guessing.
             (PathAwareValue::String((_, s)), PathAwareValue::Regex((_, r))) => {
-                if let Ok(regex) = Regex::new(r.as_str()) {
-                    regex.is_match(s.as_str()).unwrap() // given that we have already validated the regular expression
-                } else {
-                    false
+                match Regex::new(r.as_str()) {
+                    Ok(regex) => regex.is_match(s.as_str()).unwrap_or(false),
+                    Err(_) => false,
                 }
             }
             (PathAwareValue::Regex((_, r)), PathAwareValue::String((_, s))) => {
-                if let Ok(regex) = Regex::new(r.as_str()) {
-                    regex.is_match(s.as_str()).unwrap() // given that we have already validated the regular expression
-                } else {
-                    false
+                match Regex::new(r.as_str()) {
+                    Ok(regex) => regex.is_match(s.as_str()).unwrap_or(false),
+                    Err(_) => false,
                 }
             }
             (PathAwareValue::Regex((_, r)), PathAwareValue::Regex((_, s))) => r == s,
@@ -330,9 +350,15 @@ impl PartialEq for PathAwareValue {
 ///
 /// Range membership used to be answered here too, which broke symmetry outright:
 /// `Int(50) == RangeInt(5..100)` held while the reverse did not, there being no reverse arm. Those
-/// arms were unreachable and were removed rather than mirrored. Nothing is lost, because every
-/// clause is decided by `compare_eq`, which keeps its own range table and recurses through itself
-/// for lists and maps, so a range nested in a list literal never arrives here either.
+/// arms were removed rather than mirrored, because membership is `compare_eq`'s job and it keeps its
+/// own range table.
+///
+/// A range nested in a list literal does still arrive here, through `Vec::contains` in
+/// `contained_in`, and that is what the removed arms were not reaching: `contains` asks
+/// `element == value`, so it needed the reverse arm, the one that never existed. Membership through a
+/// list was therefore answered `false` for every range, in both polarities, until `contained_in`
+/// started asking `compare_eq` as well. The arms stay out; the caller asks the function that has the
+/// table.
 ///
 /// Numeric widening does stay, reached through `compare_values`. Unlike the other two it is an
 /// equivalence relation on the values it relates, and `Hash` agrees with it.
