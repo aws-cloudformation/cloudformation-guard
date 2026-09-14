@@ -1,0 +1,19 @@
+###
+# A test file no rules file claims, which is what a rules file rename leaves behind.
+#
+# The rules file beside this one is `s3_bucket.guard`, and `s3_tests.yml` does not start with
+# `s3_bucket`, so nothing runs this suite. The suite would fail if anything did: the template sets
+# Encrypted to false and the expectation says PASS. Renaming this file to `s3_bucket_tests.yml` and
+# changing nothing else takes the run from exit 0 to exit 7.
+###
+---
+- name: this suite must fail if it is ever run - the template violates the rule
+  input:
+    Resources:
+      One:
+        Type: AWS::S3::Bucket
+        Properties:
+          Encrypted: false
+  expectations:
+    rules:
+      bucket_must_be_encrypted: PASS
