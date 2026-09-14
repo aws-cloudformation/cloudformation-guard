@@ -454,6 +454,110 @@ fn test_with_converter() -> Result<()> {
     Ok(())
 }
 
+/// A query names one property. Answering it with a differently-named one is a wrong answer, not a
+/// lenient one, and the report says so: the resolved path is the property the data has, so
+/// `Properties.Tags.Name` against `Properties.Tag.Name` produced a ComparisonError over
+/// `/Resources/s3/Properties/Tag/Name` and compared a value the rule never asked about.
+#[test]
+fn a_query_for_a_plural_property_does_not_resolve_to_a_singular_one() -> Result<()> {
+    let path_value = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(
+        r#"
+        Resources:
+           s3:
+             Type: AWS::S3::Bucket
+             Properties:
+               Tag:
+                 Name: mybucket
+        "#,
+    )?)?;
+    let root = Rc::new(path_value);
+
+    for query in [
+        "Resources.s3.Properties.Tags.Name",
+        "Resources.s3.Properties.Policies.Name",
+    ] {
+        let parsed = AccessQuery::try_from(query)?.query;
+        let mut eval = BasicQueryTesting {
+            root: Rc::clone(&root),
+            recorder: None,
+        };
+        let query_results = eval.query(&parsed)?;
+        assert_eq!(query_results.len(), 1);
+        match &query_results[0] {
+            QueryResult::UnResolved(ur) => assert_eq!(
+                ur.traversed_to.self_path().0.as_str(),
+                "/Resources/s3/Properties"
+            ),
+            QueryResult::Resolved(res) => panic!(
+                "{query} resolved to {}, a property it did not name",
+                res.self_path().0.as_str()
+            ),
+            QueryResult::Literal(_) => unreachable!(),
+        }
+    }
+
+    Ok(())
+}
+
+/// The leniency that is meant to be there: one property spelled in another case convention is the
+/// same property, so a query may name it in any of them.
+///
+/// Here to keep the fix above from being read as "switch the leniency off". `resources` and
+/// `bucket_encryption` reach `Resources` and `BucketEncryption` through `to_pascal_case`, and the
+/// lowercase `value`/`key` pair is the form AWS registry rules rely on.
+#[test]
+fn case_convention_leniency_still_resolves_the_same_property() -> Result<()> {
+    let path_value = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(
+        r#"
+        Resources:
+           s3:
+             Type: AWS::S3::Bucket
+             Properties:
+               BucketEncryption:
+                 Enabled: true
+               Tags:
+                 - Key: Name
+                   Value: mybucket
+        "#,
+    )?)?;
+    let root = Rc::new(path_value);
+
+    for (query, expected_path) in [
+        (
+            "resources.s3.properties.bucket_encryption.enabled",
+            "/Resources/s3/Properties/BucketEncryption/Enabled",
+        ),
+        (
+            "resources.s3.properties.tags[0].value",
+            "/Resources/s3/Properties/Tags/0/Value",
+        ),
+        (
+            "resources.s3.properties.tags[0].key",
+            "/Resources/s3/Properties/Tags/0/Key",
+        ),
+    ] {
+        let parsed = AccessQuery::try_from(query)?.query;
+        let mut eval = BasicQueryTesting {
+            root: Rc::clone(&root),
+            recorder: None,
+        };
+        let query_results = eval.query(&parsed)?;
+        assert_eq!(query_results.len(), 1);
+        match &query_results[0] {
+            QueryResult::Resolved(res) => {
+                assert_eq!(res.self_path().0.as_str(), expected_path)
+            }
+            QueryResult::UnResolved(ur) => panic!(
+                "{query} did not resolve, stopped at {}",
+                ur.traversed_to.self_path().0.as_str()
+            ),
+            QueryResult::Literal(_) => unreachable!(),
+        }
+    }
+
+    Ok(())
+}
+
 // FIXME: break this up into multiple tests
 #[test]
 fn test_handle_function_call() -> Result<()> {
@@ -524,10 +628,10 @@ fn test_handle_function_call() -> Result<()> {
     let res = FunctionName::RegexReplace.call(&args);
     assert!(res.is_err());
     let err = res.unwrap_err();
-    assert!(matches!(err, Error::ParseError(_)));
+    assert!(matches!(err, Error::IncompatibleError(_)));
     assert_eq!(
         err.to_string(),
-        String::from("Parser Error when parsing `regex_replace function requires the second argument to be a string`")
+        String::from("Types or variable assignments are incompatible `regex_replace function requires the second argument to be a string`")
     );
 
     // extracted expr is invalid
@@ -541,10 +645,10 @@ fn test_handle_function_call() -> Result<()> {
     let res = FunctionName::RegexReplace.call(&args);
     assert!(res.is_err());
     let err = res.unwrap_err();
-    assert!(matches!(err, Error::ParseError(_)));
+    assert!(matches!(err, Error::IncompatibleError(_)));
     assert_eq!(
         err.to_string(),
-        String::from("Parser Error when parsing `regex_replace function requires the third argument to be a string`")
+        String::from("Types or variable assignments are incompatible `regex_replace function requires the third argument to be a string`")
     );
 
     // first argument is not a string type so res is an Ok(None)
@@ -583,10 +687,10 @@ fn test_handle_function_call() -> Result<()> {
     let res = FunctionName::Substring.call(&args);
     assert!(res.is_err());
     let err = res.unwrap_err();
-    assert!(matches!(err, Error::ParseError(_)));
+    assert!(matches!(err, Error::IncompatibleError(_)));
     assert_eq!(
         err.to_string(),
-        String::from("Parser Error when parsing `substring function requires the second argument to be a number`")
+        String::from("Types or variable assignments are incompatible `substring function requires the second argument to be a number`")
     );
 
     // third argument is not a number
@@ -594,10 +698,10 @@ fn test_handle_function_call() -> Result<()> {
     let res = FunctionName::Substring.call(&args);
     assert!(res.is_err());
     let err = res.unwrap_err();
-    assert!(matches!(err, Error::ParseError(_)));
+    assert!(matches!(err, Error::IncompatibleError(_)));
     assert_eq!(
         err.to_string(),
-        String::from("Parser Error when parsing `substring function requires the third argument to be a number`")
+        String::from("Types or variable assignments are incompatible `substring function requires the third argument to be a number`")
     );
 
     // join happy path
@@ -633,8 +737,8 @@ fn test_handle_function_call() -> Result<()> {
     let res = FunctionName::Join.call(&args);
     assert!(res.is_err());
     let err = res.unwrap_err();
-    assert!(matches!(err, Error::ParseError(_)));
-    assert_eq!(err.to_string(), "Parser Error when parsing `join function requires the second argument to be either a char or string`", );
+    assert!(matches!(err, Error::IncompatibleError(_)));
+    assert_eq!(err.to_string(), "Types or variable assignments are incompatible `join function requires the second argument to be either a char or string`", );
 
     Ok(())
 }

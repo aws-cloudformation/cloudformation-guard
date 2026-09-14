@@ -628,7 +628,7 @@ fn mixed_numeric_range_membership_is_decided() {
 }
 
 /// Values that compare equal hash equally, which is what `Eq` promises and what a `HashMap` keyed on
-/// `PathAwareValue` relies on -- `report_at_least_one` keys one.
+/// `PathAwareValue` relies on -- `report_by_lhs` keys one.
 ///
 /// The break was narrow and easy to miss: `Float` hashed via `*f as u64`. That cast saturates, so
 /// every negative float hashed as 0 while `Int(-1)` hashed as -1, and the two are equal since
@@ -651,6 +651,12 @@ fn equal_values_hash_equally() {
     fn flt(f: f64) -> PathAwareValue {
         PathAwareValue::Float((Path::root(), f))
     }
+    fn chr(c: char) -> PathAwareValue {
+        PathAwareValue::Char((Path::root(), c))
+    }
+    fn string(s: &str) -> PathAwareValue {
+        PathAwareValue::String((Path::root(), s.to_string()))
+    }
 
     let equal_pairs = [
         (
@@ -670,6 +676,23 @@ fn equal_values_hash_equally() {
             "most negative i64",
             int(i64::MIN),
             flt(-9_223_372_036_854_775_808.0),
+        ),
+        // The second widening `compare_values` reaches, and the one this test did not cover when the
+        // arms for it were added: `Char` hashed through `Hash for char` (`write_u32`) while the equal
+        // `String` hashed through `Hash for str` (`write` then a `0xff` terminator).
+        (
+            "a char against the string that spells it",
+            chr('b'),
+            string("b"),
+        ),
+        // Multi-byte, so the `encode_utf8` buffer is exercised past one byte. `'é'` is two bytes in
+        // UTF-8 and a `to_string()` would have hidden a buffer that was too small.
+        ("a multi-byte char", chr('é'), string("é")),
+        // Four bytes, the widest `encode_utf8` can produce.
+        (
+            "an astral-plane char",
+            chr('\u{1F600}'),
+            string("\u{1F600}"),
         ),
     ];
     for (label, a, b) in equal_pairs {
@@ -698,6 +721,70 @@ fn equal_values_hash_equally() {
         hash_of(&flt(f64::NEG_INFINITY))
     );
     assert_ne!(hash_of(&flt(1.0e300)), hash_of(&flt(-1.0e300)));
+
+    // A map's entries in two different orders. `eq` for a map is order-independent because it is a
+    // lookup per key, so the hash has to be too -- and it was not, because `IndexMap` iterates in
+    // insertion order. The `Int`/`Float` pairs above all sit in the scalar arms, so none of them
+    // reached this one.
+    fn map_of(entries: &[(&str, i64)]) -> PathAwareValue {
+        let mut values = indexmap::IndexMap::new();
+        let mut keys = vec![];
+        for (key, value) in entries {
+            values.insert((*key).to_string(), int(*value));
+            keys.push(PathAwareValue::String((Path::root(), (*key).to_string())));
+        }
+        PathAwareValue::Map((Path::root(), MapValue { keys, values }))
+    }
+
+    let forward = map_of(&[("alpha", 1), ("beta", 2)]);
+    let reversed = map_of(&[("beta", 2), ("alpha", 1)]);
+    assert_eq!(
+        forward, reversed,
+        "precondition, a map's entry order does not affect equality"
+    );
+    assert_eq!(
+        hash_of(&forward),
+        hash_of(&reversed),
+        "equal maps hashed differently because the entries were written in a different order"
+    );
+
+    // The sort must not flatten a real difference: same keys, one value changed.
+    let changed = map_of(&[("alpha", 1), ("beta", 3)]);
+    assert_ne!(forward, changed);
+    assert_ne!(hash_of(&forward), hash_of(&changed));
+
+    // Nor may it confuse a key with a value: `{alpha: 1, beta: 2}` against the pair swapped onto the
+    // other key. Both hash the same four items, so hashing entries without their order would.
+    let swapped = map_of(&[("alpha", 2), ("beta", 1)]);
+    assert_ne!(forward, swapped);
+    assert_ne!(hash_of(&forward), hash_of(&swapped));
+
+    // A list, by contrast, is order-sensitive in `eq`, so it must stay order-sensitive in `hash`.
+    let ordered = PathAwareValue::List((Path::root(), vec![int(1), int(2)]));
+    let unordered = PathAwareValue::List((Path::root(), vec![int(2), int(1)]));
+    assert_ne!(ordered, unordered);
+    assert_ne!(hash_of(&ordered), hash_of(&unordered));
+
+    // A `Char` nested in a list. `eq` for a list is element-wise `eq`, so the widening reaches through
+    // the collection arms; the hash has to reach through them the same way, and the `List` arm hashing
+    // each element is what makes it. The same holds inside a map value.
+    let char_in_list = PathAwareValue::List((Path::root(), vec![chr('b'), int(1)]));
+    let string_in_list = PathAwareValue::List((Path::root(), vec![string("b"), int(1)]));
+    assert_eq!(
+        char_in_list, string_in_list,
+        "precondition, element-wise eq"
+    );
+    assert_eq!(hash_of(&char_in_list), hash_of(&string_in_list));
+
+    // The widening does not flatten a real difference: a char is not the two-character string that
+    // starts with it, and must not hash as one.
+    assert_ne!(chr('b'), string("bc"));
+    assert_ne!(hash_of(&chr('b')), hash_of(&string("bc")));
+    // Nor is it a different character.
+    assert_ne!(chr('b'), string("c"));
+    assert_ne!(hash_of(&chr('b')), hash_of(&string("c")));
+    // And the empty string, which no char spells.
+    assert_ne!(chr('b'), string(""));
 }
 
 /// `eq` is symmetric, which `Eq` requires and range membership violated.
@@ -721,6 +808,294 @@ fn equality_is_symmetric_for_ranges() {
 
     // The membership answer still exists, in the table the evaluator consults.
     assert!(compare_eq(&value, &range).unwrap());
+}
+
+/// No comparison against a NaN answers, including the four range-membership ones that used to.
+///
+/// `libyaml/loader.rs` keeps `Float(NaN)` out of the value space and states why: the type asserts `Eq`
+/// and hashes its own contents, and a NaN is not equal to itself. The `serde_yaml` conversion, which is
+/// what `cfn-guard test` and the library entry point read a document through, has no such gate, so a
+/// NaN is reachable and the comparison layer has to behave.
+///
+/// Ordering and scalar equality already refused, through `compare_values` and `compare_int_to_float`.
+/// Range membership did not: `is_within` is `le`/`lt`/`ge`/`gt`, all false for a NaN, and
+/// `float_within_int_range` reads `compare_int_to_float`'s `None` through a `_ => false` arm. Both
+/// answered "not in the range", which is a decision -- and `!=` and `NOT IN` invert a decision, so
+/// `A not in r[-1,1]` *passed* for a NaN and a denylist admitted a value that is not a number.
+///
+/// Asserted as "every operator refuses", not as a verdict, because a refusal is what fails both
+/// polarities and so cannot be inverted into a pass.
+#[test]
+fn nothing_compares_against_a_nan() {
+    const BOTH: u8 = LOWER_INCLUSIVE | UPPER_INCLUSIVE;
+    let nan = PathAwareValue::Float((Path::root(), f64::NAN));
+    let range_f = PathAwareValue::RangeFloat((
+        Path::root(),
+        RangeType {
+            lower: -1.0f64,
+            upper: 1.0f64,
+            inclusive: BOTH,
+        },
+    ));
+    let range_i = PathAwareValue::RangeInt((
+        Path::root(),
+        RangeType {
+            lower: -1i64,
+            upper: 1i64,
+            inclusive: BOTH,
+        },
+    ));
+
+    let others = [
+        (
+            "another NaN",
+            PathAwareValue::Float((Path::root(), f64::NAN)),
+        ),
+        ("a float", PathAwareValue::Float((Path::root(), 0.0))),
+        ("an integer", PathAwareValue::Int((Path::root(), 0))),
+        ("a float range", range_f),
+        ("an integer range", range_i),
+    ];
+
+    for (label, other) in &others {
+        assert!(
+            compare_eq(&nan, other).is_err(),
+            "compare_eq answered a NaN against {}",
+            label
+        );
+        assert!(
+            compare_eq_symmetric(&nan, other).is_err(),
+            "compare_eq_symmetric answered a NaN against {}",
+            label
+        );
+    }
+
+    // The ordering comparators take no range, so they are checked against the scalars only. All four,
+    // because each reads `compare_values`'s `Ordering` through its own match and a missing arm in any
+    // one of them would answer.
+    for (label, other) in others.iter().take(3) {
+        for (name, cmp) in [
+            (
+                "lt",
+                compare_lt as fn(&PathAwareValue, &PathAwareValue) -> crate::rules::Result<bool>,
+            ),
+            ("le", compare_le),
+            ("gt", compare_gt),
+            ("ge", compare_ge),
+        ] {
+            assert!(
+                cmp(&nan, other).is_err(),
+                "compare_{} answered a NaN against {}",
+                name,
+                label
+            );
+        }
+    }
+
+    // A finite float in the same ranges still decides, so the gate is on the value and not on the arm.
+    let inside = PathAwareValue::Float((Path::root(), 0.5));
+    let outside = PathAwareValue::Float((Path::root(), 5.5));
+    for (label, range) in [
+        ("a float range", &others[3].1),
+        ("an integer range", &others[4].1),
+    ] {
+        assert!(
+            compare_eq(&inside, range).unwrap(),
+            "a float inside {} stopped matching",
+            label
+        );
+        assert!(
+            !compare_eq(&outside, range).unwrap(),
+            "a float outside {} started matching",
+            label
+        );
+    }
+}
+
+/// A `Char` compares with a string, which is the only spelling the rules language has for a character.
+///
+/// `parse_char` is a shipped guard-language function and its documented example is
+/// `let converted = parse_char(%sg.Properties.Char)` then `%converted == '1'`. That failed for every
+/// input with `not comparable char, String`, blaming the template's type for a comparison the language
+/// cannot express any other way: `parse_scalar_value` has no `Char` alternative, so `'1'` and `"1"` are
+/// both `Value::String` and the single-quote spelling is not a character literal. `parse_char` was the
+/// only one of the five converters whose result could not be checked against a literal.
+///
+/// In `compare_values`, so ordering and equality agree. Asserted through all five comparison functions
+/// for that reason -- a fix in `compare_eq` alone would leave `%c == "b"` deciding and `%c < "c"`
+/// refusing.
+#[test]
+fn a_char_compares_with_a_one_character_string() {
+    fn chr(c: char) -> PathAwareValue {
+        PathAwareValue::Char((Path::root(), c))
+    }
+    fn txt(s: &str) -> PathAwareValue {
+        PathAwareValue::String((Path::root(), s.to_string()))
+    }
+
+    // The documented example, both quotings, which reach the same `Value::String`.
+    assert!(compare_eq(&chr('1'), &txt("1")).unwrap());
+    assert!(compare_eq(&txt("1"), &chr('1')).unwrap());
+    assert!(!compare_eq(&chr('1'), &txt("2")).unwrap());
+    assert!(!compare_eq(&txt("2"), &chr('1')).unwrap());
+
+    // Ordering, in both operand positions, and consistent with equality rather than separate from it.
+    assert!(compare_lt(&chr('b'), &txt("c")).unwrap());
+    assert!(!compare_lt(&chr('b'), &txt("a")).unwrap());
+    assert!(compare_gt(&txt("c"), &chr('b')).unwrap());
+    assert!(compare_le(&chr('b'), &txt("b")).unwrap());
+    assert!(compare_ge(&chr('b'), &txt("b")).unwrap());
+
+    // A longer string is not equal to a character and still orders against it, rather than the
+    // comparison refusing on a length the types do not carry.
+    assert!(!compare_eq(&chr('b'), &txt("bc")).unwrap());
+    assert!(compare_lt(&chr('b'), &txt("bc")).unwrap());
+    assert!(compare_gt(&chr('b'), &txt("")).unwrap());
+
+    // The answer a `Char` gets is the answer the same value gets before conversion. That equivalence is
+    // the reason to compare as strings: applying `parse_char` must not change a verdict the language
+    // could already reach.
+    for other in ["1", "2", "b", "bc", ""] {
+        assert_eq!(
+            compare_values(&chr('b'), &txt(other)).unwrap(),
+            compare_values(&txt("b"), &txt(other)).unwrap(),
+            "a Char ordered differently from the same one-character string against {:?}",
+            other
+        );
+    }
+
+    // Same-kind comparison is untouched, and a kind with no arm still refuses -- the new arms are a
+    // pair of types, not a general loosening.
+    assert!(compare_eq(&chr('b'), &chr('b')).unwrap());
+    assert!(compare_lt(&chr('b'), &chr('c')).unwrap());
+    assert!(compare_eq(&chr('b'), &PathAwareValue::Int((Path::root(), 15))).is_err());
+    assert!(compare_eq(&chr('b'), &PathAwareValue::Bool((Path::root(), true))).is_err());
+}
+
+/// `==` answers a scalar against a range the same way whichever side the range is on, and `compare_eq`
+/// on its own deliberately does not.
+///
+/// All five membership arms are written scalar-on-the-left and `compare_values` has none, so asked
+/// directly with the range on the left the pair reaches the incomparable catch-all: `A == r[80,90]` was
+/// PASS and `%l == A` for the same two values refused with `not comparable range(int, int), int`. `==`
+/// is a symmetric relation -- the `Eq` comment on this type calls the identical shape in `PartialEq` a
+/// symmetry bug -- so `compare_eq_symmetric` puts the operands in the order the table expects, and the
+/// `==` operator asks that instead.
+///
+/// The one-directional table is asserted too, in the same test and on purpose. Mirroring it was tried
+/// and reaches four other callers; three of them then answer a different question than the one written,
+/// and six `IN`/`NOT IN` cells of the operator matrix moved. Anyone who "fixes" the asymmetry by adding
+/// the five reverse arms has to delete an assertion that says why not.
+///
+/// Both bound types on both sides, because the mixed int/float pairings go through
+/// `int_within_float_range` and `float_within_int_range` rather than `WithinRange`, and covering only
+/// the same-type pairs would leave two of the four numeric cells asymmetric.
+#[test]
+fn range_membership_is_answered_in_both_operand_orders() {
+    const BOTH: u8 = LOWER_INCLUSIVE | UPPER_INCLUSIVE;
+    fn int(i: i64) -> PathAwareValue {
+        PathAwareValue::Int((Path::root(), i))
+    }
+    fn flt(f: f64) -> PathAwareValue {
+        PathAwareValue::Float((Path::root(), f))
+    }
+    fn chr(c: char) -> PathAwareValue {
+        PathAwareValue::Char((Path::root(), c))
+    }
+    let range_i = PathAwareValue::RangeInt((
+        Path::root(),
+        RangeType {
+            lower: 80i64,
+            upper: 90i64,
+            inclusive: BOTH,
+        },
+    ));
+    let range_f = PathAwareValue::RangeFloat((
+        Path::root(),
+        RangeType {
+            lower: 80.0f64,
+            upper: 90.0f64,
+            inclusive: BOTH,
+        },
+    ));
+    let range_c = PathAwareValue::RangeChar((
+        Path::root(),
+        RangeType {
+            lower: 'a',
+            upper: 'z',
+            inclusive: BOTH,
+        },
+    ));
+
+    // (label, scalar, range, inside)
+    let cases = [
+        ("int in int range", int(85), &range_i, true),
+        ("int outside int range", int(95), &range_i, false),
+        ("float in float range", flt(85.5), &range_f, true),
+        ("float outside float range", flt(95.5), &range_f, false),
+        ("int in float range", int(85), &range_f, true),
+        ("int outside float range", int(95), &range_f, false),
+        ("float in int range", flt(85.5), &range_i, true),
+        ("float outside int range", flt(95.5), &range_i, false),
+        ("char in char range", chr('b'), &range_c, true),
+        ("char outside char range", chr('1'), &range_c, false),
+    ];
+
+    for (label, scalar, range, inside) in cases {
+        // Explicit format arguments: this crate is edition 2018, where `panic!` with a single string
+        // literal passes it through unformatted, so an implicit capture would print the braces.
+        let forward = compare_eq(&scalar, range).unwrap_or_else(|e| {
+            panic!(
+                "scalar on the left refused, which it never did: {}: {}",
+                label, e
+            )
+        });
+        assert_eq!(forward, inside, "scalar on the left: {}", label);
+
+        // What `==` asks. Both orders, so this is symmetry rather than a second spelling of the
+        // forward case.
+        let sym_forward = compare_eq_symmetric(&scalar, range)
+            .unwrap_or_else(|e| panic!("symmetric, scalar on the left: {}: {}", label, e));
+        let sym_reversed = compare_eq_symmetric(range, &scalar)
+            .unwrap_or_else(|e| panic!("symmetric, range on the left: {}: {}", label, e));
+        assert_eq!(sym_forward, inside, "symmetric, scalar first: {}", label);
+        assert_eq!(sym_reversed, inside, "symmetric, range first: {}", label);
+
+        // And the table itself stays one-directional, which is what keeps `IN` reading `%range in
+        // [15]` as "the range is one of these elements" rather than "15 is inside the range".
+        assert!(
+            compare_eq(range, &scalar).is_err(),
+            "compare_eq answered a range on the left, which would leak into IN: {}",
+            label
+        );
+    }
+
+    // The swap is by pairing, not a blanket "a range is comparable with anything". A range against a
+    // scalar of a kind its bounds are not still refuses, through the symmetric wrapper as well.
+    let text = PathAwareValue::String((Path::root(), "85".to_string()));
+    assert!(compare_eq(&text, &range_i).is_err());
+    assert!(compare_eq_symmetric(&text, &range_i).is_err());
+    assert!(compare_eq_symmetric(&range_i, &text).is_err());
+    assert!(compare_eq_symmetric(&int(85), &range_c).is_err());
+    assert!(compare_eq_symmetric(&range_c, &int(85)).is_err());
+
+    // And a pair with no reverse arm keeps the operand order it arrived in, so the reason reads in the
+    // order the clause is written. Swapping unconditionally is the obvious spelling of this function and
+    // it reworded forty refusals into naming the right-hand kind first -- the same wrong-operand defect
+    // as F10, introduced while fixing an asymmetry.
+    let reason = compare_eq_symmetric(&range_i, &text)
+        .unwrap_err()
+        .to_string();
+    assert!(
+        reason.contains("range(int, int), String"),
+        "the refusal named the operands in the opposite order to the clause: {}",
+        reason
+    );
+
+    // Two ranges are already symmetric, so the wrapper must leave that pair alone rather than swapping
+    // it and changing which one is read as the range.
+    assert!(compare_eq_symmetric(&range_i, &range_i.clone()).unwrap());
+    assert!(compare_eq_symmetric(&range_i, &range_f).is_err());
 }
 
 /// A range equals itself, which `impl Eq for PathAwareValue` promises and none of the three range
@@ -797,6 +1172,17 @@ fn a_range_is_equal_to_itself() {
             "{} hashes differently from itself",
             label
         );
+        // The same question asked of the other equality function, which is the one `==` actually
+        // reaches: `EqOperation` hands `compare_eq` to `match_value`. It had no range-against-range
+        // arm either, so `%allowed == r[80,90]` refused with `not comparable range(int, int),
+        // range(int, int)` and reported `Value=[80,90] not equal to value [80,90]`, while
+        // `in [r[80,90]]` passed on the same pair because `contained_in` consults `PartialEq` first.
+        // One entry point being reflexive is not enough when the operator uses the other.
+        assert!(
+            compare_eq(range, &range.clone()).unwrap(),
+            "compare_eq: {} is not equal to itself",
+            label
+        );
     }
 
     // Different ranges of the same kind stay unequal, so reflexivity was not bought by making every
@@ -811,6 +1197,7 @@ fn a_range_is_equal_to_itself() {
         },
     ));
     assert_ne!(five_to_100, &six_to_100);
+    assert!(!compare_eq(five_to_100, &six_to_100).unwrap());
 
     // Inclusivity is part of the range, not decoration: two ranges over the same bounds that differ
     // only in whether an endpoint is included are different ranges.
@@ -823,9 +1210,39 @@ fn a_range_is_equal_to_itself() {
         },
     ));
     assert_ne!(five_to_100, &five_to_100_exclusive);
+    assert!(!compare_eq(five_to_100, &five_to_100_exclusive).unwrap());
 
     // Ranges of different kinds are not equal, and must not error either.
     assert_ne!(&ranges[0].1, &ranges[1].1);
+
+    // Through `compare_eq` the same pair refuses rather than answering false, and that difference is
+    // deliberate on both sides. `compare_eq` returns the error so the clause can name the reason;
+    // `PartialEq` cannot return one and swallows it, which `docs/KNOWN_ISSUES.md` records. A
+    // `RangeInt` and a `RangeFloat` are two kinds, not two ranges, so refusing is the honest answer
+    // and the arms added for the same-kind case must not widen to this one.
+    assert!(compare_eq(&ranges[0].1, &ranges[1].1).is_err());
+
+    // The collection arms recurse, so a range nested in one inherits whichever answer the range
+    // itself gets. This is the `{p: r[80,90]} == {p: r[80,90]}` case, which refused before the arms
+    // existed even though `PartialEq` on the same two maps answered true.
+    let map_with_range = |range: &PathAwareValue| {
+        let mut values = indexmap::IndexMap::new();
+        values.insert("p".to_string(), range.clone());
+        PathAwareValue::Map((
+            Path::root(),
+            MapValue {
+                keys: vec![PathAwareValue::String((Path::root(), "p".to_string()))],
+                values,
+            },
+        ))
+    };
+    assert!(compare_eq(&map_with_range(five_to_100), &map_with_range(five_to_100)).unwrap());
+    assert!(!compare_eq(&map_with_range(five_to_100), &map_with_range(&six_to_100)).unwrap());
+
+    let list_with_range =
+        |range: &PathAwareValue| PathAwareValue::List((Path::root(), vec![range.clone()]));
+    assert!(compare_eq(&list_with_range(five_to_100), &list_with_range(five_to_100)).unwrap());
+    assert!(!compare_eq(&list_with_range(five_to_100), &list_with_range(&six_to_100)).unwrap());
 }
 
 /// An index refers to one element or to none, and never silently to the wrong one.
@@ -877,4 +1294,68 @@ fn an_index_names_one_element_or_none() {
             len
         );
     }
+}
+
+/// Two lists are decided on length first, and on equal lengths whatever an element raises is the answer.
+///
+/// The `(List, List)` arm has two exits and the difference between them is load-bearing for comments in
+/// two other files. On unequal lengths it answers `false` without asking an element anything. On equal
+/// lengths it zips and calls itself with `?`, so a pair that refuses refuses for the whole comparison.
+///
+/// Unasserted until now, and the gap cost two wrong comments. `incomparable_membership` in `eval.rs`
+/// said this arm "always returns `Ok` -- `false` on a length mismatch, never a refusal", and the
+/// `(List, Regex)` note beneath it concluded from that premise that a whole-list left-hand side can never
+/// reach the regex engine. The second case below is the counterexample: it is the pair
+/// `Cat NOT IN [[/re/]]` builds, and the zip walks straight into `(String, Regex)`.
+///
+/// The first case is the half of the old sentence that was true, and it is the half the false-alarm
+/// discriminator in that same comment rested on while the predicate compared whole values:
+/// `Strs NOT IN ["x","y",["p"]]` stayed silent because a two-element `Strs` against a one-element `["p"]`
+/// mismatches on length and answers before any element is looked at. The predicate compares elements now,
+/// so that clause is noticed and the discriminator no longer turns on this exit -- but the exit itself is
+/// still what `compare_eq` does with an unequal pair, and `contained_in`'s whole-list membership reading
+/// still asks it. The case holds a refusing element on purpose, so that a future change making the length
+/// exit compare eagerly cannot pass this test.
+#[test]
+fn two_equal_length_lists_propagate_what_their_elements_raise() {
+    let list = |elems: Vec<PathAwareValue>| PathAwareValue::List((Path::root(), elems));
+    let txt = |s: &str| PathAwareValue::String((Path::root(), s.to_string()));
+
+    // Thirty `a` characters is the length at which `(?!x)((a+)+)b` exhausts `fancy_regex`'s backtracking
+    // budget, the same subject the eval tests use. The pattern is stored without its slashes, which is
+    // what `parse_regex_inner` hands the value.
+    let catastrophic = PathAwareValue::Regex((Path::root(), "(?!x)((a+)+)b".to_string()));
+    let thirty_a = txt(&"a".repeat(30));
+
+    assert!(
+        !compare_eq(
+            &list(vec![thirty_a.clone(), txt("b")]),
+            &list(vec![catastrophic.clone()])
+        )
+        .unwrap(),
+        "lists of different lengths must answer false without asking their elements, even when one \
+         element pair would have refused"
+    );
+
+    let spent = compare_eq(&list(vec![thirty_a]), &list(vec![catastrophic])).expect_err(
+        "a String zipped against a Regex must reach the engine, not answer structurally",
+    );
+    assert!(
+        matches!(spent, Error::RegexError(_)),
+        "expected the spent backtracking budget to propagate out of the zip, got {:?}",
+        spent
+    );
+
+    // Not a property of regexes. Any element pair the function cannot decide propagates the same way,
+    // which is why the arm cannot be described as always answering.
+    let refused = compare_eq(
+        &list(vec![PathAwareValue::Int((Path::root(), 1))]),
+        &list(vec![txt("1")]),
+    )
+    .expect_err("an Int against a String has no arm, so the pair of lists must refuse");
+    assert!(
+        matches!(refused, Error::NotComparable(_)),
+        "expected NotComparable to propagate out of the zip, got {:?}",
+        refused
+    );
 }

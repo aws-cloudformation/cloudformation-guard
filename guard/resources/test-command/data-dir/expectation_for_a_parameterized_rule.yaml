@@ -1,0 +1,16 @@
+###
+# One expectation for the top-level rule, which is checked, and one for the parameterized rule it
+# invokes, which cannot be: the parameterized rule gets no top-level verdict to compare against.
+###
+---
+- name: an expectation for a parameterized rule the file does define
+  input:
+    Resources:
+      ExampleS3:
+        Type: AWS::S3::Bucket
+        Properties:
+          Encrypted: true
+  expectations:
+    rules:
+      S3_BUCKET_ENCRYPTION_ON: PASS
+      encryption_is_on: PASS

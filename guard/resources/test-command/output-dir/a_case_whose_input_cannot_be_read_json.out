@@ -1,0 +1,23 @@
+{
+  "rule_file": "resources/test-command/rule-dir/a_case_whose_input_cannot_be_read.guard",
+  "test_cases": [
+    {
+      "name": "a bucket named something other than expected",
+      "passed_rules": [
+        {
+          "name": "bucket_is_named_expected",
+          "evaluated": "FAIL"
+        }
+      ],
+      "failed_rules": [],
+      "skipped_rules": []
+    },
+    {
+      "name": "an input whose merge key is given a scalar",
+      "error": "Parser Error when parsing `the merge key `<<` must be given a mapping, or a sequence of mappings, because its value's keys become keys of the mapping that carries it (https://yaml.org/type/merge.html)`",
+      "passed_rules": [],
+      "failed_rules": [],
+      "skipped_rules": []
+    }
+  ]
+}

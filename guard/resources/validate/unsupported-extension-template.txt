@@ -1,0 +1,13 @@
+#
+# A template whose extension is not one a directory walk recognises, for the case where the user
+# names it as a `--data` argument. It used to be dropped by the extension filter, leaving the run
+# with nothing to evaluate and reporting PASS. Violates encrypted_is_true.guard, so a run that
+# reads it exits 19 and a run that skips it exits 0.
+#
+# At the resources/validate root rather than in data-dir/, because test_updated_summary_output
+# evaluates everything in rules-dir/ against everything in data-dir/ and compares to a golden file.
+#
+Resources:
+  B:
+    Properties:
+      Encrypted: false

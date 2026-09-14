@@ -1,0 +1,29 @@
+###
+# One case carrying both kinds of mistake at once: an expectation whose value is not a status, and an
+# expectation naming a rule this file does not declare.
+#
+# Each alone is already covered elsewhere. Together they interact, and that is the only way the defect
+# this fixture exists for can show: the bad status string abandons the case from inside the rule loop,
+# and the generic reporter computed the stale-name diagnostic *after* that loop, so the early return
+# took it with it. `single-line-summary` lost the sentence naming `S3_BUCKET_ENCRYPTED` while `json`,
+# `yaml` and `junit` -- which compute it before their rule loop -- kept it.
+#
+# Paired with `resources/validate/rules-dir/s3_bucket_server_side_encryption_enabled.guard`, which
+# declares `S3_BUCKET_SERVER_SIDE_ENCRYPTION_ENABLED` and not `S3_BUCKET_ENCRYPTED`.
+###
+---
+- name: A bad expectation string beside an expectation naming no rule
+  input:
+    Resources:
+      ExampleS3:
+        Type: AWS::S3::Bucket
+        Properties:
+          BucketName: my-bucket
+          BucketEncryption:
+            ServerSideEncryptionConfiguration:
+              - ServerSideEncryptionByDefault:
+                  SSEAlgorithm: AES256
+  expectations:
+    rules:
+      S3_BUCKET_SERVER_SIDE_ENCRYPTION_ENABLED: NOTASTATUS
+      S3_BUCKET_ENCRYPTED: PASS

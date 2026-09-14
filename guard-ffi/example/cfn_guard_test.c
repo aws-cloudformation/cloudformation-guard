@@ -9,9 +9,11 @@ int main() {
   data.file_name = "data.json";
   rules.content = "rule check_foo { foo.bar == true }";
   rules.file_name = "check.rule";
-  char* result = cfn_guard_run_checks(data, rules, 0, &err);
+  char* result = cfn_guard_run_checks(data, rules, false, &err);
   if (err.code == 0) {
-    printf(result);
+    /* `printf(result)` reads the returned JSON as a format string, which -Wformat-security
+     * rejects and which a `%` in the report would act on. */
+    printf("%s", result);
     cfn_guard_free_string(result);
     cfn_guard_free_string(err.message);
   } else {

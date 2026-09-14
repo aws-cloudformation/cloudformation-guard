@@ -1,0 +1,10 @@
+Resources:
+  Vol:
+    Type: AWS::EC2::Volume
+    Properties:
+      # `nan` is a plain YAML string, not a float. Both keys hold the same scalar.
+      Threshold: nan
+      Ceiling: nan
+      # The control pair, so a rule over this template can be shown to decide either way.
+      Size: 50
+      Capacity: 50

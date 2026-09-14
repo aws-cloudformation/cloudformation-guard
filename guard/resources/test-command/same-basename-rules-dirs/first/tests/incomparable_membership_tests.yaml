@@ -1,0 +1,19 @@
+###
+# Pairs with `../incomparable_membership.guard`, and is byte-identical to the suite under
+# `../../second/tests/` for the reason the rules files are identical: anything that differed would give
+# the two notices a second way to differ, and the locator is the only difference under test.
+#
+# The file name has to start with the rules file's stem, because `OrderedTestDirectory` pairs a test
+# file to the rules file whose `prefix` is the longest match on the test file's name.
+#
+# One case, not three. The three-case suite beside `vacuous_and_incomparable_cases.yaml` is there to
+# prove a notice produced once per case is collapsed before being written; that property is already
+# covered, and repeating it here would leave a cell that reddens for two reasons.
+###
+---
+- name: A string against a list of integers
+  input:
+    Name: "50"
+  expectations:
+    rules:
+      incomparable_membership: PASS

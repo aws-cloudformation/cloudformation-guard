@@ -1,0 +1,21 @@
+#
+# Byte-identical to its sibling under `../first/`, and that is the point: two rules files whose only
+# difference is the directory they sit in, reached by walking one directory with `test -d`.
+#
+# The validate-side pair under `resources/validate/same-basename-rules-dirs/` covers the same collision
+# for `validate -r a -r b`. This copy exists because `test -d` names a rules file by a third route --
+# `GuardFile::prefix`, the file name with `.guard` or `.ruleset` stripped -- which drops the directory
+# *and* the extension, so it collapsed strictly more pairs than validate's basename did. The two trees
+# cannot be shared: `test -d` needs a paired `tests/` directory per rules file, and validate must not
+# have one, or the walk would claim it.
+#
+# The clause emits the `NOT IN` deprecation notice against the paired test case, whose `Name` is the
+# string "50" and so cannot be compared with any integer in the list. The notice ends with the clause's
+# source position, so what that position names the file is the only thing telling the two apart.
+#
+# Identical content rather than merely similar: any difference in the clause would show up in the
+# notice's `Display` and let the two lines differ for a reason that is not the locator.
+#
+rule incomparable_membership {
+    Name not IN [10, 50, 100]
+}

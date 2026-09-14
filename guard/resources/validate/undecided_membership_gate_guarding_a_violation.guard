@@ -1,0 +1,29 @@
+#
+# A gate whose comparison has no answer, guarding a body that would fail.
+#
+# The sibling of `unevaluatable_gate_guarding_a_violation.guard`, reached through a different error
+# kind. That one gates on `!EMPTY` against a boolean, which raises `IncompatibleError`;
+# `is_unevaluatable` recognises it, so the gate already fails closed. This one gates on a `NOT IN`
+# whose regex exhausted its backtracking budget, which never becomes an `Error` at all: `is_one_of`
+# promotes it to `Membership::Unanswerable`, `binary_operation` records it as a `NotComparable`
+# comparison result, and a comparison result is a per-value `Status::FAIL`. One level out a FAIL on a
+# condition is indistinguishable from a condition that was decided and did not match, and `eval_rule`
+# maps that to a rule-level SKIP.
+#
+# So the two error kinds disagreed about the same question. Measured on this template before the fix:
+# `when Enabled !EMPTY` exited 19 and this exited 0 with `MustBeTrue` unchecked.
+#
+# Every `NOT IN` spelling leaked, not just this one -- the whole-list `Cat NOT IN [/re/]` and the
+# nested-list `Cat NOT IN [[/re/]]` too -- so the repair is keyed on the undecided comparison result
+# rather than on any one spelling reaching it.
+#
+# The second rule exists so the file has a verdict to lose. An earlier form of this defect aborted the
+# whole file, and the two failure modes look identical from outside unless something else is reported.
+#
+rule unrelated_violation {
+    Region == 'no-such-region-zzz'
+}
+
+rule guarded when Cat[*] NOT IN [/(?!x)((a+)+)b/] {
+    MustBeTrue == true
+}

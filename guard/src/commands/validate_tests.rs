@@ -70,6 +70,18 @@ fn test_supported_extensions() {
         &DATA_FILE_SUPPORTED_EXTENSIONS
     ));
 
+    // The match is a plain suffix compare, so it is case sensitive. This governs what a directory
+    // walk picks up and nothing else: a file named as a `--data` argument is read without consulting
+    // this predicate, so an uppercased extension is not a reason to skip a file the user asked for.
+    assert!(!has_a_supported_extension(
+        "blah.YAML",
+        &DATA_FILE_SUPPORTED_EXTENSIONS
+    ));
+    assert!(!has_a_supported_extension(
+        "blah.Json",
+        &DATA_FILE_SUPPORTED_EXTENSIONS
+    ));
+
     // Rules extensions
     assert!(has_a_supported_extension(
         "blah.guard",

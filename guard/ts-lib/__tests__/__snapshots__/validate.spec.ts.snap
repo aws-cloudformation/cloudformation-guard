@@ -185,7 +185,7 @@ exports[`validate should handle a directory in rules, a single data file, and ma
             },
           ],
           "message": {
-            "text": "Check was not compliant as property value [Path=/NotSecretAccessKey[L:1,C:20] Value="wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"] equal to value [Path=[L:0,C:0] Value="/(?<![A-Za-z0-9\\/+=])[A-Za-z0-9\\/+=]{40}(?![A-Za-z0-9\\/+=])/"]. ",
+            "text": "Check was not compliant as property value [Path=/NotSecretAccessKey[L:1,C:20] Value="wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"] equal to value [Path=[L:0,C:0] Value="/(?<![A-Za-z0-9/+=])[A-Za-z0-9/+=]{40}(?![A-Za-z0-9/+=])/"]. ",
           },
           "ruleId": "ADVANCED_REGEX_NEGATIVE_LOOKBEHIND_RULE",
         },
@@ -414,7 +414,7 @@ exports[`validate should handle directories in both rules, data, and match the s
             },
           ],
           "message": {
-            "text": "Check was not compliant as property value [Path=/NotSecretAccessKey[L:1,C:20] Value="wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"] equal to value [Path=[L:0,C:0] Value="/(?<![A-Za-z0-9\\/+=])[A-Za-z0-9\\/+=]{40}(?![A-Za-z0-9\\/+=])/"]. ",
+            "text": "Check was not compliant as property value [Path=/NotSecretAccessKey[L:1,C:20] Value="wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"] equal to value [Path=[L:0,C:0] Value="/(?<![A-Za-z0-9/+=])[A-Za-z0-9/+=]{40}(?![A-Za-z0-9/+=])/"]. ",
           },
           "ruleId": "ADVANCED_REGEX_NEGATIVE_LOOKBEHIND_RULE",
         },
@@ -865,7 +865,7 @@ exports[`validate should handle nested directories in both and match the snapsho
             },
           ],
           "message": {
-            "text": "Check was not compliant as property value [Path=/NotSecretAccessKey[L:1,C:20] Value="wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"] equal to value [Path=[L:0,C:0] Value="/(?<![A-Za-z0-9\\/+=])[A-Za-z0-9\\/+=]{40}(?![A-Za-z0-9\\/+=])/"]. ",
+            "text": "Check was not compliant as property value [Path=/NotSecretAccessKey[L:1,C:20] Value="wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"] equal to value [Path=[L:0,C:0] Value="/(?<![A-Za-z0-9/+=])[A-Za-z0-9/+=]{40}(?![A-Za-z0-9/+=])/"]. ",
           },
           "ruleId": "ADVANCED_REGEX_NEGATIVE_LOOKBEHIND_RULE",
         },

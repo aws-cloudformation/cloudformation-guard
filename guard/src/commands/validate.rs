@@ -1,5 +1,4 @@
 use std::cmp;
-use std::convert::TryFrom;
 use std::fmt::Debug;
 use std::fs::File;
 use std::io::{BufReader, Read, Write};
@@ -28,7 +27,7 @@ use crate::rules::eval::eval_rules_file;
 use crate::rules::eval_context::{root_scope, EventRecord};
 use crate::rules::exprs::RulesFile;
 use crate::rules::path_value::traversal::Traversal;
-use crate::rules::path_value::PathAwareValue;
+use crate::rules::path_value::{DuplicateKey, PathAwareValue};
 use crate::rules::{Result, Status};
 use crate::utils::reader::Reader;
 use crate::utils::writer::Writer;
@@ -147,7 +146,19 @@ pub(crate) trait Reporter: Debug {
 /// .
 /// The Validate command evaluates rules against data files to determine success or failure
 pub struct Validate {
-    #[arg(short, long, help=RULES_HELP, num_args=0.., conflicts_with=PAYLOAD.0)]
+    // `num_args=1..`, not `0..`. `--rules` is a member of the required `REQUIRED_FLAGS` group, so a
+    // bare `--rules` with no values *satisfied* that group while leaving `self.rules` empty, and
+    // `execute` then took neither branch and hit its `unreachable!()` -- exit 101 on
+    // `cfn-guard validate --rules`. `num_args=0..` had widened what the argument can hold without the
+    // `else` arm being widened to match.
+    //
+    // One value is also the smallest number that can mean anything: there is no reading of `--rules`
+    // with nothing after it. `ValidateBuilder::try_build` already rejects the same state for library
+    // callers, so this makes the two agree rather than inventing a rule.
+    //
+    // `--data` keeps `num_args=0..` on purpose: an empty `data` is a supported state that means "read
+    // the data from stdin", which is what an absent `--data` also means.
+    #[arg(short, long, help=RULES_HELP, num_args=1.., conflicts_with=PAYLOAD.0)]
     /// a list of paths that point to rule files, or a directory containing rule files on a local machine. Only files that end with .guard or .ruleset will be evaluated
     /// conflicts with payload
     pub(crate) rules: Vec<String>,
@@ -166,10 +177,28 @@ pub struct Validate {
     /// default is single-line-summary
     /// if junit is used, `structured` attributed must be set to true
     pub(crate) output_format: OutputFormatType,
-    #[arg(short=SHOW_SUMMARY.1, long, help=SHOW_SUMMARY_HELP, value_enum, default_values_t=vec![ShowSummaryType::Fail], value_delimiter=',')]
+    // The default is `none` when the output format is machine-readable, and `fail` otherwise.
+    //
+    // A single `fail` default made `-z` unusable without `-S none`, because `validate_construct`
+    // cannot tell a default apart from a value the caller chose, and rejected the default. Rather than
+    // teach it that difference, the default is made correct for the format: a run whose stdout is a
+    // JSON, YAML, JUnit or SARIF document has nowhere to put a summary table, so `none` is the only
+    // default that can be honoured. `-S` given explicitly still wins in both cases, and
+    // `-o json -S all` is still an error -- the caller asked for two things on one stream.
+    //
+    // `default_value_if` is evaluated before `default_value`, so the order of these two is what
+    // selects between them.
+    #[arg(short=SHOW_SUMMARY.1, long, help=SHOW_SUMMARY_HELP, value_enum, value_delimiter=',',
+          default_value_ifs([
+              (OUTPUT_FORMAT_ID, "json", SHOW_SUMMARY_NONE),
+              (OUTPUT_FORMAT_ID, "yaml", SHOW_SUMMARY_NONE),
+              (OUTPUT_FORMAT_ID, "junit", SHOW_SUMMARY_NONE),
+              (OUTPUT_FORMAT_ID, "sarif", SHOW_SUMMARY_NONE),
+          ]),
+          default_value=SHOW_SUMMARY_FAIL)]
     /// Controls if the summary table needs to be displayed. --show-summary fail (default) or --show-summary pass,fail (only show rules that did pass/fail) or --show-summary none (to turn it off) or --show-summary all (to show all the rules that pass, fail or skip)
-    /// default is failed
-    /// must be set to none if used together with the structured flag
+    /// default is failed, or none when the output format is machine-readable
+    /// must be none, or left to its default, when the output format is machine-readable
     pub(crate) show_summary: Vec<ShowSummaryType>,
     #[arg(short, long, help=ALPHABETICAL_HELP, conflicts_with=LAST_MODIFIED.0)]
     /// Validate files in a directory ordered alphabetically, conflicts with `last_modified` field
@@ -200,13 +229,56 @@ pub struct Validate {
 }
 
 impl Validate {
+    /// A machine-readable `--output-format` means stdout carries exactly one document, and nothing
+    /// else.
+    ///
+    /// One rule, replacing two half-rules that between them let stdout be corrupted and made `-z`
+    /// unusable on its own:
+    ///
+    /// - The summary table was suppressed only when `--structured` was passed, not when the output
+    ///   format was machine-readable. `--show-summary` defaults to `fail`, and the table goes to the
+    ///   same stdout the document does, so `validate ... -o json` emitted clean JSON while everything
+    ///   passed and a table welded to the front of the JSON the moment a rule failed -- that is,
+    ///   exactly when a consumer needs to read it. `-o json > out.json` produced a valid file or an
+    ///   invalid one depending on the verdict.
+    /// - The check keyed on `self.structured` fired against `--show-summary`'s own *default*, so every
+    ///   `-z` invocation that did not spell out `-S none` exited with a complaint about a flag the
+    ///   caller never passed. The `-z` help text lists `show-summary: all/fail/pass/skip` among its
+    ///   conflicts without noting that `fail` is the default, so following the help produced the
+    ///   error.
+    ///
+    /// Keying both on the format rather than on the flag fixes the pair, because `--structured`
+    /// already requires a machine-readable format (the arm below rejects `-z -o single-line-summary`),
+    /// so the format is the more general condition and subsumes the flag.
+    ///
+    /// `--verbose` and `--print-json` are rejected for the same reason and are not merely suppressed:
+    /// both append a second document to stdout after the first, unseparated -- `-o json -v` put the
+    /// closing brace and the tree's first line on one line. `test` already refuses
+    /// "an output_type of JSON, YAML, or JUnit while the verbose flag is set", clap already refuses
+    /// `-z -v` and `-z -p`, and `ValidateBuilder::try_build` refuses both. This is the fourth
+    /// statement of a rule the codebase had already made three times, applied to the case that was
+    /// missed.
     fn validate_construct(
         &self,
         summary_type: &BitFlags<SummaryType, u8>,
     ) -> crate::rules::Result<()> {
-        if self.structured && !summary_type.is_empty() {
-            return Err(Error::IllegalArguments(String::from(
-                "Cannot provide a summary-type other than `none` when the `structured` flag is present",
+        if self.output_format.is_structured() && !summary_type.is_empty() {
+            return Err(Error::IllegalArguments(format!(
+                "Cannot provide a summary-type other than `none` when the output format is {:?}, \
+                 because the summary table and the report share stdout",
+                self.output_format
+            )));
+        } else if self.output_format.is_structured() && self.verbose {
+            return Err(Error::IllegalArguments(format!(
+                "Cannot provide an output format of {:?} while the verbose flag is set, \
+                 because the verbose tree and the report share stdout",
+                self.output_format
+            )));
+        } else if self.output_format.is_structured() && self.print_json {
+            return Err(Error::IllegalArguments(format!(
+                "Cannot provide an output format of {:?} while the print-json flag is set, \
+                 because the parse tree and the report share stdout",
+                self.output_format
             )));
         } else if self.structured
             && matches!(self.output_format, OutputFormatType::SingleLineSummary)
@@ -249,8 +321,42 @@ impl Executable for Validate {
     /// - parse errors occur in the rule file
     /// - illegal json or yaml syntax present in any of the data/input parameter files
     /// - both rules is empty, and payload is false
-    #[allow(deprecated)]
     fn execute(&self, writer: &mut Writer, reader: &mut Reader) -> Result<i32> {
+        match self.evaluate(writer, reader) {
+            // Input cfn-guard cannot read is the user's mistake, not cfn-guard breaking, and the exit
+            // code has to say which. An `Err` escaping here reaches `main`'s catch-all, which prints
+            // "Error occurred" and exits -1 -- the code `guard/tests/utils.rs` names
+            // `INTERNAL_FAILURE`. So a template with an unquoted `~` key, an empty data file, or a
+            // file that is not YAML all reported that cfn-guard had broken.
+            //
+            // `ERROR_STATUS_CODE` is 5, which this repository already gives a ruleset it cannot use,
+            // and two commits on this branch moved rules-file mistakes here for the same reason: 5 is
+            // not 19, so a CI gate still distinguishes it from a violation, and unlike -1 it does not
+            // additionally claim the tool is at fault.
+            //
+            // `ParseError` is the discriminator because every one of its ~20 producers is about the
+            // user's input -- the rules parser, the libyaml loader, the test-spec readers, the payload
+            // deserializer -- and none is an internal failure. `guard-ffi`'s error table had already
+            // reached the same judgement, mapping `ParseError` to its code 5.
+            //
+            // A *missing* file keeps -1 deliberately. `File::open` returns `IoError`, not
+            // `ParseError`, so it is untouched here, and that is the same line the parse-tree commit
+            // drew: validate, test and parse-tree already agree on -1 for a path that does not exist.
+            Err(e @ Error::ParseError(..)) => {
+                // Reported here rather than left to `main`, because once this function has decided the
+                // failure is not internal, "Error occurred" no longer describes it.
+                writer.write_err(format!("{e}"))?;
+
+                Ok(ERROR_STATUS_CODE)
+            }
+            outcome => outcome,
+        }
+    }
+}
+
+impl Validate {
+    #[allow(deprecated)]
+    fn evaluate(&self, writer: &mut Writer, reader: &mut Reader) -> Result<i32> {
         let summary_type = self
             .show_summary
             .iter()
@@ -274,30 +380,40 @@ impl Executable for Validate {
         let data_files = match self.data.is_empty() {
             false => {
                 let mut streams = Vec::new();
+                let mut skipped = Vec::new();
 
                 for file_or_dir in &self.data {
                     validate_path(file_or_dir)?;
                     let base = resolve_path(file_or_dir)?;
+
+                    // A file the user named is read whatever it is called. The extension list is
+                    // how a directory walk decides which of the files it found look like data, and
+                    // an argument naming one file is not a discovery problem -- `--data` documents
+                    // the filter as applying to directory arguments, and the `--rules` handling
+                    // below already draws this distinction. Filtering here dropped the file, left
+                    // nothing to evaluate, and reported PASS.
+                    if base.is_file() {
+                        let name = canonical_name(&base)?;
+                        streams.push(read_data_file(&base, name, writer)?);
+                        continue;
+                    }
+
                     for file in walk_dir(base, cmp) {
                         if file.path().is_file() {
-                            let name = file
-                                .path()
-                                // path output occasionally includes double slashes '//'
-                                // without calling canonicalize()
-                                .canonicalize()?
-                                .to_str()
-                                .map_or("".to_string(), String::from);
+                            let name = canonical_name(file.path())?;
                             if has_a_supported_extension(&name, &DATA_FILE_SUPPORTED_EXTENSIONS) {
-                                let mut content = String::new();
-                                let mut reader = BufReader::new(File::open(file.path())?);
-                                reader.read_to_string(&mut content)?;
-
-                                let data_file = build_data_file(content, name)?;
-                                streams.push(data_file);
+                                streams.push(read_data_file(file.path(), name, writer)?);
+                            } else {
+                                skipped.push(name);
                             }
                         }
                     }
                 }
+
+                if streams.is_empty() {
+                    report_no_data_evaluated(writer, &skipped)?;
+                }
+
                 streams
             }
             true => {
@@ -305,7 +421,7 @@ impl Executable for Validate {
                     let mut content = String::new();
                     reader.read_to_string(&mut content)?;
 
-                    let data_file = build_data_file(content, "STDIN".to_string())?;
+                    let data_file = build_data_file(content, "STDIN".to_string(), writer)?;
 
                     vec![data_file]
                 } else {
@@ -322,26 +438,33 @@ impl Executable for Validate {
                     validate_path(file_or_dir)?;
                     let base = resolve_path(file_or_dir)?;
 
-                    for file in walk_dir(base, cmp) {
-                        if file.path().is_file() {
-                            let name = file
-                                .file_name()
-                                .to_str()
-                                .map_or("".to_string(), String::from);
+                    // Named explicitly, read whatever the extension, for the reason given for
+                    // `--data` above. `--input-parameters` documents the filter as applying to
+                    // directory arguments too, and a parameter file dropped by it changes what
+                    // every rule sees without saying so.
+                    let files: Vec<PathBuf> = if base.is_file() {
+                        vec![base]
+                    } else {
+                        walk_dir(base, cmp)
+                            .filter(|file| file.path().is_file())
+                            .map(|file| file.path().to_path_buf())
+                            .filter(|path| {
+                                has_a_supported_extension(
+                                    &file_name_of(path),
+                                    &DATA_FILE_SUPPORTED_EXTENSIONS,
+                                )
+                            })
+                            .collect()
+                    };
 
-                            if has_a_supported_extension(&name, &DATA_FILE_SUPPORTED_EXTENSIONS) {
-                                let mut content = String::new();
-                                let mut reader = BufReader::new(File::open(file.path())?);
-                                reader.read_to_string(&mut content)?;
+                    for path in files {
+                        let DataFile { path_value, .. } =
+                            read_data_file(&path, file_name_of(&path), writer)?;
 
-                                let DataFile { path_value, .. } = build_data_file(content, name)?;
-
-                                primary_path_value = match primary_path_value {
-                                    Some(current) => Some(current.merge(path_value)?),
-                                    None => Some(path_value),
-                                };
-                            }
-                        }
+                        primary_path_value = match primary_path_value {
+                            Some(current) => Some(current.merge(path_value)?),
+                            None => Some(path_value),
+                        };
                     }
                 }
                 primary_path_value
@@ -364,6 +487,7 @@ impl Executable for Validate {
 
         if !self.rules.is_empty() {
             let mut rules = Vec::new();
+            let mut skipped = Vec::new();
 
             for file_or_dir in &self.rules {
                 validate_path(file_or_dir)?;
@@ -373,19 +497,26 @@ impl Executable for Validate {
                     rules.push(base.clone())
                 } else {
                     for entry in walk_dir(base, cmp) {
-                        if entry.path().is_file()
-                            && entry
-                                .path()
-                                .file_name()
-                                .and_then(|s| s.to_str())
-                                .map_or(false, |s| {
-                                    has_a_supported_extension(s, &RULE_FILE_SUPPORTED_EXTENSIONS)
-                                })
-                        {
-                            rules.push(entry.path().to_path_buf());
+                        if entry.path().is_file() {
+                            let name = file_name_of(entry.path());
+                            if has_a_supported_extension(&name, &RULE_FILE_SUPPORTED_EXTENSIONS) {
+                                rules.push(entry.path().to_path_buf());
+                            } else {
+                                skipped.push(name);
+                            }
                         }
                     }
                 }
+            }
+
+            // The counterpart of `report_no_data_evaluated`, which the `--data` side has had and this
+            // side has not. A `--rules` directory holding no `.guard` or `.ruleset` file left `rules`
+            // empty, the loop below ran zero times, and the run exited 0 having printed nothing --
+            // indistinguishable from a run in which every rule passed. That is a green build for a
+            // policy nobody applied, which is worse on this side than on the data side: the data side
+            // at least named the files its walk passed over.
+            if rules.is_empty() {
+                report_no_rules_evaluated(writer, &skipped)?;
             }
 
             exit_code = match self.structured {
@@ -406,7 +537,7 @@ impl Executable for Validate {
                     for each_file_content in iterate_over(&rules, |content, file| {
                         Ok(RuleFileInfo {
                             content,
-                            file_name: get_file_name(file, file),
+                            file_name: rules_file_locator(file),
                         })
                     }) {
                         match each_file_content {
@@ -426,9 +557,7 @@ impl Executable for Validate {
                                     writer,
                                 )?;
 
-                                if status != SUCCESS_STATUS_CODE {
-                                    exit_code = status
-                                }
+                                exit_code = more_severe(exit_code, status);
                             }
                         }
                     }
@@ -445,7 +574,7 @@ impl Executable for Validate {
                 |mut data_collection, (i, data)| -> Result<Vec<DataFile>> {
                     let content = data.to_string();
                     let name = format!("DATA_STDIN[{}]", i + 1);
-                    let data_file = build_data_file(content, name)?;
+                    let data_file = build_data_file(content, name, writer)?;
 
                     data_collection.push(data_file);
 
@@ -463,6 +592,19 @@ impl Executable for Validate {
                 })
                 .collect::<Vec<_>>();
 
+            // The payload branch had no equivalent of the two warnings above, which are reached only
+            // from the `--data` and `--rules` branches. A payload whose `rules` or `data` list was
+            // empty parsed cleanly, evaluated nothing, printed nothing and exited 0 -- the same
+            // false green, arrived at through the one input that is most likely to be machine-built
+            // and so least likely to be eyeballed.
+            if rule_info.is_empty() {
+                report_no_rules_evaluated(writer, &[])?;
+            }
+
+            if data_collection.is_empty() {
+                report_no_data_evaluated(writer, &[])?;
+            }
+
             exit_code = match self.structured {
                 true => {
                     let mut evaluator = StructuredEvaluator {
@@ -477,10 +619,25 @@ impl Executable for Validate {
                 }
                 false => {
                     for rule in rule_info {
+                        // `&extra_data`, not `&None`. The structured branch above merges
+                        // `--input-parameters` into every payload document; this one discarded them,
+                        // so `validate -P -i params.yaml` gave opposite verdicts depending on whether
+                        // `-z` was passed -- PASS structured, FAIL not -- with nothing saying a file
+                        // the caller named had not been read.
+                        //
+                        // Merging is the side that matches what `--input-parameters` documents: the
+                        // parameter files "get merged and this combined context is again merged with
+                        // each file passed as an argument for `data`". Nothing in that says the merge
+                        // is conditional on the reporter.
+                        //
+                        // Rejecting `-P` with `-i` was the alternative, by giving `--input-parameters`
+                        // the `conflicts_with=PAYLOAD` that `--rules` and `--data` carry. It was not
+                        // taken because the structured path makes the combination work today, so
+                        // banning it would break a caller to fix a caller that is already served.
                         let status = evaluate_rule(
                             data_type,
                             self.output_format,
-                            &None,
+                            &extra_data,
                             &data_collection,
                             rule,
                             self.verbose,
@@ -489,15 +646,24 @@ impl Executable for Validate {
                             writer,
                         )?;
 
-                        if status != SUCCESS_STATUS_CODE {
-                            exit_code = status;
-                        }
+                        exit_code = more_severe(exit_code, status);
                     }
                     exit_code
                 }
             };
         } else {
-            unreachable!()
+            // Genuinely unreachable, and by construction rather than by hope. Two enforcement points
+            // stand between a caller and this arm, and both are needed because there are two ways in:
+            //
+            // - CLI: the `REQUIRED_FLAGS` group (`--rules` or `--payload`) is `required(true)`, and
+            //   `--rules` takes `num_args=1..`, so `self.rules` cannot be empty while `--payload` is
+            //   absent. Widening either back would make this a panic again -- it was one, at exit 101,
+            //   while `--rules` took `num_args=0..`.
+            // - Library: `ValidateBuilder::try_build` rejects `!payload && rules.is_empty()`.
+            unreachable!(
+                "validate requires --rules with at least one value or --payload; \
+                 the clap argument group and ValidateBuilder::try_build both enforce it"
+            )
         }
 
         Ok(exit_code)
@@ -524,6 +690,21 @@ or rules files.
 
 // const SHOW_SUMMARY_VALUE_TYPE: [&str; 5] = ["none", "all", "pass", "fail", "skip"];
 const TEMPLATE_TYPE: [&str; 1] = ["CFNTemplate"];
+/// The two `--show-summary` defaults, selected by whether `--output-format` is machine-readable.
+/// Spelled as the strings clap parses rather than as `ShowSummaryType`, because `default_value_ifs`
+/// takes values in their unparsed form.
+const SHOW_SUMMARY_NONE: &str = "none";
+const SHOW_SUMMARY_FAIL: &str = "fail";
+/// `--output-format`'s clap **id**, which is the field name and not the long flag.
+///
+/// `OUTPUT_FORMAT.0` is `"output-format"`, the spelling a caller types. clap derives an argument's id
+/// from the field name unless `name=` overrides it, and this field does not, so its id is
+/// `output_format` with an underscore. Referring to it by the long flag in `default_value_ifs` is not
+/// an error clap reports -- the condition simply never matches, so the default silently stays `fail`
+/// and every `-z` invocation keeps failing exactly as it did before the fix. Using `name=` to make the
+/// two agree was the alternative; it was not taken because the id also supplies the value placeholder
+/// in `--help`, so it would rewrite `<OUTPUT_FORMAT>` to `<output-format>` for every reader.
+const OUTPUT_FORMAT_ID: &str = "output_format";
 const RULES_HELP: &str = "Provide a rules file or a directory of rules files. Supports passing multiple values by using this option repeatedly.\
                           \nExample:\n --rules rule1.guard --rules ./rules-dir1 --rules rule2.guard\
                           \nFor directory arguments such as `rules-dir1` above, scanning is only supported for files with following extensions: .guard, .ruleset";
@@ -544,9 +725,37 @@ const ALPHABETICAL_HELP: &str = "Validate files in a directory ordered alphabeti
 const LAST_MODIFIED_HELP: &str = "Validate files in a directory ordered by last modified times";
 const VERBOSE_HELP: &str = "Verbose logging";
 const PRINT_JSON_HELP: &str = "Print the parse tree in a json format. This can be used to get more details on how the clauses were evaluated";
+/// The shape `--payload` expects, named in both the help text and the parse error, from here, so the
+/// two cannot describe different shapes.
+const PAYLOAD_SCHEMA: &str =
+    "{\"rules\":[\"<rules 1>\", \"<rules 2>\", ...], \"data\":[\"<data 1>\", \"<data 2>\", ...]}";
 const PAYLOAD_HELP: &str = "Provide rules and data in the following JSON format via STDIN,\n{\"rules\":[\"<rules 1>\", \"<rules 2>\", ...], \"data\":[\"<data 1>\", \"<data 2>\", ...]}, where,\n- \"rules\" takes a list of string \
                 version of rules files as its value and\n- \"data\" takes a list of string version of data files as it value.\nWhen --payload is specified --rules and --data cannot be specified.";
 const STRUCTURED_HELP: &str = "Print out a list of structured and valid JSON/YAML. This argument conflicts with the following arguments: \nverbose \n print-json \n show-summary: all/fail/pass/skip \noutput-format: single-line-summary";
+
+/// Fold one rules file's exit code into the code for the run so far, keeping the more severe of the
+/// two.
+///
+/// `ERROR_STATUS_CODE` outranks `FAILURE_STATUS_CODE`: a ruleset that could not be evaluated is a
+/// different and worse answer than a template that failed a rule which *was* evaluated, and a
+/// consumer that treats the two alike will read a broken ruleset as a policy violation it can waive.
+/// `SUCCESS_STATUS_CODE` never lowers a code already set.
+///
+/// Saying this out loud became necessary when an undeclared name stopped returning `Err`. While it
+/// did, the first unevaluatable file ended the whole run, so no later file could overwrite its code
+/// and `exit_code = status` was sufficient. Now that such a file yields a code and the run continues
+/// to the remaining files, a later `FAILURE_STATUS_CODE` would have silently replaced it.
+///
+/// `JunitReporter::update_exit_code` applies the same rule; it delegates here so the two cannot drift.
+pub(crate) fn more_severe(current: i32, candidate: i32) -> i32 {
+    if candidate == ERROR_STATUS_CODE
+        || (candidate == FAILURE_STATUS_CODE && current != ERROR_STATUS_CODE)
+    {
+        candidate
+    } else {
+        current
+    }
+}
 
 #[allow(clippy::too_many_arguments)]
 fn evaluate_rule(
@@ -572,7 +781,7 @@ fn evaluate_rule(
         }
 
         Ok(Some(rule)) => {
-            let status = evaluate_against_data_input(
+            let evaluated = evaluate_against_data_input(
                 data_type,
                 output,
                 extra_data,
@@ -583,7 +792,30 @@ fn evaluate_rule(
                 print_json,
                 summary_type,
                 writer,
-            )?;
+            );
+
+            let status = match evaluated {
+                Ok(status) => status,
+                // A rules file naming something it never declares -- a variable used without a `let`,
+                // most often -- is the author's mistake, and `ERROR_STATUS_CODE` is already what this
+                // function returns for the sibling case of a file the parser rejects, a few lines up.
+                // `?` here instead carried the error to `main` and exited -1, so forgetting a `let`
+                // reported that cfn-guard had broken. Forgetting a `let` is a common mistake, and the
+                // message does not name the variable as the thing to fix, so the exit code was the only
+                // signal and it pointed at the wrong party.
+                //
+                // Whatever the other rules found is already on stdout: `evaluate_against_data_input`
+                // reports before propagating, which is deliberate and explained there.
+                Err(e) if e.is_undeclared_name() => {
+                    writer.write_err(format!(
+                        "Error handling rule file = {}, Error = {e}\n---",
+                        file_name.underline(),
+                    ))?;
+
+                    return Ok(ERROR_STATUS_CODE);
+                }
+                Err(e) => return Err(e),
+            };
 
             if status == Status::FAIL {
                 return Ok(FAILURE_STATUS_CODE);
@@ -648,10 +880,20 @@ pub fn resolve_path(file_or_dir: &str) -> Result<PathBuf> {
     }
 }
 
+/// Reads the `--payload` JSON from stdin.
+///
+/// The message says where the text came from, which flag asked for it, and what shape was expected.
+/// It used to be serde's bare text -- `EOF while parsing a value at line 1 column 0` for no stdin at
+/// all -- which names none of the three, even though this function knows all three and `PAYLOAD_HELP`
+/// already carries the schema. "line 1 column 0" is especially unhelpful when the real answer is that
+/// nothing was piped in, which is the shape this takes in CI with no stdin attached.
 fn deserialize_payload(payload: &str) -> Result<Payload> {
     match serde_json::from_str::<Payload>(payload) {
         Ok(value) => Ok(value),
-        Err(e) => Err(Error::ParseError(e.to_string())),
+        Err(e) => Err(Error::ParseError(format!(
+            "Unable to parse the --payload JSON read from stdin: {e}. Expected {}",
+            PAYLOAD_SCHEMA
+        ))),
     }
 }
 
@@ -722,7 +964,15 @@ fn evaluate_against_data_input<'r>(
         };
         let traversal = Traversal::from(&each);
         let mut root_scope = root_scope(rules, Rc::new(each.clone()));
-        let status = eval_rules_file(rules, &mut root_scope, Some(&file.name))?;
+        // Not `?`. A rules file with one unevaluatable rule still has findings from the others, and
+        // they are in the record by the time the error comes back -- `eval_rules_file` evaluates every
+        // rule before returning it. Reporting first and propagating afterwards keeps the exit code
+        // saying "the ruleset is broken" while letting the reader see what the rest of it found.
+        let evaluated = eval_rules_file(rules, &mut root_scope, Some(&file.name));
+        let status = match &evaluated {
+            Ok(status) => *status,
+            Err(_) => Status::FAIL,
+        };
 
         // Written to stderr, and read before `reset_recorder` consumes the scope. Stderr rather than
         // the report because the report on stdout is what pipelines parse, and a notice about a future
@@ -761,22 +1011,74 @@ fn evaluate_against_data_input<'r>(
         if status == Status::FAIL {
             overall = Status::FAIL
         }
+
+        evaluated?;
     }
     Ok(overall)
 }
 
-fn build_data_file(content: String, name: String) -> Result<DataFile> {
+fn data_file_is_empty(name: &str) -> Error {
+    Error::ParseError(format!(
+        "Unable to parse a template from data file: {name} is empty"
+    ))
+}
+
+/// Reports each key the document declared twice inside one mapping, on the same stderr channel the
+/// empty-file message uses.
+///
+/// The verdict is left alone: the last value still wins and the exit code does not move. The YAML
+/// 1.2 spec makes a duplicate key a loading failure, so rejecting the document would be defensible
+/// on it, but every template that carries one passes today and that is a maintainer's call. Saying
+/// so is not.
+///
+/// One line per duplicated key, written once when the file is read. Data files are built before any
+/// rule is evaluated, so the count does not scale with the number of rules.
+fn report_duplicate_keys(writer: &mut Writer, name: &str, duplicates: &[DuplicateKey]) {
+    for duplicate in duplicates {
+        writer
+            .write_err(format!(
+                "Warning: duplicate key {} in data file {}, first at {} and again at {}. \
+                 The last value is the one evaluated.",
+                duplicate.path, name, duplicate.first, duplicate.repeated
+            ))
+            .expect("Unable to write to stderr");
+    }
+}
+
+fn build_data_file(content: String, name: String, writer: &mut Writer) -> Result<DataFile> {
     if content.trim().is_empty() {
-        return Err(Error::ParseError(format!(
-            "Unable to parse a template from data file: {name} is empty"
-        )));
+        return Err(data_file_is_empty(&name));
     }
 
+    let mut duplicates = vec![];
     let path_value = match crate::rules::values::read_from(&content) {
-        Ok(value) => PathAwareValue::try_from(value)?,
+        Ok(value) => {
+            let converted = PathAwareValue::try_from_marked(
+                (value, crate::rules::path_value::Path::root()),
+                &mut duplicates,
+            )?;
+            report_duplicate_keys(writer, &name, &duplicates);
+            converted
+        }
+        // A file that parses but holds no document -- one that is all comments, say -- has nothing
+        // more in it to validate than a file of no bytes, and is reported the same way. The check
+        // above cannot answer this on the text alone, so the loader is what decides it.
+        Err(Error::MissingDocument) => return Err(data_file_is_empty(&name)),
         Err(e) => {
-            if matches!(e, Error::InternalError(InternalError::InvalidKeyType(..))) {
-                return Err(Error::ParseError(e.to_string()));
+            // These two say what is wrong and where, so they keep their own wording rather than
+            // getting the byte dump below. That dump exists for the messages that say nothing --
+            // libyaml's own failures all read "error parsing file" -- and attaching it to a message
+            // that already names the construct only buries it.
+            //
+            // The file name is prepended because neither message can know it, and without it a run
+            // over a directory reports a position in an unnamed file: `L:2,C:4` identifies nothing
+            // when there are N templates to choose from.
+            if matches!(
+                e,
+                Error::InternalError(InternalError::InvalidKeyType(..))
+                    | Error::UnsupportedDocument(..)
+            ) {
+                return Err(Error::ParseError(format!("in data file {name}: {e}")));
             }
 
             let str_len: usize = cmp::min(content.len(), 100);
@@ -794,29 +1096,137 @@ fn build_data_file(content: String, name: String) -> Result<DataFile> {
     })
 }
 
+/// Whether a name ends in one of the extensions a directory walk recognises.
+///
+/// The comparison is a plain suffix match, so it is case sensitive: `.yaml` is recognised and
+/// `.YAML` is not. This decides only what a directory walk picks up. A file named as an argument is
+/// read without consulting it.
 fn has_a_supported_extension(name: &str, extensions: &[&str]) -> bool {
     extensions.iter().any(|extension| name.ends_with(extension))
 }
 
-fn get_file_name(file: &Path, base: &Path) -> String {
-    let empty_path = Path::new("");
-    match file.strip_prefix(base) {
-        Ok(path) => {
-            if path == empty_path {
-                file.file_name().unwrap().to_str().unwrap().to_string()
-            } else {
-                format!("{}", path.display())
-            }
-        }
-        Err(_) => format!("{}", file.display()),
+/// The canonical path of a data file, which is the name its findings are reported under.
+///
+/// Canonicalising is what keeps doubled separators out of the report: `walkdir` output occasionally
+/// includes '//', and this name is printed verbatim.
+fn canonical_name(path: &Path) -> Result<String> {
+    Ok(path
+        .canonicalize()?
+        .to_str()
+        .map_or("".to_string(), String::from))
+}
+
+/// The final component of a path, or an empty string if it has none.
+pub(crate) fn file_name_of(path: &Path) -> String {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .map_or_else(String::new, String::from)
+}
+
+/// Reads one data file under the name its findings will be reported against.
+fn read_data_file(path: &Path, name: String, writer: &mut Writer) -> Result<DataFile> {
+    let mut content = String::new();
+    let mut reader = BufReader::new(File::open(path)?);
+    reader.read_to_string(&mut content)?;
+
+    build_data_file(content, name, writer)
+}
+
+/// Reports on stderr that the run had no data to evaluate, and names the files a directory walk
+/// passed over on the way to finding none.
+///
+/// A run that checked nothing is otherwise indistinguishable from a run in which everything
+/// complied: both print nothing to stdout and exit 0. In a pipeline that is a green build for data
+/// nobody looked at.
+///
+/// This fires only when the run evaluated nothing at all. Reporting every skipped file would emit a
+/// line for the README, the licence and the lockfile in any real directory, and a warning that
+/// fires on every run stops being read. What that leaves uncovered is a directory yielding some
+/// templates while skipping one the user expected to be checked; such a run does print findings, so
+/// it is not silent about having run, only about the omission.
+///
+/// The exit code is left alone. A run that evaluated nothing still returns PASS, because moving it
+/// would change the result for everyone pointing `--data` at a directory of mixed content, and that
+/// is a separate argument to make.
+fn report_no_data_evaluated(writer: &mut Writer, skipped: &[String]) -> Result<()> {
+    for name in skipped {
+        writer.write_err(format!(
+            "Warning: {name} was not evaluated because its extension is not one of: {}",
+            DATA_FILE_SUPPORTED_EXTENSIONS.join(", ")
+        ))?;
     }
+
+    writer.write_err(String::from(
+        "Warning: no data files were evaluated. Nothing was checked, and the absence of findings \
+         does not mean the data complied.",
+    ))?;
+
+    Ok(())
+}
+
+/// Reports on stderr that the run had no rules to apply, and names the files a directory walk passed
+/// over on the way to finding none.
+///
+/// The mirror of [`report_no_data_evaluated`], written for the same reason and reached the same way:
+/// a run that applied no rule prints nothing to stdout and exits 0, which is what a run in which
+/// everything complied also does. `--rules some-empty-dir` therefore reported success for a policy
+/// that was never applied.
+///
+/// Like the data side, this fires only when the run found no rules at all, and leaves the exit code
+/// alone. Moving the code would change the result for every caller pointing `--rules` at a directory
+/// that happens to hold no rules file, which is a separate argument to make; and a warning that fires
+/// on runs which *did* apply rules stops being read.
+fn report_no_rules_evaluated(writer: &mut Writer, skipped: &[String]) -> Result<()> {
+    for name in skipped {
+        writer.write_err(format!(
+            "Warning: {name} was not evaluated because its extension is not one of: {}",
+            RULE_FILE_SUPPORTED_EXTENSIONS.join(", ")
+        ))?;
+    }
+
+    writer.write_err(String::from(
+        "Warning: no rules files were evaluated. Nothing was checked, and the absence of findings \
+         does not mean the data complied.",
+    ))?;
+
+    Ok(())
+}
+
+/// The name a rules file is reported and located under: the path as it was given.
+///
+/// This replaced `get_file_name(file, base)`, which every caller invoked as `get_file_name(file, file)`.
+/// `strip_prefix` against itself yields the empty path, so the function always took its
+/// `file_name()` branch and every rules file was known by its basename alone -- two arguments spent
+/// arriving at a value that needed neither. Two files named `same.guard` in different directories then
+/// produced byte-identical output everywhere the name appears, including the source position a
+/// deprecation notice ends with, which exists so a reader can go to the clause.
+///
+/// The path as given rather than a path derived from it, for three reasons.
+///
+/// It is reproducible. `resolve_path` is `PathBuf::from_str` on every non-wasm target and does not
+/// canonicalize, so a relative argument stays relative and the locator is the caller's own string.
+/// An absolute argument yields an absolute locator, which is the caller's choice and not this
+/// function's to rewrite; deriving a path relative to the process's working directory would make the
+/// same file report differently depending on where the command was run from.
+///
+/// It is what the data file already does. `Property [...] in data [...]` prints the data file exactly
+/// as it was passed, so the rules file was the asymmetric one.
+///
+/// And `test --rules-file` already does it -- `path.to_str()` -- so three of the four paths that name
+/// a rules file now agree on one rule instead of holding three spellings between them.
+///
+/// Rejected: relative to the `--rules` argument that produced the file, which is what the two-argument
+/// shape was reaching for. It distinguishes files found by walking a directory, but a caller naming two
+/// files explicitly makes each one its own base, which is the collapse above again.
+fn rules_file_locator(file: &Path) -> String {
+    file.display().to_string()
 }
 
 fn get_rule_info(rules: &[PathBuf], writer: &mut Writer) -> Result<Vec<RuleFileInfo>> {
     iterate_over(rules, |content, file| {
         Ok(RuleFileInfo {
             content,
-            file_name: get_file_name(file, file),
+            file_name: rules_file_locator(file),
         })
     })
     .try_fold(vec![], |mut res, rule| -> Result<Vec<RuleFileInfo>> {

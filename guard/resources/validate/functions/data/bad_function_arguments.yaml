@@ -1,0 +1,24 @@
+#
+# Values a rule might feed to a scalar function argument that cannot be one: a negative offset, a
+# non-numeric offset, a delimiter that is not text, a pattern that is not text. All of them are in the
+# data, not in the rules file, which is the point -- a template decides what these arguments are.
+#
+# wideopen is a genuine violation, and it is here so that a run over this file has a real finding to
+# classify while the four bad arguments are being reported.
+#
+Resources:
+  newServer:
+    Type: AWS::New::Service
+    Properties:
+      Name: "prod-database-01"
+      NegativeOffset: -1
+      TextOffset: "two"
+      NumericDelimiter: -1
+      NumericPattern: -1
+    Collection:
+      - a
+      - b
+  wideopen:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      CidrIp: 0.0.0.0/0

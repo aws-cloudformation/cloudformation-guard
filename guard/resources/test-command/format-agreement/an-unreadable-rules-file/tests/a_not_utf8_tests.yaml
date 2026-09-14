@@ -1,0 +1,10 @@
+# Present so the unreadable rules file beside it is not skipped for having no tests. Its expectation
+# is never reached: the rules file's bytes are not UTF-8, so nothing is ever parsed or evaluated.
+- name: Never evaluated, because the rules file cannot be read
+  input:
+    Resources:
+      ExampleS3:
+        Type: AWS::S3::Bucket
+  expectations:
+    rules:
+      a: PASS

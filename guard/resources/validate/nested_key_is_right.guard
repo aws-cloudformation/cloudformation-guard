@@ -1,0 +1,3 @@
+rule nested_key_is_right {
+    Resources.Nested.key == "right"
+}

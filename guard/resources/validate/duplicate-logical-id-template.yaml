@@ -1,0 +1,22 @@
+# `A` is declared twice, and `C` is the only bucket whose Public is true. The duplicate is what
+# desynchronised the key list from the value map, so a capture bound C's value to the key "A".
+#
+# This has to be YAML: the relaxed-JSON parser used by `PathAwareValue::try_from(&str)` collapses a
+# repeated key before a map is built, so a unit test written against a string cannot reach the defect.
+Resources:
+  A:
+    Type: AWS::S3::Bucket
+    Properties:
+      Public: false
+  B:
+    Type: AWS::S3::Bucket
+    Properties:
+      Public: false
+  A:
+    Type: AWS::S3::Bucket
+    Properties:
+      Public: false
+  C:
+    Type: AWS::S3::Bucket
+    Properties:
+      Public: true

@@ -48,6 +48,19 @@ impl std::fmt::Display for Location {
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub(crate) struct Path(pub(crate) String, pub(crate) Location);
 
+/// A key a document declared more than once inside one mapping.
+///
+/// Both locations are carried, not just the repeated one, because a warning that a key is duplicated
+/// without saying where is unusable on a template of any size: the reader needs the line they can
+/// see and the line that actually decided the value. A key name reused in two *different* mappings
+/// is ordinary and is not this.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct DuplicateKey {
+    pub(crate) path: String,
+    pub(crate) first: Location,
+    pub(crate) repeated: Location,
+}
+
 impl Path {
     #[cfg(test)]
     pub(crate) fn new(path: String, line: usize, col: usize) -> Path {
@@ -191,8 +204,22 @@ impl Hash for PathAwareValue {
                 s.hash(state);
             }
 
+            // Hashed as the one-character string it is, not as a `char`. `compare_values` relates
+            // `Char('b')` to `String("b")`, and the fall-through in `PartialEq` delegates to
+            // `compare_values`, so `eq` says the two are equal. `Hash for char` is
+            // `state.write_u32(*self as u32)` and `Hash for str` is
+            // `state.write(self.as_bytes()); state.write_u8(0xff)`, so for `'b'` the hasher was handed
+            // `62 00 00 00` in one case and `62 ff` in the other -- equal values, different hashes,
+            // which is the contract `equal_values_hash_equally` exists to hold.
+            //
+            // Same class of break as the `Float` cast below and unnoticed for the same reason: the one
+            // live consumer keys on map keys, which are always strings.
+            //
+            // `encode_utf8` into a stack buffer rather than `to_string()`, so the bytes go through
+            // `str`'s impl -- which is the impl the equal `String` uses -- without allocating.
             PathAwareValue::Char((_, c)) => {
-                c.hash(state);
+                let mut buf = [0u8; 4];
+                c.encode_utf8(&mut buf).hash(state);
             }
             PathAwareValue::Int((_, i)) => {
                 i.hash(state);
@@ -255,8 +282,24 @@ impl Hash for PathAwareValue {
                 }
             }
 
+            // Hashed in sorted key order, not in iteration order. `eq` for a map is
+            // `IndexMap::eq` -- a length check plus a lookup per key -- so it does not care what
+            // order the entries are in, while `IndexMap`'s iteration order is insertion order. So
+            // two maps holding the same entries written in a different order were equal and hashed
+            // differently, which is the `Eq`/`Hash` contract violation `equal_values_hash_equally`
+            // exists to prevent, in the same `match` as the `Float` cast it was written for.
+            //
+            // Sorting rather than combining the per-entry hashes commutatively: a commutative fold
+            // has to reduce each entry to a value of its own first, and `Hash` is handed one `H`
+            // with no way to construct a second hasher of that type. Sorting costs an allocation
+            // per hash, on a path nothing hot uses.
             PathAwareValue::Map((_, map)) => {
-                for (key, value) in map.values.iter() {
+                let mut entries = map
+                    .values
+                    .iter()
+                    .collect::<Vec<(&String, &PathAwareValue)>>();
+                entries.sort_unstable_by(|(left, _), (right, _)| left.cmp(right));
+                for (key, value) in entries {
                     key.hash(state);
                     value.hash(state);
                 }
@@ -274,18 +317,72 @@ impl PartialEq for PathAwareValue {
 
             (PathAwareValue::Bool((_, b1)), PathAwareValue::Bool((_, b2))) => b1 == b2,
 
+            // `unwrap_or(false)` rather than `unwrap`, and the difference is a process abort.
+            //
+            // The `unwrap` carried the comment "given that we have already validated the regular
+            // expression", which is a false premise. Validation at parse time proves the pattern
+            // *compiles*; it says nothing about whether a match *completes*. `fancy_regex` returns
+            // a `Result` from `is_match` because a pattern with a lookaround or a backreference
+            // runs on its backtracking engine, and a nested quantifier can then exceed the
+            // backtrack limit on a long value -- `/(?!zzz)(\w+\s?)+!/` against eighty characters
+            // holding no `!` did it, at exit 101, for the whole file. That is the failure the
+            // `unwrap_or(false)` answers.
+            //
+            // The two `false`s here are not the same `false`, and only one of them is live.
+            // `Regex::new` failing is a pattern that will not *compile*, and that is `Err(_)`;
+            // `is_match` returning `Err` is a pattern that compiled and then could not be
+            // *evaluated*, and that is the `unwrap_or`. Measured by making each panic in turn:
+            // `Err(_)` leaves the whole suite green, and the `unwrap_or` fails the three cases of
+            // `a_regex_in_a_list_literal_fails_the_clause_instead_of_aborting`.
+            //
+            // `Err(_) => false` is unreachable as things stand, by construction rather than by
+            // luck. Only two arms build a `PathAwareValue::Regex`: one from `MarkedValue::Regex`,
+            // which nothing in the crate ever constructs, and one from `Value::Regex`, which
+            // `parse_regex_inner` builds only after `Regex::try_from` has accepted the pattern --
+            // it answers `nom::Err::Failure` otherwise, so a rules file holding `/a(/` exits 5 at
+            // parse time and never reaches an evaluator. JSON and YAML have no regex spelling, so a
+            // data file or `--input-parameters` cannot smuggle one past that check either.
+            //
+            // It stays, and as `false` rather than `unreachable!()`. What makes it unreachable is a
+            // property of the callers and not of this match, so it returns the moment anything
+            // builds a `PathAwareValue::Regex` without compiling it first: a `MarkedValue::Regex`
+            // that starts being constructed, a parser that stops refusing, or a third construction
+            // site. `unreachable!()` would turn each of those into a panic inside a comparison,
+            // which is the abort the first paragraph is about avoiding.
+            //
+            // `false` is a compromise and not the honest answer, so it is worth being plain about
+            // what it costs. `PartialEq` returns `bool` and cannot report anything, and the arms
+            // cannot simply go: `contained_in` in `eval/operators.rs` decides `X in [/re/]` by
+            // asking `elem == rest` for each element before it asks anything else, so a panic in
+            // these arms takes a run down. Reached by
+            // `a_regex_in_a_list_literal_fails_the_clause_instead_of_aborting` and by the four
+            // `IN`/`NOT IN` cases of `an_ordinary_regex_comparison_is_unchanged`, of which only the
+            // first reaches the error path.
+            //
+            // Where a verdict can be reported, it is, and the list of spellings that reach a reporting
+            // comparator is worth keeping honest. `X == /re/` asks `compare_eq`. `X in [/re/]` reaches
+            // `contained_in`, which asks `compare_eq` as well and reports its error. `%q == %r` and
+            // `%q != %r` between two queries used to be the exception -- `EqOperation`'s
+            // both-operands-are-queries branch decided with `Vec::contains`, which is this `eq`, so the
+            // error was swallowed here where nothing could report it, and `!=` on two incomparable
+            // properties passed at exit 0 with nothing in the report. That branch now asks
+            // `compare_eq_symmetric` per pair and reports what comes back.
+            //
+            // So no comparison *verdict* is decided through this arm any more. `eq` is still reached
+            // from the two operators' machinery, by `Vec::contains` inside `reverse_diff`, but that
+            // asks whether a value is one of the ones already put in a diff rather than what the clause
+            // answers. Claiming "the comparison operators do not come through here" without that
+            // qualification is what stopped a reviewer looking, twice.
             (PathAwareValue::String((_, s)), PathAwareValue::Regex((_, r))) => {
-                if let Ok(regex) = Regex::new(r.as_str()) {
-                    regex.is_match(s.as_str()).unwrap() // given that we have already validated the regular expression
-                } else {
-                    false
+                match Regex::new(r.as_str()) {
+                    Ok(regex) => regex.is_match(s.as_str()).unwrap_or(false),
+                    Err(_) => false,
                 }
             }
             (PathAwareValue::Regex((_, r)), PathAwareValue::String((_, s))) => {
-                if let Ok(regex) = Regex::new(r.as_str()) {
-                    regex.is_match(s.as_str()).unwrap() // given that we have already validated the regular expression
-                } else {
-                    false
+                match Regex::new(r.as_str()) {
+                    Ok(regex) => regex.is_match(s.as_str()).unwrap_or(false),
+                    Err(_) => false,
                 }
             }
             (PathAwareValue::Regex((_, r)), PathAwareValue::Regex((_, s))) => r == s,
@@ -317,25 +414,61 @@ impl PartialEq for PathAwareValue {
 
 /// `eq` above is a match relation, and `Eq` claims more than it delivers.
 ///
-/// A string equals a regex it matches, and that arm is load-bearing rather than decorative: map key
-/// filters such as `Condition[ keys == /aws:[Ss]ource.*/ ]` are decided through it, and five
-/// evaluator tests fail if it is made to panic. It also puts a ceiling on how honest `Hash` can be,
+/// A string equals a regex it matches, and that arm is load-bearing rather than decorative:
+/// `contained_in` decides `X in [/re/]` by asking `eq` for each element of the list literal, so a
+/// panic in that arm ends the run at 101. Map key filters do not come through it, despite the
+/// spelling: `QueryPart::MapKeyFilter` in `eval_context.rs` hands its keys to
+/// `real_binary_operation`, which asks `compare_eq`. It also puts a ceiling on how honest `Hash` can be,
 /// because a regex and every string matching it would have to share one hash. So `eq` is not
 /// transitive, and `PathAwareValue` must not key a hashed collection that can hold a `Regex`.
 ///
 /// One hashed collection does key on it: the grouping of comparison results by their left-hand value
-/// in `report_at_least_one`. That is safe for a reason rather than by luck -- its keys come from the
+/// in `report_by_lhs`. That is safe for a reason rather than by luck -- its keys come from the
 /// document under validation, and a `Regex` only ever arrives as a rule literal on the right-hand
 /// side of a comparison.
 ///
 /// Range membership used to be answered here too, which broke symmetry outright:
 /// `Int(50) == RangeInt(5..100)` held while the reverse did not, there being no reverse arm. Those
-/// arms were unreachable and were removed rather than mirrored. Nothing is lost, because every
-/// clause is decided by `compare_eq`, which keeps its own range table and recurses through itself
-/// for lists and maps, so a range nested in a list literal never arrives here either.
+/// arms were removed rather than mirrored, because membership is `compare_eq`'s job and it keeps its
+/// own range table. That table is one-directional for the same reason these arms were, so `==`
+/// inherited the asymmetry `eq` had been relieved of; `compare_eq_symmetric` is where `==` gets the
+/// operand order put right, because `compare_eq` is shared with `IN`, for which one-directional is
+/// correct. The arms still do not belong here either way: `eq` is `Vec::contains`'s comparator, and a
+/// range reaching it that way needs the structural answer rather than the membership one.
 ///
-/// Numeric widening does stay, reached through `compare_values`. Unlike the other two it is an
-/// equivalence relation on the values it relates, and `Hash` agrees with it.
+/// A range nested in a list literal does still arrive here, through `Vec::contains` in
+/// `contained_in`, and that is what the removed arms were not reaching: `contains` asks
+/// `element == value`, so it needed the reverse arm, the one that never existed. Membership through a
+/// list was therefore answered `false` for every range, in both polarities, until `contained_in`
+/// started asking `compare_eq` as well. The arms stay out; the caller asks the function that has the
+/// table.
+///
+/// Two widenings do stay, both reached through `compare_values`: a number against a number across
+/// `Int` and `Float`, and a `Char` against the one-character `String` that spells it. Unlike the regex
+/// arm each is an equivalence relation on the values it relates, and `Hash` agrees with both -- a
+/// `Float` that is exactly an integer hashes as that integer, and a `Char` hashes as its one-character
+/// string.
+///
+/// Those two `Hash` arms are obligations this comment creates rather than incidental facts about it.
+/// The fall-through in `PartialEq` delegates to `compare_values`, so **every arm added to
+/// `compare_values` widens `eq`**, and has to be matched in `Hash` in the same commit or the type stops
+/// satisfying the `Eq` it claims. The `Char`/`String` arms were added without that step and the two
+/// hashed differently until it was caught; `equal_values_hash_equally` now pins both widenings so the
+/// next one cannot land silently.
+///
+/// For the same reason the type has no `PartialOrd`, and must not be given one. Rust requires
+/// `a.partial_cmp(b) == Some(Ordering::Equal)` exactly when `a == b`, and no ordering can satisfy that
+/// against a match relation: a regex would have to order `Equal` with every string it matches and
+/// those strings order differently from each other. The impl that used to stand here compared
+/// `self_path().0`, the path string, and ignored the value, so it disagreed with `eq` in both
+/// directions -- every rule literal is built with `Path::root()` and so shares the path `""`, which
+/// made `partial_cmp` report `Equal` for any two literals in any rules file, `15` against `"abc"`
+/// included, while two equal values read from different properties ordered `Less` or `Greater`.
+/// Nothing consumed it, which is how it survived; `sort_by(|a, b| a.partial_cmp(b).unwrap())` is one
+/// line away and would have ordered by path.
+///
+/// Ordering values is `compare_lt` and its three siblings, which return `Result` and can refuse a
+/// pair they cannot order. That is the behaviour the language needs and a `PartialOrd` cannot express.
 impl Eq for PathAwareValue {}
 
 impl TryFrom<&str> for PathAwareValue {
@@ -460,7 +593,26 @@ impl TryFrom<MarkedValue> for PathAwareValue {
 impl TryFrom<(MarkedValue, Path)> for PathAwareValue {
     type Error = Error;
 
+    /// Drops any duplicate keys the document held. Callers that report them use
+    /// `try_from_marked` instead; this exists for the ones with nowhere to report to.
     fn try_from(incoming: (MarkedValue, Path)) -> Result<Self, Self::Error> {
+        Self::try_from_marked(incoming, &mut vec![])
+    }
+}
+
+impl PathAwareValue {
+    /// The conversion, collecting the keys a mapping declared twice as it goes.
+    ///
+    /// This is where the duplicate is visible and nowhere earlier is: the loader keys its map on
+    /// `(String, Location)`, so two same-named keys at different lines are two separate entries and
+    /// both survive it. They collapse here, where the map is rebuilt keyed on the name alone, and
+    /// this is also the only point that holds the path the key was reached by. Collection is
+    /// per-mapping by construction, since the check is the insert into the map being built for one
+    /// mapping, so a name reused across two mappings cannot register.
+    pub(crate) fn try_from_marked(
+        incoming: (MarkedValue, Path),
+        duplicates: &mut Vec<DuplicateKey>,
+    ) -> Result<Self, Error> {
         let root = incoming.0;
         let path = incoming.1;
 
@@ -489,7 +641,8 @@ impl TryFrom<(MarkedValue, Path)> for PathAwareValue {
                 for (idx, each) in v.into_iter().enumerate() {
                     let sub_path = path.extend_usize(idx);
                     let loc = *each.location();
-                    let value = PathAwareValue::try_from((each, sub_path.with_location(loc)))?;
+                    let value =
+                        Self::try_from_marked((each, sub_path.with_location(loc)), duplicates)?;
                     result.push(value);
                 }
 
@@ -499,15 +652,47 @@ impl TryFrom<(MarkedValue, Path)> for PathAwareValue {
             MarkedValue::Map(map, loc) => {
                 let mut keys = Vec::with_capacity(map.len());
                 let mut values = indexmap::IndexMap::with_capacity(map.len());
+                let mut first_seen: indexmap::IndexMap<String, Location> =
+                    indexmap::IndexMap::with_capacity(map.len());
                 for ((each_key, loc), each_value) in map {
                     let sub_path = path.extend_string(&each_key);
                     let sub_path = sub_path.with_location(*each_value.location());
-                    let value = PathAwareValue::try_from((each_value, sub_path))?;
-                    values.insert(each_key.to_owned(), value);
-                    keys.push(PathAwareValue::String((
-                        path.with_location(loc),
-                        each_key.to_string(),
-                    )));
+                    let key_path = sub_path.0.clone();
+                    let value = Self::try_from_marked((each_value, sub_path), duplicates)?;
+                    // Pushed only when the insert added a new entry. `values` is an `IndexMap` and
+                    // dedups; `keys` did not, so a document with a repeated key left the two different
+                    // lengths -- and `eval_context` pairs them *positionally*
+                    // (`map.keys.iter().zip(map.values.values())`), so every entry after the duplicate
+                    // was bound to the wrong key.
+                    //
+                    // On a template declaring `A` twice, with `C` the only public bucket,
+                    // `Resources[ nm | Properties.Public == true ]` captured `nm` as "A" -- a bucket
+                    // whose `Public` is false -- and the last key was dropped entirely. Remove the
+                    // duplicate and the same rule captures "C". A rule that reports the wrong logical
+                    // id sends someone to the wrong resource.
+                    //
+                    // Only the key side was affected, which is why it needs a capture to see at all: a
+                    // value traversal such as `Resources.*[ Type == ... ] { ... }` never reads `keys`
+                    // and always found `C`.
+                    //
+                    // Last-write-wins on the value is unchanged, and the key keeps the position of its
+                    // first appearance, which is what `IndexMap` does for the value too.
+                    //
+                    // That same insert is what tells a duplicate from a first appearance, so the
+                    // collection below costs no second pass over the mapping.
+                    if values.insert(each_key.to_owned(), value).is_none() {
+                        first_seen.insert(each_key.to_owned(), loc);
+                        keys.push(PathAwareValue::String((
+                            path.with_location(loc),
+                            each_key.to_string(),
+                        )));
+                    } else if let Some(first) = first_seen.get(&each_key) {
+                        duplicates.push(DuplicateKey {
+                            path: key_path,
+                            first: *first,
+                            repeated: loc,
+                        });
+                    }
                 }
                 Ok(PathAwareValue::Map((
                     path.with_location(loc),
@@ -657,8 +842,8 @@ impl QueryResolver for PathAwareValue {
             QueryPart::This => self.select(all, &query[1..], resolver),
 
             QueryPart::Key(key) => {
-                match key.parse::<i64>() {
-                    Ok(index) => match self {
+                match list_index_of(self, key) {
+                    Some(index) => match self {
                         PathAwareValue::List((_, list)) => {
                             PathAwareValue::retrieve_index(self, index, list, query).map_or_else(
                                 |e| self.map_error_or_empty(all, e),
@@ -669,7 +854,7 @@ impl QueryResolver for PathAwareValue {
                         _ => self.map_some_or_error_all(all, query),
                     },
 
-                    Err(_) => match self {
+                    None => match self {
                         PathAwareValue::Map((path, map)) => {
                             //
                             // Variable interpolation support.
@@ -815,7 +1000,23 @@ impl QueryResolver for PathAwareValue {
                             }
                         }
 
-                        LetValue::FunctionCall(_) => unreachable!(),
+                        // Not `unreachable!()` any more. It was true only because the parser could not
+                        // build a key filter with a function call on the right, and that was the defect --
+                        // the same input parsed as an ordinary filter over a property named `keys` and
+                        // returned a different verdict. Now that the parser builds it, an abort here would
+                        // be one panic away from any caller of this resolver.
+                        //
+                        // Resolving it is the live engine's job and it does resolve it, in
+                        // `eval_context::query_retrieval_with_converter`; this resolver has no function
+                        // machinery to reach for and no command path reaches this arm. So it says what it
+                        // cannot do rather than dying of it.
+                        LetValue::FunctionCall(function) => {
+                            return Err(Error::RetrievalError(format!(
+                                "A key filter with a function call on the right, {}, needs the evaluation \
+                                 context that resolves functions. This resolver does not have one.",
+                                function.name
+                            )))
+                        }
                     };
                     if query.len() > 1 {
                         let mut acc = Vec::with_capacity(selected.len());
@@ -920,12 +1121,6 @@ impl Serialize for PathAwareValue {
             }
             Err(e) => Err(serde::ser::Error::custom(e)),
         }
-    }
-}
-
-impl PartialOrd for PathAwareValue {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        self.self_path().0.partial_cmp(&other.self_path().0)
     }
 }
 
@@ -1163,6 +1358,28 @@ fn compare_int_to_float(i: i64, f: f64) -> Option<Ordering> {
     })
 }
 
+/// The index a [`QueryPart::Key`] stands for, and `None` when it stands for a key name.
+///
+/// `Items.0` is index access written without brackets, which is why a key is read as a number at all.
+/// A map takes that same text as a key name, and deciding on the text alone made any key that reads
+/// as an integer unaddressable: `Mappings.AccountToEnv."123456789012".Env` resolved to nothing on a
+/// template that has exactly that key, and quoting it in the rule changed nothing, because the quotes
+/// are gone by the time retrieval sees a `Key`. Quoting is how the language says "this is a name" --
+/// it is what `docs/KNOWN_ISSUES.md` prescribes for a key containing a dash -- so there was no
+/// spelling that worked. `"1.5"` resolved and `"80"` did not, which is the shape of an `i64` parse
+/// rather than of anything to do with maps.
+///
+/// Account ids, ports and status codes are all real map keys that read as integers, and a rule that
+/// names one silently matched nothing.
+///
+/// Both engines ask this question, so they get the same answer from one place.
+pub(crate) fn list_index_of(current: &PathAwareValue, key: &str) -> Option<i64> {
+    match current {
+        PathAwareValue::List(_) => key.parse::<i64>().ok(),
+        _ => None,
+    }
+}
+
 /// The offset an array index refers to in a collection of `len` elements, or `None` when it refers to
 /// none of them.
 ///
@@ -1206,6 +1423,15 @@ fn float_as_exact_i64(f: f64) -> Option<i64> {
     Some(f as i64)
 }
 
+/// The refusal for a float that cannot be ordered, which in practice is a NaN.
+///
+/// Shared so that the range-membership arms of `compare_eq` refuse in the same words `compare_values`
+/// does. The message says "Float values" rather than naming NaN because the condition it reports is
+/// `partial_cmp` answering `None`, and that is what the caller can act on.
+fn float_is_not_comparable() -> Error {
+    Error::NotComparable("Float values are not comparable".to_owned())
+}
+
 fn compare_values(first: &PathAwareValue, other: &PathAwareValue) -> Result<Ordering, Error> {
     match (first, other) {
         //
@@ -1216,9 +1442,7 @@ fn compare_values(first: &PathAwareValue, other: &PathAwareValue) -> Result<Orde
         (PathAwareValue::String((_, s)), PathAwareValue::String((_, o))) => Ok(s.cmp(o)),
         (PathAwareValue::Float((_, f)), PathAwareValue::Float((_, s))) => match f.partial_cmp(s) {
             Some(o) => Ok(o),
-            None => Err(Error::NotComparable(
-                "Float values are not comparable".to_owned(),
-            )),
+            None => Err(float_is_not_comparable()),
         },
 
         // A number is a number. Without these two arms `Size > 10` reports the template's own
@@ -1236,6 +1460,40 @@ fn compare_values(first: &PathAwareValue, other: &PathAwareValue) -> Result<Orde
         }
 
         (PathAwareValue::Char((_, f)), PathAwareValue::Char((_, s))) => Ok(f.cmp(s)),
+
+        // A `Char` against a `String`, ordered as the one-character string it is.
+        //
+        // Without these two arms `parse_char`'s output could not be checked against anything a rules
+        // file can write. There is no `Char` literal in the language: `parse_scalar_value` is
+        // `alt((parse_string, parse_float, parse_int_value, parse_bool, parse_regex))`, and
+        // `parse_char` is reachable from `range_value` only, so `'1'` and `"1"` both parse as
+        // `Value::String`. The documented example for the function --
+        // `let converted = parse_char(..)` then `%converted == '1'` -- therefore failed for every
+        // input, with `not comparable char, String` blaming the template's type. It is the only one of
+        // the five converters whose result cannot be compared with a literal; `parse_int`,
+        // `parse_float`, `parse_boolean` and `parse_string` all produce a value that matches one.
+        //
+        // In `compare_values` rather than in `compare_eq`, so that ordering gets the same answer as
+        // equality. Adding it to `compare_eq` alone would have left `%c == "b"` deciding while
+        // `%c < "c"` refused, which is the shape of asymmetry this file has had to fix twice.
+        //
+        // Ordered as strings, not gated on the string's length. Refusing a multi-character string would
+        // make comparability depend on a value rather than on a pair of types, and `<` needs a total
+        // order to be any use. `'b'` against `"bc"` is Less, which is what the same two values would
+        // have compared as if `parse_char` had not been applied -- and that equivalence is the point:
+        // conversion should not change the answer to a comparison the language could already make.
+        // Byte-wise `str` ordering agrees with code-point ordering under UTF-8, so this is consistent
+        // with the `(Char, Char)` arm above.
+        //
+        // The narrowest fix, and not the only candidate. `parse_char` could have returned a
+        // one-character `String` instead, which needs no new arms -- but a `String` does not compare
+        // with a `RangeChar` either (`"b" in r[a,z]` refuses), so that would break `%c in r[a,z]`,
+        // which works today and is the other half of what the function is for. Whether `Char` should
+        // exist in the value space at all is a real question, and a `String`-against-`RangeChar` arm is
+        // what would settle it; that is a wider change than this finding.
+        (PathAwareValue::Char((_, c)), PathAwareValue::String((_, s))) => Ok(c.to_string().cmp(s)),
+        (PathAwareValue::String((_, s)), PathAwareValue::Char((_, c))) => Ok(s.cmp(&c.to_string())),
+
         (_, _) => Err(Error::NotComparable(format!(
             "PathAwareValues are not comparable {}, {}",
             first.type_info(),
@@ -1299,6 +1557,35 @@ pub(crate) fn compare_eq(first: &PathAwareValue, second: &PathAwareValue) -> Res
 
         (PathAwareValue::Regex((_, r)), PathAwareValue::Regex((_, s))) => return Ok(r == s),
 
+        // Two ranges are equal when they describe the same range, which is what `PartialEq` already
+        // says three arms of its own. `compare_eq` is the equality function `==` actually calls --
+        // `EqOperation` hands it to `match_value` -- and it had no such arm, so its `(_, _)`
+        // fall-through asked `compare_values`, whose only range arms are the membership cells below.
+        // Two ranges landed on the incomparable catch-all, and `%allowed == r[80,90]` reported
+        // `Value=[80,90] not equal to value [80,90]` with reason `not comparable range(int, int),
+        // range(int, int)`. A reason that refutes itself on its face.
+        //
+        // Both polarities were affected, so a rule author had no working spelling: `!=` on the same
+        // pair also refused, because the negation wrapper in `eval/operators.rs` inverts `Fail` and
+        // `Success` and passes `NotComparable` through untouched -- correctly, since "could not be
+        // answered" must not become a pass. `in [r[80,90]]` was the only spelling that worked, and only
+        // because `contained_in` consults `PartialEq` first.
+        //
+        // Structural, matching `PartialEq`'s arms exactly rather than asking whether the two ranges
+        // admit the same values: `r[1,3]` and `r[1,4)` over the integers admit the same set and are
+        // written differently, and answering `==` on the admitted set would make equality depend on the
+        // bound type in a way nothing else in the file does.
+        //
+        // The collection arms above recurse into `compare_eq`, so this also settles a map or list
+        // holding a range: `{p: r[80,90]} == {p: r[80,90]}` refused for the same reason and now decides.
+        (PathAwareValue::RangeInt((_, r)), PathAwareValue::RangeInt((_, r2))) => return Ok(r == r2),
+        (PathAwareValue::RangeFloat((_, r)), PathAwareValue::RangeFloat((_, r2))) => {
+            return Ok(r == r2)
+        }
+        (PathAwareValue::RangeChar((_, r)), PathAwareValue::RangeChar((_, r2))) => {
+            return Ok(r == r2)
+        }
+
         //
         // Range checks
         //
@@ -1306,8 +1593,43 @@ pub(crate) fn compare_eq(first: &PathAwareValue, second: &PathAwareValue) -> Res
             return Ok(value.is_within(r))
         }
 
+        // A NaN refuses rather than answering false, which is what the four range-membership
+        // comparisons on a float would otherwise do. `is_within` is `le`/`lt`/`ge`/`gt` and
+        // `float_within_int_range` reads `compare_int_to_float`'s `None` through a `_ => false` arm, so
+        // every one of them reports "not in the range" for a value that cannot be ordered against
+        // either bound. That is a decision, and `!=` and `NOT IN` then invert it into a pass, so a
+        // denylist would admit a value that is not a number. Every other comparison against a NaN
+        // already refuses, through `compare_values` and `compare_int_to_float`, and both polarities of a
+        // refusal fail the clause -- these four were the only ones answering.
+        //
+        // **No input can reach it as the tree stands, and it is kept anyway.** When this was written the
+        // scenario was live: a `Float(NaN)` did arrive from a document. It cannot now, because the serde
+        // loader gained a finiteness gate afterwards (in `impl TryFrom<&serde_yaml::Value> for Value`,
+        // which stringifies a non-finite float to `.nan` / `.inf` / `-.inf`), and every other way a
+        // `Float` is built from input already had one: `libyaml::loader::Loader::handle_scalar_event`,
+        // the rules-file float literal in `rules::parser::parse_float`, where it is a parse error, and
+        // the `to_float` function's own `functions::converters::parse_float`, which yields no value. `serde_json::Number` cannot hold a NaN in the first place -- JSON has
+        // no spelling for one, and `1e400` in a JSON data file loads as the string `"1e400"` through the
+        // YAML reader rather than as an infinity.
+        //
+        // So it becomes reachable again the moment any of those four gates goes, or a fifth construction
+        // site appears -- which is a property of the callers and not of this match, exactly as for the
+        // `Err(_) => false` arm in `PartialEq` above. Not `unreachable!()` for the same reason given
+        // there: that would turn each of those changes into a panic inside a comparison, and a widened
+        // contract reaching a panic is worse than a widened contract reaching a refusal. The guard is
+        // one `is_nan` call on a path that already does four comparisons.
+        //
+        // Only the scalar is tested. A range's bounds come from `parse_range` in the rules parser,
+        // which builds them with `parse_float`, and that rejects a literal which is not finite -- so a
+        // `RangeFloat` cannot hold a NaN bound and a guard for one would be unreachable.
+        //
+        // The reason text is `compare_values`'s own for the same condition, because it is the same
+        // condition: a float that cannot be ordered.
         (PathAwareValue::Float((_, value)), PathAwareValue::RangeFloat((_, r))) => {
-            return Ok(value.is_within(r))
+            return match value.is_nan() {
+                true => Err(float_is_not_comparable()),
+                false => Ok(value.is_within(r)),
+            }
         }
 
         (PathAwareValue::Int((_, value)), PathAwareValue::RangeFloat((_, r))) => {
@@ -1315,7 +1637,10 @@ pub(crate) fn compare_eq(first: &PathAwareValue, second: &PathAwareValue) -> Res
         }
 
         (PathAwareValue::Float((_, value)), PathAwareValue::RangeInt((_, r))) => {
-            return Ok(float_within_int_range(*value, r))
+            return match value.is_nan() {
+                true => Err(float_is_not_comparable()),
+                false => Ok(float_within_int_range(*value, r)),
+            }
         }
 
         (PathAwareValue::Char((_, value)), PathAwareValue::RangeChar((_, r))) => {
@@ -1333,6 +1658,80 @@ pub(crate) fn compare_eq(first: &PathAwareValue, second: &PathAwareValue) -> Res
     match match_result {
         Ok(is_match) => Ok(is_match),
         Err(error) => Err(Error::from(Box::new(error))),
+    }
+}
+
+/// `compare_eq` with the operands put in the order its range table expects, for the operators that
+/// have no left and right.
+///
+/// `compare_eq` is a match function rather than an equality function, whatever its name says: its five
+/// range arms ask "is this scalar inside that range", and they are all written scalar-on-the-left
+/// because every caller but one has a subject and a pattern. `IN` does -- `Port IN r[80,90]` tests
+/// `Port` against the range and never the reverse -- and so do the map key filters and the `NOT IN`
+/// deprecation probe.
+///
+/// `==` is the exception. It relates two values with no subject among them, and it is symmetric by
+/// contract; `impl Eq for PathAwareValue` says so, and calls the identical one-directional shape in
+/// `PartialEq` a symmetry bug. Asked directly, `compare_eq` gave `Resources.R.Properties.A ==
+/// r[80,90]` a PASS and `%l == Resources.R.Properties.A` for the same two values `not comparable
+/// range(int, int), int`.
+///
+/// So the swap lives here, at the operator that needs it, rather than as five more arms in the table.
+/// Mirroring the table was tried first and reaches four other callers, three of which then answer a
+/// question nobody asked: `%range in [15]` becomes "15 is inside the range" instead of "the range is
+/// one of these elements", `in_cmp`'s list loop the same, and `incomparable_membership` stops emitting
+/// its `NOT IN` deprecation notice because the comparison it probes with now succeeds. Measured, not
+/// predicted -- the mirrored version moved six `IN`/`NOT IN` cells of the operator matrix, and `in`
+/// membership is exactly what must not move. That was measured while the predicate compared whole values;
+/// it flattens both operands now, so which pairs it probes with has moved and the notice half of the
+/// finding would have to be re-measured before being quoted. The six moved cells are the reason the
+/// mirror was rejected and they are about the operator, not the notice.
+///
+/// Exactly the five pairings the table has, and no others. Swapping every range-against-non-range pair
+/// was the first version and it moved the wording of forty refusals: a range against a `bool` has no arm
+/// in either order, so the swap changed nothing about the verdict and made `compare_values` report
+/// `not comparable bool, range(char, char)` for a clause written `%range == true`. Naming the operands
+/// in the opposite order to the clause is the defect F10 is about; a fix for one asymmetry must not
+/// introduce it somewhere else. So a pair with no reverse arm keeps the order it arrived in, and its
+/// reason still reads left-to-right.
+///
+/// One consequence the caller list above does not spell out, and it is the widest thing the swap did.
+/// `EqOperation`'s literal-on-the-left branch has a `single_value` arm that unwraps a right-hand `List`
+/// and compares the left operand against **each element** (`impl Comparator for EqOperation`). With a range on
+/// the left that arm now answers `%range == <query yielding a list>` element-wise, so a clause a reader
+/// parses as "these two are the same thing" answers "every one of these is inside the range". It refused
+/// before, at exit 19.
+///
+/// Deliberately left as it is, because the alternatives are worse in both directions. The mirror --
+/// `<query yielding a list> == %range` -- has distributed element-wise since before this swap, through
+/// the same unwrapping in the opposite branch, so refusing on this side would restore the asymmetry the
+/// swap exists to remove and `impl Eq for PathAwareValue` calls a bug. Nor is the new answer a rubber
+/// stamp: it discriminates. `r[0,10]` against a query yielding `[1, 99]` fails, and against one yielding
+/// `[1, "x"]` fails in both polarities. It is also the same comparison as
+/// `%range == <query yielding a scalar>`, which is squarely what the swap is for, and a one-element list
+/// answers the same way a bare scalar does.
+///
+/// What remains open, and is not this function's to settle: the literal spelling of the same clause,
+/// `%range == [1, 2]`, still refuses -- on both sides of the round and in both operand orders. So the
+/// language answers a list-against-range comparison when the list arrives through a query and refuses
+/// when it is written out. That axis pre-dates the swap; the swap widened it by one cell. Closing it
+/// means deciding whether `list == range` should have meant membership in the first place, which is the
+/// same question as whether `Char` belongs in the value space, and neither is a change to make from here.
+///
+/// Two ranges are left alone as well. `compare_eq` relates them structurally and is already symmetric
+/// there, and swapping would only change which of the two the message names first.
+pub(crate) fn compare_eq_symmetric(
+    first: &PathAwareValue,
+    second: &PathAwareValue,
+) -> Result<bool, Error> {
+    match (first, second) {
+        (
+            PathAwareValue::RangeInt(_) | PathAwareValue::RangeFloat(_),
+            PathAwareValue::Int(_) | PathAwareValue::Float(_),
+        )
+        | (PathAwareValue::RangeChar(_), PathAwareValue::Char(_)) => compare_eq(second, first),
+
+        _ => compare_eq(first, second),
     }
 }
 

@@ -2,13 +2,18 @@ use crate::commands::reporters::test::generic::GenericReporter;
 use crate::commands::reporters::test::structured::{
     ContextAwareRule, Err, StructuredTestReporter, TestResult,
 };
-use crate::commands::reporters::test::{write_diagnostics, Diagnostics};
+use crate::commands::reporters::test::{
+    no_rules_declared_message, test_file_parse_error, unmatched_test_file_message,
+    write_diagnostics, Diagnostics,
+};
 use crate::commands::reporters::JunitReport;
 use crate::commands::{
     Executable, SUCCESS_STATUS_CODE, TEST_ERROR_STATUS_CODE, TEST_FAILURE_STATUS_CODE,
 };
+use clap::builder::TypedValueParser;
 use clap::Args;
 use serde::{Deserialize, Serialize};
+use std::cmp::Reverse;
 use std::collections::{BTreeMap, HashMap};
 use std::fs::File;
 use std::io::Write;
@@ -19,7 +24,8 @@ use walkdir::DirEntry;
 use validate::validate_path;
 
 use crate::commands::files::{
-    alphabetical, get_files_with_filter, last_modified, read_file_content, regular_ordering,
+    alphabetical, get_files_with_filter, iterate_over, last_modified, read_file_content,
+    regular_ordering,
 };
 use crate::commands::validate::{OutputFormatType, OUTPUT_FORMAT_HELP};
 use crate::commands::{
@@ -41,11 +47,30 @@ const DIRECTORY_HELP: &str = "Provide the root directory for rules";
 const ALPHABETICAL_HELP: &str = "Sort alphabetically inside a directory";
 const LAST_MODIFIED_HELP: &str = "Sort by last modified times within a directory";
 const VERBOSE_HELP: &str = "Verbose logging";
+const SINGLE_LINE_SUMMARY: &str = "single-line-summary";
+/// The output formats `test` has a reporter for. `sarif` is deliberately absent; see `output_format`.
+const SUPPORTED_OUTPUT_FORMATS: [&str; 4] = [SINGLE_LINE_SUMMARY, "json", "yaml", "junit"];
 
 #[derive(Debug, Clone, Eq, PartialEq, Args)]
 #[clap(about=ABOUT)]
+// `.args([..])` is what makes this group enforce anything. Without it the group had no members, and
+// a clap `ArgGroup` with no members can never be "present", so neither its `requires_all` nor its
+// `conflicts_with` ever fired -- the `DIRECTORY_ONLY` group three lines below has always had its
+// `.args`, which is why only this one was inert. Two defects followed:
+//
+// - `test -r rules.guard` with no `--test-data` satisfied the parser and then panicked on
+//   `self.test_data.as_ref().unwrap()`. `arg_required_else_help` hid it, because it only covers the
+//   zero-argument invocation.
+// - `test -d dir -r rules.guard` was accepted and `--dir` won, silently: `execute` reads
+//   `self.directory` first. The doc comments on all three fields claimed the conflict existed.
+//
+// `.multiple(true)` is required and is not decoration: a clap group is single-use by default, so
+// naming both arguments as members without it would reject `-r x -t y` -- the one combination the
+// group exists to require.
 #[clap(
     group=clap::ArgGroup::new(RULES_AND_TEST_FILE)
+    .args([RULES_FILE.0, TEST_DATA.0])
+    .multiple(true)
     .requires_all([RULES_FILE.0, TEST_DATA.0])
     .conflicts_with(DIRECTORY_ONLY))
 ]
@@ -93,7 +118,17 @@ pub struct Test {
     /// Specify the format in which the output should be displayed
     /// default is single-line-summary
     /// if junit, json or yaml are chosen, will conflict with verbose logging if set to true
-    #[arg(short, long, help=OUTPUT_FORMAT_HELP, value_enum, default_value_t=OutputFormatType::SingleLineSummary)]
+    //
+    // The accepted values are listed rather than taken from `OutputFormatType`'s `ValueEnum`, so that
+    // `sarif` -- which this command has no reporter for and rejects at `execute` -- stops appearing in
+    // `--help` as a possible value. It was advertised there while being the one value that could never
+    // produce output.
+    //
+    // `//` and not `///` on purpose: clap's derive prints a doc comment as the flag's `long_about`, so
+    // a rationale written with `///` lands in `--help` and expands the whole command's help layout.
+    #[arg(short, long, help=OUTPUT_FORMAT_HELP, default_value=SINGLE_LINE_SUMMARY,
+          value_parser=clap::builder::PossibleValuesParser::new(SUPPORTED_OUTPUT_FORMATS)
+              .map(|value| OutputFormatType::from(value.as_str())))]
     pub(crate) output_format: OutputFormatType,
 }
 
@@ -123,7 +158,6 @@ impl Executable for Test {
     /// - parse errors occur in the rule file
     /// - illegal json or yaml syntax present in any of the data input files
     fn execute(&self, writer: &mut Writer, _: &mut Reader) -> Result<i32> {
-        let mut exit_code = SUCCESS_STATUS_CODE;
         let cmp = if self.alphabetical {
             alphabetical
         } else if self.last_modified {
@@ -145,29 +179,50 @@ impl Executable for Test {
             let walk = walkdir::WalkDir::new(dir);
             let ordered_directory = OrderedTestDirectory::from(walk);
 
+            // Before the report and on stderr, as the unchecked-expectation note is, and here rather
+            // than in either handler so that every output format says it. Read now because
+            // iterating the directory consumes it.
+            write_diagnostics(
+                &ordered_directory
+                    .orphaned_test_files
+                    .iter()
+                    .map(|path| unmatched_test_file_message(path))
+                    .collect(),
+                writer,
+            )?;
+
             match self.output_format {
                 OutputFormatType::SingleLineSummary => {
                     handle_plaintext_directory(ordered_directory, writer, self.verbose)
                 }
+                // Returned as the handler gave it. This merged the handler's code with a local that
+                // was `SUCCESS_STATUS_CODE` on every path reaching here and nowhere assigned in
+                // between, so the merge could only ever yield the handler's code -- a third spelling
+                // of the exit-code policy that decided nothing.
                 OutputFormatType::JSON | OutputFormatType::YAML | OutputFormatType::Junit => {
-                    let test_exit_code = handle_structured_directory_report(
+                    handle_structured_directory_report(
                         ordered_directory,
                         writer,
                         self.output_format,
-                    )?;
-                    exit_code = if exit_code == SUCCESS_STATUS_CODE {
-                        test_exit_code
-                    } else {
-                        exit_code
-                    };
-
-                    Ok(exit_code)
+                    )
                 }
                 OutputFormatType::Sarif => unreachable!(),
             }
         } else {
-            let file = self.rules.as_ref().unwrap();
-            let data = self.test_data.as_ref().unwrap();
+            // Not `unwrap()`. The `RULES_AND_TEST_FILE` group requires the two together, so the CLI
+            // cannot reach here with either missing -- but `TestBuilder::try_build` does not require
+            // them, so the library can, and it panicked at exit 101 when it did.
+            // A panic is never the right answer to an argument list, and the caller that can still
+            // get here is a Rust caller who needs the reason rather than a backtrace.
+            let (file, data) = match (self.rules.as_ref(), self.test_data.as_ref()) {
+                (Some(file), Some(data)) => (file, data),
+                _ => {
+                    return Err(Error::IllegalArguments(String::from(
+                        "test requires both a rules file and a test data file: \
+                         pass --rules-file and --test-data together, or --dir to walk a directory",
+                    )))
+                }
+            };
 
             validate_path(file)?;
             validate_path(data)?;
@@ -189,12 +244,37 @@ impl Executable for Test {
 
             let path = PathBuf::from(file);
 
-            let rule_file = File::open(&path)?;
-            if !rule_file.metadata()?.is_file() {
-                return Err(Error::IoError(std::io::Error::from(
-                    std::io::ErrorKind::InvalidInput,
-                )));
+            // The check runs before the open, and through `fs::metadata` rather than through the open
+            // handle, because a directory is not openable everywhere. On Unix `File::open` on a
+            // directory succeeds and raises `ErrorKind::InvalidInput` on the first read. On Windows it
+            // does not open at all: `CreateFileW` requires `FILE_FLAG_BACKUP_SEMANTICS` to return a
+            // handle to a directory, which `File::open` does not pass and `fs::metadata` does. So
+            // checking through the handle only ever ran on Unix, and on Windows the `?` on the open
+            // reached `main` first.
+            //
+            // Both spellings said the wrong thing. The Unix one rendered as "I/O error when reading
+            // invalid input parameter": it named no path, and "input parameter" is `validate`'s
+            // `--input-params`, a flag `test` does not have. Both exited 255, the code
+            // `guard/README.md` gives to cfn-guard itself failing.
+            //
+            // `TEST_ERROR_STATUS_CODE` instead, which that table defines for `test` as "an
+            // expectation could not be evaluated, or a rules or test file could not be read" -- a
+            // directory handed to `--rules-file` is a rules file that could not be read.
+            // `handle_plaintext_single_file` below already answers the sibling case, content that
+            // cannot be read, with the same code.
+            //
+            // 255 stays on a path that does not exist, which `validate_path` above rejects before
+            // this point and all three subcommands agree on.
+            if !std::fs::metadata(&path)?.is_file() {
+                writer.write_err(format!(
+                    "`{file}` is not a rules file. --rules-file takes one file; \
+                     use --dir to walk a directory of rules files."
+                ))?;
+
+                return Ok(TEST_ERROR_STATUS_CODE);
             }
+
+            let rule_file = File::open(&path)?;
 
             match self.output_format {
                 OutputFormatType::SingleLineSummary => handle_plaintext_single_file(
@@ -245,13 +325,62 @@ fn handle_plaintext_directory(
             )?;
 
             let path = each_rule_file.file.path();
-            let content = get_rule_content(path)?;
-            let span = crate::rules::parser::Span::new_extra(&content, &each_rule_file.prefix);
+            // Not `?`. Propagating reached `main`'s catch-all and exited 255, `INTERNAL_FAILURE`, the
+            // code this repository reserves for the tool itself breaking -- and it abandoned every
+            // later rules file in the directory, so one unreadable file cost the whole walk. A rules
+            // file that cannot be read is content: `TEST_ERROR_STATUS_CODE` is what
+            // `handle_plaintext_single_file` and both structured paths answer, and the structured
+            // directory walk carries on to the next file the way this now does.
+            let content = match get_rule_content(path) {
+                Ok(content) => content,
+                Err(e) => {
+                    writeln!(writer, "Unable to read rule file content {e}")?;
+                    exit_code = get_exit_code(exit_code, TEST_ERROR_STATUS_CODE);
+                    writeln!(writer, "---")?;
+                    continue;
+                }
+            };
+            // The path, not `each_rule_file.prefix`. `prefix` is the file name with `.guard` or
+            // `.ruleset` stripped and no directory at all, so it was the coarsest of the three names
+            // this repository gave a rules file: `a/x.guard` and `b/x.guard` both parsed as `x`.
+            //
+            // Dropping the extension as well as the directory is what made `prefix` strictly worse than
+            // a basename, and the pair that shows it is `ra/x.guard` beside `rb/x.ruleset` -- two files
+            // whose names differ, which any basename keeps apart and which `prefix` does not. Measured
+            // over exactly that tree, one `tests/x_tests.yml` apiece:
+            //
+            //     prefix     single-line  2 notices, 1 distinct, both `Location[file:x`
+            //                -o json      1 notice
+            //     path       single-line  2 notices, 2 distinct
+            //                -o json      2 notices, 2 distinct
+            //
+            // Across directories, not within one. This comment used to cite `x.guard` and `x.ruleset`
+            // "in one directory" and point at the pairing code below as calling that pair real. The
+            // pairing code says the opposite once its tie-break is read: `min_by_key` over
+            // `Reverse(prefix.len())` returns the first of equal keys, so in one directory the single
+            // `x_tests.yml` goes to `x.guard` and `x.ruleset` is left with no test files at all --
+            // whereupon both walks skip it before it is ever parsed. Measured: that tree reports one
+            // notice and one `rule_file`, with or without this fix. The same-directory collision was
+            // unreachable and the example was untestable; the cross-directory one is neither.
+            //
+            // The name reaches the reader through the source position a deprecation notice ends with,
+            // and the walk over a directory is the invocation the aws-guard-rules-registry CI uses, so
+            // the collision landed on the corpus most likely to hit it.
+            //
+            // `prefix` keeps its job of matching test files to rules files, which is what it was built
+            // for and where dropping the extension is correct.
+            let span = crate::rules::parser::Span::new_extra(&content, path.to_str().unwrap_or(""));
 
             match crate::rules::parser::rules_file(span) {
                 Err(e) => {
                     writeln!(writer, "Parse Error on ruleset file {e}",)?;
-                    exit_code = TEST_FAILURE_STATUS_CODE;
+                    // `TEST_ERROR_STATUS_CODE`, not `TEST_FAILURE_STATUS_CODE`. A rules file that will
+                    // not parse is an expectation that could not be evaluated, not one that was not
+                    // met, and `guard/README.md` gives those two different codes. This arm was the only
+                    // one of the four that said 7: the same directory answered 7 under
+                    // `single-line-summary` and 1 under `json`, `yaml` and `junit`, and
+                    // `handle_plaintext_single_file` answers 1 for these same bytes.
+                    exit_code = get_exit_code(exit_code, TEST_ERROR_STATUS_CODE);
                 }
                 Ok(Some(rules)) => {
                     let data_test_files = each_rule_file
@@ -264,18 +393,30 @@ fn handle_plaintext_directory(
                         test_data: &data_test_files,
                         rules,
                         verbose,
+                        rules_file: path.to_str().unwrap_or(""),
                         writer,
                     };
 
                     let test_exit_code = reporter.report()?;
 
-                    exit_code = if exit_code == SUCCESS_STATUS_CODE {
-                        test_exit_code
-                    } else {
-                        exit_code
-                    };
+                    // `get_exit_code`, not `if exit_code == SUCCESS_STATUS_CODE`. That spelling kept
+                    // whatever it already had, so it never promoted a failure to an error: a directory
+                    // whose first rules file failed an expectation and whose second could not evaluate
+                    // one exited 7, while the structured walk over the same directory exited 1. Each
+                    // file on its own already agreed across the formats; only the merge did not.
+                    exit_code = get_exit_code(exit_code, test_exit_code);
                 }
-                Ok(None) => {}
+                Ok(None) => {
+                    let mut diagnostics = Diagnostics::new();
+                    if report_expectations_against_no_rules(
+                        path,
+                        &each_rule_file.get_test_files(),
+                        &mut diagnostics,
+                    ) {
+                        exit_code = get_exit_code(exit_code, TEST_ERROR_STATUS_CODE);
+                    }
+                    write_diagnostics(&diagnostics, writer)?;
+                }
             }
             writeln!(writer, "---")?;
         }
@@ -310,11 +451,25 @@ fn handle_plaintext_single_file(
                         writer,
                         verbose,
                         rules,
+                        rules_file: path.to_str().unwrap_or(""),
                     };
 
                     reporter.report()
                 }
-                Ok(None) => Ok(SUCCESS_STATUS_CODE),
+                Ok(None) => {
+                    let mut diagnostics = Diagnostics::new();
+                    let dropped = report_expectations_against_no_rules(
+                        path,
+                        data_test_files,
+                        &mut diagnostics,
+                    );
+                    write_diagnostics(&diagnostics, writer)?;
+
+                    Ok(match dropped {
+                        true => TEST_ERROR_STATUS_CODE,
+                        false => SUCCESS_STATUS_CODE,
+                    })
+                }
             }
         }
     }
@@ -324,6 +479,84 @@ fn get_rule_content(path: &Path) -> Result<String> {
     read_file_content(rule_file)
 }
 
+/// Collects a message for every expectation in `data_test_files`, for a rules file that declares no
+/// rules, and answers whether there was one.
+///
+/// `parse_rules` returns `Ok(None)` for an empty, comment-only or whitespace-only rules file, and
+/// every `Ok(None)` arm in this module dropped the run on the floor: `test` had been handed explicit
+/// expectations and exited 0 without looking at any of them. The two other ways an expectation goes
+/// unchecked -- no such rule, and a parameterized rule -- already report and exit
+/// `TEST_ERROR_STATUS_CODE`; this one is being brought in line with them rather than given a new
+/// behaviour of its own.
+///
+/// A test file that will not parse is reported here too. With no rules there is no report for the
+/// reporters to put that error in, and staying quiet about it is the defect being fixed.
+///
+/// Returns false when the test files hold no expectations at all, which is not this defect: nothing
+/// was asked, so nothing was dropped, and the caller leaves the exit code alone.
+///
+/// The path as given, not `file_name_of`. This is the one arm of the four whose message is the *whole*
+/// record of what was dropped: `Ok(None)` pushes no `TestResult`, so the structured document is `[]`
+/// and there is no `rule_file` field anywhere in it to recover the name from. Combine that with the
+/// single `Diagnostics` set `handle_structured_directory_report` keeps across the walk, and two files
+/// named alike collapsed into one line that named neither of them. Measured over two directories each
+/// holding a comment-only `declares_nothing.guard` with one expectation apiece:
+///
+/// ```text
+/// test -d <dir> -o json    1 line, stdout [] -- two dropped expectations, one record
+/// test -d <dir>            2 lines, byte-identical
+/// ```
+///
+/// So the structured walk lost a whole file's record and the plaintext walk kept both while making
+/// neither locatable. Both are repaired by naming the file the way `a12ff5fd` named it everywhere else.
+///
+/// `unchecked_expectation_message`, the sibling sentence for an expectation naming a rule the file does
+/// not declare, has the same 2-to-1 collapse and is deliberately left alone; see the note on it.
+fn report_expectations_against_no_rules(
+    rules_file: &Path,
+    data_test_files: &[PathBuf],
+    diagnostics: &mut Diagnostics,
+) -> bool {
+    let name = rules_file.display().to_string();
+    let mut dropped = false;
+
+    for specs in iterate_over(data_test_files, |content, path| {
+        parse_test_specs(&content, path.as_path())
+    }) {
+        match specs {
+            Ok(specs) => {
+                for spec in specs {
+                    for expectation in spec.expectations.rules.keys() {
+                        diagnostics.insert(no_rules_declared_message(&name, expectation));
+                        dropped = true;
+                    }
+                }
+            }
+            Err(e) => {
+                diagnostics.insert(format!("Unable to process a test file: {e}"));
+                dropped = true;
+            }
+        }
+    }
+
+    dropped
+}
+
+/// Reads one test file, accepting YAML or JSON.
+///
+/// Lifted out of `GenericReporter::report`, which had the only copy, so that the empty-rules-file
+/// path above reads the expectations exactly as a run with rules would. Two spellings of "what counts
+/// as a test file" would let the two disagree about whether an expectation exists.
+pub(crate) fn parse_test_specs(content: &str, path: &Path) -> Result<Vec<TestSpec>> {
+    match serde_yaml::from_str::<Vec<TestSpec>>(content) {
+        Ok(spec) => Ok(spec),
+        Err(_) => match serde_json::from_str::<Vec<TestSpec>>(content) {
+            Ok(specs) => Ok(specs),
+            Err(e) => Err(test_file_parse_error(path, e)),
+        },
+    }
+}
+
 pub(crate) fn handle_structured_single_report(
     rule_file: File,
     path: &Path,
@@ -331,7 +564,6 @@ pub(crate) fn handle_structured_single_report(
     data_test_files: &[PathBuf],
     output: OutputFormatType,
 ) -> Result<i32> {
-    let mut exit_code = SUCCESS_STATUS_CODE;
     let now = Instant::now();
 
     let mut diagnostics = Diagnostics::new();
@@ -362,16 +594,40 @@ pub(crate) fn handle_structured_single_report(
                     };
 
                     let test = reporter.evaluate()?;
-                    let test_code = test.get_exit_code();
-                    exit_code = get_exit_code(exit_code, test_code);
 
                     diagnostics.append(&mut reporter.diagnostics);
                     test
                 }
-                Ok(None) => return Ok(exit_code),
+                Ok(None) => {
+                    let dropped = report_expectations_against_no_rules(
+                        path,
+                        data_test_files,
+                        &mut diagnostics,
+                    );
+                    write_diagnostics(&diagnostics, writer)?;
+
+                    return Ok(match dropped {
+                        true => TEST_ERROR_STATUS_CODE,
+                        false => SUCCESS_STATUS_CODE,
+                    });
+                }
             }
         }
     };
+
+    // Read off the report, once, for every arm that produced one.
+    //
+    // It used to be assigned inside the `Ok(Some(..))` arm alone, from a local initialized to
+    // `SUCCESS_STATUS_CODE`, so both `TestResult::Err` arms above -- a rules file that could not be
+    // read, and one that would not parse -- returned 0. `json`, `yaml` and `junit` exited 0 on a
+    // broken ruleset while `single-line-summary` exited 1 on the same bytes, and the junit document
+    // the same run had just written said `errors="1"`: a CI job gating on the exit code read a
+    // ruleset it had never managed to load as a pass, with every expectation in the suite unchecked.
+    //
+    // `TestResult::get_exit_code`'s `Err` arm already answered `TEST_ERROR_STATUS_CODE`; nothing on
+    // this path consulted it. Deriving the code from the report here rather than assigning it per arm
+    // is what keeps the number the process exits with and the number the report states the same.
+    let exit_code = result.get_exit_code();
 
     // Before the report, as in `validate`, and on stderr so that stdout stays parseable.
     write_diagnostics(&diagnostics, writer)?;
@@ -405,29 +661,39 @@ fn handle_structured_directory_report(
             }
 
             let path = each_rule_file.file.path();
+            // Both `TestResult::Err` arms below take their code from the report they push, as the
+            // `Ok(Some(..))` arm does and as `handle_structured_single_report` now does. They spelled
+            // `TEST_ERROR_STATUS_CODE` out instead, which is the same number `TestResult::get_exit_code`
+            // gives an `Err` -- a second place stating the policy, and the single-file path is where
+            // having two of them cost the run its exit code.
             let content = match get_rule_content(path) {
                 Ok(content) => content,
                 Err(e) => {
-                    exit_code = TEST_ERROR_STATUS_CODE;
-                    test_results.push(TestResult::Err(Err {
+                    let result = TestResult::Err(Err {
                         rule_file: path.to_str().unwrap().to_string(),
                         error: e.to_string(),
                         time: now.elapsed().as_millis(),
-                    }));
+                    });
+                    exit_code = get_exit_code(exit_code, result.get_exit_code());
+                    test_results.push(result);
                     continue;
                 }
             };
 
-            let span = crate::rules::parser::Span::new_extra(&content, &each_rule_file.prefix);
+            // The path, for the reason the plaintext walk above gives, plus one this path makes plain:
+            // the `rule_file` field two lines below is already `path.to_str()`, so one document said
+            // `a/x.guard` in its own field and `x` in any notice about it.
+            let span = crate::rules::parser::Span::new_extra(&content, path.to_str().unwrap_or(""));
 
             match crate::rules::parser::rules_file(span) {
                 Err(e) => {
-                    exit_code = TEST_ERROR_STATUS_CODE;
-                    test_results.push(TestResult::Err(Err {
+                    let result = TestResult::Err(Err {
                         rule_file: path.to_str().unwrap().to_string(),
                         error: e.to_string(),
                         time: now.elapsed().as_millis(),
-                    }))
+                    });
+                    exit_code = get_exit_code(exit_code, result.get_exit_code());
+                    test_results.push(result)
                 }
                 Ok(Some(rules)) => {
                     let data_test_files = each_rule_file.get_test_files();
@@ -449,7 +715,15 @@ fn handle_structured_directory_report(
                     diagnostics.append(&mut reporter.diagnostics);
                     test_results.push(test);
                 }
-                Ok(None) => {}
+                Ok(None) => {
+                    if report_expectations_against_no_rules(
+                        path,
+                        &each_rule_file.get_test_files(),
+                        &mut diagnostics,
+                    ) {
+                        exit_code = TEST_ERROR_STATUS_CODE;
+                    }
+                }
             }
         }
     }
@@ -496,11 +770,18 @@ pub struct TestSpec {
     pub expectations: TestExpectations,
 }
 
-struct OrderedTestDirectory(BTreeMap<String, Vec<GuardFile>>);
+struct OrderedTestDirectory {
+    files: BTreeMap<String, Vec<GuardFile>>,
+    /// Test files under a `tests/` directory that no rules file took, in walk order.
+    ///
+    /// Read by the caller before it consumes the directory. Nothing named these before, so a test
+    /// file left behind by a rules file rename was discarded in silence.
+    orphaned_test_files: Vec<PathBuf>,
+}
 
 impl IntoIterator for OrderedTestDirectory {
     fn into_iter(self) -> Self::IntoIter {
-        self.0.into_iter()
+        self.files.into_iter()
     }
 
     type IntoIter = std::collections::btree_map::IntoIter<String, Vec<GuardFile>>;
@@ -511,6 +792,7 @@ impl From<walkdir::WalkDir> for OrderedTestDirectory {
     fn from(walk: walkdir::WalkDir) -> Self {
         let mut non_guard: Vec<DirEntry> = vec![];
         let mut files: BTreeMap<String, Vec<GuardFile>> = BTreeMap::new();
+        let mut orphaned_test_files: Vec<PathBuf> = vec![];
         for file in walk
             .follow_links(true)
             .sort_by_file_name()
@@ -563,21 +845,41 @@ impl From<walkdir::WalkDir> for OrderedTestDirectory {
                 let parent = file.path().parent();
 
                 if parent.map_or(false, |p| p.ends_with("tests")) {
-                    if let Some(candidates) = parent.unwrap().parent().and_then(|grand| {
+                    let candidates = parent.unwrap().parent().and_then(|grand| {
                         let grand = format!("{}", grand.display());
                         files.get_mut(&grand)
-                    }) {
-                        for guard_file in candidates {
-                            if name.starts_with(&guard_file.prefix) {
-                                guard_file.test_files.push(file);
-                                break;
-                            }
-                        }
+                    });
+
+                    // The longest matching prefix, not the first match in sort order. A shorter
+                    // stem is a prefix of a longer one, so `s3_encryption_tests.yml` starts with
+                    // both `s3` and `s3_encryption`, and taking the first left it on `s3.guard`
+                    // while `s3_encryption.guard` was reported as having no tests.
+                    //
+                    // `min_by_key` over the reversed length rather than `max_by_key`: on a tie
+                    // the first element in sort order must still win, as it did before, and
+                    // `min_by_key` returns the first of equal keys where `max_by_key` returns
+                    // the last. Ties are real -- `x.guard` and `x.ruleset` share the prefix `x`.
+                    let claimed_by = candidates.and_then(|candidates| {
+                        candidates
+                            .iter_mut()
+                            .filter(|guard_file| name.starts_with(&guard_file.prefix))
+                            .min_by_key(|guard_file| Reverse(guard_file.prefix.len()))
+                    });
+
+                    // Whether the file was taken is asked once, here, and both halves read the
+                    // answer. Deciding it a second time by repeating the prefix test would let the
+                    // two drift, and a file could then be both paired and reported as unpaired.
+                    match claimed_by {
+                        Some(guard_file) => guard_file.test_files.push(file),
+                        None => orphaned_test_files.push(file.path().to_path_buf()),
                     }
                 }
             }
         }
 
-        OrderedTestDirectory(files)
+        OrderedTestDirectory {
+            files,
+            orphaned_test_files,
+        }
     }
 }

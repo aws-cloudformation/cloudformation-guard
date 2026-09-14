@@ -1,0 +1,14 @@
+#
+# `Ports` is a list and the denylist in the rule holds integers, so the list as a whole can be compared
+# with nothing in it -- while element-wise `1` collides, which is what makes the condition fail.
+#
+# `Encrypted` is false so the guarded body fails, and the file is only green because the condition
+# dropped it.
+#
+Resources:
+  A:
+    Properties:
+      Ports:
+        - 1
+        - 2
+      Encrypted: false

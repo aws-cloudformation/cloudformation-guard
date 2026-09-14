@@ -1,0 +1,23 @@
+#
+# Two rules spelling the same failing block clause. The denylist is derived from a resource type the
+# input does not contain, so %denied resolves to no values, the negated comparison has nothing to
+# compare against, and each rule fails with a block report whose context is the same text as the
+# other's.
+#
+# The unattributed section labelled a clause entry with its rule and a block entry with nothing, so
+# these two produced byte-identical lines and the reader could not tell that two rules had failed --
+# or which two. The summary above names them and the detail below did not.
+#
+# Kept out of data-dir/ and rules-dir/ on purpose, as denied_names_from_empty_reference.guard is:
+# test_updated_summary_output runs every rules file in rules-dir/ against every data file in
+# data-dir/ and compares the result to a checked-in golden output.
+#
+let denied = Resources.*[ Type == 'AWS::KMS::Key' ].Properties.KeyId
+
+rule first_reader_of_the_denylist {
+    Resources.*[ Type == 'AWS::S3::Bucket' ].Properties.BucketName != %denied
+}
+
+rule second_reader_of_the_denylist {
+    Resources.*[ Type == 'AWS::S3::Bucket' ].Properties.BucketName != %denied
+}

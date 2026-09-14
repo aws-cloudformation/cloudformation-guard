@@ -218,14 +218,13 @@ fn binary_error_message(
 ) -> crate::rules::Result<String> {
     Ok(format!(
         "Property [{path}] in data [{data}] is not compliant with [{rule}] because \
-     provided value [{provided}] {op_msg} {cmp_msg} [{expected}]. Error \
+     provided value [{provided}] {verdict} [{expected}]. Error \
      Message [{msg}]",
         path = info.path,
         provided = info
             .provided
             .as_ref()
             .map_or(&serde_json::Value::Null, std::convert::identity),
-        op_msg = op_msg,
         data = data_file,
         rule = info.rule,
         msg = info.message.replace('\n', ";"),
@@ -233,14 +232,72 @@ fn binary_error_message(
             .expected
             .as_ref()
             .map_or(&serde_json::Value::Null, |v| v),
-        cmp_msg = info.comparison.as_ref().map_or("", |c| {
-            if c.operator == CmpOperator::In {
-                "match expected value in"
-            } else {
-                "match expected value"
-            }
-        })
+        verdict = membership_verdict(op_msg, info)
     ))
+}
+
+/// The clause of a binary failure that says what the comparison found.
+///
+/// Two states, and the second one exists because `IN` and `NOT IN` used to claim an answer they did
+/// not have. `NOT IN` rendered "did match expected value in" and `IN` rendered "did not match" --
+/// both assertions that the comparison ran -- and a membership comparison the regex engine abandoned
+/// reached exactly those sentences. The reason was blank, so nothing contradicted them.
+///
+/// A reason being present is the discriminator, and it is only usable because the record now carries
+/// one: before that, the code could not tell a refusal from a decided mismatch here. So this is
+/// deliberately NOT a rewording of membership failures. A decided `NOT IN` failure means the value
+/// really did match something the denylist names, and "did match expected value in" is the correct
+/// sentence for it -- replacing that to fix the refused minority would have made the common case
+/// worse and churned every golden file for nothing.
+///
+/// Scoped to [`CmpOperator::In`], which covers `IN` and `NOT IN` alike since the negation is a
+/// separate flag. `==` and `!=` are left exactly as they were: their undecided map-key spelling
+/// renders through `retrieval_error` rather than here, so this population is the one that is wrong.
+///
+/// TWO live renderers carry this sentence, not three. 56c95a51's message says "Three renderers,
+/// because three build this sentence independently" and that count is wrong. The live two are this
+/// function, reached from `print_name_info` for the console, and `eval_context.rs`'s
+/// `ClauseCheck::InComparison` arm, which serves `-o json`, `--structured`, the FFI and the Lambda.
+/// The third, `SingleLineReporter` in `cfn_reporter.rs`, is unreachable: nothing constructs
+/// `CfnReporter`, so its edit is consistency rather than coverage.
+///
+/// Established by mutation rather than by reading, because grepping for constructors cannot rule out
+/// macro-generated or reflective construction and a sentinel run can. Both arms of that renderer's
+/// conditional were replaced with sentinel strings and the suite run: 3138 passed / 0 failed /
+/// 0 ignored over 16 suites, tallies identical to the unmutated tree, and zero occurrences of either
+/// sentinel anywhere in the output. Deleting the module outright is the stronger form of the same
+/// measurement -- the crate still builds and the suite is still 3138 / 0 / 0 with identical counts.
+///
+/// So `a_refused_membership_does_not_claim_a_match_happened` covers the two reachable renderers and
+/// structurally cannot cover the third. Any test would have the same problem, which is the reason
+/// this is written down instead of a cell being added.
+///
+/// The unreachable renderer is left in place, and that is a choice with a measured reason rather than
+/// a preference. `CfnReporter` is `pub(crate)`, so no external consumer can name it and removing it
+/// would break no published surface -- but the removal does not stand alone. It was the only caller of
+/// `common::print_compliant_skipped_info`, so deleting it makes that function dead too and
+/// `cargo clippy --all-targets -- -D warnings` exits 101 on the result. Landing the deletion means a
+/// dead-code sweep of unknown depth, which is a different change from repairing a sentence. Keeping
+/// the edit means that if the type is ever wired up it carries this conditional rather than
+/// reintroducing the claim that a comparison ran when it did not. Its own `{msg} match with`
+/// template was untested before this branch and remains so, for the same reason.
+fn membership_verdict(op_msg: &str, info: &NameInfo<'_>) -> String {
+    let is_membership = info
+        .comparison
+        .as_ref()
+        .is_some_and(|c| c.operator == CmpOperator::In);
+
+    // `NameInfo` carries no separate custom-message field, and the `InComparison` arm of
+    // `extract_name_info` fills `message` from the record's own explanation alone. So for a
+    // membership failure a non-empty `message` is a refusal and nothing else.
+    if is_membership && !info.message.is_empty() {
+        return "could not be compared with expected value in".to_string();
+    }
+
+    match is_membership {
+        true => format!("{op_msg} match expected value in"),
+        false => format!("{op_msg} match expected value"),
+    }
 }
 
 fn print_rules_output(

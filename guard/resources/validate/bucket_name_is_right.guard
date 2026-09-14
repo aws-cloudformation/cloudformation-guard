@@ -1,0 +1,3 @@
+rule bucket_name_is_right {
+    Resources.Bucket.Properties.BucketName == "right"
+}
