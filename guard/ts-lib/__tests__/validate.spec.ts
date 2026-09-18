@@ -4,6 +4,17 @@ import * as path from 'path';
 import { describe, expect, it } from '@jest/globals';
 
 describe('validate', () => {
+  it('should reject a named file whose extension is not supported', async () => {
+    // A directory walk filters by extension, but a file named explicitly was
+    // asked for. Silently skipping it leaves rules empty and the run clean.
+    await expect(
+      validate({
+        rulesPath: path.resolve(__dirname, '__fixtures__/unsupported_extension.txt'),
+        dataPath: path.resolve(__dirname, '../../resources/validate/data-dir'),
+      })
+    ).rejects.toThrow('does not have a supported extension')
+  })
+
   it('should handle directories in both rules, data, and match the snapshot', async () => {
     const result = await validate({
       rulesPath: path.resolve(__dirname, '../../resources/validate/rules-dir'),
