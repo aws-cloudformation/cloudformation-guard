@@ -266,6 +266,17 @@ pub(crate) struct ComparisonClauseCheck {
     pub(crate) message: Option<String>,
     pub(crate) custom_message: Option<String>,
     pub(crate) status: Status,
+    /// Whether `message` embeds a REFUSAL's reason: the record of a left-hand value the document lacks
+    /// decided beside a refused `%name` among the right-hand values carries the retrieval's own reason
+    /// and the refusal's text beside it, and the record of a left-hand value paired with the refusal's
+    /// marker under a positive `IN` carries the refusal's text as its reason. Set where the record is
+    /// written, from the marker's kind (`eval::refused_read_reason`), as [`ValueCheck::refusal`] is set
+    /// from the error's; the reporters' `Messages::refusal` is copied from here, so the console prints
+    /// such a message whole where it cuts every other to `LONGEST_RECORDED_MESSAGE`, and a refusal's
+    /// remedy and path are not cut off its record. A key filter's reason is no refusal and reads
+    /// `false`. Not serialized: the record tree `--print-json` writes keeps its shape.
+    #[serde(skip)]
+    pub(crate) refusal: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -289,6 +300,14 @@ pub(crate) struct InComparisonCheck {
     pub(crate) message: Option<String>,
     pub(crate) custom_message: Option<String>,
     pub(crate) status: Status,
+    /// Whether `message` embeds a REFUSAL's reason, as [`ComparisonClauseCheck::refusal`] says of its
+    /// record. Every site that builds this record writes `false`: the `IN` record that embeds a refused
+    /// `%name`'s text (a value no listed entry accepted beside the refusal, or the refusal alone on the
+    /// right) is a [`ComparisonClauseCheck`], written where the membership is decided, and it carries
+    /// the flag there. The field keeps the two records' shapes alike for the renderers that read
+    /// [`Messages::refusal`] from either. Not serialized, for the same reason.
+    #[serde(skip)]
+    pub(crate) refusal: bool,
 }
 
 /// What a failed membership-shaped record says, decided once from the record so that every renderer
@@ -1100,6 +1119,26 @@ pub(crate) trait EvalContext<'value, 'loc: 'value>: RecordTracer<'value> {
         notice: String,
     );
 
+    /// Note that a comparison at `site` (written as `context`) was decided without raising the REFUSED
+    /// reads among its values, on either side (`refusals`, one text each): the clause's verdict
+    /// (`verdict`: a value that holds settled it, a value the document lacks decided it, a value that does
+    /// not match decided it, or a value that matches a denied entry decided it) never raised them, and the
+    /// line is what keeps such a refusal from being silent. Written only after the clause is decided (a
+    /// clause raised on an undecided pair carries the refusal in its failure and writes nothing), once per
+    /// clause site: the line counts the DISTINCT refusal texts the site met and how many evaluations
+    /// decided it each way, so one refusal met beside a pass and beside an absence is one refusal,
+    /// whatever order the evaluations came in, names every text met in the order it was met, and ends
+    /// with the clause's position and the input it was found in. The same rules as `record_warning`:
+    /// returns nothing, nothing reads it back, nothing is recorded during a measurement, no default. Never
+    /// for the marker a key filter leaves, which is not a refusal.
+    fn record_unraised_refusal(
+        &mut self,
+        site: &exprs::FileLocation<'_>,
+        context: &str,
+        verdict: UnraisedVerdict,
+        refusals: &[String],
+    );
+
     /// The name of the data file this evaluation reads, for a notice that cites positions in it: with
     /// several data files in one run, a position alone does not say which file it is in. The root
     /// scope is built with it (`root_scope_for`); a scope built without one (`root_scope`, the unit
@@ -1626,6 +1665,27 @@ impl MoveDirection {
             MoveDirection::RanBeforeSkipsNow
         }
     }
+}
+
+/// How a comparison that left a refused read among its values unraised was decided, for the line that
+/// reports it (`EvalContext::record_unraised_refusal`): a value that holds settled it (a listed value
+/// under `IN`, another value under `some`), a value the document lacks decided it, a value that does not
+/// match decided it (a resolved mismatch under `==`, an ordering or `IN`), a value that MATCHES a denied
+/// entry decided it (a resolved collision under `!=` or `NOT IN`, the negated comparators' no), or a value
+/// of another KIND decided it (a pair the comparator refused on kinds under `!=` or `NOT IN` beside the
+/// marker, `Port != %x` with `Port: 22` and `'ssh'` listed: a decided no that compared nothing, so it
+/// matched no denied value; under a positive comparator such a pair "does not match" and keeps that
+/// wording). The
+/// verdict stands either way; the line says which value decided it so a reader knows why the refusal was
+/// not raised, and words the no by the comparator's polarity, since the value that decided `Names[*] NOT
+/// IN %x` matched a listed entry and "does not match" would say the opposite.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum UnraisedVerdict {
+    Passed,
+    DecidedByAbsence,
+    DecidedByMismatch,
+    DecidedByCollision,
+    DecidedByKinds,
 }
 
 /// The kinds of one-release notice recorded once per call site; see

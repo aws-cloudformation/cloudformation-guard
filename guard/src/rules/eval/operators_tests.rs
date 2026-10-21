@@ -5,6 +5,62 @@ use crate::rules::EvalContext;
 use pretty_assertions::assert_eq;
 use std::convert::TryFrom;
 
+/// `QueryIn::rhs_unmatched` tells "never computed" (`None`) from "computed, every resolved right-hand
+/// value matched" (`Some(empty)`): the constructors every `IN` spelling and the negation wrapper build
+/// from leave it `None`, the equality operator's two-query arm records `Some` through `from_rhs` or
+/// `with_rhs_unmatched`, and the wrapper carries whatever it was handed. The one reader, `eval.rs`'s
+/// equality pre-pass beside an undecidable marker, treats `Some(empty)` as "the resolved values may still
+/// leave the sets equal" and `None` as a decided `Fail`; one `Vec` for both would read an uncomputed set as
+/// a matched one.
+#[test]
+fn a_query_in_tells_an_uncomputed_right_hand_mismatch_set_from_an_empty_one() {
+    let value = |text: &str| Rc::new(PathAwareValue::try_from(text).unwrap());
+    let (a, b) = (value("'a'"), value("'b'"));
+    let ordinary = QueryIn::new(
+        vec![Rc::clone(&a)],
+        vec![Rc::clone(&a)],
+        vec![Rc::clone(&b)],
+    );
+    assert_eq!(
+        None, ordinary.rhs_unmatched,
+        "`new` records no right-hand mismatch set"
+    );
+    let partly = QueryIn::partly_matched(
+        vec![Rc::clone(&a)],
+        vec![],
+        vec![Rc::clone(&a)],
+        vec![Rc::clone(&b)],
+    );
+    assert_eq!(
+        None, partly.rhs_unmatched,
+        "`partly_matched` records none either"
+    );
+    let computed_empty = QueryIn::new(vec![], vec![Rc::clone(&a)], vec![Rc::clone(&a)])
+        .with_rhs_unmatched(Some(vec![]));
+    assert_eq!(
+        Some(vec![]),
+        computed_empty.rhs_unmatched,
+        "the equality arm's `with_rhs_unmatched(Some(..))` records a computed, empty set"
+    );
+    let from_rhs = QueryIn::from_rhs(
+        vec![Rc::clone(&b)],
+        vec![],
+        vec![Rc::clone(&a)],
+        vec![Rc::clone(&a), Rc::clone(&b)],
+    );
+    assert_eq!(
+        Some(vec![Rc::clone(&b)]),
+        from_rhs.rhs_unmatched,
+        "`from_rhs` records the right-hand diff as the computed set"
+    );
+    let carried = QueryIn::new(vec![], vec![Rc::clone(&a)], vec![Rc::clone(&a)])
+        .with_rhs_unmatched(from_rhs.rhs_unmatched.clone());
+    assert_eq!(
+        from_rhs.rhs_unmatched, carried.rhs_unmatched,
+        "the negation wrapper's pass-through keeps what it was handed"
+    );
+}
+
 const RESOURCES: &str = r###"
 Resources:
   s3:

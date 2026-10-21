@@ -1,0 +1,49 @@
+# Two cases reaching the one clause site, each with a DIFFERENT refused read: the first case's
+# map-shaped tags sit on function `M`, the second case's on function `N`, and the twin's refusal names
+# the map it could not read, so the two texts differ. The command prints one line per clause site and
+# spec file, rendered from what both cases met, so it names both texts, numbered in case order.
+- name: first case
+  input:
+    Mappings:
+      Wanted:
+        Keys:
+          - Env
+    Resources:
+      B:
+        Type: AWS::S3::Bucket
+        Properties:
+          Tags:
+            - Key: Env
+              Value: allowed
+      M:
+        Type: AWS::Serverless::Function
+        Properties:
+          Handler: index.handler
+          Tags:
+            Env: x
+  expectations:
+    rules:
+      owner_unset: PASS
+
+- name: second case
+  input:
+    Mappings:
+      Wanted:
+        Keys:
+          - Env
+    Resources:
+      C:
+        Type: AWS::S3::Bucket
+        Properties:
+          Tags:
+            - Key: Env
+              Value: other
+      N:
+        Type: AWS::Serverless::Function
+        Properties:
+          Handler: index.handler
+          Tags:
+            Env: y
+  expectations:
+    rules:
+      owner_unset: PASS

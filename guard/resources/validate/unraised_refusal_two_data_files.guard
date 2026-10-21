@@ -1,0 +1,9 @@
+# A refused bare read compared only against values the document lacks. `%names` is a list-bound name
+# read through a filter predicate; over a map-shaped tag set the predicate's twin cannot read the name,
+# so `%names` holds a refusal's marker beside the resolved tag maps. Every bucket lacks `Owner`, so each
+# comparison is decided by the absence and the rule PASSES; the refusal is never raised by the clause and
+# is reported on the warning channel instead, once per clause site and data file: a run over two data
+# files writes two lines, each naming the clause as written, its position, and the file it was found in.
+let wanted = Mappings.Wanted.Keys
+let names = Resources.*.Properties.Tags[*][ Key IN %wanted ]
+rule owner_unset { Resources.*[ Type == 'AWS::S3::Bucket' ][ Properties.Owner == %names ] empty }

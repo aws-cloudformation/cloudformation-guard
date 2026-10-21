@@ -1,0 +1,30 @@
+# A `Cfg` map whose own-key walk `Cfg[*][ x | Mode exists or Kind == 'k' ].Sub[*][ s | R1 !exists ]` is
+# refused for the entries `A` and `B` (each `Sub` holds the key the inner predicate names beside members),
+# so the capture `x` holds the keys `Fallback`, `A` and `B` beside the refusal's marker; `Mode.Ref` equals
+# no key, and every name in `Names` is a key.
+Cfg:
+  Mode:
+    Ref: ModeParam
+  Fallback:
+    Kind: k
+  A:
+    Kind: k
+    Sub:
+      R1:
+        Ref: P
+      P:
+        Kind: k
+      Q:
+        Kind: k
+  B:
+    Kind: k
+    Sub:
+      R1:
+        Ref: P
+      P:
+        Kind: k
+      Q:
+        Kind: k
+Names:
+  - A
+  - B

@@ -2,12 +2,12 @@ use super::exprs::*;
 use super::*;
 use crate::rules::eval::operators::{Comparator, InOperation};
 use crate::rules::eval_context::{
-    bare_variable_root, block_scope, capture_scope, clause_as_written, function_result_alias_root,
-    interpolated_keys, is_refusal, keys_of_projection, let_value_as_written, names_the_population,
-    query_retrieval, query_retrieval_shaped, refuse, resolve_function_with_shape, without_entries,
-    without_unresolved, Asked, BindingId, BindingStep, CaptureFrames, CaptureHome, EmptySelection,
-    EntryCaptures, FunctionChain, FunctionEntries, PassedOn, ProjectionKeys, QueryStart,
-    RhsEnumeration, ValueScope,
+    bare_variable_root, block_scope, bounded_traversed_to, capture_scope, clause_as_written,
+    function_result_alias_root, interpolated_keys, is_refusal, keys_of_projection,
+    let_value_as_written, names_the_population, query_retrieval, query_retrieval_shaped, refuse,
+    resolve_function_with_shape, without_entries, without_unresolved, Asked, BindingId,
+    BindingStep, CaptureFrames, CaptureHome, EmptySelection, EntryCaptures, FunctionChain,
+    FunctionEntries, PassedOn, ProjectionKeys, QueryStart, RhsEnumeration, ValueScope,
 };
 use crate::rules::path_value::Path;
 use std::collections::{BTreeSet, HashMap, HashSet};
@@ -123,10 +123,20 @@ pub(crate) fn refused_read_reason(unresolved: &UnResolved) -> Option<String> {
 
 /// True for a pair under a POSITIVE `IN` whose right-hand value is an undecidable marker of either kind
 /// (`undecidable_reason`: a refusal's marker, or the marker a key filter leaves for a map it could not
-/// decide): the one per-value result `binary_operation` files neither a status nor a record for
-/// (`value_statuses` maps it to no status; the `RhsUnresolved` arm writes no record), because membership
-/// is decided by any one listed value, so the marker's pair says nothing about a value a listed entry
-/// matched, and a failing status or record for it read a clause that passed as one with a failing value.
+/// decide), for a left-hand value a RESOLVED entry accepted (`accepted`, the addresses of the values the
+/// `Success` results of the same comparison name), or for every left-hand value when NO right-hand value
+/// is a listed entry (`any_listed_rhs` false, the marker alone): the one per-value result
+/// `binary_operation` files neither a status nor a record for (the caller asks this before
+/// `value_statuses` and skips both), because membership is decided by any one listed value, so the
+/// marker's pair says nothing about a value a listed entry matched, and a failing status or record for it
+/// would read a clause that passed as one with a failing value; and with no entry listed at all nothing
+/// could have accepted any value, so the clause compares nothing and answers with the marker's reason
+/// (the compared-nothing arm), unknown, rather than failing each value against a marker. For a left-hand
+/// value NO resolved entry accepted, beside at least one resolved entry, the pair keeps its FAIL status
+/// and its record: the value's membership is unknown (the marker may hold the match), the clause fails
+/// closed on it, and the record is where the report names the marker's reason; were the pair dropped for
+/// every value, a failing `Cfg.Mode.Ref IN %x` would show the resolved mismatch alone and the refusal
+/// would be raised nowhere.
 /// Either kind, because `Y IN {x, ?}` with `Y` equal to the resolved `x` is a YES whichever kind of
 /// unknown `?` is; read for the refusal's marker alone, the same clause failed closed under the key
 /// filter's marker where it passed under the refusal's. `NOT IN` is NOT read here (the whole comparator
@@ -134,16 +144,197 @@ pub(crate) fn refused_read_reason(unresolved: &UnResolved) -> Option<String> {
 /// `match_all` in every role and fails a `match_all` clause that reaches the comparison as an assertion
 /// (a marker held by a capture), as every other comparator's marker pair does; the pre-pass over the
 /// marker judges the resolved pairs beside it (`passes_are_unknown`, `every_value_decided_no`), and
-/// `undecided_gate` raises on a `some` assertion whose passes are unknown, the one assertion its statuses
-/// alone would pass.
-fn marker_pair_under_in(cmp: (CmpOperator, bool), result: &operators::ValueEvalResult) -> bool {
+/// `undecided_gate` raises on a `some` assertion whose passes are unknown and whose statuses alone would
+/// pass it.
+///
+/// A right-hand REFERENCE THE DOCUMENT LACKS (an unresolved value with no marker) is not a marker and its
+/// pair is never skipped: it keeps its FAIL status and record, a decided failure on the document, so `Y IN
+/// [x, <reference the document lacks>]` fails where `Y IN [x, <refusal>]` passes with the refusal reported.
+/// It is a LISTED entry to this test (`any_listed_rhs`), so a marker beside it keeps its pair for a value
+/// no entry accepted and the report names the marker's reason beside the absence's own record; were the
+/// marker alone the listed entry's company, `Owner IN %names` over a reference the document lacks and a
+/// marker would fail on the absence's record alone, with no record naming the reason the clause failed
+/// closed for. The two readings stand as released: a function's result with an unresolved entry fails the
+/// membership closed and announces it in its own notice, and a refusal's marker beside a listed value is
+/// reported.
+fn marker_pair_under_in(
+    cmp: (CmpOperator, bool),
+    result: &operators::ValueEvalResult,
+    accepted: &std::collections::HashSet<*const PathAwareValue>,
+    any_listed_rhs: bool,
+) -> bool {
     cmp == (CmpOperator::In, false)
         && matches!(
             result,
             operators::ValueEvalResult::ComparisonResult(
-                operators::ComparisonResult::RhsUnresolved(urhs, _)
+                operators::ComparisonResult::RhsUnresolved(urhs, lhs)
             ) if undecidable_reason(urhs).is_some()
+                && (!any_listed_rhs || accepted.contains(&Rc::as_ptr(lhs)))
         )
+}
+
+/// Whether a comparison's NO decides the clause beside a marker among the right-hand values, by the
+/// comparator: under every comparator but the positive `IN` a resolved mismatch or collision is a decided
+/// NO the marker cannot undo (`AND(no, unknown)` is no; under `NOT IN` a resolved match is the no); under a
+/// positive `IN` membership is `OR` over the pairs and `OR(no, unknown)` is unknown, since the entry the
+/// marker hides may be the one the value is among, so a no decides nothing and the clause fails, where it
+/// fails, on the marker's own pair. The one answer both readers of a resolved no take: the pre-pass over
+/// the marker (`ResultEvidence::decided_failure`) and the refused-read line's verdict
+/// (`decided_by_a_mismatch`), so the line never calls a membership that failed closed on the marker
+/// "decided by a value that does not match" (or, under a negated comparator, "by a value that matches a
+/// denied value") while its record carries the refusal that decided it.
+fn a_mismatch_decides(cmp: (CmpOperator, bool)) -> bool {
+    cmp != (CmpOperator::In, false)
+}
+
+/// A comparator as a rules file spells it, for a sentence that quotes one back to the author: the one
+/// table, every comparator the parser reads (`value_cmp`, `other_operations`) and no other rendering.
+/// `==` and `!=`; `>`, `>=`, `<` and `<=`, which the parser reads in their positive form alone (no `not`
+/// stands before an ordering comparator in any rules file), so the negation flag is never set for them
+/// and their arm reads it as the parser does, not at all; `IN` and `NOT IN` as the documentation spells
+/// them (the parser also reads `in`, `not in` and `!in`, every one the same comparator); and each unary
+/// comparator by its keyword with `!` before the negated form (`exists`, `!exists`, `empty`, `is_struct`
+/// for a map, ...). One arm per comparator and negation, no wildcard, so a comparator added to
+/// `CmpOperator` fails to compile here instead of taking the record tree's own `Display` (`EQUALS`,
+/// `NOT IN` beside `GREATER THAN`), which no rules file spells.
+fn comparator_as_written(cmp: (CmpOperator, bool)) -> &'static str {
+    match cmp {
+        (CmpOperator::Eq, false) => "==",
+        (CmpOperator::Eq, true) => "!=",
+        (CmpOperator::In, false) => "IN",
+        (CmpOperator::In, true) => "NOT IN",
+        (CmpOperator::Gt, _) => ">",
+        (CmpOperator::Ge, _) => ">=",
+        (CmpOperator::Lt, _) => "<",
+        (CmpOperator::Le, _) => "<=",
+        (CmpOperator::Exists, false) => "exists",
+        (CmpOperator::Exists, true) => "!exists",
+        (CmpOperator::Empty, false) => "empty",
+        (CmpOperator::Empty, true) => "!empty",
+        (CmpOperator::IsString, false) => "is_string",
+        (CmpOperator::IsString, true) => "!is_string",
+        (CmpOperator::IsList, false) => "is_list",
+        (CmpOperator::IsList, true) => "!is_list",
+        (CmpOperator::IsMap, false) => "is_struct",
+        (CmpOperator::IsMap, true) => "!is_struct",
+        (CmpOperator::IsBool, false) => "is_bool",
+        (CmpOperator::IsBool, true) => "!is_bool",
+        (CmpOperator::IsInt, false) => "is_int",
+        (CmpOperator::IsInt, true) => "!is_int",
+        (CmpOperator::IsFloat, false) => "is_float",
+        (CmpOperator::IsFloat, true) => "!is_float",
+        (CmpOperator::IsNull, false) => "is_null",
+        (CmpOperator::IsNull, true) => "!is_null",
+    }
+}
+
+/// The sentence a REFUSAL TO COMPARE KINDS under a negated comparator beside a marker records for its
+/// pair (`operators::Unanswerable::IncomparableKinds`, `ResultEvidence::kinds_refused`): the two values,
+/// the comparator as the rules file spells it (`comparator_as_written`) and the two kinds the comparator
+/// has no reading for, so the record says what was refused and why where the operators' own reason named
+/// the values alone. A refusal of its own kind, apart from a comparison that was answered no: the record
+/// carries it with `refusal` set, so the console prints it whole, and the evidence counts it under
+/// `kinds_refused`, never under `comparison_failed`, so the refused-read line never calls `22` against
+/// `'ssh'` under `!=` a value that "matches a denied value". Every other refusal of kinds keeps the
+/// operators' reason on its record.
+fn kinds_refusal_sentence(
+    cmp: (CmpOperator, bool),
+    lhs: &PathAwareValue,
+    rhs: &PathAwareValue,
+) -> String {
+    let spelled = comparator_as_written(cmp);
+    // The two values are quoted from the template, so the record that carries them as a refusal, which
+    // the console prints whole, renders each through the bound every template part of a refusal takes
+    // (`bounded_traversed_to`): a key of three thousand letters prints as 256 and the count cut, never
+    // a sentence the template decides the length of.
+    format!(
+        "Comparing {} {spelled} {} was refused: {} and {} are kinds the comparator does not compare",
+        bounded_traversed_to(lhs),
+        bounded_traversed_to(rhs),
+        lhs.type_info(),
+        rhs.type_info()
+    )
+}
+
+/// A document list with no element: a left-hand value the operators compare as a collection and not as
+/// a value (`ValueEvalResult::EmptyCollection` where an operator pushes one; a refusal of kinds or the
+/// marker's pair alone where it does not), so the per-value evidence reads it as an ABSENCE in every arm
+/// that meets it as such, a decided failure on the document and never a compared or noted value, and
+/// `Tags: []` reads as a missing `Tags` does under every comparator and quantifier. One exception, read
+/// by the marker's pair alone: a `[]` a comparison ANSWERED (`compared_left_values`, the two-query `==`
+/// comparing `[]` with a right-hand `[]` and matching it) is a compared value there, so the marker's
+/// unknown beside the match is raised and not swallowed by a reading of the matched list as an absence.
+fn is_empty_list(value: &PathAwareValue) -> bool {
+    matches!(value, PathAwareValue::List((_, elements)) if elements.is_empty())
+}
+
+/// The addresses of the left-hand values some comparison among `results` ANSWERED, yes or no: the left
+/// operand of every `Success` and `Fail` (a `QueryIn`'s whole `lhs`, which the two-query arms compare value
+/// by value; the pair's or the list's left value for the other shapes). A `NotComparable` is not an
+/// answer about the value (a refusal of kinds, or an engine that gave up), and a `RhsUnresolved` pair
+/// compared nothing. Read by the marker's pair for a DOCUMENT empty list on the left, which is an ABSENCE
+/// to the evidence only where no comparison answered it: `when Tags == %x` over `Tags: []` with `%x`
+/// holding a document `[]` and a marker has the `[]` matched by `==` (one PASS) beside the marker's
+/// unknown, and `AND(yes, unknown)` is unknown, so the gate is raised as it is over `Tags: ['a']` against
+/// `['a']` and the marker; read as an absence, the matched list would decide the clause and the rule would
+/// be reported not applicable where the value the marker hides may be the one `Tags` differs from. With
+/// the marker alone on the right the pair is the list's only result and the absence reading stands. Keyed
+/// by the address of the value's `Rc`, as [`accepted_left_values`] is: the results of one comparison share
+/// the `Rc`s of its left operand (`ComparisonResult`'s identity contract).
+fn compared_left_values(
+    results: &[operators::ValueEvalResult],
+) -> std::collections::HashSet<*const PathAwareValue> {
+    let mut compared = std::collections::HashSet::new();
+    for result in results {
+        let answered = match result {
+            operators::ValueEvalResult::ComparisonResult(
+                operators::ComparisonResult::Success(compare)
+                | operators::ComparisonResult::Fail(compare),
+            ) => compare,
+            _ => continue,
+        };
+        match answered {
+            operators::Compare::QueryIn(qin) => {
+                compared.extend(qin.lhs.iter().map(Rc::as_ptr));
+            }
+            operators::Compare::Value(pair) | operators::Compare::ValueIn(pair) => {
+                compared.insert(Rc::as_ptr(&pair.lhs));
+            }
+            operators::Compare::ListIn(list_in) => {
+                compared.insert(Rc::as_ptr(&list_in.lhs));
+            }
+        }
+    }
+    compared
+}
+
+/// The addresses of the left-hand values the `Success` results among `results` name: the values some
+/// RESOLVED entry accepted under `IN` (a `QueryIn`'s `accepted`; a literal left-hand value a pair
+/// matched), the one set [`marker_pair_under_in`] reads. Keyed by the address of the value's `Rc`, as
+/// the operator's own sets are: the results of one comparison share the `Rc`s of its left operand.
+fn accepted_left_values(
+    results: &[operators::ValueEvalResult],
+) -> std::collections::HashSet<*const PathAwareValue> {
+    let mut accepted = std::collections::HashSet::new();
+    for result in results {
+        if let operators::ValueEvalResult::ComparisonResult(operators::ComparisonResult::Success(
+            compare,
+        )) = result
+        {
+            match compare {
+                operators::Compare::QueryIn(qin) => {
+                    accepted.extend(qin.accepted.iter().map(Rc::as_ptr));
+                }
+                operators::Compare::Value(pair) | operators::Compare::ValueIn(pair) => {
+                    accepted.insert(Rc::as_ptr(&pair.lhs));
+                }
+                operators::Compare::ListIn(list_in) => {
+                    accepted.insert(Rc::as_ptr(&list_in.lhs));
+                }
+            }
+        }
+    }
+    accepted
 }
 
 fn exists_operation(value: &QueryResult) -> Result<bool> {
@@ -1259,6 +1450,37 @@ fn empty_collection_message(side: operators::EmptySide, role: ClauseRole) -> Str
     }
 }
 
+/// The message of a comparison an ABSENT left-hand operand (a value the document lacks, an empty
+/// collection, or every value an empty collection on the compared-nothing path) decided while a marker
+/// stands among the right-hand values: `None` with no marker there (`rhs_marker`), else `lead` (the
+/// retrieval's own reason for a value the document lacks, "Could not find key Owner inside struct at
+/// path ...", the finding a reader acts on; the absence's own sentence for an empty collection; the
+/// plain fact of the absence with neither) followed by the marker's reason, so the record reads the
+/// absence first and the selection it was decided beside after it. The record says whether the reason
+/// embedded is a refusal's (`ComparisonClauseCheck::refusal`), and the console prints such a message
+/// whole. The absence decides the comparison whatever the right-hand side holds
+/// (`docs/CLAUSES.md`, "a decided failure for each left-hand value, under every comparator and in both
+/// polarities"), so the entry is deselected or the gate not applicable; what the marker hides is then
+/// never raised by this clause, and over a template whose every entry lacks the property a refused bare
+/// read `%env` compared against it would otherwise leave no trace of its refusal. The reason is carried
+/// in the record, of either marker kind; a REFUSAL's reason (`refused_read_reason`, the one kind whose
+/// text was built through `template_part` and registered where it was raised) is also written to the run's
+/// output by the caller once per clause site after the clause is decided, and registered as a refusal
+/// ([`binary_operation`] collects every refused read among the right-hand values after its loop whenever
+/// one stands there, whatever the verdict; the run's line alone waits on the verdict). Nothing is
+/// registered here: a key filter's reason is not a refusal, and the refusal's registration belongs with
+/// its collection.
+fn marker_beside_an_absence(rhs_marker: Option<&str>, lead: Option<&str>) -> Option<String> {
+    let reason = rhs_marker?;
+    let lead = lead.unwrap_or(
+        "The value is absent, which decides the comparison whatever the right-hand side holds.",
+    );
+    Some(format!(
+        "{lead} A refused or undecided selection stands among the right-hand values, reported here \
+         so it is not silent: {reason}"
+    ))
+}
+
 /// The reason recorded against a clause whose two operands both resolved and yet produced no
 /// comparison: every value on both sides was a collection with no element. Names the role for the
 /// reason [`empty_collection_message`] gives.
@@ -1280,6 +1502,57 @@ fn nothing_to_compare_message(context: &str, role: ClauseRole) -> String {
             "{what}, and the entry is not selected. Add `<query> !empty` to the filter if an empty \
              collection is expected."
         ),
+    }
+}
+
+/// The text a comparison raised on a marker carries: every refused read the comparison met
+/// (`refused_reads`, the right-hand refusals in value order and then the left-hand markers', the order
+/// [`binary_operation`] registered them), led by `reason` when it is none of them (a key filter's marker,
+/// an engine that gave up beside the refusal), each sentence whole and numbered `(1) ... (2) ...` as the
+/// refused-read line numbers several, so a reader can tell where one sentence ends and the next begins
+/// whatever punctuation each carries; one text alone is carried as it is. Both raise sites build their
+/// error's text here, the gate and the compared-nothing arm (at the read of its outcome, where the
+/// collection is complete), so a second refusal is never silent on the raise path: registered alone, it
+/// reached no error and no line, and the line is written only where the gate declined. A reason that is
+/// no refusal (a key filter's marker, a spent regex budget) is numbered too when it leads one refusal, so
+/// `(1) <reason> (2) <refusal>` is the shape of one refusal beside such a reason, never the reason alone.
+/// Pure, and no one registers the joined text: the refusal test accepts it part by part
+/// (`eval_context::is_refusal`), so the registry keeps one entry per refusal met; the strict raise goes
+/// through [`raised_refusal`].
+fn raised_refusal_text(reason: String, refused_reads: &[String]) -> String {
+    let mut texts: Vec<&str> = Vec::with_capacity(refused_reads.len() + 1);
+    if !refused_reads.iter().any(|text| *text == reason) {
+        texts.push(reason.as_str());
+    }
+    texts.extend(refused_reads.iter().map(String::as_str));
+    if texts.len() <= 1 {
+        return reason;
+    }
+    texts
+        .iter()
+        .enumerate()
+        .map(|(index, text)| format!("({}) {text}", index + 1))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// The REFUSAL a strict raise carries ([`raised_refusal_text`]'s text as an `Unevaluatable`), registering
+/// nothing of its own: one text alone is the registered refusal it is (`eval_context::refuse`, whose
+/// registration of a text the collection registered already is a no-op), and a text joined from several
+/// sentences (`(1) ... (2) ...`) is raised as it is, because the refusal test (`eval_context::is_refusal`)
+/// accepts a numbered text whose every part is a registered refusal. Registering the joined text as well
+/// would add a third entry to the registry beside the two refusals the comparison met, and the registry's
+/// size is what the run's output reports as the refused reads MET, so a joined text is never registered:
+/// not here, and not for the plain undecidable error of a gate or a predicate, which carries the same text
+/// unregistered (its record reads the variant, a later change).
+fn raised_refusal(reason: String, refused_reads: &[String]) -> Error {
+    let joins_several =
+        refused_reads.len() > 1 || (refused_reads.len() == 1 && refused_reads[0] != reason);
+    let text = raised_refusal_text(reason, refused_reads);
+    if joins_several {
+        Error::Unevaluatable(text)
+    } else {
+        crate::rules::eval_context::refuse(text)
     }
 }
 
@@ -1338,23 +1611,17 @@ fn incomparable_membership_notice(context: &str, location: &FileLocation<'_>) ->
 
 /// The statuses one comparison result contributes to a clause's verdict, with the value each one is
 /// about, in the order the `Result` arm of `binary_operation` files them beside its records. The one
-/// mapping from results to statuses.
+/// mapping from results to statuses, with one result the caller never asks about: a marker of either
+/// kind paired under a positive `IN` with a left-hand value a resolved entry accepted
+/// ([`marker_pair_under_in`]), for which the caller files neither a status nor a record, so the
+/// statuses and the records stay one mapping.
 ///
 /// A left-hand value that did not resolve, a right-hand reference that did not, and a refused pairing
 /// are each one failure for their value. A successful `QueryIn` is one pass per left-hand value it
 /// carries and a failed one is one failure per value in its diff, and nothing for the rest, which is
 /// what makes `IN` against a multi-value query mean "any of these". Every other comparison is one status
 /// for its one left-hand value.
-fn value_statuses(
-    result: &operators::ValueEvalResult,
-    cmp: (CmpOperator, bool),
-) -> Vec<(QueryResult, Status)> {
-    // The one result that maps to no status: a refusal's marker paired with a left-hand value under a
-    // positive `IN` (`marker_pair_under_in`); the same arm files no record for it, so the statuses and
-    // the records stay one mapping.
-    if marker_pair_under_in(cmp, result) {
-        return vec![];
-    }
+fn value_statuses(result: &operators::ValueEvalResult) -> Vec<(QueryResult, Status)> {
     match result {
         operators::ValueEvalResult::LhsUnresolved(ur) => {
             vec![(QueryResult::UnResolved(ur.clone()), Status::FAIL)]
@@ -2397,6 +2664,9 @@ fn report_value<'r, 'value: 'r, 'loc: 'value>(
                 custom_message,
                 message: reason,
                 status: Status::FAIL,
+                // A key filter's own reasons (a comparison refused on kinds, an engine that gave up, a
+                // right-hand value the retrieval never reached): none a refusal.
+                refusal: false,
             })),
         )?;
         (lhs_value, Status::FAIL)
@@ -2598,6 +2868,8 @@ fn report_by_lhs<'r, 'value: 'r, 'loc: 'value>(
                         custom_message: custom_message.clone(),
                         status: Status::FAIL,
                         comparison: cmp,
+                        // The key filter's own reasons, as above: none a refusal.
+                        refusal: false,
                     })),
                 )?;
                 statues.push((QueryResult::Resolved(Rc::clone(lhs)), Status::FAIL))
@@ -2652,6 +2924,10 @@ fn binary_operation<'value, 'loc: 'value>(
     // for a bare `%v`, whose values the scope memoizes, false for an inline query or a `%v` with parts
     // after it, which the walk re-materializes each time. `IN` caches its entry sets only for the former.
     rhs_shared: bool,
+    // The clause itself, for the refused-read line alone, which names it as the author wrote it
+    // (`access_clause_text`); rendered only when that line is recorded, since `context` above is the
+    // record-tree rendering every evaluation already pays for.
+    clause: &GuardAccessClause<'loc>,
 ) -> Result<EvaluationResult> {
     let (mut lhs, _, passed_on) = eval_context.query_with_shape(lhs_query)?;
     // A left-hand side that is the empty selection a one-object filter left, handed on bare (`this ==
@@ -2675,40 +2951,109 @@ fn binary_operation<'value, 'loc: 'value>(
     // cuts its captures back to the refusal's marker (`eval_context::enumerate_under_an_own_key_filter`,
     // `captures_after_a_refused_walk`), the clause's error is held by an `or`, and a sibling clause reads
     // `%x` as a plain assertion, the marker among its values beside whatever a same-name capture bound
-    // before. The marker is not a value, so no pair against it is decided, and an absent left-hand value
-    // beside it decides nothing either (the `LhsUnresolved` arm reads the marker's reason, not a decided
-    // failure), so `Properties.Missing == %env` and `%env == Properties.Missing` are both unknown and fail
-    // closed. Read here, before the comparison, and applied to the evidence
-    // after it, by the comparator and the quantifier (the block above `undecided_gate` below). The
-    // refusal's marker only (`refused_read_reason`, through `UnResolvedKind::is_refusal`) for `==`, `!=`
-    // and the orderings: the marker a key filter nobody could decide leaves, or a capture refused inside
-    // a predicate (`to_undecidable_result`, `refused` unset), is a value's own unresolved answer and is
-    // read pair by pair by the `RhsUnresolved` arm, which records it undecided for that pair and leaves
-    // every decided pair decided; read here as well it wiped the decided failures beside it, so `when Y
-    // == Maps.*[ keys == /re/ ].*` with one key the regex could not be run over and one resolved `x`
-    // beside it failed its rule closed where the control is not applicable. Membership and the
-    // set-vs-set `==` read either kind (`rhs_marker` below): `Y IN {x, ?}` is a YES on `x` and unknown
-    // otherwise whichever kind of unknown `?` is, and two sets whose only mismatch is on the left may be
-    // equal through `?` whichever kind it is.
+    // before. The marker is not a value, so no pair against it is decided. An ABSENT operand beside it
+    // is decided all the same: a value the document lacks fails its comparison whatever stands on the
+    // other side (`docs/CLAUSES.md`, "A right-hand query that stops at a key the document lacks ... is a
+    // decided failure for each left-hand value, under every comparator and in both polarities"; the
+    // `LhsUnresolved` arm below says why an absent property is a fact about the document), so
+    // `Properties.Missing == %env` and `%env == Properties.Missing` are both decided, the entry deselected
+    // and the gate not applicable, as they are with no marker in sight; were they read as unknown, they
+    // would fail a rule closed where it should deselect the resources lacking the property. Read here,
+    // before the
+    // comparison, and applied to the evidence after it, by the comparator and the quantifier (the block
+    // above `undecided_gate` below). The refusal's marker only (`refused_read_reason`, through
+    // `UnResolvedKind::is_refusal`) for the POSITIVE `==` and orderings: the marker a key filter nobody
+    // could decide leaves, or a capture refused inside a predicate (`to_undecidable_result`, `refused`
+    // unset), is a value's own unresolved answer and is read pair by pair by the `RhsUnresolved` arm,
+    // which records it undecided for that pair and leaves every decided pair decided; were the marker
+    // read here as well, it would wipe the decided failures beside it, so `when Y == Maps.*[ keys == /re/
+    // ].*` with one key the regex could not be run over and one resolved `x` beside it would fail its rule
+    // closed where the control is not applicable. Membership, the set-vs-set `==` and every NEGATED
+    // comparator read either kind
+    // (`rhs_marker` below): `Y IN {x, ?}` is a YES on `x` and unknown otherwise whichever kind of unknown
+    // `?` is; two sets whose only mismatch is on the left may be equal through `?` whichever kind it is;
+    // and under `!=` a value that differs from every resolved value may equal the one `?` hides
+    // whichever kind `?` is, so that pass is not a pass (`passes_are_unknown`), as it is not under `NOT
+    // IN`; read for the refusal's marker alone, `some Y != Maps.*[ keys == /re/ ].*` would pass on such a
+    // value where its `NOT IN` spelling fails closed.
     let rhs_refused = rhs.iter().find_map(|value| match value {
         QueryResult::UnResolved(unresolved) => refused_read_reason(unresolved),
         QueryResult::Resolved(_) | QueryResult::Literal(_) => None,
     });
-    let rhs_marker = rhs.iter().find_map(|value| match value {
-        QueryResult::UnResolved(unresolved) => undecidable_reason(unresolved),
-        QueryResult::Resolved(_) | QueryResult::Literal(_) => None,
+    // The refusal's reason first where both kinds stand among the values: a clause raised on the marker
+    // (the compared-nothing arm, the gate) names a rules-file mistake over a data budget, whichever
+    // value came first.
+    let rhs_marker = rhs_refused.clone().or_else(|| {
+        rhs.iter().find_map(|value| match value {
+            QueryResult::UnResolved(unresolved) => undecidable_reason(unresolved),
+            QueryResult::Resolved(_) | QueryResult::Literal(_) => None,
+        })
     });
-    // A marker of either kind among the LEFT-hand values (`%names != Properties.Missing`, the refused
-    // selection compared against a document value; `%cfg == Properties.Missing` with a key filter's
-    // marker in `%cfg`): an absent right-hand value then decides nothing, as an absent left-hand value
-    // decides nothing beside a marker on the right, since the value the marker hides may be what the
-    // absent one would have compared against. The `LhsUnresolved` arm reads the marker itself undecided;
-    // this flag keeps the `RhsUnresolved` arm from calling the pairs beside it decided, so the clause is
-    // unknown in both spellings, `%names != Properties.Missing` and `Properties.Missing != %names` alike.
-    let lhs_marker = lhs.iter().any(|value| match value {
-        QueryResult::UnResolved(unresolved) => undecidable_reason(unresolved).is_some(),
-        QueryResult::Resolved(_) | QueryResult::Literal(_) => false,
+    // Which marker drives the pre-pass below, decided here so the bookkeeping the pre-pass reads can be
+    // gated on it (`pre_pass.is_some() && cmp.1`, below): the marker of either kind for membership and
+    // for every negated comparator, the refusal's alone for the positive `==` and orderings; the reads
+    // above say why.
+    let pre_pass = match cmp.0 {
+        CmpOperator::In => rhs_marker.clone(),
+        _ if cmp.1 => rhs_marker.clone(),
+        _ => rhs_refused.clone(),
+    };
+    // Whether any right-hand value is a LISTED entry: a resolved value, a literal, or a reference the
+    // document lacks, which the comparison reads as a decided NO for every left-hand value (the
+    // `RhsUnresolved` arm's `None` branch), where a marker is an entry it cannot read. Under a positive
+    // `IN` with NONE listed (the marker alone), no entry could have accepted a left-hand value, so the
+    // marker's pairs file no status and no record for any value (`marker_pair_under_in`), the clause
+    // compares nothing and answers with the marker's reason through the compared-nothing arm, unknown;
+    // with one entry listed, a value no entry accepted keeps its marker pair, a FAIL status with the
+    // reason in its record, beside the absence's own record where the listed entry is one the document
+    // lacks.
+    let any_listed_rhs = rhs.iter().any(|value| match value {
+        QueryResult::Resolved(_) | QueryResult::Literal(_) => true,
+        QueryResult::UnResolved(unresolved) => undecidable_reason(unresolved).is_none(),
     });
+    // Whether the right-hand side is ABSENT as a whole: every value a reference the document lacks, none
+    // a marker. A marker among the left-hand values compared against it is decided like every other
+    // left-hand value, since the absence decides the comparison whatever stands on the left (the
+    // `LhsUnresolved` arm), so `some %names NOT IN Properties.Missing` deselects as `%names NOT IN
+    // Properties.Missing` does.
+    // A DOCUMENT empty list among the right-hand values is NOT an absence here, although the arms that
+    // meet one as a compared operand read it as one (`is_empty_list`): the operators pair every resolved
+    // left-hand value with the `[]` and answer (`contained_in` over no element is a no, which `NOT IN`
+    // turns into a pass; `['x'] != []` likewise), so a marker beside those values must stay undecided,
+    // as it is beside any present value. Read as an absence, `when %x NOT IN Denied` over `Denied: []`
+    // would decide the marker's pair NO while every value beside it passed, skip the rule and report a
+    // present `Denied` as a value the document lacks, where the value the marker hides passes like its
+    // neighbours. So `when %cfg != Resources.B.Properties.Tags` with the marker alone in `%cfg` over
+    // `Tags: []` is raised, as over `Tags: 'x'`; over a missing `Tags` it is decided. A `[]` the rules
+    // file wrote is a `Literal` and never an absence either (the two-literal arm's own line).
+    let rhs_absent = !rhs.is_empty()
+        && rhs.iter().all(|value| match value {
+            QueryResult::UnResolved(ur) => undecidable_reason(ur).is_none(),
+            QueryResult::Resolved(_) | QueryResult::Literal(_) => false,
+        });
+    // The one left-hand value of a clause whose left operand is a literal (`%lit != %cfg`, a rule
+    // literal compared against a query): the operators build such pairs with the DOCUMENT value as the
+    // pair's subject (`EqOperation`, the literal-left arm: "the document value is the pair's subject and
+    // the literal is what it was compared with"), so a result's `lhs` is then a right-hand value, and the
+    // bookkeeping below notes the literal instead, by the one `Rc` the operand holds (the operators clone
+    // the literal into fresh `Rc`s per pair, which keyed by address would read as one value per pair).
+    let literal_left = operators::is_literal(&lhs);
+    // Whether a REFUSAL's marker stands among the values on either side (`refused_read_reason`: the
+    // marker a refused walk or a refused key filter left, never the marker a key filter leaves for a map
+    // whose key spent the regex budget), read once for the `NotComparable` arm: a refusal to compare
+    // kinds under a NEGATED comparator beside one (`Port != %x` with `Port: 22` and `'ssh'` beside the
+    // marker in `%x`; `some %a NOT IN ['ssh']` with the marker in `%a`) is a decided no of its own kind,
+    // worded as such by the refused-read line and recorded as a refusal (`ResultEvidence::kinds_refused`,
+    // `ComparisonClauseCheck::refusal`); every other refusal of kinds keeps its landed reading, a resolved
+    // no with the operators' own reason. A key filter's marker is no refusal (`mod.rs`,
+    // `ComparisonClauseCheck::refusal`: "a key filter's reason is no refusal and reads false"), so a value
+    // refused on kinds beside one alone (`some Properties.Name != %x` with the budget marker and a `[]` in
+    // `%x`) keeps the operators' reason and `refusal: false`; read for either kind of marker, that record
+    // carried the kinds sentence flagged as a refusal the console prints whole.
+    let a_refusal_beside = rhs_refused.is_some()
+        || lhs.iter().any(|value| {
+            matches!(value, QueryResult::UnResolved(unresolved) if refused_read_reason(unresolved).is_some())
+        });
     // Computed here and emitted at the bottom, because neither end of the comparison has both halves
     // of the condition.
     //
@@ -2776,26 +3121,78 @@ fn binary_operation<'value, 'loc: 'value>(
         //
         // The distinction is drawn the same way `unary_operation` already draws it for `EMPTY`, so
         // there is one definition of "the query is just a variable" rather than two.
+        //
+        // Both readings hold with no REFUSAL's marker among the right-hand values. Beside a refusal's
+        // marker (`rhs_refused`: a refused bare read the caller pushed, or a capture holding a refused
+        // walk's marker) the empty selection is RAISED on the refusal's reason, in every role, as the
+        // compared-nothing arm below raises a marker beside no status. The two readings above are decided
+        // answers (not applicable, or an assertion's own FAIL), and a decided answer beside the refusal is
+        // the one shape nothing names: the pre-pass runs over a `QueryValueResult` alone, so the
+        // `EmptyQueryResult` written here reached `undecided_gate` with no reason and was not raised, and
+        // the run's refused-read line is written for a clause that PASSED or that an absence or a mismatch
+        // decided, which an empty selection is not, so no line was written either. The text was
+        // registered and nothing else said it: `Resources.*[ Properties.Tags[ Key == 'Owner' ].Value ==
+        // %names ] empty` over buckets with no `Owner` tag deselected every bucket and PASSED at exit 0
+        // with a refusal's marker in `%names`, and the `when` gate written the same way was silently not
+        // applicable, where `marker_beside_an_absence` promises a refusal is never silent. Raised, the
+        // predicate's clause fails closed, the gate fails its rule closed, and an assertion fails with the
+        // refusal in its record; the refusal is registered by the collection after this match either way,
+        // and the `Err` arm of `eval_guard_access_clause` records a refusal's raise whole (`refusal:
+        // true`). Every role, not the gate alone: an empty selection carries no pair and no status, so the
+        // strict arm of `undecided_gate`, which keeps a `match_all` assertion on the FAIL statuses of its
+        // undecided pairs, would have nothing to keep it on. No `UnraisedVerdict` fits a selection that
+        // holds nothing (it is not a value the document lacks, and the refusal is raised, not left
+        // unraised), so no line is written for this shape; the raise is its one report. The refusal's
+        // reason is raised as the registered refusal it is where the clause is asserted, and as the plain
+        // undecidable error in a gate or a predicate, as every gate and predicate raise is.
+        //
+        // A KEY FILTER's marker alone among the right-hand values (the marker a map leaves when the regex
+        // engine cannot be run over one of its keys, or a capture refused inside a predicate; `rhs_marker`
+        // with `rhs_refused` unset) leaves both readings as they are. The marker hides a VALUE the
+        // comparison could not read, and it drives the pre-pass below for membership and the negated
+        // comparators because a left-hand value's pass against the listed values may not hold against the
+        // hidden one; with zero left-hand values no pair is built, so there is no pass for the hidden
+        // value to overturn and no comparison for the marker to leave undecided. Raised here, `when
+        // Resources.*[ Type == 'AWS::S3::Bucket' ].Properties.BucketName NOT IN Resources.*.Properties.Cfg[
+        // keys == /re/ ].*` over a template with no bucket failed its rule closed whenever an UNRELATED
+        // map elsewhere in the template spent the regex budget, and the predicate written that way
+        // deselected nothing where it had nothing to select among: a false refusal on a template the
+        // idiom above exists to leave not applicable, where the released evaluator and this arm with no
+        // marker in sight both read it not applicable. Nothing is left silent by the decided answer: a key
+        // filter's marker is not a refusal, is registered nowhere, and writes no line beside any decided
+        // comparison (`a_refusal_beside_an_absent_operand_is_reported_with_the_decided_comparison`, the
+        // key-filter control), so the empty selection's own reason is the whole of the report, as it is
+        // with no marker. The refusal half above is the fail-closed half: a refusal names a rules-file
+        // mistake that would otherwise be registered and said nowhere, which a data budget on an
+        // unrelated map is not.
         operators::EvalResult::Skip => {
-            let lone_variable = lhs_query.len() == 1 && lhs_query[0].is_variable();
-            Ok(match lone_variable {
-                true => EvaluationResult::EmptyQueryResult(
-                    match role.is_strict() {
-                        true => Status::FAIL,
-                        false => Status::SKIP,
-                    },
-                    Some(empty_lhs_message()),
-                ),
-                // Carries the reason for the same purpose the arm above carries one. This branch is
-                // reached with the query in hand and `is_empty()` already decided, so the fact is
-                // known here and was simply not written down: `find_skip_reason` reads this message
-                // off the `GuardClauseBlockCheck` the caller builds from it, and a `None` made a
-                // clause-form empty selection report a SKIP with no reason at all.
-                false => EvaluationResult::EmptyQueryResult(
-                    Status::SKIP,
-                    Some(empty_selection_message(lhs_query)),
-                ),
-            })
+            if let Some(reason) = rhs_refused.as_deref() {
+                if role.is_strict() {
+                    Err(crate::rules::eval_context::refuse(reason.to_string()))
+                } else {
+                    Err(Error::UndecidableComparison(reason.to_string()))
+                }
+            } else {
+                let lone_variable = lhs_query.len() == 1 && lhs_query[0].is_variable();
+                Ok(match lone_variable {
+                    true => EvaluationResult::EmptyQueryResult(
+                        match role.is_strict() {
+                            true => Status::FAIL,
+                            false => Status::SKIP,
+                        },
+                        Some(empty_lhs_message()),
+                    ),
+                    // Carries the reason for the same purpose the arm above carries one. This branch
+                    // is reached with the query in hand and `is_empty()` already decided, so the fact
+                    // is known here and was simply not written down: `find_skip_reason` reads this
+                    // message off the `GuardClauseBlockCheck` the caller builds from it, and a `None`
+                    // made a clause-form empty selection report a SKIP with no reason at all.
+                    false => EvaluationResult::EmptyQueryResult(
+                        Status::SKIP,
+                        Some(empty_selection_message(lhs_query)),
+                    ),
+                })
+            }
         }
 
         // Positive comparison against a reference that resolved to nothing. No value
@@ -2878,46 +3275,121 @@ fn binary_operation<'value, 'loc: 'value>(
 
         operators::EvalResult::Result(results) => {
             let mut statues: Vec<(QueryResult, Status)> = Vec::with_capacity(lhs.len());
+            // The left-hand values a resolved entry accepted under a positive `IN` beside a marker, the
+            // one shape whose marker pairs are dropped (`marker_pair_under_in`); empty, and never read,
+            // for every other comparison.
+            let accepted = if cmp == (CmpOperator::In, false) && rhs_marker.is_some() {
+                let accepted = accepted_left_values(&results);
+                // The identity contract `ComparisonResult` states: a `Success` names the left-hand
+                // value by the comparison's own `Rc`, so every accepted address is the address of a
+                // value in the left operand; a reboxing arm would leave an address nothing here holds.
+                debug_assert!(
+                    accepted.iter().all(|key| {
+                        lhs.iter().any(|value| {
+                            matches!(value, QueryResult::Resolved(held) | QueryResult::Literal(held)
+                                if Rc::as_ptr(held) == *key)
+                        })
+                    }),
+                    "an accepted left-hand value is one of the comparison's left operand values, by address"
+                );
+                accepted
+            } else {
+                std::collections::HashSet::new()
+            };
+            // The left-hand values some comparison answered (`compared_left_values`), read by the marker's
+            // pair for a document `[]` on the left: an absence only where no comparison answered it.
+            // Computed only where that pair can meet one, a marker among the right-hand values.
+            let compared = if rhs_marker.is_some() {
+                compared_left_values(&results)
+            } else {
+                std::collections::HashSet::new()
+            };
             for each in results {
                 // The statuses come from the one mapping `folded_verdict` also reads; the arms below
                 // write the records that go beside them, one record per status, and nothing else. One
                 // exception: under a POSITIVE `IN` a pair against an undecidable marker among the
-                // right-hand values (`marker_pair_under_in`) files neither a status nor a record.
-                // Membership is a YES on any one listed value, so that pair decides nothing about a value
-                // a listed entry matched, and a FAIL status for it read `Tags[*] IN %names` over a pair
-                // `%names` holds as unmatched under `match_all`, where the caller's fold fails on any
-                // FAIL. The marker still reaches the evidence (the `RhsUnresolved` arm), so a value no
-                // listed entry matched stays unknown. Every other comparator keeps the status: `==` holds
-                // only when every pair holds, and the marker's pair never does; under `NOT IN` the pair's
-                // FAIL denies a pass.
-                let statuses = value_statuses(&each, cmp);
-                // Per left-hand value, for the pre-pass over a marker among the right-hand values
-                // (`ResultEvidence::every_value_decided_no`): which values a comparison against a
-                // RESOLVED value or a refusal of kinds decided no, which values were seen at all, and
-                // whether some left-hand value was absent or an empty collection (decided nothing beside a
-                // marker). Only with a marker present: the sets are read by nothing else, and a
-                // comparison with no marker pays nothing for them. The left-hand values come from the
-                // result's own left operand, never from a diff: a `QueryIn` built by `==` through
-                // `QueryIn::from_rhs` carries RIGHT-hand values in its `diff`, and read as left-hand
-                // values they made one left value against two right ones look like two left values.
-                if rhs_marker.is_some() {
+                // right-hand values, for a left-hand value a resolved entry accepted
+                // (`marker_pair_under_in`, asked once here and read by the `RhsUnresolved` arm), files
+                // neither a status nor a record. Membership is a YES on any one listed value, so that
+                // pair decides nothing about a value a listed entry matched, and a FAIL status for it
+                // read `Tags[*] IN %names` over a pair `%names` holds as unmatched under `match_all`,
+                // where the caller's fold fails on any FAIL. For a value no listed entry matched the pair
+                // keeps its FAIL status and its record, which names the marker's reason: the value's
+                // membership is unknown and the clause fails closed on it. The marker reaches the
+                // evidence either way (the `RhsUnresolved` arm). Every other comparator keeps the status:
+                // `==` holds only when every pair holds, and the marker's pair never does; under `NOT IN`
+                // the pair's FAIL denies a pass.
+                let skipped_marker_pair =
+                    marker_pair_under_in(cmp, &each, &accepted, any_listed_rhs);
+                // A skipped pair whose marker is a REFUSAL's is never silent: after the loop every refused
+                // read among the right-hand values is registered whatever the clause's verdict, and the
+                // run's output reports it once the clause is decided (a membership a listed value settled
+                // says so in its line, read from the outcome; a `match_all` clause that failed on ANOTHER
+                // value's marker pair writes no line, its failure carrying the refusal). A key filter's
+                // marker is not a refusal and is registered nowhere.
+                if skipped_marker_pair {
+                    count_marker_pair_skip();
+                }
+                let statuses = if skipped_marker_pair {
+                    Vec::new()
+                } else {
+                    value_statuses(&each)
+                };
+                // Per left-hand value, for the pre-pass over a marker among the right-hand values under a
+                // NEGATED comparator (`ResultEvidence::every_value_decided_no`, read by `settled_no`):
+                // which values a comparison against a RESOLVED value decided no, which values were seen
+                // at all, and whether some left-hand value was absent or an empty collection. Only where
+                // that pre-pass runs (`pre_pass.is_some() && cmp.1`): the sets are read by nothing else,
+                // and a comparison with no marker, or a positive one, pays nothing for them. The
+                // left-hand values come from the result's own left operand, never from a diff: a
+                // `QueryIn` built by `==` through `QueryIn::from_rhs` carries RIGHT-hand values in its
+                // `diff`, and read as left-hand values they made one left value against two right ones
+                // look like two left values. A clause whose left operand is a literal notes the literal
+                // (`literal_left`): the operators make the document value the pair's subject there, so
+                // the result's own `lhs` is a right-hand value. The flag says the bookkeeping RAN, which
+                // is what makes its sets readable: `absent_lhs` is also written below this gate, by the
+                // arms that read an empty left-hand list as an absence under every comparator, so with
+                // the sets empty and no marker on the right the fold would read "every value seen was
+                // decided NO" over no value seen, and `when some Name != /re/` over `Name: []` beside a
+                // value whose regex spent its budget would be settled NO and skip the rule where the
+                // budget's raise fails it closed; the missing-key twin, whose absence is written here
+                // alone, would raise, and `[]` and a missing key would read differently.
+                if pre_pass.is_some() && cmp.1 {
+                    evidence.bookkeeping_active = true;
                     match &each {
-                        operators::ValueEvalResult::LhsUnresolved(_) => evidence.absent_lhs = true,
+                        // An absence only: a MARKER among the left-hand values is a value nobody knows,
+                        // not a value the document lacks (its own flag, `lhs_marker`, is set by the
+                        // `LhsUnresolved` arm below and blocks every "settled" reading).
+                        operators::ValueEvalResult::LhsUnresolved(ur) => {
+                            if undecidable_reason(ur).is_none() {
+                                evidence.absent_lhs = true;
+                            }
+                        }
                         operators::ValueEvalResult::EmptyCollection { side, other, .. } => {
                             match side {
                                 operators::EmptySide::Lhs => evidence.absent_lhs = true,
                                 operators::EmptySide::Rhs => {
                                     if let Some(other) = other {
-                                        evidence.note_value(other, true);
+                                        evidence.note_value(
+                                            literal_left.as_ref().unwrap_or(other),
+                                            true,
+                                        );
                                     }
                                 }
                             }
                         }
                         operators::ValueEvalResult::ComparisonResult(comparison) => {
+                            // A refusal to compare kinds is a decided NO for the value under `!=` (a value
+                            // of another kind than the resolved one differs from it), not under `NOT IN`
+                            // beside a marker: membership refuses a value only when NO entry can be
+                            // compared with it (`docs/CLAUSES.md`, the membership comparators), and the
+                            // entry the marker hides may be the comparable one, so `22 NOT IN {'ssh', ?}`
+                            // is unknown, not a decided miss, where `22 NOT IN {'ssh'}` is decided.
                             let decided_no = match comparison {
                                 operators::ComparisonResult::Fail(_) => true,
                                 operators::ComparisonResult::NotComparable(nc) => {
                                     matches!(nc.cause, operators::Unanswerable::IncomparableKinds)
+                                        && cmp.0 != CmpOperator::In
                                 }
                                 operators::ComparisonResult::Success(_)
                                 | operators::ComparisonResult::RhsUnresolved(..) => false,
@@ -2933,24 +3405,48 @@ fn binary_operation<'value, 'loc: 'value>(
                                     // left-hand values a `Fail` names, which is its `diff` only when
                                     // the diff was taken from the left (`DiffFrom::Lhs`); a diff taken
                                     // from the right names right-hand values and decides no left value.
+                                    // An empty left-hand list is an absence here, as in every arm
+                                    // (`absent_lhs`), never a noted value.
                                     for value in &qin.lhs {
-                                        evidence.note_value(value, false);
+                                        if is_empty_list(value) {
+                                            evidence.absent_lhs = true;
+                                        } else {
+                                            evidence.note_value(value, false);
+                                        }
                                     }
                                     if decided_no && qin.diff_from == operators::DiffFrom::Lhs {
                                         for value in &qin.diff {
-                                            evidence.note_value(value, true);
+                                            if !is_empty_list(value) {
+                                                evidence.note_value(value, true);
+                                            }
                                         }
                                     }
                                 }
-                                _ => {
-                                    for (value, _) in &statuses {
-                                        if let QueryResult::Resolved(value)
-                                        | QueryResult::Literal(value) = value
-                                        {
-                                            evidence.note_value(value, decided_no);
+                                _ => match literal_left.as_ref() {
+                                    Some(literal) => evidence.note_value(literal, decided_no),
+                                    None => {
+                                        // An EMPTY LEFT-HAND DOCUMENT LIST IS AN ABSENCE to this
+                                        // bookkeeping in every arm, whatever result carries it (a marker
+                                        // pair, a refusal of kinds, a pair): it sets `absent_lhs` as a
+                                        // missing value does and is never noted as a compared value, so
+                                        // `Tags: []` and a missing `Tags` read alike beside a marker
+                                        // under every comparator and quantifier; the `EmptyCollection`
+                                        // result is one route to that reading, not its premise (`!=`
+                                        // between two queries makes none, and a marker-only right-hand
+                                        // side makes none).
+                                        for (value, _) in &statuses {
+                                            if let QueryResult::Resolved(value)
+                                            | QueryResult::Literal(value) = value
+                                            {
+                                                if is_empty_list(value) {
+                                                    evidence.absent_lhs = true;
+                                                } else {
+                                                    evidence.note_value(value, decided_no);
+                                                }
+                                            }
                                         }
                                     }
-                                }
+                                },
                             }
                         }
                     }
@@ -2971,34 +3467,98 @@ fn binary_operation<'value, 'loc: 'value>(
                     // well, whether the filter was evaluated there or bound outside, and is read
                     // undecided, so the enclosing clause fails closed; see `undecidable_selection`.)
                     // The kind is read by `undecidable_reason`, with no clone and no catch-all arm.
+                    // Decided whatever stands among the right-hand values, a marker included: an absent
+                    // value's comparison fails on the absence, which no value the marker hides can
+                    // change (`docs/CLAUSES.md`: "a decided failure for each left-hand value, under every
+                    // comparator and in both polarities"), so `[ Properties.Missing == %cfg ]` with a key
+                    // filter's marker in `%cfg` deselects the entry as it does with none, and `when
+                    // Properties.Size > %limits` over a resource lacking `Size` is not applicable; were
+                    // either read as unknown beside a marker, it would fail its rule closed where the
+                    // control deselects.
                     operators::ValueEvalResult::LhsUnresolved(ur) => {
-                        match (undecidable_reason(&ur), rhs_marker.as_ref()) {
-                            (Some(reason), _) => {
+                        match undecidable_reason(&ur) {
+                            // A marker among the left-hand values compared against a right-hand side that
+                            // is absent as a whole (`rhs_absent`): decided, as every left-hand value is
+                            // against an absence, whatever the marker hides.
+                            Some(reason) if rhs_absent => {
+                                evidence.decided_failure = true;
+                                evidence.absent_failure = true;
+                                // The marker's reason travels in this record as the `from` value
+                                // (`QueryResult::UnResolved(ur)` below); a REFUSAL's reason is also kept
+                                // (`lhs_refused_reads`, the refused reads that are not among the
+                                // right-hand values), to be registered and written to the run's output
+                                // once the clause is decided, as the right-hand refusal beside an absent
+                                // left value is.
+                                if refused_read_reason(&ur).is_some() {
+                                    evidence.note_left_refusal(reason);
+                                }
+                            }
+                            // A marker among the left-hand values: a value nobody knows, never an absence.
+                            // It keeps the clause from being settled by its other values under `some`
+                            // (`lhs_marker`): `when some %cfg NOT IN %names` with the marker alone in
+                            // `%cfg` is unknown and raises whatever `%names` holds, where read as an absence
+                            // it would settle NO and skip the rule. A REFUSAL's reason is kept here too
+                            // (`lhs_refused_reads`): a clause another left-hand value decides never
+                            // consults this one (`some %x == 'A'` with a key equal to `'A'` beside the
+                            // marker passes), so the refusal the `or` swallowed upstream would reach no
+                            // record, no registry and no line; kept, it is registered whatever the
+                            // verdict and written to the run's output when the clause is decided without
+                            // raising it, as a right-hand refusal is.
+                            Some(reason) => {
+                                evidence.lhs_marker = true;
+                                if refused_read_reason(&ur).is_some() {
+                                    evidence.note_left_refusal(reason.clone());
+                                }
                                 if evidence.undecided.is_none() {
                                     evidence.undecided = Some(reason);
                                 }
                             }
-                            // An absent left-hand value beside a marker of either kind among the
-                            // right-hand values decides nothing: the value the marker hides may be what
-                            // the absent one would have compared against, so `[ Properties.Missing ==
-                            // %cfg ]` with a key filter's marker in `%cfg` is unknown as `[ %cfg ==
-                            // Properties.Missing ]` is.
-                            (None, Some(reason)) => {
-                                evidence.undecided.get_or_insert_with(|| reason.clone());
+                            None => {
+                                evidence.decided_failure = true;
+                                evidence.absent_failure = true;
                             }
-                            (None, None) => evidence.decided_failure = true,
                         }
+                        // The record's message, where a marker stands among the right-hand values: the
+                        // retrieval's own reason leads ("Could not find key Owner inside struct at path
+                        // ..."), the finding a reader acts on and the one the console renders for a
+                        // message-less record of a value the document lacks, and the marker's reason
+                        // follows it, so the absence that decided and the selection it decided beside
+                        // are read together in the one record. The record says whether that reason is a
+                        // REFUSAL's (`refusal`, read from the marker's kind), so the console prints the
+                        // message whole where it cuts every other to its bound: cut, the refusal's
+                        // remedy and path would be the part lost, and a reader of the console alone
+                        // would be left with the key's sentence. With no marker on the right and the
+                        // LEFT value itself a REFUSAL's marker (`left_refusal`, the two marker branches
+                        // above), the record carries the refusal's own text with `refusal` set: the
+                        // pair is a FAIL status that fails an assertion and raises a gate, and the
+                        // record is where the report names what was refused, so a message-less record
+                        // would have the console read the marker as a property the template lacks
+                        // ("property [] to compare from is missing") with the reason nowhere in the
+                        // output. With no marker on either side the record carries no message and the
+                        // console renders the finding from the unresolved value, as released. A
+                        // REFUSAL among the right-hand values is also registered after the loop
+                        // whatever the verdict and written whole to the run's output once the clause is
+                        // decided (the absence that decided, `absent_failure`, set above, is the
+                        // verdict the line names); a key filter's marker beside an absence is in this
+                        // record and on no line.
+                        let left_refusal = refused_read_reason(&ur);
+                        let message =
+                            marker_beside_an_absence(rhs_marker.as_deref(), ur.reason.as_deref())
+                                .or_else(|| left_refusal.clone());
+                        let refusal =
+                            message.is_some() && (rhs_refused.is_some() || left_refusal.is_some());
                         eval_context.start_record(&context)?;
                         eval_context.end_record(
                             &context,
                             RecordType::ClauseValueCheck(ClauseCheck::Comparison(
                                 ComparisonClauseCheck {
                                     status: Status::FAIL,
-                                    message: None,
+                                    message,
                                     custom_message: custom_message.clone(),
                                     comparison: cmp,
                                     from: QueryResult::UnResolved(ur),
                                     to: None,
+                                    refusal,
                                 },
                             )),
                         )?;
@@ -3032,18 +3592,40 @@ fn binary_operation<'value, 'loc: 'value>(
                         other: Some(other),
                     } => {
                         let reason = empty_collection_message(side, role);
+                        // Decided beside a marker of either kind too, as the absent value above is: the
+                        // collection is empty whatever the marker hides, so `Tags: []` reads as a missing
+                        // `Tags` does beside a key filter's marker, both deselected, both not applicable
+                        // under `when`, which is what this arm's own sentence ("one route for both")
+                        // promises. `absent_failure` carries that through the pre-pass over the marker,
+                        // which keeps it as it keeps a comparison's no. This result is ONE route to the
+                        // reading: an empty left-hand list is an absence to the evidence in every arm that
+                        // meets it (the marker pair, the refusal of kinds, the bookkeeping), since not every
+                        // operator pushes an `EmptyCollection` for it.
                         evidence.decided_failure = true;
-                        // A comparison against a resolved value only when the EMPTY collection is the
-                        // right-hand one: an empty left-hand collection against the right decided
-                        // nothing about what its elements would have compared against, like an absent
-                        // left-hand value, so beside a refusal's marker `Tags: []` reads as a missing
-                        // `Tags` does, both unknown. Set once a result reads a decided no and never
-                        // cleared, so an empty left-hand collection that follows a collision in the
-                        // results (the right-hand unresolved pairs come first, the collections after)
-                        // cannot undo it, in either document order.
-                        if matches!(side, operators::EmptySide::Rhs) {
-                            evidence.comparison_failed = true;
+                        evidence.absent_failure = true;
+                        if matches!(side, operators::EmptySide::Lhs) {
+                            evidence.absent_lhs = true;
                         }
+                        // A left-hand value COMPARED only when the EMPTY collection is the right-hand
+                        // one (`compared_a_left_value`, so `some` is not settled by its absences on it): an
+                        // empty left-hand collection against the right compared none of its elements.
+                        // Never a MISMATCH on either side (`comparison_failed` is a resolved value's no):
+                        // the empty right-hand collection is an ABSENCE to the evidence, as `absent_failure`
+                        // set above says, and the refused-read line names it a value the document lacks,
+                        // as it names a right-hand reference that resolved to nothing. Set once and never
+                        // cleared, so an empty left-hand collection that follows one in the results (the
+                        // right-hand unresolved pairs come first, the collections after) cannot undo it, in
+                        // either document order.
+                        if matches!(side, operators::EmptySide::Rhs) {
+                            evidence.compared_a_left_value = true;
+                        }
+                        // The marker among the right-hand values, where one stands, is reported in this
+                        // record as it is in the absent value's (`marker_beside_an_absence`); a refusal
+                        // among them is registered after the loop whatever the verdict, and the run's
+                        // output line reads this absence (`absent_failure`) as the verdict that left it
+                        // unraised, an empty collection on either side alike.
+                        let reason = marker_beside_an_absence(rhs_marker.as_deref(), Some(&reason))
+                            .unwrap_or(reason);
                         eval_context.start_record(&context)?;
                         eval_context.end_record(
                             &context,
@@ -3055,6 +3637,9 @@ fn binary_operation<'value, 'loc: 'value>(
                                     comparison: cmp,
                                     from: QueryResult::Resolved(empty),
                                     to: Some(QueryResult::Resolved(other)),
+                                    // The message embeds the marker's reason where one stands, and
+                                    // `rhs_marker` reads a refusal's first.
+                                    refusal: rhs_refused.is_some(),
                                 },
                             )),
                         )?;
@@ -3075,45 +3660,101 @@ fn binary_operation<'value, 'loc: 'value>(
                         operators::ComparisonResult::RhsUnresolved(urhs, lhs),
                     ) => {
                         // Decided, for the same reason as the arm above: the reference resolved to
-                        // nothing, and there is nothing undecided about comparing against nothing.
-                        // Unless the nothing is the undecidable marker, which is the arm above's
-                        // exception mirrored on the right-hand side.
+                        // nothing, and there is nothing undecided about comparing against nothing,
+                        // whatever else stands among the left-hand values (a marker there is read by its
+                        // own `LhsUnresolved` arm, undecided for itself alone). Unless the nothing is the
+                        // undecidable marker, which is the arm above's exception mirrored on the
+                        // right-hand side. The left-hand value of the pair is a compared value unless it
+                        // is a DOCUMENT empty list, which is an ABSENCE to the evidence in every arm (the
+                        // operators push one such pair per left-hand value, the empty collection included,
+                        // before they sort the values; with a marker-only right-hand side this pair is the
+                        // empty list's only result, so the absence is read here and not left to an
+                        // `EmptyCollection` that never comes). A `[]` the AUTHOR wrote (`let e = []`, the
+                        // literal-left arm of `==` pairs it with each right-hand value, `literal_left`) is
+                        // a value, never an absence: the operators' own line, "only a document value can
+                        // be the empty collection" (`operators.rs`, the two-literal arm), and the guard the
+                        // `NotComparable` arm below applies. Read as an absence, `when %e == %x` with the
+                        // marker alone in `%x` would be not applicable where the marker's reason is the
+                        // gate's answer.
+                        // Unless a comparison ANSWERED the empty list (`compared_left_values`): the
+                        // two-query `==` compares `[]` with a right-hand `[]` and matches it, so the
+                        // list is a compared value with a PASS beside this pair's unknown, and the gate
+                        // is raised on the marker as it is over `['a']` against `['a']` and the marker;
+                        // read as an absence here, the match would be overruled by a reading of the same
+                        // list as a value the document lacks, and `when Tags == %x` over `Tags: []`
+                        // would be reported not applicable at exit 0 where the hidden value may be the
+                        // one `Tags` differs from. The marker alone on the right leaves the pair as the
+                        // list's only result, and the absence reading stands.
+                        if literal_left.is_none()
+                            && is_empty_list(&lhs)
+                            && !compared.contains(&Rc::as_ptr(&lhs))
+                        {
+                            evidence.absent_lhs = true;
+                            evidence.absent_failure = true;
+                            evidence.decided_failure = true;
+                        } else {
+                            evidence.compared_a_left_value = true;
+                        }
                         match undecidable_reason(&urhs) {
                             Some(reason) => {
                                 if evidence.undecided.is_none() {
                                     evidence.undecided = Some(reason);
                                 }
                             }
-                            // Unless a marker stands among the LEFT-hand values (`lhs_marker`): the
-                            // value this pair compares against the absent one is resolved, but the value
-                            // the marker hides beside it may be the one the absent right-hand value would
-                            // have compared against, so the pair decides nothing about the clause; the
-                            // marker's own `LhsUnresolved` arm read it undecided, and the clause is
-                            // unknown as its mirror image is.
-                            None if lhs_marker => {}
                             None => {
+                                // A decided failure for the pair and never a MISMATCH: the reference
+                                // resolved to nothing, so no value was read against the left-hand one
+                                // (`comparison_failed` is a resolved value's no, which the refused-read
+                                // line names "a value that does not match"; an absence is a value the
+                                // document lacks, `absent_failure`'s, and the line would call it a
+                                // mismatch were the flag set here).
                                 evidence.decided_failure = true;
-                                evidence.comparison_failed = true;
+                                // The absence decides the CLAUSE under the AND comparators (`==`, the
+                                // orderings: `AND(no, ..)` is no) and never under a positive `IN` beside
+                                // a marker: membership is `OR` over the pairs, and `OR(no, unknown)` is
+                                // unknown, so `Owner IN %names` with a reference the document lacks and
+                                // a marker among the values, `Owner` equal to no listed value, is raised
+                                // on the marker's reason (the pair keeps its own decided NO and its FAIL
+                                // record above, and the marker's pair keeps its record beside it, the
+                                // reference counting as a listed entry); read as a clause-wide absence it
+                                // would be not applicable where the value the marker hides may be the
+                                // one `Owner` is among.
+                                if !(cmp == (CmpOperator::In, false) && rhs_marker.is_some()) {
+                                    evidence.absent_failure = true;
+                                }
                             }
                         }
-                        // A marker paired with a value under a positive `IN` files no record, as it
-                        // files no status (`marker_pair_under_in`): a clause that passed on a listed
-                        // value would otherwise carry a failing child the reporters render as a finding
-                        // under a passing clause. The marker still reached the evidence above.
-                        if cmp == (CmpOperator::In, false) && undecidable_reason(&urhs).is_some() {
+                        // A marker paired under a positive `IN` with a value a resolved entry accepted
+                        // files no record, as it files no status (`skipped_marker_pair`, asked once
+                        // above): a clause that passed on a listed value would otherwise carry a failing
+                        // child the reporters render as a finding under a passing clause. The pair of a
+                        // value no entry accepted keeps its record, the one place the report names the
+                        // marker's reason beside the value. The marker reached the evidence above either
+                        // way.
+                        if skipped_marker_pair {
                             continue;
                         }
+                        // The marker's reason is the record's message, and the record says whether it
+                        // is a REFUSAL's (`refusal`), so the console prints it whole beside the value
+                        // whose membership it left unknown: this record is the one place the report
+                        // names the reason a value no listed entry accepted failed its membership for,
+                        // and cut at the console's bound the refusal's remedy and path would be the
+                        // part lost. A reference the document lacks carries no reason and keeps the
+                        // message-less record, whose finding the console renders from the unresolved
+                        // value, as released.
+                        let refusal = refused_read_reason(&urhs).is_some();
                         eval_context.start_record(&context)?;
                         eval_context.end_record(
                             &context,
                             RecordType::ClauseValueCheck(ClauseCheck::Comparison(
                                 ComparisonClauseCheck {
                                     status: Status::FAIL,
-                                    message: None,
+                                    message: undecidable_reason(&urhs),
                                     custom_message: custom_message.clone(),
                                     comparison: cmp,
                                     from: QueryResult::Resolved(lhs),
                                     to: Some(QueryResult::UnResolved(urhs)),
+                                    refusal,
                                 },
                             )),
                         )?;
@@ -3126,29 +3767,91 @@ fn binary_operation<'value, 'loc: 'value>(
                         // refusal to compare kinds is a decided no, because rule authors write a value
                         // against both spellings it might carry and rely on the pairing that does not
                         // apply answering "no" rather than "unknown". See `Unanswerable` for what
-                        // reading that one the other way costs.
+                        // reading that one the other way costs. One exception: under MEMBERSHIP beside a
+                        // marker among the right-hand values. Membership refuses a value only when NO
+                        // entry can be compared with it, and one comparable entry turns the refusal into
+                        // a decided answer (`docs/CLAUSES.md`, the membership comparators), so the entry
+                        // the marker hides may be the comparable one, and the value's membership is
+                        // unknown: were `22` against `'ssh'` a decided miss, `some Ports[*] NOT IN
+                        // %denied` over `[22]` with `%denied` holding `'ssh'` and a marker would settle
+                        // the `some` on it and skip its rule, while the hidden entry may be the int `80`,
+                        // which `22` is not, so the clause may pass. An EMPTY LEFT-HAND LIST refused on
+                        // kinds (`[] != 'x'` between two queries, where `EqOperation` pushes no
+                        // `EmptyCollection`) is an absence to the evidence, as in every arm: a decided
+                        // failure on the document, never a compared value, so `[ some Tags != %cfg ]` over
+                        // `Tags: []` deselects beside a marker as a missing `Tags` does.
+                        let empty_left = literal_left.is_none() && is_empty_list(&nc.pair.lhs);
+                        if empty_left {
+                            evidence.absent_lhs = true;
+                            evidence.absent_failure = true;
+                        } else {
+                            evidence.compared_a_left_value = true;
+                        }
+                        // Whether THIS pair is the refusal of kinds the line words on its own (the arm
+                        // below sets it); read for the pair's record, where the evidence's flag would also
+                        // speak for an earlier pair.
+                        let mut own_kind_refusal = false;
                         match nc.cause {
                             operators::Unanswerable::EngineGaveUp => {
                                 if evidence.undecided.is_none() {
                                     evidence.undecided = Some(nc.reason.clone());
                                 }
                             }
+                            operators::Unanswerable::IncomparableKinds if empty_left => {
+                                evidence.decided_failure = true;
+                            }
+                            operators::Unanswerable::IncomparableKinds
+                                if cmp.0 == CmpOperator::In && rhs_marker.is_some() =>
+                            {
+                                evidence
+                                    .undecided
+                                    .get_or_insert_with(|| rhs_marker.clone().unwrap_or_default());
+                            }
+                            operators::Unanswerable::IncomparableKinds
+                                if cmp.1 && a_refusal_beside =>
+                            {
+                                // A decided no of its OWN kind (`kinds_refused`), never a comparison that
+                                // was answered no (`comparison_failed`): the refused-read line words a
+                                // resolved no under a negated comparator "matches a denied value", and `22`
+                                // against `'ssh'` matched nothing; the line names a refusal of kinds in its
+                                // own words. Beside a REFUSAL's marker and negated only: without one no
+                                // line is written (a key filter's marker is no refusal, so a pair beside
+                                // that marker alone takes the arm below), and under a positive comparator
+                                // a value of another kind "does not match", the landed wording, which
+                                // stays.
+                                evidence.decided_failure = true;
+                                evidence.kinds_refused = true;
+                                own_kind_refusal = true;
+                            }
                             operators::Unanswerable::IncomparableKinds => {
                                 evidence.decided_failure = true;
                                 evidence.comparison_failed = true;
                             }
                         }
+                        // The pair's record: the refusal of kinds the line words on its own (the arm above)
+                        // carries its own sentence, the two kinds and the comparator as written
+                        // (`kinds_refusal_sentence`), with `refusal` set so the console prints it whole;
+                        // every other pair carries the operators' own reason, as landed.
+                        let (message, refusal) = if own_kind_refusal {
+                            (
+                                kinds_refusal_sentence(cmp, &nc.pair.lhs, &nc.pair.rhs),
+                                true,
+                            )
+                        } else {
+                            (nc.reason, false)
+                        };
                         eval_context.start_record(&context)?;
                         eval_context.end_record(
                             &context,
                             RecordType::ClauseValueCheck(ClauseCheck::Comparison(
                                 ComparisonClauseCheck {
                                     status: Status::FAIL,
-                                    message: Some(nc.reason),
+                                    message: Some(message),
                                     custom_message: custom_message.clone(),
                                     comparison: cmp,
                                     from: QueryResult::Resolved(nc.pair.lhs),
                                     to: Some(QueryResult::Resolved(nc.pair.rhs)),
+                                    refusal,
                                 },
                             )),
                         )?;
@@ -3160,6 +3863,8 @@ fn binary_operation<'value, 'loc: 'value>(
                         // One success record per left-hand value a `QueryIn` carries, as
                         // `value_statuses` files one status per value; one for every other shape.
                         operators::Compare::QueryIn(qin) => {
+                            evidence.compared_a_left_value |=
+                                qin.lhs.iter().any(|value| !is_empty_list(value));
                             // The accepted values, not the whole left operand: a `Success` can carry
                             // a value the operator refused beside the ones it matched, and only the
                             // matched ones passed. For a per-value record the two sets are the same
@@ -3176,6 +3881,7 @@ fn binary_operation<'value, 'loc: 'value>(
                         operators::Compare::ListIn(_)
                         | operators::Compare::Value(_)
                         | operators::Compare::ValueIn(_) => {
+                            evidence.compared_a_left_value = true;
                             eval_context.start_record(&context)?;
                             eval_context.end_record(
                                 &context,
@@ -3197,21 +3903,30 @@ fn binary_operation<'value, 'loc: 'value>(
                         // right-hand value matched, the left-hand value with no resolved equal may be the
                         // one the marker hides, or the marker may be one more element on the right, so
                         // the comparison is not decided by its resolved values and the marker's reason
-                        // stands as the clause's. Either marker kind: the question is whether an unknown
-                        // value may make two sets equal, which its kind does not change. `!=` is not read
+                        // stands as the clause's. A `QueryIn` whose right-hand mismatches were never
+                        // computed (`rhs_unmatched` `None`: a path other than the equality operator's
+                        // two-query arm built it) is decided as it stands, since nothing says the
+                        // resolved values left the sets equal. Either marker kind: the question is
+                        // whether an unknown value may make two sets equal, which its kind does not
+                        // change. `!=` is not read
                         // here: its `Fail` is the left-hand values that collide with a RESOLVED right-hand
                         // value, a no the marker cannot undo. A `QueryIn` over NO left-hand value (every
                         // left-hand value was absent, and the operator still diffed the right-hand values
                         // against nothing) compared nothing and decides nothing here: each absent value
-                        // carries its own verdict through the `LhsUnresolved` arm, decided or not as the
-                        // marker beside it says, and a decided failure about a comparison that never ran
-                        // read `[ Properties.Missing == %names ]` as decided beside the marker, where its
-                        // `!=` twin is unknown.
+                        // carries its own decided verdict through the `LhsUnresolved` arm, and a second
+                        // decided failure about a comparison that never ran would be a verdict with no
+                        // value under it.
+                        if !matches!(
+                            &cmpr,
+                            operators::Compare::QueryIn(qin) if qin.lhs.iter().all(|value| is_empty_list(value))
+                        ) {
+                            evidence.compared_a_left_value = true;
+                        }
                         let decided = match &cmpr {
                             operators::Compare::QueryIn(qin) => {
                                 let set_undecided = cmp == (CmpOperator::Eq, false)
                                     && rhs_marker.is_some()
-                                    && qin.rhs_unmatched.is_empty();
+                                    && matches!(&qin.rhs_unmatched, Some(unmatched) if unmatched.is_empty());
                                 !(qin.lhs.is_empty() || set_undecided)
                             }
                             operators::Compare::Value(_)
@@ -3237,6 +3952,7 @@ fn binary_operation<'value, 'loc: 'value>(
                                             comparison: cmp,
                                             from: QueryResult::Resolved(pair.lhs),
                                             to: Some(QueryResult::Resolved(pair.rhs)),
+                                            refusal: false,
                                         },
                                     )),
                                 )?;
@@ -3255,6 +3971,7 @@ fn binary_operation<'value, 'loc: 'value>(
                                             from: QueryResult::Resolved(pair.lhs),
                                             to: vec![QueryResult::Resolved(pair.rhs)],
                                             matched: None,
+                                            refusal: false,
                                         },
                                     )),
                                 )?;
@@ -3273,6 +3990,7 @@ fn binary_operation<'value, 'loc: 'value>(
                                             from: QueryResult::Resolved(lin.lhs),
                                             to: vec![QueryResult::Resolved(lin.rhs)],
                                             matched: None,
+                                            refusal: false,
                                         },
                                     )),
                                 )?;
@@ -3332,6 +4050,7 @@ fn binary_operation<'value, 'loc: 'value>(
                                                 from: QueryResult::Resolved(lhs),
                                                 to: rhs.clone(),
                                                 matched: None,
+                                                refusal: false,
                                             },
                                         )),
                                     )?;
@@ -3352,14 +4071,92 @@ fn binary_operation<'value, 'loc: 'value>(
             // other operator, so a membership clause that compared nothing is explained the same way
             // rather than passing vacuously.
             if statues.is_empty() {
-                // Every right-hand value an undecidable marker under a positive `IN` (a capture that
-                // holds a refusal's marker alone, read as `%x`; a key filter that could decide none of
-                // its maps): every pair filed no status, so there is nothing to fold and nothing to
+                // A refusal's marker among the LEFT-hand values on this path is registered here, before
+                // any return below: the collection after this match registers what the loop noted, and
+                // this arm's raise must leave the same registration behind it whatever the loop met.
+                for value in &lhs {
+                    if let QueryResult::UnResolved(unresolved) = value {
+                        if let Some(text) = refused_read_reason(unresolved) {
+                            crate::rules::eval_context::register_refusal(&text);
+                        }
+                    }
+                }
+                // Every right-hand value an undecidable marker of either kind (a capture that holds a
+                // refusal's marker alone, read as `%x`; a key filter that could decide none of its
+                // maps), and the comparator a positive `IN`: under every other comparator the
+                // `RhsUnresolved` arm files a FAIL status per pair, so `statues` is empty beside a marker
+                // only where `marker_pair_under_in` skipped every pair (the assertion below holds the
+                // arm to that). Every pair filed no status, so there is nothing to fold and nothing to
                 // compare, and the clause's answer is the marker's own reason, whatever the role: an
                 // assertion fails on it, a gate or a predicate fails closed on it, where a "compared
-                // nothing" reason named the wrong cause.
+                // nothing" reason named the wrong cause. Unless every left-hand value was an ABSENCE
+                // (an empty collection, the one left-hand shape that reaches this branch beside the
+                // marker alone: its marker pair is the list's only result and files no status): the
+                // absence decides whatever the right-hand side holds, as the per-value arms decide it
+                // (`every_value_absent`), so `[ Tags IN %x ]` over `Tags: []` deselects and `when Tags
+                // IN %x` is not applicable, as both read over a missing `Tags`, with the marker's reason
+                // reported in the answer (`marker_beside_an_absence`). Were the marker raised here, one
+                // empty list would fail its rule closed where the missing key is decided, two readings
+                // of one fact about the document.
                 match rhs_marker.as_ref() {
-                    Some(reason) => Err(Error::UndecidableComparison(reason.clone())),
+                    Some(reason) if evidence.every_value_absent() => {
+                        debug_assert!(
+                            cmp == (CmpOperator::In, false),
+                            "a marker beside no status is the positive `IN`'s shape alone; met {:?}",
+                            cmp
+                        );
+                        let absence = empty_collection_message(operators::EmptySide::Lhs, role);
+                        let reason = marker_beside_an_absence(Some(reason), Some(&absence))
+                            .unwrap_or(absence);
+                        Ok(EvaluationResult::EmptyQueryResult(
+                            Status::FAIL,
+                            Some(reason),
+                        ))
+                    }
+                    // An ABSENCE among the left-hand values beside values the marker's pair alone met
+                    // (`Tags: []` on one resource, `Tags: v` on another, the marker alone on the right),
+                    // under `match_all`: the absence decides the clause, as the missing-key twin's FAIL
+                    // status decides it (`AND(no, unknown)` is no), so `when Resources.*.Properties.Tags
+                    // IN %x` is not applicable over the empty list as it is over the missing key, with
+                    // the same reason the every-value-absent arm gives. Raised, one empty list would fail
+                    // its rule closed where the missing key is decided, two readings of one fact about
+                    // the document. Under `some` the absence decides nothing (`OR(no, unknown)` is
+                    // unknown, the hidden entry may be the one the other value is among), and the arm
+                    // below raises, as the missing-key twin is raised there.
+                    Some(reason) if match_all && evidence.absent_failure => {
+                        debug_assert!(
+                            cmp == (CmpOperator::In, false),
+                            "a marker beside no status is the positive `IN`'s shape alone; met {:?}",
+                            cmp
+                        );
+                        let absence = empty_collection_message(operators::EmptySide::Lhs, role);
+                        let reason = marker_beside_an_absence(Some(reason), Some(&absence))
+                            .unwrap_or(absence);
+                        Ok(EvaluationResult::EmptyQueryResult(
+                            Status::FAIL,
+                            Some(reason),
+                        ))
+                    }
+                    Some(reason) => {
+                        debug_assert!(
+                            cmp == (CmpOperator::In, false),
+                            "a marker beside no status is the positive `IN`'s shape alone; met {:?}",
+                            cmp
+                        );
+                        // Asserted, a REFUSAL's reason is raised as the registered refusal it is
+                        // (`eval_context::refuse`), so the record the `Err` arm of
+                        // `eval_guard_access_clause` writes reads `refusal: true` and the console prints
+                        // the sentence whole; a key filter's marker is no refusal and keeps the plain
+                        // undecidable error, as every gate and predicate raise does. The arm chooses the
+                        // KIND and the leading text; the error's text is completed where this outcome is
+                        // read (below the collection), with every refused read the comparison met
+                        // (`raised_refusal_text`), so a second refusal among the values is named too.
+                        if role.is_strict() && rhs_refused.as_deref() == Some(reason.as_str()) {
+                            Err(crate::rules::eval_context::refuse(reason.clone()))
+                        } else {
+                            Err(Error::UndecidableComparison(reason.clone()))
+                        }
+                    }
                     None => {
                         let reason = nothing_to_compare_message(&context, role);
                         Ok(EvaluationResult::EmptyQueryResult(
@@ -3373,7 +4170,72 @@ fn binary_operation<'value, 'loc: 'value>(
             }
         }
     };
-    let outcome = outcome?;
+    // The REFUSED reads the clause met: every refusal's marker among the right-hand values (`rhs_refused`,
+    // the first of them, was read before the loop for the pre-pass), and every refusal's marker among the
+    // LEFT-hand values (`lhs_refused_reads`, noted by the `LhsUnresolved` arm whether the right-hand side
+    // was absent as a whole or not). Collected ONCE, here, whenever a refusal stands among the values (a
+    // comparison with no refusal among its values allocates no text), one entry per distinct text,
+    // WHATEVER the verdict: a clause that passed beside the refusal never raised it (a listed value settled
+    // the `IN`, another value passed the `some`, on either side of the marker), a clause an absence or a
+    // resolved no decided never consulted it, and a clause that failed or is raised on the marker's pair (a
+    // positive `IN` beside a value no listed entry accepted; the marker alone on the right, whose every pair
+    // is skipped and whose outcome is the compared-nothing raise; a left-hand marker whose pair is a FAIL
+    // status under an assertion) carries the text in its record or its error, which must print whole.
+    // Every one is registered as a refusal (`register_refusal`, keyed by text, so a
+    // text `refuse` did register is registered once) BEFORE the outcome is read, so the compared-nothing
+    // arm's raise and the gate's raise below leave the texts in the registry too: a refusal raised inside a
+    // quiet probe left no registration behind it, and a later error carrying the text must print whole.
+    // The registration does not wait on the verdict; the run's output gets the LINE only after the gate
+    // declines (below), for the verdicts that leave a refused read unraised: the clause passed, a value the
+    // document lacks decided it (`absent_failure`, which every arm that decides by an absence sets: a
+    // left-hand value the document lacks, an empty collection on either side, a right-hand reference that
+    // resolved to nothing, under every operator, so `[ Properties.Tags == %env ]` over `Tags: []` and `[
+    // Properties.Owner == %env ]` against a reference the document lacks write the line a missing `Tags`
+    // writes), or a value that does not match decided it (`decided_by_a_mismatch`, below).
+    let refused_reads: Vec<String> = {
+        let mut texts: Vec<String> = Vec::new();
+        if rhs_refused.is_some() {
+            for value in rhs {
+                if let QueryResult::UnResolved(unresolved) = value {
+                    if let Some(text) = refused_read_reason(unresolved) {
+                        if !texts.contains(&text) {
+                            texts.push(text);
+                        }
+                    }
+                }
+            }
+        }
+        for text in evidence.lhs_refused_reads.drain(..) {
+            if !texts.contains(&text) {
+                texts.push(text);
+            }
+        }
+        texts
+    };
+    count_refusal_texts_collected(refused_reads.len());
+    for text in &refused_reads {
+        crate::rules::eval_context::register_refusal(text);
+    }
+    // The compared-nothing arm's raise leaves here, with the collection complete: its error's text is
+    // rebuilt from every refused read the comparison met (`raised_refusal_text`), the kind the arm chose
+    // kept (a refusal stays one, `raised_refusal`: the joined text is accepted by the refusal test part by
+    // part and registered by nobody, so the registry keeps one entry per refusal met; a key filter's
+    // plain undecidable error stays plain). The match above builds its `Err`s in two arms, this one and
+    // the `Skip` arm (an empty left-hand selection beside a driving marker, which raises in the same two
+    // kinds); every other failure left the function through `?` inside the loop.
+    let outcome = match outcome {
+        Ok(outcome) => outcome,
+        Err(Error::Unevaluatable(reason)) => {
+            return Err(raised_refusal(reason, &refused_reads));
+        }
+        Err(Error::UndecidableComparison(reason)) => {
+            return Err(Error::UndecidableComparison(raised_refusal_text(
+                reason,
+                &refused_reads,
+            )));
+        }
+        Err(other) => return Err(other),
+    };
 
     // A gate whose comparison had no answer keeps the error instead of answering FAIL.
     //
@@ -3415,9 +4277,23 @@ fn binary_operation<'value, 'loc: 'value>(
     // error ... when handling clause, bailing". `UndecidableComparison` renders as its reason alone,
     // so each frame supplies its own framing and neither asserts a type mismatch.
     //
-    // Gate only. An assertion already fails closed here and its report names the clause and the operand
-    // values; converting would replace that with a rule-level failure and lose the comparison record.
-    // `a_catastrophic_regex_asserted` and `the_whole_list_spelling_now_refuses` pin that half.
+    // Gate only, with two exceptions. An assertion already fails closed here and its report names the
+    // clause and the operand values; converting would replace that with a rule-level failure and lose
+    // the comparison record. `a_catastrophic_regex_asserted` and `the_whole_list_spelling_now_refuses`
+    // pin that half. The first exception is a `some` assertion beside a marker among the right-hand
+    // values that no value decides: one whose statuses alone would PASS it under a negated comparator
+    // (the pass may be against the value the marker hides), or one that did not pass under a positive
+    // comparator while some pair of it is nobody's answer (`OR(no, unknown)` is unknown); `undecided_gate`'s
+    // strict arm raises those, unless every left-hand value is a decided NO. The second is the
+    // compared-nothing arm above (`statues` empty beside a marker alone under a positive `IN`, no
+    // left-hand value absent): it raises the marker's reason in every role, the assertion included, since
+    // there is no comparison record to keep and no status to fold, and the marker's reason is the
+    // clause's whole answer. Both raises, asserted, carry a REFUSAL's reason as the registered refusal it
+    // is (`eval_context::refuse`), so the block record `eval_guard_access_clause` writes for the failed
+    // clause reads `refusal: true` and the console prints the sentence whole, and the record's sentence
+    // says the clause fails and the run continues (`clause_error_message`), which it does: the assertion
+    // role turns the unevaluatable error into the clause's FAIL. A key filter's marker keeps the plain
+    // undecidable error in every role.
     //
     // An abandoned evaluation only, never a refusal to compare kinds, and that boundary is measured
     // rather than chosen for safety. Rule authors write a value against both spellings it might carry
@@ -3452,60 +4328,239 @@ fn binary_operation<'value, 'loc: 'value>(
     // for here, and both quantifiers have a value that decides the clause without the undecided ones.
     // `undecided_gate` holds the table and says which arm answers what.
     //
-    // The marker read off the right-hand side above (`rhs_refused`, `rhs_marker`): no pair against it is
-    // decided, and what the resolved pairs decided depends on the comparator and the quantifier. Under a
-    // positive comparator a clause that passed is left alone (`IN` matched a listed value, a YES the marker
-    // cannot undo, which is why the marker's pair files neither a status nor a record under a positive
-    // `IN`, `marker_pair_under_in`: with a status, a matched value read as unmatched under `match_all`;
-    // `==` holds only when every pair holds and the marker's pair never does, so it reaches no YES here),
-    // and a clause that did not pass is
-    // undecided unless a resolved pair decided it: a
-    // comparison's no stays decided for every comparator but `IN`, where the marker may hold the match,
-    // and a left-hand value that resolved to nothing (the `LhsUnresolved` arm) decided nothing, since the
-    // refused value may be what it would have compared against. Under a negated comparator (`!=`, `NOT
+    // The marker read off the right-hand side above (`rhs_refused`, `rhs_marker`; `pre_pass` is the one
+    // this comparator reads): no pair against it is decided, and what the resolved pairs decided depends
+    // on the comparator and the quantifier. Under a positive comparator a clause that passed is left
+    // alone (`IN` matched a listed value, a YES the marker cannot undo, which is why the marker's pair
+    // files neither a status nor a record under a positive `IN` for such a value,
+    // `marker_pair_under_in`: with a status, a matched value read as unmatched under `match_all`; `==`
+    // holds only when every pair holds and the marker's pair never does, so it reaches no YES here), and
+    // a clause that did not pass is undecided unless a value decided it: a comparison's no stays decided
+    // for every comparator but `IN`, where the marker may hold the match, and an ABSENT operand (a
+    // left-hand value that resolved to nothing, an empty collection, a right-hand reference that
+    // resolved to nothing; `absent_failure`) stays decided under every comparator, since its failure is
+    // about the document and not about what the marker hides. Under a negated comparator (`!=`, `NOT
     // IN`) a resolved match is a decided NO and stays one, a value that differs from every resolved
     // value is unknown, since it may equal the refused one (that PASS is not a pass, so it cannot settle
-    // `some`, `passes_are_unknown`), and an absent left-hand value decided nothing, as under a positive
-    // comparator; so under `match_all` the gate raises unless a resolved NO settles the clause, and under
-    // `some` it raises unless EVERY left-hand value is a resolved NO (`settled_no`: no value can be the
-    // one `some` passes on). Two value SETS compared under `==` (`QueryIn`, `X[*] == %ref`) are decided
-    // no only when a RESOLVED right-hand value has no equal on the left (the `Fail` arm above reads
+    // `some`, `passes_are_unknown`), and an absent left-hand value is decided NO, as under a positive
+    // comparator; so under `match_all` the gate raises unless a decided NO settles the clause, and under
+    // `some` it raises unless EVERY left-hand value is decided NO (`settled_no`: no value can be the one
+    // `some` passes on), a resolved NO or an absence each. Under a positive comparator `some` is settled
+    // by its absences alone: when every left-hand value was absent, no value can be the one `some`
+    // passes on either (`[ some Properties.Missing IN %names ]` deselects as `[ Properties.Missing IN
+    // %names ]` does). Two value SETS compared under `==` (`QueryIn`, `X[*] == %ref`) are decided no only
+    // when a RESOLVED right-hand value has no equal on the left (the `Fail` arm above reads
     // `QueryIn::rhs_unmatched`); a left-only mismatch, or two equal resolved sets, is unknown, since the
     // marker may hide the missing element or one more; under `!=` the sets are read value by value as
     // any other `!=` is (a resolved collision is a decided NO). A left-hand side that selected nothing
-    // compared nothing, and its answer stands whatever the right-hand side holds. The first reason kept
-    // is the comparison's own when it read one. For membership the marker of either kind drives this
-    // block (`rhs_marker`), for every other comparator the refusal's alone (`rhs_refused`); the reads
+    // never reaches this block beside a REFUSAL's marker: the `Skip` arm above raises that shape (a
+    // decided answer beside a refusal would leave the refusal silent); beside a key filter's marker alone,
+    // or with no marker, it compared nothing, so this block has no pair to read and its answer stands
+    // whatever the right-hand side holds. The reason kept is the
+    // comparison's own when it read one, and a REFUSAL's reason is preferred over a key filter's where
+    // both kinds stand among the right-hand values (`rhs_marker` reads the refusal first; the gate's
+    // raise below reads `rhs_refused` first). For membership and every negated comparator the marker of
+    // either kind drives this block, for the positive `==` and orderings the refusal's alone; the reads
     // above say why.
-    let pre_pass = match cmp.0 {
-        CmpOperator::In => rhs_marker,
-        _ => rhs_refused,
-    };
+    //
+    // The block REDERIVES `decided_failure` from its two sources, `absent_failure` and
+    // `comparison_failed`, rather than adding to what the arms wrote: beside a marker the arms' own
+    // `decided_failure` is the no-marker reading, and one arm writes it with neither source on purpose,
+    // the `RhsUnresolved` arm's reference the document lacks under a positive `IN` beside a marker, whose
+    // decided no is the pair's alone (membership is `OR` over the pairs), so the clause-wide flag is dropped
+    // here for that shape and kept for every other. The invariant the rederivation rests on, checked in a
+    // debug build: every other arm that writes `decided_failure` writes one of the two sources with it, so
+    // nothing an arm decided is lost here but that one drop. An arm that set `decided_failure` alone for
+    // another shape would be undone by this block unseen, and a gate that should decline would raise.
+    debug_assert!(
+        !evidence.decided_failure
+            || evidence.absent_failure
+            || evidence.comparison_failed
+            || evidence.kinds_refused
+            || cmp == (CmpOperator::In, false),
+        "`decided_failure` is written beside `absent_failure`, `comparison_failed` or `kinds_refused` by \
+         every arm but the positive `IN`'s absent reference; met it alone under {:?}",
+        cmp
+    );
     if let (Some(reason), EvaluationResult::QueryValueResult(_)) = (pre_pass, &outcome) {
         if !cmp.1 {
             if !clause_passed(&outcome, match_all) {
                 evidence.undecided.get_or_insert(reason);
-                evidence.decided_failure = match cmp.0 {
-                    CmpOperator::In => false,
-                    _ => evidence.comparison_failed,
-                };
+                evidence.decided_failure = evidence.absent_failure
+                    || (a_mismatch_decides(cmp)
+                        && (evidence.comparison_failed || evidence.kinds_refused));
+                // Under `some` a clause that did not pass beside the marker holds a pair nobody could
+                // decide, and `OR(no, unknown)` is unknown: the value the marker hides may be the one
+                // `some` passes on. Recorded for the gate's strict path (`undecided_under_some`), which
+                // raises the assertion unless every left-hand value is a decided NO (`settled_no`);
+                // under `match_all` a FAIL status decides the clause and the assertion keeps its fold.
+                if !match_all {
+                    evidence.undecided_under_some = true;
+                }
             }
         } else {
             // Negated, in both quantifiers and whether or not any value passed: a resolved match is a
             // decided NO the marker cannot undo (`comparison_failed`), a pass may equal the refused
-            // value (`passes_are_unknown`), and an absent left-hand value decided nothing (the
-            // `LhsUnresolved` arm's failure is not a comparison, so `comparison_failed` is left as the
-            // resolved pairs set it). Under `match_all` one decided NO settles the clause; under `some`
+            // value (`passes_are_unknown`), and an absent operand is a decided NO whatever the marker
+            // hides (`absent_failure`). Under `match_all` one decided NO settles the clause; under `some`
             // only every value decided NO does (`settled_no`), and any value without a resolved equal
             // leaves it unknown.
             evidence.undecided.get_or_insert(reason);
             evidence.passes_are_unknown = true;
-            evidence.decided_failure = evidence.comparison_failed;
-            evidence.settled_no = !match_all && evidence.every_value_decided_no();
+            evidence.decided_failure =
+                evidence.absent_failure || evidence.comparison_failed || evidence.kinds_refused;
         }
     }
-    if let Some(reason) = undecided_gate(&outcome, evidence, match_all, role) {
-        return Err(Error::UndecidableComparison(reason));
+    // Whether the clause PASSED, under its own quantifier: the line's first verdict, and part of the
+    // absence verdict under `some`.
+    let passed = clause_passed(&outcome, match_all);
+    // Whether an absence decided the CLAUSE, read before the evidence moves into the gate: under
+    // `match_all` one absent value decides it (`AND(no, ..)` is no); under `some` every left-hand value
+    // absent does (`every_value_absent`), and so does an absence that decided some pair (`absent_failure`)
+    // when nothing passed and no resolved value decided a no (`comparison_failed`, `kinds_refused`): with the gate declined
+    // (below), every value is then a decided NO and the absences are what decided them, whatever the
+    // marker hides. A right-hand side ABSENT AS A WHOLE (`rhs_absent`: `some %x == Properties.Missing`
+    // with a resolved value and a marker in `%x`, where the resolved value compared leaves
+    // `every_value_absent` false) and a document `[]` among the right-hand values (`some Name != %x` with
+    // `[]` and a marker in `%x`, every `Name` decided NO by the empty collection) are the two shapes; read
+    // from the left-hand values alone, both would leave the verdict unnamed and the line unwritten. One
+    // absent value beside a value whose pair is unknown decides nothing, and that clause is raised above
+    // the line, so the line never says the absence decided a clause the hidden value may have passed. The
+    // write below needs it. A `some` with a MARKER among its LEFT-hand values that did not pass is not
+    // decided by anything (`undecided_some_beside_a_left_marker`): a gate or a predicate raises it below,
+    // and an assertion fails it closed on the marker pair's own FAIL status, whose record names the
+    // refusal, so neither the absence nor the mismatch verdict is written for it; the pass verdict is,
+    // since a value that passed for real decides `some` whatever the marker hides.
+    let undecided_some_beside_a_left_marker = !match_all && evidence.lhs_marker;
+    let decided_by_an_absence = !undecided_some_beside_a_left_marker
+        && if match_all {
+            evidence.absent_failure
+        } else {
+            evidence.every_value_absent()
+                || (evidence.absent_failure
+                    && !passed
+                    && !evidence.comparison_failed
+                    && !evidence.kinds_refused)
+        };
+    // Whether a value that does not match decided a comparison (a resolved mismatch or collision), the
+    // third verdict the refused-read line names; read before the evidence moves into the gate, like the
+    // absence. Whether a no DECIDES is the comparator's question, answered as the pre-pass over the marker
+    // answers it (`a_mismatch_decides`): under a positive `IN` a comparison's no decides nothing, so `Owner
+    // IN %names` with `Owner` equal to no listed value failed on the marker's own pair, whose record names
+    // the refusal, and the line is not written for it; read operator-blind, the flag would have that
+    // clause report the refusal as "not raised by it" beside the failure that raised it. Under `some` such
+    // a clause beside a marker is raised unless every value is a decided NO, so where the gate declines
+    // and nothing passed, the mismatches decided it. The line words the no by the comparator's polarity
+    // (`UnraisedVerdict::DecidedByCollision` for `!=` and `NOT IN`): the value that decided `Names[*] NOT
+    // IN %x` MATCHED a listed entry, and "a value that does not match" would say the opposite of what
+    // happened.
+    let decided_by_a_mismatch = !undecided_some_beside_a_left_marker
+        && a_mismatch_decides(cmp)
+        && evidence.comparison_failed;
+    // Whether a REFUSAL TO COMPARE KINDS under a negated comparator decided the comparison
+    // (`kinds_refused`: `Port != %x` with `Port: 22` and `'ssh'` listed beside the marker), the fifth
+    // verdict, decided as a mismatch is (the same comparator question) and worded on its own
+    // (`UnraisedVerdict::DecidedByKinds`): the pair compared nothing, so "matches a denied value" is false
+    // of it. Under a positive comparator the arm keeps the landed reading, a resolved no ("does not
+    // match", true of a value of another kind), so this flag is never set there.
+    let decided_by_a_kind_refusal =
+        !undecided_some_beside_a_left_marker && a_mismatch_decides(cmp) && evidence.kinds_refused;
+    // Whether `some` is settled NO by its values (`ResultEvidence::settled_no`) is read inside the gate
+    // from the evidence, not set here: this block runs over a `QueryValueResult` alone, and the
+    // compared-nothing arm's `EmptyQueryResult` beside a marker alone reaches the gate too.
+    if let Some(reason) = undecided_gate(&outcome, evidence, match_all, cmp.1, role) {
+        // A REFUSAL's reason over a key filter's where both kinds stand among the right-hand values,
+        // whichever pair recorded its reason first (`evidence.undecided` keeps the first): a refusal
+        // names a rules-file mistake, a key filter's marker a data budget, and the raise is the one
+        // place the clause's answer is read from. Only over a MARKER's reason: a resolved pair's own
+        // undecided reason (an engine that gave up on `Name != /catastrophic/` beside the refusal) is the
+        // comparison's answer and stays, leading the raised text, with the refusal numbered after it
+        // (`raised_refusal_text`) as well as registered and in the per-value records. The refusal's own
+        // text is registered either way (the collection above); the joined text the raise carries is
+        // registered by nobody and accepted by the refusal test part by part, so the asserted raise below
+        // prints whole, and the record of a gate's or a predicate's raise, a plain undecidable error,
+        // reads the variant (a later change).
+        let a_markers_reason = rhs.iter().any(|value| {
+            matches!(value, QueryResult::UnResolved(unresolved)
+                if undecidable_reason(unresolved).as_deref() == Some(reason.as_str()))
+        });
+        let reason = match rhs_refused.clone() {
+            Some(refused) if a_markers_reason => refused,
+            _ => reason,
+        };
+        // Asserted (the strict path's raise), a REFUSAL's reason is raised as the registered refusal it
+        // is (`raised_refusal`): the `Err` arm of `eval_guard_access_clause` then records it with
+        // `refusal: true` and the console prints the sentence whole. A key filter's marker is no refusal
+        // and keeps the plain undecidable error, as every gate and predicate raise does, which the
+        // enclosing clause reads by kind. The reason is a refusal's when it is one of the refused reads
+        // the comparison met on EITHER side (`refused_reads`, the collection above: the right-hand
+        // refusals and the left-hand markers'): a left-hand marker's pair can be the first to record its
+        // reason (`some %x NOT IN %y`, a refused walk's marker in each capture), and read on the
+        // right-hand side alone that refusal was raised as a plain undecidable error, its record
+        // `refusal: false` and its numbered text cut by the console where the same text led by the
+        // right-hand refusal printed whole.
+        let a_refusals = refused_reads.iter().any(|text| *text == reason);
+        // Every refused read the comparison met joins the raised text (`raised_refusal_text`, from the
+        // collection above): a second refusal, registered beside the chosen reason, would otherwise
+        // reach no error and no line, since the line below is written only where this gate declines.
+        // The kind of the raise keeps its key on the chosen reason. The joined text is registered by
+        // NOBODY, for either kind: the refusal test accepts a numbered text whose every part is a
+        // registered refusal (`eval_context::is_refusal`), so the asserted raise prints whole without a
+        // third registry entry beside the two refusals met, which the run's output counts as the refused
+        // reads; the gate's or the predicate's plain undecidable error carries the same text, its record
+        // reading the variant (a later change).
+        if role.is_strict() && a_refusals {
+            return Err(raised_refusal(reason, &refused_reads));
+        }
+        return Err(Error::UndecidableComparison(raised_refusal_text(
+            reason,
+            &refused_reads,
+        )));
+    }
+    // The run's output line for the refused reads collected above (`record_unraised_refusal`), only now
+    // that the gate declined: the clause PASSED (a listed value settled it, or `some` passed on another
+    // value) or an absence decided it, and either way its verdict did not raise them; a clause the gate
+    // raises carries the refusal in its failure, so a line saying it was not raised would be false, and
+    // the return above writes none. The site's line is rendered by the store from the distinct texts and
+    // the verdicts met, so the same refusal met beside a pass and beside an absence is one refusal.
+    // Five verdicts write it: the clause PASSED (a listed value settled it, or `some` passed on another
+    // value), a value the document lacks decided it, a value that does not match decided it, a value
+    // that matches a denied value decided it (these two are one fact, a resolved mismatch or collision
+    // beside the marker, `decided_by_a_mismatch`, worded by the comparator's polarity: `[ Properties.Owner
+    // == %names ]` over an `Owner` no listed pair equals deselects on a value that does not match, `when
+    // some Names[*] NOT IN %x` with every name a key is decided by values that MATCH a denied entry, and
+    // the refused read beside either decision is as unraised as beside an absence), or a value of another
+    // KIND decided it (`decided_by_a_kind_refusal`: the comparator refused the pair on kinds, a decided no
+    // that compared nothing, so it is neither of the two resolved wordings; read after them, since a
+    // resolved value that decided the clause beside a refused pair is the comparison's own answer). A
+    // positive `IN` that did not pass meets none of the five
+    // (a no decides nothing there, and an absent reference among the values is the pair's own failure,
+    // not the clause's): it failed on the marker's pair, its record names the refusal, and no line is
+    // written, as under `NOT IN` with a value no resolved entry matches.
+    if !refused_reads.is_empty() {
+        let verdict = if passed {
+            Some(crate::rules::UnraisedVerdict::Passed)
+        } else if decided_by_an_absence {
+            Some(crate::rules::UnraisedVerdict::DecidedByAbsence)
+        } else if decided_by_a_mismatch && cmp.1 {
+            Some(crate::rules::UnraisedVerdict::DecidedByCollision)
+        } else if decided_by_a_mismatch {
+            Some(crate::rules::UnraisedVerdict::DecidedByMismatch)
+        } else if decided_by_a_kind_refusal {
+            Some(crate::rules::UnraisedVerdict::DecidedByKinds)
+        } else {
+            None
+        };
+        if let Some(verdict) = verdict {
+            // The clause as written (`Properties.Owner == %names`), the form the author greps for,
+            // where `context` is the record tree's (`Properties.Owner EQUALS  %names`).
+            eval_context.record_unraised_refusal(
+                location,
+                &access_clause_text(clause),
+                verdict,
+                &refused_reads,
+            );
+        }
     }
 
     // Which notice, or none: the verdict picks the wording, and the role decides whether a failure is
@@ -3570,76 +4625,253 @@ fn binary_operation<'value, 'loc: 'value>(
 struct ResultEvidence {
     /// The first reason a comparison could not be answered, if one could not.
     undecided: Option<String>,
-    /// Whether some value's comparison was performed and answered no. A refusal to compare kinds counts
-    /// here, not in `undecided`; see [`operators::Unanswerable`].
+    /// Whether some value's comparison was performed and answered no, or some operand was absent, or
+    /// some pair was refused on kinds. A refusal to compare kinds counts here, not in `undecided`, except
+    /// under membership beside a marker (see the `NotComparable` arm); see [`operators::Unanswerable`].
+    /// Written by the arms as the no-marker reading, always beside `absent_failure`, `comparison_failed`
+    /// or `kinds_refused` (the three sources), with one exception, the `RhsUnresolved` arm's reference
+    /// the document lacks under a positive `IN` beside a marker; beside a marker the pre-pass REDERIVES
+    /// this flag from the three sources, which drops that one and keeps every other (the invariant is
+    /// checked there in a debug build).
     decided_failure: bool,
+    /// Whether some pair was REFUSED ON KINDS under a NEGATED comparator beside a marker among the values
+    /// (`operators::Unanswerable::IncomparableKinds`, the `NotComparable` arm's guarded branch: `Port != %x`
+    /// with `Port: 22` and `'ssh'` beside the marker in `%x`): a decided no of its own kind, apart from
+    /// `comparison_failed` (a resolved value's no) and from `absent_failure`. Read where
+    /// `comparison_failed` is read, the pre-pass over a marker among the right-hand values and the
+    /// refused-read line's verdict, and decided as a mismatch is (`a_mismatch_decides`); worded by the line
+    /// on its own (`UnraisedVerdict::DecidedByKinds`), since a pair that compared nothing never "matches a
+    /// denied value", and recorded for its pair with the two kinds and the comparator named
+    /// (`kinds_refusal_sentence`) as a refusal the console prints whole. Every other refusal of kinds (no
+    /// marker beside it, or a positive comparator, where a value of another kind "does not match") keeps
+    /// the landed reading, `comparison_failed` with the operators' own reason; an empty left-hand list is
+    /// an absence and membership beside a right-hand marker is undecided, as before.
+    kinds_refused: bool,
     /// Whether a comparison answered no against a value the operator read: every `decided_failure` but
-    /// the `LhsUnresolved` arm's, whose failure is a left-hand value that resolved to nothing, and an
-    /// empty LEFT-hand collection's (the `EmptyCollection` arm with the empty side on the left), which
-    /// compared nothing either. Set for a pair against an ABSENT right-hand value too (the `RhsUnresolved`
-    /// arm: the absence is a fact about the document the comparison fails on), unless a marker stands
-    /// among the left-hand values, where that pair decides nothing (`lhs_marker`). Read where a
-    /// refusal's marker sits among the right-hand values ([`binary_operation`]'s pre-pass), which keeps
-    /// such a no decided and drops the absence, since the refused value may be what the absent one would
-    /// have compared against.
+    /// the absences' and the refusals of kinds (`kinds_refused`, a pair the comparator did not read), a
+    /// left-hand value that resolved to nothing (the `LhsUnresolved` arm), an empty
+    /// collection on EITHER side (the `EmptyCollection` arm, both sides) and a RIGHT-hand reference that
+    /// resolved to nothing (the `RhsUnresolved` arm's `None` branch), each a fact about the document and
+    /// not a value that does not match (the first three are `absent_failure`; the last is the pair's own
+    /// decided failure). Read where a marker sits among the right-hand values ([`binary_operation`]'s
+    /// pre-pass and the refused-read line's verdict, through `a_mismatch_decides`), which keep such a no
+    /// decided under every comparator but the positive `IN`, where the marker may hold the match; and
+    /// read by the line's absence verdict under `some`, which names the absence only where no resolved
+    /// value decided a no.
     comparison_failed: bool,
+    /// Whether some operand was absent: a left-hand value that resolved to nothing, an empty collection
+    /// on either side, a right-hand reference that resolved to nothing. Each is a decided failure for
+    /// its value whatever stands on the other side (`docs/CLAUSES.md`: a comparison against a value the
+    /// document lacks "is a decided failure for each left-hand value, under every comparator and in both
+    /// polarities"), so the pre-pass over a marker keeps it decided where it drops a resolved no the
+    /// marker may undo.
+    absent_failure: bool,
+    /// Whether some result compared a RESOLVED left-hand value: a pair against a resolved or an absent
+    /// right-hand value, a refusal of kinds, a membership over at least one value, an empty right-hand
+    /// collection against a left value. Unset when every left-hand value was absent, which is what
+    /// [`ResultEvidence::every_value_absent`] reads; a `QueryIn` over no left-hand value compared none.
+    compared_a_left_value: bool,
     /// Whether the clause's PASS statuses are not passes: a negated comparator (`!=`, `NOT IN`) with a
-    /// refusal's marker among the right-hand values answers yes to a value that differs from every
-    /// resolved value, which may still equal the refused one, so [`undecided_gate`] must not settle
-    /// `some` on such a pass.
+    /// marker of either kind among the right-hand values answers yes to a value that differs from every
+    /// resolved value, which may still equal the one the marker hides, so [`undecided_gate`] must not
+    /// settle `some` on such a pass.
     passes_are_unknown: bool,
-    /// Whether the clause is decided NO under `some` with a negated comparator beside a refusal's marker:
-    /// every left-hand value equals some RESOLVED right-hand value (a decided no the marker cannot undo),
-    /// so no value can be the one `some` passes on ([`undecided_gate`] declines; the entry is deselected).
-    settled_no: bool,
-    /// Whether some left-hand value was absent (`LhsUnresolved`) or an empty collection: beside a
-    /// refusal's marker such a value decided nothing, since the refused value may be what it would have
-    /// compared against, so no clause with one is settled by its values alone.
+    /// Whether a `some` clause under a POSITIVE comparator did not pass beside a marker among the
+    /// right-hand values: some pair of it is nobody's answer, and `OR(no, unknown)` is unknown, so the
+    /// value the marker hides may be the one `some` passes on. Set by the pre-pass over the marker
+    /// ([`binary_operation`]'s positive branch), read by [`undecided_gate`]'s strict path, which raises the
+    /// assertion unless every left-hand value is a decided NO; under `match_all` a FAIL status decides
+    /// the clause and nothing is recorded.
+    undecided_under_some: bool,
+    /// The refused reads that are not among the right-hand values: every LEFT-hand marker's own refusal
+    /// (the `LhsUnresolved` arm, both its marker branches), one entry per distinct text, since the
+    /// right-hand side does not hold them; collected with the others after the loop. Allocates nothing
+    /// for a comparison with no left-hand refusal.
+    lhs_refused_reads: Vec<String>,
+    /// Whether the per-value bookkeeping below RAN for this comparison (`binary_operation`'s negated
+    /// pre-pass over a marker among the right-hand values, the one place `lhs_seen` and `lhs_decided_no`
+    /// are written). Required by [`ResultEvidence::every_value_decided_no`]: `absent_lhs` is also written
+    /// by arms outside that pre-pass, and over empty sets "every value seen was decided NO" holds of no
+    /// value at all.
+    bookkeeping_active: bool,
+    /// Whether some left-hand value was absent (`LhsUnresolved` with no marker) or an empty collection, a
+    /// decided NO for that value that no comparison recorded in `lhs_decided_no`. Written inside the
+    /// pre-pass's gate with the two sets below, and outside it by the arms that read an empty left-hand
+    /// list as an absence under every comparator, so it is read only beside `bookkeeping_active`.
     absent_lhs: bool,
-    /// Every distinct left-hand value a comparison result named, resolved or literal, by its key
-    /// ([`ResultEvidence::key_of`]). Filled only while a marker stands among the right-hand values, the
-    /// one case that reads it.
-    lhs_seen: std::collections::HashSet<String>,
+    /// Whether a MARKER stands among the left-hand values (`LhsUnresolved` carrying an undecidable
+    /// reason, compared against a right-hand side that is not absent as a whole): a value nobody knows,
+    /// which no reading of the other values settles, so neither [`ResultEvidence::every_value_decided_no`]
+    /// nor [`ResultEvidence::every_value_absent`] holds while it stands. Read as an absence, it would
+    /// settle a `some` NO on the other values and skip a gate the marker leaves unknown.
+    lhs_marker: bool,
+    /// Every distinct left-hand value a comparison result named, resolved or literal, by the address of
+    /// its `Rc`: the results of one comparison share the `Rc`s of its left operand, as the operators'
+    /// own per-value sets rely on (`InOperation`), so two values at one PATH (a function's outputs that
+    /// keep their input's path, say) are two values here, where a path key would merge them and one
+    /// decided NO would stand for both. Filled only where the negated pre-pass reads it (a marker among the
+    /// right-hand values under `!=` or `NOT IN`), the one case that does.
+    lhs_seen: std::collections::HashMap<*const PathAwareValue, Rc<PathAwareValue>>,
     /// The left-hand values some result decided NO against a resolved right-hand value (`Fail`, a
-    /// refusal of kinds, an empty right-hand collection), a subset of `lhs_seen`, by the same key.
-    lhs_decided_no: std::collections::HashSet<String>,
+    /// refusal of kinds under `!=`, an empty right-hand collection), a subset of `lhs_seen`, by the same
+    /// key.
+    lhs_decided_no: std::collections::HashMap<*const PathAwareValue, Rc<PathAwareValue>>,
 }
 
 impl ResultEvidence {
-    /// The key a left-hand value is recorded under: its path, which names one document value; for a
-    /// value the rules file wrote (a literal, whose path is empty) the value's own rendering, so two
-    /// literals never share a key.
-    fn key_of(value: &PathAwareValue) -> String {
-        let path = value.self_path();
-        if path.0.is_empty() {
-            format!("{value:?}")
-        } else {
-            path.0.clone()
-        }
-    }
-
-    /// Record a left-hand value a result named, and whether that result decided it NO.
+    /// Record a left-hand value a result named, and whether that result decided it NO. Keyed by the
+    /// address of the value's `Rc`, and the `Rc` itself is HELD beside the key: an address is a value's
+    /// identity only while the value is alive, and a noted value the results own alone (the loop consumes
+    /// each result by value; some operator arms build a fresh `Rc` per pair) would be freed before the fold
+    /// reads the sets, so a later allocation could take its address and read as a value already noted.
+    /// Holding the clone keeps every noted address allocated for as long as the sets live.
     fn note_value(&mut self, value: &Rc<PathAwareValue>, decided_no: bool) {
-        // The test that pins the bookkeeping to comparisons with a marker counts the entries recorded
-        // (`the_marker_bookkeeping_runs_only_beside_a_marker`); the counter lives beside the other probe
-        // counters in `eval_context`, see there for why.
-        #[cfg(test)]
-        super::eval_context::MARKER_BOOKKEEPING_VISITS.with(|visits| visits.set(visits.get() + 1));
-        let key = Self::key_of(value);
+        count_marker_bookkeeping_visit();
+        // A note is the bookkeeping running, so the flag its reader requires is set here as well as at
+        // the pre-pass gate (which also covers a pre-pass that met absences alone and noted nothing).
+        self.bookkeeping_active = true;
+        let key = Rc::as_ptr(value);
         if decided_no {
-            self.lhs_decided_no.insert(key.clone());
+            self.lhs_decided_no.insert(key, Rc::clone(value));
         }
-        self.lhs_seen.insert(key);
+        self.lhs_seen.insert(key, Rc::clone(value));
     }
 
-    /// Whether every left-hand value was decided NO against a resolved right-hand value: no value absent
-    /// or empty, at least one seen, and each one in `lhs_decided_no`. Under `some` with a negated
-    /// comparator beside a refusal's marker, that is the clause decided NO.
-    fn every_value_decided_no(&self) -> bool {
-        !self.absent_lhs
-            && !self.lhs_seen.is_empty()
-            && self.lhs_seen.is_subset(&self.lhs_decided_no)
+    /// Keep a LEFT-hand marker's refusal text for the collection after the loop, once per distinct text.
+    fn note_left_refusal(&mut self, text: String) {
+        if !self.lhs_refused_reads.contains(&text) {
+            self.lhs_refused_reads.push(text);
+        }
     }
+
+    /// Whether every left-hand value was decided NO: the bookkeeping ran (`bookkeeping_active`), each
+    /// value seen is in `lhs_decided_no`, and at least one value was seen or absent (an absent value is
+    /// its own decided NO). Under `some` with a negated comparator beside a marker, that is the clause
+    /// decided NO. Read at the fold, where every noted `Rc` is still the value its key was taken from
+    /// (the debug check): the sets hold it. With no marker on the right the bookkeeping never ran, the
+    /// sets are empty and the question has no answer here: `when some Name != /re/` over `Name: []`
+    /// beside a value whose regex spent its budget is raised on the budget, as its missing-key twin is,
+    /// not settled NO over the one absence.
+    fn every_value_decided_no(&self) -> bool {
+        debug_assert!(
+            self.lhs_seen
+                .iter()
+                .chain(self.lhs_decided_no.iter())
+                .all(|(key, held)| Rc::as_ptr(held) == *key),
+            "a noted left-hand value is held under the address it was noted at"
+        );
+        self.bookkeeping_active
+            && !self.lhs_marker
+            && (self.absent_lhs || !self.lhs_seen.is_empty())
+            && self
+                .lhs_seen
+                .keys()
+                .all(|key| self.lhs_decided_no.contains_key(key))
+    }
+
+    /// Whether every left-hand value was absent or an empty collection: some was, no result compared a
+    /// resolved one, and no marker stands among them. Under `some` beside a marker that is the clause
+    /// decided NO under any comparator, since an absence is decided whatever the marker hides and no
+    /// other value can be the one `some` passes on.
+    fn every_value_absent(&self) -> bool {
+        !self.lhs_marker && self.absent_failure && !self.compared_a_left_value
+    }
+
+    /// Whether the clause is decided NO under `some` beside a marker: under a negated comparator every
+    /// left-hand value is a decided NO, a resolved match (a no the marker cannot undo) or an absence
+    /// ([`ResultEvidence::every_value_decided_no`]); under a positive comparator every left-hand value
+    /// was absent ([`ResultEvidence::every_value_absent`]). Either way no value can be the one `some`
+    /// passes on ([`undecided_gate`] declines; the entry is deselected, the gate not applicable). Derived
+    /// from the per-value evidence where the gate reads it, never set by the pre-pass over the marker:
+    /// the pre-pass runs over a `QueryValueResult` alone, and the compared-nothing arm's
+    /// `EmptyQueryResult` (a marker alone on the right under a positive `IN`, every left-hand value an
+    /// empty collection) never meets it, so a flag set there would leave `some Tags IN %x` over
+    /// `Tags: []` raised where a missing `Tags` is not applicable; one reading of the evidence serves
+    /// every outcome shape.
+    fn settled_no(&self, match_all: bool, negated: bool) -> bool {
+        !match_all
+            && if negated {
+                self.every_value_decided_no()
+            } else {
+                self.every_value_absent()
+            }
+    }
+}
+
+// The number of refused-read texts `binary_operation` collected after its loop, for the test that pins
+// that a comparison with no refusal among its values allocates none (the collection runs only when a
+// refusal stands among the values). Per thread, as the probe counters in `eval_context` are.
+#[cfg(test)]
+thread_local! {
+    pub(in crate::rules) static REFUSAL_TEXTS_COLLECTED: std::cell::Cell<usize> =
+        const { std::cell::Cell::new(0) };
+}
+
+#[inline]
+fn count_refusal_texts_collected(texts: usize) {
+    #[cfg(test)]
+    REFUSAL_TEXTS_COLLECTED.with(|collected| collected.set(collected.get() + texts));
+    #[cfg(not(test))]
+    let _ = texts;
+}
+
+// Four more counts, for the cell that tells apart how an unraised refusal travels: the marker pairs a
+// positive `IN` skipped for a listed value (`marker_pair_under_in`, one per skipped pair), the forwards a
+// scope between the clause and the root made for an unraised refusal, the calls that reached the ROOT
+// scope (`record_unraised_refusal` at the end of its chain) and the ones the root RECORDED (a call under
+// a measurement is dropped). A refused read a listed value settled that reaches the root with no skipped
+// pair was never paired by the operator; one that is skipped and forwarded but never reaches the root was
+// dropped by a scope on the way; one that reaches the root and is not recorded came under a measurement.
+// Per thread, as the others are.
+#[cfg(test)]
+thread_local! {
+    pub(in crate::rules) static MARKER_PAIR_SKIPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    pub(in crate::rules) static UNRAISED_REFUSAL_FORWARDS: std::cell::Cell<usize> =
+        const { std::cell::Cell::new(0) };
+    pub(in crate::rules) static UNRAISED_REFUSAL_ROOT_CALLS: std::cell::Cell<usize> =
+        const { std::cell::Cell::new(0) };
+    pub(in crate::rules) static UNRAISED_REFUSAL_RECORDS: std::cell::Cell<usize> =
+        const { std::cell::Cell::new(0) };
+}
+
+#[inline]
+fn count_marker_pair_skip() {
+    #[cfg(test)]
+    MARKER_PAIR_SKIPS.with(|skips| skips.set(skips.get() + 1));
+}
+
+#[inline]
+pub(in crate::rules) fn count_unraised_refusal_root_call() {
+    #[cfg(test)]
+    UNRAISED_REFUSAL_ROOT_CALLS.with(|calls| calls.set(calls.get() + 1));
+}
+
+#[inline]
+pub(in crate::rules) fn count_unraised_refusal_record() {
+    #[cfg(test)]
+    UNRAISED_REFUSAL_RECORDS.with(|records| records.set(records.get() + 1));
+}
+
+#[inline]
+pub(in crate::rules) fn count_unraised_refusal_forward() {
+    #[cfg(test)]
+    UNRAISED_REFUSAL_FORWARDS.with(|forwards| forwards.set(forwards.get() + 1));
+}
+
+// The number of left-hand values the comparison's marker bookkeeping recorded
+// (`ResultEvidence::note_value`), for the test that pins that the bookkeeping runs only where its reader
+// does (a marker among the right-hand values under a negated comparator) and records one entry per
+// result per value there. Per thread, as the probe counters in `eval_context` are.
+#[cfg(test)]
+thread_local! {
+    pub(in crate::rules) static MARKER_BOOKKEEPING_VISITS: std::cell::Cell<usize> =
+        const { std::cell::Cell::new(0) };
+}
+
+#[inline]
+fn count_marker_bookkeeping_visit() {
+    #[cfg(test)]
+    MARKER_BOOKKEEPING_VISITS.with(|visits| visits.set(visits.get() + 1));
 }
 
 /// The reason a gate has no answer, when that is what happened.
@@ -3681,9 +4913,9 @@ impl ResultEvidence {
 /// reimplemented: "did any value pass" for `some` and "did every value pass" for `match_all` are the same
 /// predicates over the same vector for both of us, and two copies that agree are the setup for the next
 /// divergence. Under `match_all` that arm is reached by one shape, `IN` against a right-hand side holding
-/// a refusal's marker: the marker's pairs file no status there ([`marker_pair_under_in`]), so a value
-/// every listed entry was compared with and one matched reads PASS alone, and the clause is decided by
-/// its values (`AND(yes, yes) = yes`). Every other undecided pair is a FAIL status, which denies it.
+/// a marker: the marker's pair for a value a listed entry accepted files no status there
+/// ([`marker_pair_under_in`]), so such a value reads PASS alone, and the clause is decided by its values
+/// (`AND(yes, yes) = yes`). Every other undecided pair is a FAIL status, which denies it.
 ///
 /// The no arm cannot borrow from it, and that is a difference of question rather than of answer.
 /// [`clause_passed`] asks "did this clause pass", which decides eligibility for a notice about a future
@@ -3694,18 +4926,20 @@ impl ResultEvidence {
 ///
 /// # Disjoint from the notice
 ///
-/// By construction, with one named exception. This fires only when `undecided` is `Some`, which two
+/// By construction, with one named exception. This fires only when `undecided` is `Some`, which four
 /// things set: an arm of the comparison that pushes a `Status::FAIL` for the value it could not decide
-/// (or, under a positive `IN`, no status at all for the pair against a marker), the `Fail` arm's reading
-/// of `==` between two value sets beside a marker (a left-only mismatch, undecided), and the pre-pass
-/// over a marker among the right-hand values ([`binary_operation`]), which sets it over a positive clause
-/// that did not pass and over every negated clause beside a marker (`passes_are_unknown`). Under
-/// `match_all` the notice needs every value PASS: a FAIL denies it, a positive clause that did not pass
-/// denies it, and where every value did pass this declines outright, so the two agree the clause is
-/// decided. Under `some` the notice needs one PASS: this declines outright when there is one and the
-/// passes are passes. The exception: a `some` clause with a negated comparator beside a marker whose values passed is RAISED here although
-/// the notice's own test (`clause_passed`) would call it passed; the two disagree by construction, and the
-/// raise wins by ordering (this runs first, and the raise returns before the notice is considered).
+/// (or, under a positive `IN`, no status at all for the marker's pair of a value a listed entry
+/// accepted, or of any value when no entry is listed), the `Fail` arm's reading of `==` between two value
+/// sets beside a marker (a left-only mismatch, undecided), the `NotComparable` arm's reading of a kind
+/// refusal under membership beside a marker (the hidden entry may be the comparable one), and the
+/// pre-pass over a marker among the right-hand values ([`binary_operation`]), which sets it over a
+/// positive clause that did not pass and over every negated clause beside a marker (`passes_are_unknown`). Under `match_all` the notice needs every value PASS: a
+/// FAIL denies it, a positive clause that did not pass denies it, and where every value did pass this
+/// declines outright, so the two agree the clause is decided. Under `some` the notice needs one PASS:
+/// this declines outright when there is one and the passes are passes. The exception: a `some` clause
+/// with a negated comparator beside a marker whose values passed is RAISED here although the notice's
+/// own test (`clause_passed`) would call it passed; the two disagree by construction, and the raise wins
+/// by ordering (this runs first, and the raise returns before the notice is considered).
 /// `a_some_clause_beside_a_refused_value_is_never_eligible_for_the_notice` pins that such a clause reaches
 /// no notice: the raise is the refusal's fail-closed answer, and a notice about a future fail-closed
 /// release would describe a clause that already fails closed. So the early return never suppresses a
@@ -3717,28 +4951,44 @@ fn undecided_gate(
     result: &EvaluationResult,
     evidence: ResultEvidence,
     match_all: bool,
+    negated: bool,
     role: ClauseRole,
 ) -> Option<String> {
+    // Read before the reason is taken out of the evidence: whether `some` is decided NO by its values
+    // ([`ResultEvidence::settled_no`]), for whatever outcome shape reached this gate.
+    let settled_no = evidence.settled_no(match_all, negated);
     let reason = evidence.undecided?;
 
-    // An assertion is decided by its statuses: every undecided pair but one is a FAIL status, which fails
-    // the clause under `match_all` and denies that value under `some`. The one exception is `some` with a
-    // negated comparator beside a marker among the right-hand values: a value that differs from every
-    // resolved value reads PASS, and under `some` one PASS decides the clause, although that value may
-    // equal the refused one (`passes_are_unknown`); so `some Cfg.Name NOT IN %x` with the marker in `%x`
-    // passed on a name no resolved key equals. Raised here, as a filter predicate and a gate are, so the
-    // assertion fails on the marker's reason; every other assertion keeps its fold.
+    // An assertion under `match_all` is decided by its statuses: every undecided pair is a FAIL status,
+    // which fails the clause (`AND(no, unknown)` is no, and a FAIL status is the clause's fail-closed
+    // answer, with the marker's reason in that pair's record), so it keeps its fold. An assertion under
+    // `some` is not: `OR(no, unknown)` is unknown, since the value the marker hides may be the one `some`
+    // passes on, so a `some` whose pairs are {absent, decided no, undecided} with no passing pair is
+    // RAISED here on the marker's reason, as a filter predicate and a gate are (the positive pre-pass
+    // branch records the undecided pair, `undecided_under_some`, when such a clause did not pass beside
+    // the marker). Two shapes keep their fold under `some`: every left-hand value a decided NO
+    // (`settled_no`: `some Cfg.Missing NOT IN %x` fails on the absence, with its comparison record, where
+    // a raise would rewrite its block record into an error blaming the marker for an absent property's
+    // failure), and a value that passed for real. A pass under a negated comparator beside a marker is
+    // not a pass (`passes_are_unknown`: a value that differs from every resolved value may equal the
+    // refused one), so `some Cfg.Name NOT IN %x` with the marker in `%x` is raised, not passed on a name
+    // no resolved key equals.
     if role.is_strict() {
-        if !match_all && evidence.passes_are_unknown && !evidence.settled_no {
+        if !match_all
+            && !settled_no
+            && (evidence.passes_are_unknown || evidence.undecided_under_some)
+        {
             return Some(reason);
         }
         return None;
     }
 
-    // `some` with a negated comparator beside a refusal's marker, every left-hand value a decided NO
-    // against a resolved right-hand value: no value can be the one `some` passes on, whatever the marker
-    // holds, so the clause is decided NO (the pre-pass's `settled_no`).
-    if evidence.settled_no {
+    // `some` beside a marker, every left-hand value a decided NO (a resolved match under a negated
+    // comparator, or an absence under any): no value can be the one `some` passes on, whatever the
+    // marker holds, so the clause is decided NO (`ResultEvidence::settled_no`, read above from the
+    // evidence itself, so the compared-nothing arm's `EmptyQueryResult` over an empty left list beside a
+    // marker alone is decided here as a missing key's `QueryValueResult` is).
+    if settled_no {
         return None;
     }
 
@@ -3746,8 +4996,8 @@ fn undecided_gate(
     // undecided sibling changes nothing; unless the passes are not passes (a negated comparator against
     // a refused right-hand value, where a value that differs from every resolved value may still equal
     // the refused one). Under `match_all` every value PASS beside an undecided reason is reached by `IN`
-    // alone, whose pairs against a refusal's marker file no status (`marker_pair_under_in`); every other
-    // undecided pair is a FAIL status, which denies it.
+    // alone, whose marker pairs for the values listed entries accepted file no status
+    // (`marker_pair_under_in`); every other undecided pair is a FAIL status, which denies it.
     if !evidence.passes_are_unknown && clause_passed(result, match_all) {
         return None;
     }
@@ -3962,6 +5212,7 @@ pub(super) fn real_binary_operation<'value, 'loc: 'value>(
                         comparison: recorded_cmp,
                         from: each.clone(),
                         to: Some(QueryResult::Resolved(Rc::clone(&empty_set))),
+                        refusal: false,
                     })),
                 )?;
                 statues.push((each.clone(), Status::FAIL));
@@ -3987,6 +5238,7 @@ pub(super) fn real_binary_operation<'value, 'loc: 'value>(
                         comparison: recorded_cmp,
                         from: each.clone(),
                         to: None,
+                        refusal: false,
                     })),
                 )?;
                 statues.push((each.clone(), Status::FAIL));
@@ -4904,6 +6156,20 @@ pub(in crate::rules) fn function_call_document_level_bindings<'value, 'loc: 'val
     Some(bindings)
 }
 
+/// An access clause as the rules file spells it (`clause_as_written`: symbolic operators, a filter with
+/// its predicate), or, for the one shape that renderer declines (a filter whose predicate holds a
+/// named-rule reference or a nested block), its record-tree rendering joined to one line. The text the
+/// `when` notice and the refused-read line name a clause by; see `when_clause_text` for why the fallback
+/// alone has its whitespace joined.
+fn access_clause_text(gac: &GuardAccessClause<'_>) -> String {
+    clause_as_written(gac).unwrap_or_else(|| {
+        gac.to_string()
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+    })
+}
+
 /// A `when` condition as the rules file spells it: an access clause through `clause_as_written`
 /// (symbolic operators, a filter with its predicate; its `Display` is the record-tree rendering and
 /// stood in for a filter with `(filter-clauses)`). Every part is joined with single spaces as it is
@@ -4918,12 +6184,7 @@ pub(in crate::rules) fn function_call_document_level_bindings<'value, 'loc: 'val
 /// line.
 fn when_clause_text(condition: &WhenGuardClause<'_>) -> String {
     match condition {
-        WhenGuardClause::Clause(gac) => clause_as_written(gac).unwrap_or_else(|| {
-            gac.to_string()
-                .split_whitespace()
-                .collect::<Vec<_>>()
-                .join(" ")
-        }),
+        WhenGuardClause::Clause(gac) => access_clause_text(gac),
         WhenGuardClause::NamedRule(gnc) => format!(
             "{}{}",
             if gnc.negation { "not " } else { "" },
@@ -4954,6 +6215,26 @@ fn when_clause_location<'c, 'loc>(condition: &'c WhenGuardClause<'loc>) -> &'c F
         WhenGuardClause::Clause(gac) => &gac.access_clause.location,
         WhenGuardClause::NamedRule(gnc) => &gnc.location,
         WhenGuardClause::ParameterizedNamedRule(prc) => &prc.named_rule.location,
+    }
+}
+
+/// The sentence the block record of a clause whose query or comparison raised an error carries
+/// (`eval_guard_access_clause`'s `Err` arms). An unevaluatable error (a refusal, an undecidable
+/// comparison) is held at the clause in every role and the evaluation goes on to the next clause: the
+/// arm returns the clause's FAIL in the assertion role, a gate that reads the error fails its own rule
+/// closed on it, and a filter predicate that reads it is refused (the filter fails closed), so in every
+/// role the run goes on to the next rule and the sentence says so; every other
+/// error is returned to the caller and stops the evaluation at this clause, which "bailing" names. The
+/// role is not consulted: the strictness of an assertion is applied by the caller that catches the
+/// error, and the arm's own `role` reads as the clause's position, not the verdict's. The record's
+/// `refusal` flag beside it is `is_refusal(e)`, so a refusal's sentence (a registered refusal,
+/// `eval_context::refuse`) is printed whole by the console where another sentence is held to the
+/// recorded-message bound.
+fn clause_error_message(e: &Error) -> String {
+    if is_unevaluatable(e) {
+        format!("Error {e} when handling clause; the clause is raised and the run continues")
+    } else {
+        format!("Error {e} when handling clause, bailing")
     }
 }
 
@@ -5035,9 +6316,7 @@ pub(in crate::rules) fn eval_guard_access_clause<'value, 'loc: 'value>(
                                 RecordType::GuardClauseBlockCheck(BlockCheck {
                                     status: Status::FAIL,
                                     at_least_one_matches: !all,
-                                    message: Some(format!(
-                                        "Error {e} when handling clause, bailing"
-                                    )),
+                                    message: Some(clause_error_message(&e)),
                                     refusal: is_refusal(&e),
                                 }),
                             )?;
@@ -5059,9 +6338,7 @@ pub(in crate::rules) fn eval_guard_access_clause<'value, 'loc: 'value>(
                                 RecordType::GuardClauseBlockCheck(BlockCheck {
                                     status: Status::FAIL,
                                     at_least_one_matches: !all,
-                                    message: Some(format!(
-                                        "Error {e} when handling clause, bailing"
-                                    )),
+                                    message: Some(clause_error_message(&e)),
                                     refusal: is_refusal(&e),
                                 }),
                             )?;
@@ -5141,6 +6418,7 @@ pub(in crate::rules) fn eval_guard_access_clause<'value, 'loc: 'value>(
             all,
             rhs_enumerates,
             rhs_shared,
+            gac,
         )
     };
 
@@ -5231,7 +6509,7 @@ pub(in crate::rules) fn eval_guard_access_clause<'value, 'loc: 'value>(
                 RecordType::GuardClauseBlockCheck(BlockCheck {
                     status: Status::FAIL,
                     at_least_one_matches: !all,
-                    message: Some(format!("Error {} when handling clause, bailing", e)),
+                    message: Some(clause_error_message(&e)),
                     refusal: is_refusal(&e),
                 }),
             )?;
@@ -6460,6 +7738,19 @@ impl<'eval, 'value, 'loc: 'value> EvalContext<'value, 'loc>
     /// Forwarded for the reason `record_warning` is.
     fn record_capture_warning(&mut self, site: &FileLocation<'_>, capture: &str, notice: String) {
         self.parent.record_capture_warning(site, capture, notice)
+    }
+
+    /// Forwarded for the reason `record_warning` is.
+    fn record_unraised_refusal(
+        &mut self,
+        site: &FileLocation<'_>,
+        context: &str,
+        verdict: crate::rules::UnraisedVerdict,
+        refusals: &[String],
+    ) {
+        count_unraised_refusal_forward();
+        self.parent
+            .record_unraised_refusal(site, context, verdict, refusals)
     }
 
     /// Forwarded with the two notice methods, whose notices are the one reader of the name.
@@ -8422,8 +9713,9 @@ where
 
                     // The record carries no message. `validate` reports the record tree before it
                     // applies `?` to the error, so the rule is printed as FAIL on stdout, but the
-                    // cause is already named there by the disjunct's own record (the
-                    // access clause's "bailing" sentence), which every reporter renders in place of a
+                    // cause is already named there by the disjunct's own record (the access clause's
+                    // error sentence, "bailing" for an error that stops the run and "the clause is
+                    // raised and the run continues" for an unevaluatable one), which every reporter renders in place of a
                     // disjunction's message when the disjunction has children; measured in the
                     // console, json, yaml and structured outputs, a sentence recorded here reaches
                     // none of them. The error text itself also reaches stderr.

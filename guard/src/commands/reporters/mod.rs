@@ -25,7 +25,7 @@ use crate::{
         eval::eval_rules_file,
         eval_context::{
             root_scope_for, simplified_json_from_root, Messages, RootScope, RuleFileError,
-            WarningKind, WarningSite,
+            UnraisedCounts, WarningKind, WarningSite,
         },
         exprs::RulesFile,
         DeprecationKind, Status,
@@ -98,15 +98,28 @@ pub(crate) struct Notices {
 }
 
 /// The readings one warning line stands for, across the scopes absorbed under its key: the maps of
-/// every input for a moved reading, the inputs alone for an unbound capture, which has no maps.
+/// every input for a moved reading, the inputs alone for an unbound capture, which has no maps, and for
+/// an unraised refusal the cases with what each case's line was rendered from, so the multi-case line is
+/// rendered again from all of them (`unraised_refusal_notice`) and a later case's refusal text or
+/// verdict is named, not reduced to a count.
 #[derive(Debug)]
 struct WarningTally {
     kind: WarningKind,
+    /// The head the multi-case line is built on: the first text recorded for the key
+    /// (`SiteWarning::first`). For a moved reading and an unbound capture that is a rendered `Warning:`
+    /// line, which the count is appended to; for an unraised refusal it is the clause as written, the
+    /// context the line is rendered from with the summed counts, the joined texts and the position below.
     first: String,
-    /// Every (case position, map path) recorded for the key.
+    /// Every (case position, map path) recorded for the key: the maps a moved reading counts.
     readings: BTreeSet<(usize, String)>,
-    /// Every case position recorded for the key: the K of "across K cases in this file".
-    cases: BTreeSet<usize>,
+    /// Every case position recorded for the key, the K of "across K cases in this file", with the
+    /// evaluations that case's scope counted under each verdict of an unraised refusal (all zero for the
+    /// other kinds). Keyed by case so a scope absorbed twice counts once.
+    cases: BTreeMap<usize, UnraisedCounts>,
+    /// For an unraised refusal: the distinct refusal texts in the order the cases met them, and the
+    /// clause's position, which ends the line.
+    met: Vec<String>,
+    position: String,
 }
 
 /// What a line collected for stderr is, decided where the line is made, and named for the writer's
@@ -283,12 +296,19 @@ impl Notices {
                     kind: reading.kind,
                     first: reading.first.to_owned(),
                     readings: BTreeSet::new(),
-                    cases: BTreeSet::new(),
+                    cases: BTreeMap::new(),
+                    met: Vec::new(),
+                    position: reading.position.to_owned(),
                 });
-            tally.cases.insert(reading.case);
+            tally.cases.insert(reading.case, reading.verdicts);
             tally
                 .readings
                 .extend(reading.maps.iter().map(|map| (reading.case, map.clone())));
+            for text in reading.met {
+                if !tally.met.contains(text) {
+                    tally.met.push(text.clone());
+                }
+            }
             let text = if tally.cases.len() == 1 {
                 reading.line.to_owned()
             } else {
@@ -312,6 +332,33 @@ impl Notices {
                             tally.first,
                             more,
                             if more == 1 { "" } else { "s" }
+                        )
+                    }
+                    // An unraised refusal has no maps either: what each case's scope counted is the
+                    // evaluations under each verdict and the refusal texts the site met, so across the
+                    // cases of one spec file the line is RENDERED AGAIN from the cases' summed counts
+                    // and every text any case met, in case order, with the case count and the spec
+                    // file in place of the one case's name; a count appended to the first case's line
+                    // left a later case's different refusal text, or its different verdict, unsaid.
+                    WarningKind::UnraisedRefusal => {
+                        let verdicts = tally
+                            .cases
+                            .values()
+                            .fold(UnraisedCounts::default(), |sum, case| sum + *case);
+                        let across = match key.spec_file() {
+                            Some(spec_file) => format!(
+                                " in {} cases of `{}`",
+                                tally.cases.len(),
+                                crate::utils::writer::escaped_controls_for_display(spec_file)
+                            ),
+                            None => format!(" in {} cases", tally.cases.len()),
+                        };
+                        rules::eval_context::unraised_refusal_notice(
+                            &tally.first,
+                            verdicts,
+                            &tally.met,
+                            &tally.position,
+                            &across,
                         )
                     }
                 }

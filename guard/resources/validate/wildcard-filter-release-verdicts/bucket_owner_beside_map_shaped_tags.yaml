@@ -1,0 +1,21 @@
+# A bucket whose `Owner` equals no tag pair, beside a function whose map-shaped `Tags` the list-bound
+# predicate `[ Key IN %wanted ]` cannot read as its `{ Key, Value }` list twin, so `%names` holds the
+# bucket's resolved pair beside the refusal's marker.
+Mappings:
+  Wanted:
+    Keys:
+      - Env
+Resources:
+  B:
+    Type: AWS::S3::Bucket
+    Properties:
+      Owner: alice
+      Tags:
+        - Key: Env
+          Value: allowed
+  M:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: index.handler
+      Tags:
+        Env: x

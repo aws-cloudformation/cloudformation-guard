@@ -212,6 +212,8 @@ fn pprint_failed_sub_tree(
                     from,
                     status: Status::FAIL,
                     to,
+                    refusal,
+                    ..
                 }) => {
                     let custom_message = custom_message.as_ref().map_or("".to_string(), |s| {
                         format!(" Message = [{}]", s.replace('\n', ";"))
@@ -227,7 +229,21 @@ fn pprint_failed_sub_tree(
                             QueryResult::Resolved(to_res) => Some(Rc::clone(to_res)),
 
                             QueryResult::UnResolved(to_unres) => {
-                                writeln!(
+                                // A right-hand side the evaluator REFUSED to read is named as the
+                                // refusal (the error text that follows), not as a missing property
+                                // spelled with the marker's remaining query; an absent right-hand
+                                // value keeps the missing-property sentence.
+                                if *refusal {
+                                    writeln!(
+                                        writer,
+                                        "{}{}Check was not compliant as the value to compare to could not be read.{err}{msg}",
+                                        prefix,
+                                        prefix_current,
+                                        err = error_message,
+                                        msg = custom_message
+                                    )?;
+                                } else {
+                                    writeln!(
                                         writer,
                                         "{}{}Check was not compliant as property [{remain}] to compare to is missing. Value traversed to [{to}].{err}{msg}",
                                         prefix,
@@ -237,6 +253,7 @@ fn pprint_failed_sub_tree(
                                         err=error_message,
                                         msg=custom_message
                                     )?;
+                                }
                                 return Ok(());
                             }
                         },
@@ -247,16 +264,32 @@ fn pprint_failed_sub_tree(
                     match from {
                         QueryResult::Literal(_) => unreachable!(),
                         QueryResult::UnResolved(to_unres) => {
-                            writeln!(
-                                writer,
-                                "{}{}Check was not compliant as property [{remain}] to compare from is missing. Value traversed to [{to}].{err}{msg}",
-                                prefix,
-                                prefix_current,
-                                remain=to_unres.remaining_query,
-                                to=to_unres.traversed_to,
-                                err=error_message,
-                                msg=custom_message
-                            )?;
+                            // A left-hand side the evaluator REFUSED to read, whose record carries
+                            // the refusal's text, is named as the refusal (the error text that
+                            // follows), not as a missing property spelled with the marker's remaining
+                            // query, as the right-hand arm above names its refusal; an absent
+                            // left-hand value keeps the missing-property sentence.
+                            if to_unres.kind.is_refusal() && message.is_some() {
+                                writeln!(
+                                    writer,
+                                    "{}{}Check was not compliant as the value to compare from could not be read.{err}{msg}",
+                                    prefix,
+                                    prefix_current,
+                                    err = error_message,
+                                    msg = custom_message
+                                )?;
+                            } else {
+                                writeln!(
+                                    writer,
+                                    "{}{}Check was not compliant as property [{remain}] to compare from is missing. Value traversed to [{to}].{err}{msg}",
+                                    prefix,
+                                    prefix_current,
+                                    remain=to_unres.remaining_query,
+                                    to=to_unres.traversed_to,
+                                    err=error_message,
+                                    msg=custom_message
+                                )?;
+                            }
                         }
 
                         QueryResult::Resolved(res) => {

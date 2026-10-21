@@ -2884,6 +2884,184 @@ mod test_command_tests {
         );
     }
 
+    /// Two cases of one spec file reaching one clause site with an unraised refused read are one line,
+    /// RENDERED from both cases: the clause as written, the verdict both cases reached (one phrase, no
+    /// per-way count), each case's refusal text (the twin's text names the refused map at its position in
+    /// the spec file, so two cases are two texts even over the same input), and the case count in place
+    /// of the one case's name.
+    ///
+    /// The evaluator keeps the clause as written as the head it re-renders the site's line from, and the
+    /// command's collapse across the cases of one spec file renders the multi-case line from that head
+    /// with what every case's scope counted (the evaluations under each verdict, the refusal texts met),
+    /// through the evaluator's own line builder, so the line carries the `Warning:` prefix, the verdict
+    /// and the refusals, and a later case's text or verdict is named rather than reduced to a count.
+    /// Built on the bare head it would print the clause alone, a line with no prefix read as failure
+    /// text; built as the first case's line with a count appended, it would leave a second case's
+    /// refusal unsaid.
+    #[rstest]
+    #[case::single_line_summary("single-line-summary")]
+    #[case::json("json")]
+    fn two_cases_reaching_one_unraised_refusal_site_are_one_prefixed_line(#[case] format: &str) {
+        let (status_code, stdout, stderr) = run_spec_in(
+            "resources/test-command/unraised-refusal-warning/rules.guard",
+            "resources/test-command/unraised-refusal-warning/two_cases_tests.yaml",
+            format,
+        );
+        assert_eq!(
+            StatusCode::SUCCESS,
+            status_code,
+            "{}: both cases expect the PASS the absence decides:\n{}\n{}",
+            format,
+            stdout,
+            stderr
+        );
+        let warnings: Vec<&str> = stderr
+            .lines()
+            .filter(|l| l.starts_with("Warning:"))
+            .collect();
+        assert_eq!(
+            1,
+            warnings.len(),
+            "{}: one clause site across two cases of one spec file is one prefixed line, got:\n{}",
+            format,
+            stderr
+        );
+        // The clause as the author wrote it (`Properties.Owner == %names`, the form a reader greps the
+        // rules file for), never the record tree's `Properties.Owner EQUALS  %names`.
+        // Both cases reach the one site with the same verdict and the same refusal shape (the same
+        // function `M`, the same map-shaped tags), so the line names one verdict with no per-way count
+        // and the two cases of the spec file in place of the one case's name; the two refusal texts are
+        // two, each naming the refused map at its own position in the spec file, both numbered.
+        assert!(
+            warnings[0].contains("Properties.Owner == %names")
+                && !warnings[0].contains("EQUALS")
+                && warnings[0].contains("was decided by a value the document lacks")
+                && !warnings[0].contains("on 2 evaluations")
+                && warnings[0]
+                    .contains("the 2 refused reads among its other values were not raised by it")
+                && warnings[0].contains("they are reported here instead: (1) ")
+                && warnings[0].contains(" (2) ")
+                && warnings[0]
+                    .matches("a name bound outside the predicate")
+                    .count()
+                    == 2
+                && warnings[0].contains("in 2 cases of `")
+                && !warnings[0].contains("more case"),
+            "{}: the line names the clause as written, its verdict and the refusal, rendered across the \
+             two cases: {}",
+            format,
+            warnings[0]
+        );
+        let bare: Vec<&str> = stderr
+            .lines()
+            .filter(|l| l.starts_with("Properties.Owner"))
+            .collect();
+        assert!(
+            bare.is_empty(),
+            "{}: no line starts with the bare clause (a prefix-less line is read as failure text): {:?}",
+            format,
+            bare
+        );
+        // A positioned line, as every warning the `Notices` contract keeps: the clause's position in the
+        // rules file and the input it was found in (the case and its spec file under `test`), so two
+        // rules of one clause spelling print two distinct lines.
+        assert!(
+            warnings[0].contains("The clause is at Location[file:")
+                && warnings[0].contains("rules.guard")
+                && warnings[0].contains("two_cases_tests.yaml"),
+            "{}: the line ends with the clause's position and names the spec file: {}",
+            format,
+            warnings[0]
+        );
+    }
+
+    /// Two cases of one spec file whose refused reads are DIFFERENT texts (two functions at two paths,
+    /// each with map-shaped tags, one per case) are one line naming BOTH texts, numbered in case order,
+    /// with the count of refused reads: the fold renders the line from every text the cases met, so the
+    /// second case's refusal is named; appended as a case count to the first case's line, it would be a
+    /// number.
+    #[test]
+    fn two_cases_with_different_refused_reads_are_one_line_naming_both() {
+        let (status_code, stdout, stderr) = run_spec_in(
+            "resources/test-command/unraised-refusal-warning/rules.guard",
+            "resources/test-command/unraised-refusal-warning/two_texts_tests.yaml",
+            "single-line-summary",
+        );
+        assert_eq!(
+            StatusCode::SUCCESS,
+            status_code,
+            "both cases expect the PASS the absence decides:\n{}\n{}",
+            stdout,
+            stderr
+        );
+        let warnings: Vec<&str> = stderr
+            .lines()
+            .filter(|l| l.starts_with("Warning:"))
+            .collect();
+        assert_eq!(
+            1,
+            warnings.len(),
+            "one clause site across two cases is one prefixed line, got:\n{}",
+            stderr
+        );
+        assert!(
+            warnings[0]
+                .contains("the 2 refused reads among its other values were not raised by it")
+                && warnings[0].contains("they are reported here instead: (1) ")
+                && warnings[0].contains(" (2) ")
+                && warnings[0]
+                    .matches("a name bound outside the predicate")
+                    .count()
+                    == 2
+                && warnings[0].contains("in 2 cases of `")
+                && !warnings[0].contains("more case"),
+            "the line counts two refused reads and names both texts in case order: {}",
+            warnings[0]
+        );
+    }
+
+    /// Two rules of ONE clause spelling in one rules file reach two sites, and the two lines they write
+    /// are distinct: each ends with its own clause's position, so a reader can tell which rule's clause
+    /// left the refused read unraised; without the position the two lines would be byte-identical.
+    #[test]
+    fn two_rules_of_one_clause_spelling_print_two_distinct_unraised_refusal_lines() {
+        let (status_code, stdout, stderr) = run_spec_in(
+            "resources/test-command/unraised-refusal-warning/two_rules.guard",
+            "resources/test-command/unraised-refusal-warning/one_case_tests.yaml",
+            "single-line-summary",
+        );
+        assert_eq!(
+            StatusCode::SUCCESS,
+            status_code,
+            "both rules PASS by the absence:\n{}\n{}",
+            stdout,
+            stderr
+        );
+        let warnings: Vec<&str> = stderr
+            .lines()
+            .filter(|l| l.starts_with("Warning:"))
+            .collect();
+        assert_eq!(
+            2,
+            warnings.len(),
+            "two clause sites, two lines, got:\n{}",
+            stderr
+        );
+        assert_ne!(
+            warnings[0], warnings[1],
+            "the two lines differ (each ends with its own position):\n{}",
+            stderr
+        );
+        assert!(
+            warnings
+                .iter()
+                .all(|line| line.contains("The clause is at Location[file:")
+                    && line.contains("line:")),
+            "each line ends with its clause's position:\n{}",
+            stderr
+        );
+    }
+
     /// Two spec files refusing one capture are one line each, naming the file.
     ///
     /// The collapse is keyed by the spec file for this warning as for the moved reading, so a run over

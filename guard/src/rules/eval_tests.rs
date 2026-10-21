@@ -1145,6 +1145,7 @@ fn block_guard_pass() -> Result<()> {
                                         comparison: (CmpOperator::Eq, true),
                                         from: QueryResult::Resolved(from_q),
                                         to: Some(QueryResult::Resolved(_)),
+                                        ..
                                     },
                                 )) => {
                                     assert_eq!(msg, "No wildcard allowed for Principals");
@@ -10225,7 +10226,7 @@ fn every_recorded_explanation_has_a_rendering_path() {
 
     // Evaluator-generated explanations, by the record variant each lands on:
     //
-    //   ClauseValueCheck        7   leaf value checks; rendered by the clause arms already
+    //   ClauseValueCheck        8   leaf value checks; rendered by the clause arms already
     //   GuardClauseBlockCheck   7   rendered: falls back to the message when no children report
     //   BlockGuardCheck         3   rendered: uses the record's message, not a hardcoded sentence
     //   WhenCheck               2   rendered: same fallback as GuardClauseBlockCheck
@@ -10353,9 +10354,22 @@ fn every_recorded_explanation_has_a_rendering_path() {
     // above; `every_delivery_path_of_a_body_read_refuses_as_the_inline_spelling_does` asserts the
     // sentence is in the record for every delivery path.
     //
+    // The sixth `ClauseValueCheck` is the record of a left-hand value paired with the undecidable marker
+    // among the right-hand values (the `RhsUnresolved` arm): the marker's reason, `undecidable_reason`,
+    // with `refusal` set for a refused `%name`'s. Its sibling, the record of a left-hand value the document
+    // lacks decided beside the marker (the `LhsUnresolved` arm), builds its message above the record
+    // (`marker_beside_an_absence`: the retrieval's own reason leads, the marker's reason follows) and so is
+    // not among the sites this count reads. Both render on both paths: the
+    // console's clause tree reads them through `Messages::error_message` built by the
+    // `ClauseCheck::Comparison` arm of `eval_context.rs` (the `Error = [...]` slot, printed whole for a
+    // refusal through `Messages::refusal`), and the console summary through `NameInfo::error`.
+    // `an_absent_left_value_beside_a_refusal_records_the_absence_and_the_refusal_whole` and
+    // `an_unmatched_value_beside_a_refusal_under_a_positive_in_records_the_refusal_whole` assert the
+    // records, and the validate tests of the same names the console.
+    //
     // If this total changes, find the new site, note which variant it records against, and confirm
     // it reaches rendered output before updating the number.
-    const SITES_EXPECTED: usize = 25;
+    const SITES_EXPECTED: usize = 26;
 
     assert_eq!(
         sites, SITES_EXPECTED,
@@ -19369,7 +19383,7 @@ fn a_key_is_rendered_bare_exactly_when_the_parser_reads_it_bare() -> Result<()> 
         "it's",
         "say\"hi",
         "éclair",
-        "caf\u{e9}",
+        "café",
         "%k",
     ];
 
@@ -42947,29 +42961,31 @@ fn a_refused_right_operand_decides_by_the_comparator_and_the_quantifier() -> Res
     Ok(())
 }
 
-/// With a refusal's marker among the right-hand values, an ABSENT left-hand value decides nothing under a
-/// negated comparator, as under a positive one: `[ Properties.Missing != %names ]` and `NOT IN`, in both
-/// spellings (the absent value on the left; the marker's selection on the left), are unknown and fail
-/// closed under `empty` and `!empty` alike, the two spellings agreeing: an absent value is recorded as a
-/// comparison that did not happen, not as a decided failure, and the negated branch of the pre-pass runs
-/// whether or not a value passed, so `Resources.*[ Type == 'AWS::S3::Bucket' ][ Properties.Missing !=
-/// %names ] empty` fails closed as the operands swapped do. An absent value beside resolved values that each differ from every
-/// resolved right-hand value is unknown too (no resolved NO settles it). Under `some` with a negated
-/// comparator a clause whose every value equals a resolved right-hand value is decided NO (the entry is
-/// deselected, `empty` passes), and one with a value no resolved value equals is unknown. Two value SETS
-/// compared under `==` (`Properties.Set[*] == %names`) are decided no only when a RESOLVED right-hand
-/// value has no equal on the left (the sets differ whatever the marker hides); a left-only mismatch and
-/// two equal resolved sets are unknown, since the refused value may be the missing element or one more.
-/// Under `!=` the sets are read value by value: a left-hand value equal to a resolved right-hand value is
-/// a decided NO the marker cannot undo, so a set with such a value is deselected. An empty left-hand
-/// collection (`Empty: []`) and a missing one read alike beside the marker under `IN` and `NOT IN` (the
-/// one comparison an empty document list reaches as a collection), both unknown, where the empty one
-/// deselected and the missing one failed closed. Every filter runs over the enumerated resources
-/// (`Resources.*[ Type == 'AWS::S3::Bucket' ]`), never over one resource's own entries: `Resources.B[ ..
-/// ]` is a filter over `B`'s entries, where `Properties.Tags[*]` names nothing and every cell fails
-/// closed on that absence instead of on the marker.
+/// With a refusal's marker among the right-hand values, an ABSENT operand is a DECIDED failure under
+/// every comparator and in both polarities, as `docs/CLAUSES.md` states for a value the document lacks:
+/// `[ Properties.Missing != %names ]` and `NOT IN`, in both spellings (the absent value on the left; the
+/// marker's selection on the left of an absent right-hand value), deselect the entry (`empty` PASS,
+/// `!empty` FAIL) as they do with no marker in sight, since the absence fails the comparison whatever
+/// the marker hides. Read as a comparison that did not happen, the absent value would make each of these
+/// unknown, and `Resources.*[ Type == 'AWS::S3::Bucket' ][ Properties.Missing != %names ] empty` would
+/// fail its rule closed where it deselects the buckets lacking the property. An absent value beside resolved
+/// values that each differ from every resolved right-hand value is decided too (`AND(no, unknown) =
+/// no`). Under `some` with a negated comparator a clause whose every value equals a resolved right-hand
+/// value is decided NO (the entry is deselected, `empty` passes), and one with a value no resolved value
+/// equals is unknown. Two value SETS compared under `==` (`Properties.Set[*] == %names`) are decided no
+/// only when a RESOLVED right-hand value has no equal on the left (the sets differ whatever the marker
+/// hides); a left-only mismatch and two equal resolved sets are unknown, since the refused value may be
+/// the missing element or one more. Under `!=` the sets are read value by value: a left-hand value equal
+/// to a resolved right-hand value is a decided NO the marker cannot undo, so a set with such a value is
+/// deselected. An empty left-hand collection (`Empty: []`) and a missing one read alike beside the marker
+/// under `IN` and `NOT IN` (the one comparison an empty document list reaches as a collection), both
+/// decided, both deselecting (read as unknown, the missing one would fail closed where the empty one
+/// deselects). Every
+/// filter runs over the enumerated resources (`Resources.*[ Type == 'AWS::S3::Bucket' ]`), never over one
+/// resource's own entries: `Resources.B[ .. ]` is a filter over `B`'s entries, where `Properties.Tags[*]`
+/// names nothing and every cell fails closed on that absence instead of on the marker.
 #[test]
-fn an_absent_left_value_under_a_negated_comparator_beside_a_marker_is_unknown() -> Result<()> {
+fn an_absent_operand_beside_a_marker_is_a_decided_failure_under_every_comparator() -> Result<()> {
     // `%names` is the `Env` and `Owner` pairs of the list-tagged resources plus the refused map-tagged
     // function's marker (a list-bound `%wanted` the twin cannot read). `B` is the one bucket; `Same`
     // holds the pairs `%names` resolves, `Wider` those and one more, `Narrow` one of them, `Expected`
@@ -43016,33 +43032,9 @@ fn an_absent_left_value_under_a_negated_comparator_beside_a_marker_is_unknown() 
         eval_rules_file(&rules_file, &mut root, None)
     };
     let mut cells = CellFailures::default();
-    // (the predicate, the shape, the template): every one unknown.
-    let unknown: [(&str, &str, &str); 13] = [
-        (
-            "Properties.Missing != %names",
-            "an absent left value under `!=`",
-            TEMPLATE,
-        ),
-        (
-            "%names != Properties.Missing",
-            "the marker's selection on the left of `!=`, the absent value on the right",
-            TEMPLATE,
-        ),
-        (
-            "Properties.Missing NOT IN %names",
-            "an absent left value under `NOT IN`",
-            TEMPLATE,
-        ),
-        (
-            "%names NOT IN Properties.Missing",
-            "the marker's selection on the left of `NOT IN`, the absent value on the right",
-            TEMPLATE,
-        ),
-        (
-            "Properties.Multi[*].Tag != %names",
-            "an absent value beside a resolved pair differing from every resolved right-hand pair, under `!=`",
-            TEMPLATE,
-        ),
+    // (the predicate, the shape, the template): every one unknown, each by a resolved pair the marker may
+    // complete or undo, none by an absence.
+    let unknown: [(&str, &str, &str); 4] = [
         (
             "Properties.Wider[*] == %names",
             "two sets whose resolved elements differ by one LEFT element, under `==`",
@@ -43056,26 +43048,6 @@ fn an_absent_left_value_under_a_negated_comparator_beside_a_marker_is_unknown() 
         (
             "Properties.Expected[*] == %names",
             "a left set holding the pair only the refused function could supply, under `==`",
-            TEMPLATE,
-        ),
-        (
-            "Properties.Empty IN %names",
-            "an empty left-hand collection against the refused selection, under `IN`",
-            TEMPLATE,
-        ),
-        (
-            "Properties.Missing IN %names",
-            "a missing left-hand collection against the refused selection, under `IN`",
-            TEMPLATE,
-        ),
-        (
-            "Properties.Empty NOT IN %names",
-            "an empty left-hand collection against the refused selection, under `NOT IN`",
-            TEMPLATE,
-        ),
-        (
-            "Properties.Missing NOT IN %names",
-            "a missing left-hand collection against the refused selection, under `NOT IN`",
             TEMPLATE,
         ),
         (
@@ -43095,14 +43067,16 @@ fn an_absent_left_value_under_a_negated_comparator_beside_a_marker_is_unknown() 
         );
     }
     // Decided NO (the entry deselected: `empty` PASS, `!empty` FAIL), each by a resolved comparison the
-    // marker cannot undo: under `some` with `!=` every pair of the bucket's equals a resolved right-hand
-    // value, so no value can be the one `some` passes on; under `==` a RESOLVED right-hand pair (`Owner`)
-    // has no equal in the left set `Narrow`, so the sets differ whatever the marker hides; under `!=` a
-    // left-hand pair equal to a resolved right-hand pair is a collision, in the equal sets and in the
-    // wider one alike; and a collision beside an EMPTY left-hand collection stays decided in either
-    // document order (an empty collection decides nothing, and must not undo the no a pair before or
-    // after it decided).
-    let decided_no: [(&str, &str, &str); 6] = [
+    // marker cannot undo or by an absence the marker cannot change: under `some` with `!=` every pair of
+    // the bucket's equals a resolved right-hand value, so no value can be the one `some` passes on; under
+    // `==` a RESOLVED right-hand pair (`Owner`) has no equal in the left set `Narrow`, so the sets differ
+    // whatever the marker hides; under `!=` a left-hand pair equal to a resolved right-hand pair is a
+    // collision, in the equal sets and in the wider one alike; a collision beside an EMPTY left-hand
+    // collection stays decided in either document order; and an absent operand (a key the document
+    // lacks, a list with no element, in either position) fails its comparison on the document under every
+    // comparator and both polarities, beside a resolved pair that differs from every resolved right-hand
+    // pair too (`AND(no, unknown) = no`).
+    let decided_no: [(&str, &str, &str); 17] = [
         (
             "Properties.Both[*] NOT IN %names",
             "a resolved collision followed by an empty left-hand collection, under `NOT IN`",
@@ -43133,6 +43107,61 @@ fn an_absent_left_value_under_a_negated_comparator_beside_a_marker_is_unknown() 
             "two sets whose resolved elements differ by one left element, under `!=`: two left pairs collide",
             TEMPLATE,
         ),
+        (
+            "Properties.Missing != %names",
+            "an absent left value under `!=`",
+            TEMPLATE,
+        ),
+        (
+            "%names != Properties.Missing",
+            "the marker's selection on the left of `!=`, the absent value on the right",
+            TEMPLATE,
+        ),
+        (
+            "Properties.Missing NOT IN %names",
+            "an absent left value under `NOT IN`",
+            TEMPLATE,
+        ),
+        (
+            "%names NOT IN Properties.Missing",
+            "the marker's selection on the left of `NOT IN`, the absent value on the right",
+            TEMPLATE,
+        ),
+        (
+            "Properties.Multi[*].Tag != %names",
+            "an absent value beside a resolved pair differing from every resolved right-hand pair, under `!=`",
+            TEMPLATE,
+        ),
+        (
+            "Properties.Empty IN %names",
+            "an empty left-hand collection against the refused selection, under `IN`",
+            TEMPLATE,
+        ),
+        (
+            "Properties.Missing IN %names",
+            "a missing left-hand collection against the refused selection, under `IN`",
+            TEMPLATE,
+        ),
+        (
+            "Properties.Empty NOT IN %names",
+            "an empty left-hand collection against the refused selection, under `NOT IN`",
+            TEMPLATE,
+        ),
+        (
+            "Properties.Missing[*] NOT IN %names",
+            "a missing left-hand collection, its elements asked for, against the refused selection, under `NOT IN`",
+            TEMPLATE,
+        ),
+        (
+            "Properties.Missing == %names",
+            "an absent left value under `==`",
+            TEMPLATE,
+        ),
+        (
+            "%names == Properties.Missing",
+            "the marker's selection on the left of `==`, the absent value on the right",
+            TEMPLATE,
+        ),
     ];
     for (predicate, shape, input) in decided_no {
         cells.check(
@@ -43144,15 +43173,3601 @@ fn an_absent_left_value_under_a_negated_comparator_beside_a_marker_is_unknown() 
             ),
         );
     }
-    // The absent-value reading is the positive comparator's too, unchanged: pinned beside the negated rows.
-    cells.check(
-        "`[ Properties.Missing == %names ]`, an absent left value under `==`: unknown under both tails",
-        (Status::FAIL, Status::FAIL),
+    cells.assert_all_agreed();
+    Ok(())
+}
+
+/// A refused bare read compared only against ABSENT values is still reported. Over a template whose every
+/// bucket lacks `Owner`, `Resources.*[ Properties.Owner == %names ] empty` with a refusal's marker in
+/// `%names` (a list-bound `%wanted` the map-tagged function's twin cannot read) deselects every bucket on
+/// the absence and PASSES; the record of the absent value is the absence's own (no message: the console
+/// renders its finding, "Could not find key Owner", from the unresolved value, where a message naming the
+/// marker would stand in its place and be cut at the console's bound), beside the clause that names
+/// `%names`, and the run's OUTPUT carries the refusal whole: one `Warning:` line per clause site
+/// (`WarningKind::UnraisedRefusal`, written after the clause is decided), the line `validate` writes to
+/// stderr beside the file's report (`commands/reporters`, `Notices::absorb_warnings`), which is where a
+/// passing rule's run says anything, naming the clause and the refusal's sentence, and NO `DEPRECATION:`
+/// line (the refusal is not a deprecation, so a consumer counting deprecations counts none for it); the
+/// mirror `[ %names == Properties.Owner ]` the same, the marker's own record carrying the refusal as the
+/// marker's reason. The refusal is REGISTERED beside the line (`eval_context::registered_refusals` holds
+/// its text after the run): the quiet read that refused `%names` raised it inside a probe, which writes
+/// nothing, so the decided site is the one place the text joins the registry `is_refusal` reads. Nothing
+/// else is registered: a KEY FILTER's marker beside an absence (`%cfg` holding the marker a key filter
+/// leaves for a map it could not decide) decides the same way, and registers nothing and writes no notice,
+/// since it is not a refusal; the absence is the whole of that clause's answer. Were the refusal dropped
+/// with the decided comparison, a mistake behind `%names` would leave no trace on a template where every
+/// comparison beside it was decided by an absence; were it reported and not registered, a later error
+/// carrying that text would print cut as a sentence that may hold a value; were a key filter's reason
+/// registered as a refusal, a later error carrying that text would print as one.
+#[test]
+fn a_refusal_beside_an_absent_operand_is_reported_with_the_decided_comparison() -> Result<()> {
+    const TEMPLATE: &str = r#"
+    {
+        Mappings: { Wanted: { Keys: [ 'Env' ] } },
+        Resources: {
+            B: { Type: 'AWS::S3::Bucket', Properties: { Tags: [ { Key: 'Env', Value: 'allowed' } ] } },
+            C: { Type: 'AWS::S3::Bucket', Properties: { Tags: [ { Key: 'Env', Value: 'other' } ] } },
+            M: { Type: 'AWS::Serverless::Function', Properties: { Handler: 'index.handler', Tags: { Env: 'x' } } }
+        }
+    }
+    "#;
+    // `A.Maps` under a key filter whose regex spends its budget: the marker a key filter leaves, not a
+    // refusal's.
+    let key_filter_template = format!(
+        "{{ Resources: {{ B: {{ Type: 'AWS::S3::Bucket', Properties: {{ W: 'y' }} }}, A: {{ Type: 'AWS::IAM::Role', Properties: {{ Maps: {{ M1: {{ {long}: 'z' }}, M2: {{ aab: 'x' }} }} }} }} }} }}",
+        long = "a".repeat(30)
+    );
+    // The refused-read line's own sentence, which tells it from every other warning and deprecation.
+    const THE_LINE: &str = "was decided by a value the document lacks";
+    struct Run {
+        status: Status,
+        records: String,
+        registered: Vec<String>,
+        notices: Vec<String>,
+        deprecation_lines: usize,
+    }
+    let run = |lets: &str, predicate: &str, input: &str| -> Result<Run> {
+        let rules = format!(
+            "{lets}\nrule r {{ Resources.*[ Type == 'AWS::S3::Bucket' ][ {predicate} ] empty }}"
+        );
+        let rules_file = RulesFile::try_from(rules.as_str())?;
+        let mut root = root_scope(&rules_file, Rc::new(PathAwareValue::try_from(input)?));
+        let status = eval_rules_file(&rules_file, &mut root, None)?;
+        let registered = crate::rules::eval_context::registered_refusals();
+        let notices: Vec<String> = root
+            .warnings()
+            .filter(|line| line.contains(THE_LINE))
+            .cloned()
+            .collect();
+        let deprecation_lines = root
+            .deprecations()
+            .filter(|line| line.contains(THE_LINE))
+            .count()
+            + root
+                .deprecations_once()
+                .filter(|(_, line)| line.contains(THE_LINE))
+                .count();
+        let records = format!("{:?}", root.reset_recorder().extract());
+        Ok(Run {
+            status,
+            records,
+            registered,
+            notices,
+            deprecation_lines,
+        })
+    };
+    // A registered refusal as the records' `Debug` rendering spells it (quotes and backslashes escaped).
+    let as_recorded = |text: &str| {
+        let quoted = format!("{:?}", text);
+        quoted[1..quoted.len() - 1].to_string()
+    };
+    const REFUSED_LETS: &str =
+        "let wanted = Mappings.Wanted.Keys\nlet names = Resources.*.Properties.Tags[*][ Key IN %wanted ]";
+    let mut cells = CellFailures::default();
+    for (label, predicate, record_names_the_refusal) in [
         (
-            run("Properties.Missing == %names", " empty", TEMPLATE)?,
-            run("Properties.Missing == %names", " !empty", TEMPLATE)?,
+            "`[ Properties.Owner == %names ] empty` over buckets lacking `Owner`: deselected on the absence, PASS; the absent value's record carries the refusal beside the retrieval's own reason, the clause record names `%names`, the run's one notice carries the refusal",
+            "Properties.Owner == %names",
+            true,
+        ),
+        (
+            "the mirror `[ %names == Properties.Owner ] empty`: deselected on the absence, PASS; the marker's own record carries the refusal as its reason, the run's one notice too",
+            "%names == Properties.Owner",
+            true,
+        ),
+    ] {
+        let run = run(REFUSED_LETS, predicate, TEMPLATE)?;
+        let twin_refusal = run
+            .registered
+            .iter()
+            .find(|text| text.contains("a name bound outside the predicate"));
+        cells.check(
+            label,
+            (
+                Status::PASS,
+                true,
+                record_names_the_refusal,
+                true,
+                1,
+                true,
+                true,
+            ),
+            (
+                run.status,
+                twin_refusal.is_some(),
+                twin_refusal.is_some_and(|text| run.records.contains(&as_recorded(text))),
+                run.records.contains("%names"),
+                run.notices.len(),
+                twin_refusal.is_some_and(|text| run.notices.iter().any(|line| line.contains(text))),
+                run.notices.iter().any(|line| line.contains("%names")),
+            ),
+        );
+    }
+    cells.check(
+        "the refused read beside an absence adds no `DEPRECATION:` line: the refusal is a warning, not a deprecation",
+        0,
+        run(REFUSED_LETS, "Properties.Owner == %names", TEMPLATE)?.deprecation_lines,
+    );
+    let key_filter = run(
+        "let cfg = Resources.A.Properties.Maps.*[ keys == /(?!x)((a+)+)b/ ].*",
+        "Properties.Missing == %cfg",
+        &key_filter_template,
+    )?;
+    cells.check(
+        "the control: a KEY FILTER's marker beside an absent left value decides the same way (PASS), the absence's record carrying the marker's reason beside the retrieval's own and reading `refusal: false`, and registers nothing and writes no notice",
+        (Status::PASS, true, false, 0, 0),
+        (
+            key_filter.status,
+            key_filter.records.contains("A refused or undecided selection"),
+            key_filter.records.contains("refusal: true"),
+            key_filter.registered.len(),
+            key_filter.notices.len(),
         ),
     );
+    cells.assert_all_agreed();
+    Ok(())
+}
+
+/// A refused bare read beside an EMPTY LEFT-HAND SELECTION is raised, not decided past in silence. Over
+/// buckets whose `Tags` hold no `Owner` key, `Properties.Tags[ Key == 'Owner' ].Value` selects nothing,
+/// and with a refusal's marker in `%names` (the list-bound `%wanted` the map-tagged function's twin
+/// cannot read, as the sibling test above binds it) the comparison against it is a pair nobody decided:
+/// the filter predicate `Resources.*[ Type == 'AWS::S3::Bucket' ][ Properties.Tags[ Key == 'Owner' ].Value
+/// == %names ] empty` FAILS (the predicate's clause is raised and the clause that uses the filter fails
+/// closed), and the `when` gate written the same way fails its rule closed (FAIL), where each deselected
+/// or stayed not applicable at exit 0 with nothing naming the refusal. In both the refusal's text is
+/// REGISTERED once (`eval_context::registered_refusals`), carried whole in the raised clause's record,
+/// and NO refused-read line is written: the line reports a refusal a decided clause left unraised, and
+/// this one is raised. The controls, the same two shapes with `%names` a plain list of strings, keep the
+/// empty selection's answers (`empty` PASSES over the deselected buckets, the gate leaves its rule not
+/// applicable), register nothing and write no line. An empty selection beside the marker read as its
+/// no-marker self (not applicable, deselected) was the one shape that registered the refusal and said
+/// nothing else about it: a decided answer under the pre-pass's reading, which runs over compared pairs
+/// alone, with no verdict the refused-read line writes for, where `marker_beside_an_absence` promises a
+/// refusal is never silent.
+#[test]
+fn an_empty_left_selection_beside_a_refusal_is_raised() -> Result<()> {
+    const TEMPLATE: &str = r#"
+    {
+        Mappings: { Wanted: { Keys: [ 'Env' ] } },
+        Resources: {
+            B: { Type: 'AWS::S3::Bucket', Properties: { Tags: [ { Key: 'Env', Value: 'allowed' } ] } },
+            C: { Type: 'AWS::S3::Bucket', Properties: { Tags: [ { Key: 'Env', Value: 'other' } ] } },
+            M: { Type: 'AWS::Serverless::Function', Properties: { Handler: 'index.handler', Tags: { Env: 'x' } } }
+        }
+    }
+    "#;
+    const REFUSED_LETS: &str =
+        "let wanted = Mappings.Wanted.Keys\nlet names = Resources.*.Properties.Tags[*][ Key IN %wanted ]";
+    const PLAIN_LETS: &str = "let names = ['allowed', 'other']";
+    const THE_TWIN_REFUSAL: &str = "a name bound outside the predicate";
+    // The sentence every refused-read line carries, whatever its verdict's wording.
+    const THE_LINE: &str = "reported here instead";
+    const FILTER: &str = "rule r { Resources.*[ Type == 'AWS::S3::Bucket' ][ Properties.Tags[ Key == 'Owner' ].Value == %names ] empty }";
+    const GATE: &str = "rule r when Resources.*[ Type == 'AWS::S3::Bucket' ].Properties.Tags[ Key == 'Owner' ].Value == %names { Resources.B.Type == 'AWS::S3::Bucket' }";
+    // (status; the refusal's texts in the registry; the refused-read lines; the records carry the
+    // refusal's text)
+    let run = |lets: &str, rule: &str| -> Result<(Status, usize, usize, bool)> {
+        let rules = format!("{lets}\n{rule}");
+        let rules_file = RulesFile::try_from(rules.as_str())?;
+        let mut root = root_scope(&rules_file, Rc::new(PathAwareValue::try_from(TEMPLATE)?));
+        let status = eval_rules_file(&rules_file, &mut root, None)?;
+        let registered = crate::rules::eval_context::registered_refusals()
+            .iter()
+            .filter(|text| text.contains(THE_TWIN_REFUSAL))
+            .count();
+        let lines = root
+            .warnings()
+            .filter(|line| line.contains(THE_LINE))
+            .count();
+        let records = format!("{:?}", root.reset_recorder().extract());
+        Ok((
+            status,
+            registered,
+            lines,
+            records.contains(THE_TWIN_REFUSAL),
+        ))
+    };
+    let mut cells = CellFailures::default();
+    for (label, lets, rule, wanted) in [
+        (
+            "the predicate `[ Properties.Tags[ Key == 'Owner' ].Value == %names ] empty` over buckets with no `Owner` tag, a refusal's marker in `%names`: raised, the clause fails closed (FAIL); the refusal registered once, in the record, no refused-read line",
+            REFUSED_LETS,
+            FILTER,
+            (Status::FAIL, 1, 0, true),
+        ),
+        (
+            "the control, `%names` a plain list: the empty selection deselects every bucket and `empty` PASSES; nothing registered, no line",
+            PLAIN_LETS,
+            FILTER,
+            (Status::PASS, 0, 0, false),
+        ),
+        (
+            "the gate `when Resources.*[ ... ].Properties.Tags[ Key == 'Owner' ].Value == %names`, a refusal's marker in `%names`: raised, the rule fails closed (FAIL); the refusal registered once, in the record, no refused-read line",
+            REFUSED_LETS,
+            GATE,
+            (Status::FAIL, 1, 0, true),
+        ),
+        (
+            "the control, `%names` a plain list: the gate over the empty selection leaves its rule not applicable (SKIP); nothing registered, no line",
+            PLAIN_LETS,
+            GATE,
+            (Status::SKIP, 0, 0, false),
+        ),
+    ] {
+        cells.check(label, wanted, run(lets, rule)?);
+    }
+    cells.assert_all_agreed();
+    Ok(())
+}
+
+/// A KEY FILTER's marker beside an EMPTY LEFT-HAND SELECTION leaves the selection's own answer, where a
+/// REFUSAL's marker beside it is raised (the sibling test above). Over a template with no bucket and an
+/// unrelated `AWS::IAM::Role` whose `Maps` hold one key the regex engine cannot be run over (thirty `a`
+/// characters under `/(?!x)((a+)+)b/`, the suite's budget-spending shape), `when Resources.*[ Type ==
+/// 'AWS::S3::Bucket' ].Properties.BucketName NOT IN Resources.*.Properties.Maps.*[ keys == /(?!x)((a+)+)b/
+/// ].*` selects nothing on the left and the key filter leaves its marker among the right-hand values; the
+/// gate is NOT APPLICABLE (SKIP), as it is with no marker in sight (the key `c` in the marker's place),
+/// nothing is registered, no record reads `refusal: true` and no refused-read line is written. The filter
+/// predicate `[ Properties.Tags[ Key == 'Owner' ].Value NOT IN %cfg ] empty` over a bucket whose tags
+/// hold no `Owner` deselects the bucket and PASSES the same way. With zero left-hand values no pair is
+/// built, so there is no pass for the hidden value to overturn and no comparison for the marker to leave
+/// undecided; a key filter's marker is not a refusal and is registered nowhere, so the decided answer
+/// leaves nothing silent. Raised, the shape failed its rule closed on a template that lacks the resource
+/// type whenever an unrelated map elsewhere spent the regex budget: a false refusal on the idiom that lets
+/// one ruleset run over templates that omit a resource type. The planted positive is the gate with a
+/// bucket named `b1` against the role's maps alone, `NOT IN Resources.R.Properties.Maps.*[ keys ==
+/// /(?!x)((a+)+)b/ ]` (the value under `aab` and the marker): one left-hand value passes against the
+/// listed value and may equal the one the marker hides, so the gate is raised and the rule fails closed
+/// (FAIL), which proves the key filter leaves its marker over this template. The status alone is read
+/// there: a raise registers the joined text it carries whatever the marker's kind. Written over
+/// `Resources.*.Properties.Maps` as the SKIP cells are, the same `b1` gate is NOT APPLICABLE instead: the
+/// bucket itself lacks `Maps`, a reference the document lacks stands among the right-hand values, and an
+/// absent operand is a decided NO for the one left-hand value whatever the marker hides (`AND(no,
+/// unknown)` is no), so `match_all` declines on it. That is the absent-reference reading of
+/// `docs/CLAUSES.md`, not the empty selection's, and it is why the planted positive scopes its right-hand
+/// side to the one resource that holds `Maps`.
+#[test]
+fn an_empty_left_selection_beside_a_key_filters_marker_keeps_its_answer() -> Result<()> {
+    let spends_the_budget = "a".repeat(30);
+    // `resources`: the resources beside the role whose `Maps` carry the key filter's marker (or, with
+    // `m1_key` a plain `c`, no marker).
+    let document = |resources: &str, m1_key: &str| {
+        format!(
+            "{{ Resources: {{ {resources}R: {{ Type: 'AWS::IAM::Role', Properties: {{ Maps: {{ M1: {{ {m1_key}: 'z' }}, M2: {{ aab: 'x' }} }} }} }} }} }}"
+        )
+    };
+    const NO_BUCKET: &str = "Q: { Type: 'AWS::SQS::Queue', Properties: { QueueName: 'q' } }, ";
+    const A_NAMED_BUCKET: &str =
+        "B: { Type: 'AWS::S3::Bucket', Properties: { BucketName: 'b1' } }, ";
+    const A_BUCKET_WITHOUT_OWNER: &str =
+        "B: { Type: 'AWS::S3::Bucket', Properties: { Tags: [ { Key: 'Env', Value: 'x' } ] } }, ";
+    const GATE: &str = "rule r when Resources.*[ Type == 'AWS::S3::Bucket' ].Properties.BucketName NOT IN Resources.*.Properties.Maps.*[ keys == /(?!x)((a+)+)b/ ].* { Resources.R.Type == 'AWS::IAM::Role' }";
+    // The planted positive's gate: the right-hand side scoped to the role, so no reference the document
+    // lacks stands among its values to decide the one left-hand value NO.
+    const GATE_OVER_THE_ROLE: &str = "rule r when Resources.*[ Type == 'AWS::S3::Bucket' ].Properties.BucketName NOT IN Resources.R.Properties.Maps.*[ keys == /(?!x)((a+)+)b/ ] { Resources.R.Type == 'AWS::IAM::Role' }";
+    const FILTER: &str = "let cfg = Resources.*.Properties.Maps.*[ keys == /(?!x)((a+)+)b/ ].*\nrule r { Resources.*[ Type == 'AWS::S3::Bucket' ][ Properties.Tags[ Key == 'Owner' ].Value NOT IN %cfg ] empty }";
+    // The sentence every refused-read line carries, whatever its verdict's wording.
+    const THE_LINE: &str = "reported here instead";
+    // (status; the texts in the refusal registry; the refused-read lines; a record reads `refusal: true`)
+    let run = |rules: &str, input: &str| -> Result<(Status, usize, usize, bool)> {
+        let rules_file = RulesFile::try_from(rules)?;
+        let mut root = root_scope(&rules_file, Rc::new(PathAwareValue::try_from(input)?));
+        let status = eval_rules_file(&rules_file, &mut root, None)?;
+        let registered = crate::rules::eval_context::registered_refusals().len();
+        let lines = root
+            .warnings()
+            .filter(|line| line.contains(THE_LINE))
+            .count();
+        let records = format!("{:?}", root.reset_recorder().extract());
+        Ok((status, registered, lines, records.contains("refusal: true")))
+    };
+    let mut cells = CellFailures::default();
+    for (label, rules, resources, m1_key, wanted) in [
+        (
+            "the gate over a template with no bucket, the key filter's marker among the right-hand values: not applicable (SKIP); nothing registered, no line, no refusal in the records",
+            GATE,
+            NO_BUCKET,
+            spends_the_budget.as_str(),
+            (Status::SKIP, 0, 0, false),
+        ),
+        (
+            "the control, the same template with no marker (`c` in the budget-spending key's place): not applicable (SKIP)",
+            GATE,
+            NO_BUCKET,
+            "c",
+            (Status::SKIP, 0, 0, false),
+        ),
+        (
+            "the predicate `[ Properties.Tags[ Key == 'Owner' ].Value NOT IN %cfg ] empty` over a bucket with no `Owner` tag, the marker in `%cfg`: the bucket is deselected and `empty` PASSES; nothing registered, no line",
+            FILTER,
+            A_BUCKET_WITHOUT_OWNER,
+            spends_the_budget.as_str(),
+            (Status::PASS, 0, 0, false),
+        ),
+        (
+            "the control, the predicate with no marker in `%cfg`: deselected, `empty` PASSES",
+            FILTER,
+            A_BUCKET_WITHOUT_OWNER,
+            "c",
+            (Status::PASS, 0, 0, false),
+        ),
+    ] {
+        cells.check(label, wanted, run(rules, &document(resources, m1_key))?);
+    }
+    cells.check(
+        "the planted positive, a bucket named `b1` against the role's maps alone (the value under `aab` and the marker): the one left-hand value passes against the listed value and may equal the hidden one, the gate is raised, the rule fails closed (FAIL)",
+        Status::FAIL,
+        run(
+            GATE_OVER_THE_ROLE,
+            &document(A_NAMED_BUCKET, spends_the_budget.as_str()),
+        )?
+        .0,
+    );
+    cells.assert_all_agreed();
+    Ok(())
+}
+
+/// The document the capture cells below share: `Cfg[ x | Kind == 'k' ]` captures the keys of the entries
+/// holding `Kind: k`, and the refused walk (`REFUSED_WALK`) adds the own-key refusal's marker to the same
+/// capture, so `%x` holds keys and a REFUSAL's marker; `Cfg` lacks `Missing`, and `Cfg.Mode.Ref` is among
+/// no key.
+const CAPTURED_KEYS_AND_A_REFUSAL: &str = r#"{
+    "Cfg": {
+        "Mode": { "Ref": "ModeParam" },
+        "Fallback": { "Kind": "k" },
+        "A": { "Kind": "k", "Sub": { "R1": { "Ref": "P" }, "P": { "Kind": "k" }, "Q": { "Kind": "k" } } },
+        "B": { "Kind": "k", "Sub": { "R1": { "Ref": "P" }, "P": { "Kind": "k" }, "Q": { "Kind": "k" } } }
+    }
+}"#;
+const REFUSED_WALK_INTO_X: &str =
+    "Cfg[*][ x | Mode exists or Kind == 'k' ].Sub[*][ s | R1 !exists ] !empty or Cfg.Fallback exists";
+const THE_OWN_KEY_REFUSAL: &str = "then no kept entry holds a key the predicate names";
+
+/// The record of a LEFT-hand value the document lacks, decided beside a REFUSAL's marker among the
+/// right-hand values, carries the retrieval's own reason as its lead ("Could not find key Missing", the
+/// finding a reader acts on) and the refusal's text beside it, and says the message embeds a refusal
+/// (`refusal: true`), so the console prints the record whole where it cuts every other message at its
+/// bound: `Cfg.Missing == %x` asserted with the keys and the refusal's marker in the capture `%x` fails on
+/// the absence, its record carries both, the refusal reaches the run's output on the stderr line in the
+/// absence wording, registered. A record with the refusal's text and no kind would be cut at the console's
+/// bound with the remedy and the path lost; a record with no message would leave the console reader
+/// without the reason the selection was refused for. The control without the marker records the retrieval's
+/// finding alone, with no message and `refusal: false`.
+#[test]
+fn an_absent_left_value_beside_a_refusal_records_the_absence_and_the_refusal_whole() -> Result<()> {
+    const THE_LINE: &str = "was decided by a value the document lacks";
+    // (status; the clause's records: the retrieval's finding naming `Missing`, the refusal's text, the
+    // record's `refusal: true`; the refused-read lines in the absence wording naming the refusal; the
+    // refusal registered)
+    let run = |rules: &str| -> Result<(Status, bool, bool, bool, usize, bool)> {
+        let rules_file = RulesFile::try_from(rules)?;
+        let mut root = root_scope(
+            &rules_file,
+            Rc::new(PathAwareValue::try_from(CAPTURED_KEYS_AND_A_REFUSAL)?),
+        );
+        let status = eval_rules_file(&rules_file, &mut root, None)?;
+        let lines = root
+            .warnings()
+            .filter(|line| line.contains(THE_LINE) && line.contains(THE_OWN_KEY_REFUSAL))
+            .count();
+        let registered = crate::rules::eval_context::registered_refusals()
+            .iter()
+            .any(|text| text.contains(THE_OWN_KEY_REFUSAL));
+        let mut records = String::new();
+        record_containers_under(
+            &root.reset_recorder().extract(),
+            "Cfg.Missing",
+            &mut records,
+        );
+        Ok((
+            status,
+            records.contains("Could not find key Missing"),
+            records.contains(THE_OWN_KEY_REFUSAL),
+            records.contains("refusal: true"),
+            lines,
+            registered,
+        ))
+    };
+    let mut cells = CellFailures::default();
+    cells.check(
+        "`Cfg.Missing == %x` asserted, `%x` the keys and the refusal's marker: FAIL on the absence; the record names `Missing` and carries the refusal, `refusal: true`; one line in the absence wording naming the refusal; registered",
+        (Status::FAIL, true, true, true, 1, true),
+        run(&format!(
+            "rule r {{ Cfg[ x | Kind == 'k' ] !empty  {REFUSED_WALK_INTO_X}  Cfg.Missing == %x }}"
+        ))?,
+    );
+    cells.check(
+        "the control, `%x` the keys alone: FAIL on the absence; the record names `Missing` and carries no refusal, `refusal: false`; no line, nothing registered",
+        (Status::FAIL, true, false, false, 0, false),
+        run("rule r { Cfg[ x | Kind == 'k' ] !empty  Cfg.Missing == %x }")?,
+    );
+    cells.assert_all_agreed();
+    Ok(())
+}
+
+/// The record of a LEFT-hand value that is a REFUSAL's marker, compared against a right-hand side holding
+/// no marker, carries the refusal's text as its message and says so (`refusal: true`), so the report names
+/// what was refused where the console would otherwise read the marker as a property the template lacks:
+/// `%x != 'zzz'` with the keys and the refusal's marker in the capture `%x` fails on the marker's pair
+/// asserted (a FAIL status under `match_all`) and raises the gate (`when %x != 'zzz'`, the rule failing
+/// closed), and in both roles the marker's comparison record carries the own-key refusal with `refusal:
+/// true` and the refusal is registered; asserted, the report's sentence for the record names a value that
+/// could not be read and carries the refusal, never "property [] to compare from is missing" (as a gate
+/// the report's rule entry carries the raise, and the condition's records are not among its clauses). No
+/// refused-read line is
+/// written in either role: the pair itself fails the assertion and raises the gate, so neither verdict is
+/// an unraised one (the line is for a refusal a decided clause never raised). The control, a LEFT-hand
+/// ABSENCE (`Cfg.Missing != 'zzz'`, a key the document lacks, no marker), keeps the released wording,
+/// "property [Missing] to compare from is missing", with no message and `refusal: false`.
+#[test]
+fn a_left_refusal_marker_against_a_plain_right_hand_side_records_the_refusal_whole() -> Result<()> {
+    const THE_MISSING_FROM: &str = "to compare from is missing";
+    const COULD_NOT_BE_READ: &str = "the value to compare from could not be read";
+    // The FAILING comparison records under `needle` (the keys' passing pairs beside the marker are not
+    // read): (the record's message, its `refusal` flag), one per record.
+    fn failing_comparison_records(
+        record: &EventRecord<'_>,
+        needle: &str,
+        out: &mut Vec<(Option<String>, bool)>,
+    ) {
+        if record.context.contains(needle) {
+            if let Some(RecordType::ClauseValueCheck(ClauseCheck::Comparison(check))) =
+                &record.container
+            {
+                if check.status == Status::FAIL {
+                    out.push((check.message.clone(), check.refusal));
+                }
+            }
+        }
+        for child in &record.children {
+            failing_comparison_records(child, needle, out);
+        }
+    }
+    // (status; a failing comparison record of the clause whose message holds the refusal with
+    // `refusal: true`; one with no message and `refusal: false`; the report's sentences name a value
+    // that could not be read and hold the refusal; the report's sentences hold the missing-property
+    // wording; the lines naming the refusal; the refusal registered)
+    type Seen = (Status, bool, bool, bool, bool, usize, bool);
+    let run = |rules: &str, needle: &str| -> Result<Seen> {
+        let rules_file = RulesFile::try_from(rules)?;
+        let mut root = root_scope(
+            &rules_file,
+            Rc::new(PathAwareValue::try_from(CAPTURED_KEYS_AND_A_REFUSAL)?),
+        );
+        let status = eval_rules_file(&rules_file, &mut root, None)?;
+        let lines = root
+            .warnings()
+            .filter(|line| line.contains(THE_OWN_KEY_REFUSAL))
+            .count();
+        let registered = crate::rules::eval_context::registered_refusals()
+            .iter()
+            .any(|text| text.contains(THE_OWN_KEY_REFUSAL));
+        let extracted = root.reset_recorder().extract();
+        let mut records = Vec::new();
+        failing_comparison_records(&extracted, needle, &mut records);
+        let refused = records.iter().any(|(message, refusal)| {
+            *refusal
+                && message
+                    .as_deref()
+                    .is_some_and(|message| message.contains(THE_OWN_KEY_REFUSAL))
+        });
+        let plain = records
+            .iter()
+            .any(|(message, refusal)| !*refusal && message.is_none());
+        let report = format!(
+            "{:?}",
+            crate::rules::eval_context::simplified_json_from_root(&extracted)?.not_compliant
+        );
+        Ok((
+            status,
+            refused,
+            plain,
+            report.contains(COULD_NOT_BE_READ) && report.contains(THE_OWN_KEY_REFUSAL),
+            report.contains(THE_MISSING_FROM),
+            lines,
+            registered,
+        ))
+    };
+    let mut cells = CellFailures::default();
+    cells.check(
+        "`%x != 'zzz'` asserted, `%x` the keys and the refusal's marker: FAIL on the marker's pair; its record carries the refusal with `refusal: true`; the report names a value that could not be read with the refusal, not a missing property; no line; registered",
+        (Status::FAIL, true, false, true, false, 0, true),
+        run(
+            &format!(
+                "rule r {{ Cfg[ x | Kind == 'k' ] !empty  {REFUSED_WALK_INTO_X}  %x != 'zzz' }}"
+            ),
+            "%x",
+        )?,
+    );
+    cells.check(
+        "`when %x != 'zzz'` over the same capture: the gate raised on the marker, the rule fails closed (FAIL); the marker's record carries the refusal with `refusal: true`; the report's rule entry carries the raise (the condition's own records are not among the report's clauses, so neither sentence is there); no line; registered",
+        (Status::FAIL, true, false, false, false, 0, true),
+        run(
+            &format!(
+                "rule r when Cfg[ x | Kind == 'k' ] !empty  {REFUSED_WALK_INTO_X}  %x != 'zzz' {{ Cfg exists }}"
+            ),
+            "%x",
+        )?,
+    );
+    cells.check(
+        "the control, `Cfg.Missing != 'zzz'` asserted, a key the document lacks and no marker: FAIL on the absence; the record has no message and `refusal: false`; the report keeps the missing-property wording; no line; nothing registered",
+        (Status::FAIL, false, true, false, true, 0, false),
+        run("rule r { Cfg.Missing != 'zzz' }", "Cfg.Missing")?,
+    );
+    cells.assert_all_agreed();
+    Ok(())
+}
+
+/// The record of a left-hand value no listed entry accepted under a positive `IN`, paired with a REFUSAL's
+/// marker, carries the refusal's text as its message and says so (`refusal: true`), so the console prints
+/// the reason the value's membership is unknown whole beside the value: `Cfg.Mode.Ref IN %x` asserted
+/// with the keys and the refusal's marker in `%x`, `Ref` among no key, fails on the marker's pair, whose
+/// record is the one place the report names the refusal (no line is written: the failure carries it). The
+/// control with the keys alone fails on a decided membership, its record with no message and
+/// `refusal: false`.
+#[test]
+fn an_unmatched_value_beside_a_refusal_under_a_positive_in_records_the_refusal_whole() -> Result<()>
+{
+    // (status; the clause's records: a comparison record, the refusal's text, `refusal: true`; the
+    // refused-read lines)
+    let run = |rules: &str| -> Result<(Status, bool, bool, bool, usize)> {
+        let rules_file = RulesFile::try_from(rules)?;
+        let mut root = root_scope(
+            &rules_file,
+            Rc::new(PathAwareValue::try_from(CAPTURED_KEYS_AND_A_REFUSAL)?),
+        );
+        let status = eval_rules_file(&rules_file, &mut root, None)?;
+        let lines = root
+            .warnings()
+            .filter(|line| line.contains("reported here instead"))
+            .count();
+        let mut records = String::new();
+        record_containers_under(
+            &root.reset_recorder().extract(),
+            "Cfg.Mode.Ref",
+            &mut records,
+        );
+        Ok((
+            status,
+            records.contains("ClauseValueCheck("),
+            records.contains(THE_OWN_KEY_REFUSAL),
+            records.contains("refusal: true"),
+            lines,
+        ))
+    };
+    let mut cells = CellFailures::default();
+    cells.check(
+        "`Cfg.Mode.Ref IN %x` asserted, `%x` the keys and the refusal's marker, `Ref` among no key: FAIL on the marker's pair; its record carries the refusal with `refusal: true`; no line",
+        (Status::FAIL, true, true, true, 0),
+        run(&format!(
+            "rule r {{ Cfg[ x | Kind == 'k' ] !empty  {REFUSED_WALK_INTO_X}  Cfg.Mode.Ref IN %x }}"
+        ))?,
+    );
+    cells.check(
+        "the control, `%x` the keys alone: FAIL on a decided membership; a record with no refusal and `refusal: false`; no line",
+        (Status::FAIL, true, false, false, 0),
+        run("rule r { Cfg[ x | Kind == 'k' ] !empty  Cfg.Mode.Ref IN %x }")?,
+    );
+    cells.assert_all_agreed();
+    Ok(())
+}
+
+/// A document `[]` on the left that a comparison ANSWERED is a compared value beside a marker, not an
+/// absence: `when Resources.A.Properties.Tags == %x` over `Tags: []` with `%x` holding a document `[]`
+/// (a key filter's selection, `Maps.*[ keys == /re/ ]` over `{ aab: [] }`: the filter hands on the value
+/// under each key it selects, here the `[]` itself) and the marker of the map whose key spent the regex's
+/// budget has the `[]` matched by `==` beside the marker's unknown, and `AND(yes, unknown)` is unknown, so
+/// the gate is raised and the rule fails closed (FAIL), as it does over `Tags: ['a']` against `['a']` and
+/// the marker; read as an absence, the matched list would decide the clause and the rule would be reported
+/// not applicable at exit 0 where the hidden value may be the one `Tags` differs from. The marker alone on
+/// the right leaves the `[]` an absence (not applicable, SKIP), as a missing `Tags` beside the `[]` and the
+/// marker is; with no marker the `[]` matches and the body runs (PASS). The selection is read through the
+/// bare filter: a `.aab` written after it is a key read on the `[]` the filter handed on, a value the
+/// document lacks, and the right-hand side then held no `[]` at all (the shape probe,
+/// `the_key_filter_selection_shape_beside_an_empty_list_entry_is_read_from_the_values`).
+#[test]
+fn an_empty_left_list_a_comparison_answered_is_a_compared_value_beside_a_marker() -> Result<()> {
+    let document = |a_properties: &str, m1_key: &str, m2: &str| {
+        format!(
+            "{{ Resources: {{ A: {{ Type: 'T', Properties: {{ {a_properties} }} }}, K: {{ Type: 'K', Properties: {{ Maps: {{ M1: {{ {m1_key}: 'z' }}{m2} }} }} }} }} }}"
+        )
+    };
+    let spends_the_budget = "a".repeat(30);
+    const RULES: &str = "let x = Resources.K.Properties.Maps.*[ keys == /(?!x)((a+)+)b/ ]\nrule r when Resources.A.Properties.Tags == %x { Resources.A.Type == 'T' }";
+    let run = |input: &str| -> Result<Status> {
+        let rules_file = RulesFile::try_from(RULES)?;
+        let mut root = root_scope(&rules_file, Rc::new(PathAwareValue::try_from(input)?));
+        eval_rules_file(&rules_file, &mut root, None)
+    };
+    let mut cells = CellFailures::default();
+    for (label, a_properties, m1_key, m2, wanted) in [
+        (
+            "`Tags: []` against `[]` and the marker: the `[]` matched, the marker's pair unknown, the gate raised (FAIL)",
+            "Tags: []",
+            spends_the_budget.as_str(),
+            ", M2: { aab: [] }",
+            Status::FAIL,
+        ),
+        (
+            "`Tags: ['a']` against `['a']` and the marker: matched beside the unknown, raised (FAIL), the parity control",
+            "Tags: ['a']",
+            spends_the_budget.as_str(),
+            ", M2: { aab: ['a'] }",
+            Status::FAIL,
+        ),
+        (
+            "`Tags: []` against the marker alone: the pair is the list's only result, an absence, not applicable (SKIP)",
+            "Tags: []",
+            spends_the_budget.as_str(),
+            "",
+            Status::SKIP,
+        ),
+        (
+            "`Tags` missing against `[]` and the marker: the absence decides, not applicable (SKIP), the parity control",
+            "Other: 1",
+            spends_the_budget.as_str(),
+            ", M2: { aab: [] }",
+            Status::SKIP,
+        ),
+        (
+            "`Tags: []` against `[]` with no marker: matched, the body runs (PASS)",
+            "Tags: []",
+            "c",
+            ", M2: { aab: [] }",
+            Status::PASS,
+        ),
+    ] {
+        cells.check(label, wanted, run(&document(a_properties, m1_key, m2))?);
+    }
+    cells.assert_all_agreed();
+    Ok(())
+}
+
+/// An ABSENT left-hand value beside values the marker's pair alone met, under a positive `IN` against the
+/// marker alone, decides a `match_all` clause as its missing-key twin's FAIL status does: `when
+/// Resources.*[ Type == 'T' ].Properties.Tags IN %x` with the marker alone in `%x`, `Tags: []` on one
+/// resource and `Tags: v` on another, is not applicable (SKIP), as it is over a resource lacking `Tags`
+/// (`AND(no, unknown)` is no); raised on the marker, one empty list would fail its rule closed where the
+/// missing key is decided. Under `some` the absence decides nothing (`OR(no, unknown)` is unknown: the
+/// hidden entry may be the one `v` is among), and both spellings are raised (FAIL).
+#[test]
+fn an_absent_left_value_beside_a_compared_one_decides_a_match_all_membership_against_the_marker_alone(
+) -> Result<()> {
+    let document = |a_properties: &str| {
+        format!(
+            "{{ Resources: {{ A: {{ Type: 'T', Properties: {{ {a_properties} }} }}, B: {{ Type: 'T', Properties: {{ Tags: 'v' }} }}, K: {{ Type: 'K', Properties: {{ Maps: {{ M1: {{ {long}: 'z' }} }} }} }} }} }}",
+            long = "a".repeat(30)
+        )
+    };
+    let rules = |quantifier: &str| {
+        format!(
+            "let x = Resources.K.Properties.Maps.*[ keys == /(?!x)((a+)+)b/ ].*\nrule r when {quantifier}Resources.*[ Type == 'T' ].Properties.Tags IN %x {{ Resources.B.Type == 'T' }}"
+        )
+    };
+    let run = |rules: &str, input: &str| -> Result<Status> {
+        let rules_file = RulesFile::try_from(rules)?;
+        let mut root = root_scope(&rules_file, Rc::new(PathAwareValue::try_from(input)?));
+        eval_rules_file(&rules_file, &mut root, None)
+    };
+    let mut cells = CellFailures::default();
+    for (label, quantifier, a_properties, wanted) in [
+        (
+            "`Tags: []` beside `Tags: v` against the marker alone, `match_all`: decided by the absence, not applicable (SKIP)",
+            "",
+            "Tags: []",
+            Status::SKIP,
+        ),
+        (
+            "`Tags` missing beside `Tags: v` against the marker alone, `match_all`: not applicable (SKIP), the parity control",
+            "",
+            "Other: 1",
+            Status::SKIP,
+        ),
+        (
+            "`Tags: []` beside `Tags: v` against the marker alone, `some`: raised (FAIL)",
+            "some ",
+            "Tags: []",
+            Status::FAIL,
+        ),
+        (
+            "`Tags` missing beside `Tags: v` against the marker alone, `some`: raised (FAIL), the parity control",
+            "some ",
+            "Other: 1",
+            Status::FAIL,
+        ),
+    ] {
+        cells.check(label, wanted, run(&rules(quantifier), &document(a_properties))?);
+    }
+    cells.assert_all_agreed();
+    Ok(())
+}
+
+/// A document `[]` on the RIGHT is a PRESENT value to a marker on the left, not an absence: the operators
+/// answer every resolved left-hand value against it (`!=` holds for a scalar, `NOT IN []` for every value),
+/// so the marker beside it stays undecided and the gate is raised, as beside any value. `when %cfg !=
+/// Resources.B.Properties.Tags` with the marker alone in `%cfg` (a key filter's, over the one map whose key
+/// spends the regex's budget) over `Tags: []` fails its rule closed (FAIL), as it does over `Tags: 'x'`;
+/// over a `B` lacking `Tags` the right-hand side is absent as a whole, the marker's pair is decided with
+/// its neighbours and the rule is not applicable (SKIP). Read as an absence, the `[]` row would skip the
+/// rule where the value the marker hides is compared against a list it may differ from.
+#[test]
+fn a_document_empty_list_on_the_right_is_a_present_value_to_a_left_hand_marker() -> Result<()> {
+    let document = |b_properties: &str| {
+        format!(
+            "{{ Resources: {{ B: {{ Type: 'T', Properties: {{ {b_properties} }} }}, K: {{ Type: 'K', Properties: {{ Maps: {{ M1: {{ {long}: 'z' }} }} }} }} }} }}",
+            long = "a".repeat(30)
+        )
+    };
+    const RULES: &str = "let cfg = Resources.K.Properties.Maps.*[ keys == /(?!x)((a+)+)b/ ].*\nrule r when %cfg != Resources.B.Properties.Tags { Resources.B.Type == 'T' }";
+    let run = |input: &str| -> Result<Status> {
+        let rules_file = RulesFile::try_from(RULES)?;
+        let mut root = root_scope(&rules_file, Rc::new(PathAwareValue::try_from(input)?));
+        eval_rules_file(&rules_file, &mut root, None)
+    };
+    let mut cells = CellFailures::default();
+    for (label, b_properties, wanted) in [
+        (
+            "`%cfg != Tags` over `Tags: []`, the marker alone on the left: the document `[]` is a present value, the marker against it is unknown, raised (FAIL)",
+            "Tags: []",
+            Status::FAIL,
+        ),
+        (
+            "`%cfg != Tags` over a `B` lacking `Tags`: the right-hand side absent as a whole, decided, not applicable (SKIP)",
+            "Other: 1",
+            Status::SKIP,
+        ),
+        (
+            "`%cfg != Tags` over `Tags: 'x'`: the marker against a value is unknown, raised (FAIL), the parity control for the `[]` row",
+            "Tags: 'x'",
+            Status::FAIL,
+        ),
+    ] {
+        cells.check(label, wanted, run(&document(b_properties))?);
+    }
+    cells.assert_all_agreed();
+    Ok(())
+}
+
+/// A capture holding keys beside a refused walk's marker, compared `NOT IN` a document `[]` in a `when`
+/// condition, is RAISED, never skipped: over the `Cfg` map whose own-key walk `Cfg[*][ x | Mode exists or
+/// Kind == 'k' ].Sub[*][ s | R1 !exists ]` is refused for `A` and `B`, every resolved value in `%x` passes
+/// `NOT IN []` (no element contains it), so the value the marker hides would pass too, and the condition's
+/// answer is unknown: the gate is raised on the refusal and the rule fails closed (FAIL) with its body
+/// never reached. Read as an absence, the `[]` would decide the marker's pair NO against its passing
+/// neighbours, the condition would read not applicable and the body written to fail would never be
+/// checked at a passing exit, with a present `Denied` reported as a value the document lacks. With `Denied`
+/// ABSENT the right-hand side is absent as a whole, every pair is decided and the rule is not applicable
+/// (SKIP), the released reading of a reference the document lacks.
+#[test]
+fn a_capture_beside_a_refused_walk_not_in_a_document_empty_list_is_raised_not_skipped() -> Result<()>
+{
+    let document = |tail: &str| {
+        format!(
+            "{{ Cfg: {{ Mode: {{ Ref: 'ModeParam' }}, Fallback: {{ Kind: 'k' }}, A: {{ Kind: 'k', Sub: {{ R1: {{ Ref: 'P' }}, P: {{ Kind: 'k' }}, Q: {{ Kind: 'k' }} }} }}, B: {{ Kind: 'k', Sub: {{ R1: {{ Ref: 'P' }}, P: {{ Kind: 'k' }}, Q: {{ Kind: 'k' }} }} }} }}{tail} }}"
+        )
+    };
+    // The body is written to FAIL, so a condition wrongly read as not applicable shows as SKIP where a
+    // raised condition and a checked body both read FAIL.
+    const RULES: &str = "rule r when Cfg[ x | Kind == 'k' ] !empty  Cfg[*][ x | Mode exists or Kind == 'k' ].Sub[*][ s | R1 !exists ] !empty or Cfg.Fallback exists  %x NOT IN Denied { Cfg.Mode.Ref == 'Other' }";
+    let run = |input: &str| -> Result<Status> {
+        let rules_file = RulesFile::try_from(RULES)?;
+        let mut root = root_scope(&rules_file, Rc::new(PathAwareValue::try_from(input)?));
+        eval_rules_file(&rules_file, &mut root, None)
+    };
+    let mut cells = CellFailures::default();
+    for (label, tail, wanted) in [
+        (
+            "`when %x NOT IN Denied` over `Denied: []`, the capture holding keys beside the refusal's marker: a present `[]` every value passes against, the marker unknown, raised (FAIL), the rule not skipped",
+            ", Denied: []",
+            Status::FAIL,
+        ),
+        (
+            "`when %x NOT IN Denied` with `Denied` absent: the right-hand side absent as a whole, decided, not applicable (SKIP)",
+            "",
+            Status::SKIP,
+        ),
+    ] {
+        cells.check(label, wanted, run(&document(tail))?);
+    }
+    cells.assert_all_agreed();
+    Ok(())
+}
+
+/// The shape a key filter's selection takes beside a map whose entry is an empty list, read from the
+/// resolved values themselves: over `Maps: { M1: { <a key that spends the regex's budget>: z }, M2: { aab:
+/// [] } }`, `Maps.*[ keys == /re/ ]` holds the marker the filter leaves for `M1` and the document `[]`
+/// under `M2`'s `aab`, since a key filter hands on the VALUE under each key it selects. A part written
+/// after the filter is read on that value, not on the map it came from: `Maps.*[ keys == /re/ ].aab`
+/// reads the key `aab` on the `[]` itself, a key read on a list, so the `[]` comes back as a value the
+/// document lacks (an unresolved record, kind `Absent`) beside the marker; `Maps.*[ keys == /re/ ].*`
+/// enumerates the `[]`, which has no element, so it comes back as the enumeration's own record (kind
+/// `EmptyEnumeration`, the record a key filter's right-hand side reads as the empty set) beside the
+/// marker. Neither spelling holds a resolved `[]`. The dump of each selection is the assertion's message,
+/// so a reader of a red sees the shape met. The bare filter is the route to a document `[]` beside a key
+/// filter's marker; the cells on that shape read their `%x` through it.
+#[test]
+fn the_key_filter_selection_shape_beside_an_empty_list_entry_is_read_from_the_values() -> Result<()>
+{
+    let document = format!(
+        "{{ Resources: {{ A: {{ Type: 'T', Properties: {{ Maps: {{ M1: {{ {long}: 'z' }}, M2: {{ aab: [] }} }} }} }} }} }}",
+        long = "a".repeat(30)
+    );
+    const RULES: &str = "let bare = Resources.A.Properties.Maps.*[ keys == /(?!x)((a+)+)b/ ]\nlet by_key = Resources.A.Properties.Maps.*[ keys == /(?!x)((a+)+)b/ ].aab\nlet by_star = Resources.A.Properties.Maps.*[ keys == /(?!x)((a+)+)b/ ].*\nrule r { Resources exists }";
+    let rules_file = RulesFile::try_from(RULES)?;
+    let mut root = root_scope(
+        &rules_file,
+        Rc::new(PathAwareValue::try_from(document.as_str())?),
+    );
+    // (markers; document empty lists; other resolved values; values the document lacks; enumerations
+    // over an empty collection; the whole selection)
+    let empty_list = |value: &PathAwareValue| matches!(value, PathAwareValue::List((_, elements)) if elements.is_empty());
+    let shape = |selection: &[QueryResult]| -> (usize, usize, usize, usize, usize, usize) {
+        let count = |keep: &dyn Fn(&QueryResult) -> bool| {
+            selection.iter().filter(|value| keep(value)).count()
+        };
+        (
+            count(
+                &|value: &QueryResult| matches!(value, QueryResult::UnResolved(ur) if undecidable_reason(ur).is_some()),
+            ),
+            count(
+                &|value: &QueryResult| matches!(value, QueryResult::Resolved(v) if empty_list(v)),
+            ),
+            count(
+                &|value: &QueryResult| matches!(value, QueryResult::Resolved(v) if !empty_list(v)),
+            ),
+            count(
+                &|value: &QueryResult| matches!(value, QueryResult::UnResolved(ur) if matches!(ur.kind, UnResolvedKind::Absent)),
+            ),
+            count(&|value: &QueryResult| {
+                matches!(
+                    value,
+                    QueryResult::UnResolved(ur) if matches!(ur.kind, UnResolvedKind::EmptyEnumeration)
+                )
+            }),
+            selection.len(),
+        )
+    };
+    let bare = root.resolve_variable("bare")?;
+    let by_key = root.resolve_variable("by_key")?;
+    let by_star = root.resolve_variable("by_star")?;
+    let mut cells = CellFailures::default();
+    cells.check(
+        &format!(
+            "`Maps.*[ keys == /re/ ]`: the marker and the document `[]`, nothing else; met {bare:?}"
+        ),
+        (1, 1, 0, 0, 0, 2),
+        shape(&bare),
+    );
+    cells.check(
+        &format!(
+            "`Maps.*[ keys == /re/ ].aab`: the marker and the key read on the `[]`, a value the document lacks; met {by_key:?}"
+        ),
+        (1, 0, 0, 1, 0, 2),
+        shape(&by_key),
+    );
+    cells.check(
+        &format!(
+            "`Maps.*[ keys == /re/ ].*`: the marker and the enumeration over the `[]`, no element; met {by_star:?}"
+        ),
+        (1, 0, 0, 0, 1, 2),
+        shape(&by_star),
+    );
+    cells.assert_all_agreed();
+    Ok(())
+}
+
+/// A `some` clause under a NEGATED comparator whose every left-hand value is decided NO beside a document
+/// `[]` among the right-hand values and a key filter's marker is SETTLED, not raised: `[ some Properties.Name
+/// != %x ] empty` with `%x` = `Maps.*[ keys == /re/ ]` over `{ aab: [] }` (the filter hands on the `[]`
+/// under `aab`) and the marker of the map whose key spent the regex's budget, `Name` a scalar, has `Name`
+/// refused against the `[]` on kinds, a decided no in both polarities (the kinds refusal is a decided no
+/// outside membership), so every left-hand value is decided NO (`settled_no`), the gate declines and the
+/// entry deselects (PASS under `empty`, FAIL under `!empty`). A key filter's marker is no refusal, so
+/// nothing is registered and no line is written. The control without the marker reads the same. Read
+/// through a `.aab` after the filter, `%x` held the marker and a value the document lacks (the key read
+/// on the `[]` itself) and no `[]`, and a `some` beside an absence and a marker is raised, not settled.
+#[test]
+fn a_some_clause_decided_beside_an_empty_right_hand_list_and_a_key_filters_marker_is_settled(
+) -> Result<()> {
+    let document = |m1_key: &str| {
+        format!(
+            "{{ Resources: {{ B: {{ Type: 'AWS::S3::Bucket', Properties: {{ Name: 'n' }} }}, A: {{ Type: 'AWS::IAM::Role', Properties: {{ Maps: {{ M1: {{ {m1_key}: 'z' }}, M2: {{ aab: [] }} }} }} }} }} }}"
+        )
+    };
+    let marker = document(&"a".repeat(30));
+    let control = document("c");
+    // (status; the refused-read lines; the registry's size)
+    let run = |tail: &str, input: &str| -> Result<(Status, usize, usize)> {
+        let rules = format!(
+            "let x = Resources.A.Properties.Maps.*[ keys == /(?!x)((a+)+)b/ ]\nrule r {{ Resources.*[ Type == 'AWS::S3::Bucket' ][ some Properties.Name != %x ]{tail} }}"
+        );
+        let rules_file = RulesFile::try_from(rules.as_str())?;
+        let mut root = root_scope(&rules_file, Rc::new(PathAwareValue::try_from(input)?));
+        let status = eval_rules_file(&rules_file, &mut root, None)?;
+        let lines = root
+            .warnings()
+            .filter(|line| line.contains("reported here instead"))
+            .count();
+        let registered = crate::rules::eval_context::registered_refusals().len();
+        Ok((status, lines, registered))
+    };
+    let mut cells = CellFailures::default();
+    for (label, input) in [
+        ("beside the key filter's marker", marker.as_str()),
+        ("over the control (no marker)", control.as_str()),
+    ] {
+        cells.check(
+            &format!("`[ some Properties.Name != %x ] empty` with `[]` in `%x`, {label}: settled NO, the entry deselected (PASS), no line, nothing registered"),
+            (Status::PASS, 0, 0),
+            run(" empty", input)?,
+        );
+        cells.check(
+            &format!("`[ some Properties.Name != %x ] !empty` with `[]` in `%x`, {label}: settled NO, the entry deselected (FAIL), no line, nothing registered"),
+            (Status::FAIL, 0, 0),
+            run(" !empty", input)?,
+        );
+    }
+    cells.assert_all_agreed();
+    Ok(())
+}
+
+/// A refusal to compare kinds beside a KEY FILTER's marker is a plain decided no, never a refusal's
+/// record: `some Resources.B.Properties.Name != %x` with `%x` = `Maps.*[ keys == /re/ ]` holding the `[]`
+/// the filter hands on and the marker of the map whose key spent the regex's budget has `Name` refused
+/// against the `[]` on kinds, a decided no (FAIL asserted); the pair's record keeps the operators' own
+/// reason and reads `refusal: false`, as every record beside a key filter's marker does
+/// (`ComparisonClauseCheck::refusal`: "a key filter's reason is no refusal and reads false"), nothing is
+/// registered and no refused-read line is written. The control is the same refusal of kinds beside a
+/// REFUSAL's marker (`Vals.Port != %x` with `Port: 22`, the keys and an own-key refusal's marker in
+/// `%x`): the record carries the kinds sentence as a refusal (`refusal: true`), the refusal registered.
+/// Before this the arm read either kind of marker, so the record beside the budget marker carried the
+/// kinds sentence flagged as a refusal the console prints whole.
+#[test]
+fn a_refusal_of_kinds_beside_a_key_filters_marker_is_no_refusal_record() -> Result<()> {
+    const THE_SENTENCE: &str = "kinds the comparator does not compare";
+    let budget_document = format!(
+        "{{ Resources: {{ B: {{ Type: 'AWS::S3::Bucket', Properties: {{ Name: 'n' }} }}, A: {{ Type: 'AWS::IAM::Role', Properties: {{ Maps: {{ M1: {{ {}: 'z' }}, M2: {{ aab: [] }} }} }} }} }} }}",
+        "a".repeat(30)
+    );
+    const BUDGET_RULES: &str = "let x = Resources.A.Properties.Maps.*[ keys == /(?!x)((a+)+)b/ ]\nrule r { some Resources.B.Properties.Name != %x }";
+    const REFUSAL_DOC: &str = r#"{
+        "Cfg": {
+            "Mode": { "Ref": "ModeParam" },
+            "Fallback": { "Kind": "k" },
+            "A": { "Kind": "k", "Sub": { "R1": { "Ref": "P" }, "P": { "Kind": "k" }, "Q": { "Kind": "k" } } },
+            "B": { "Kind": "k", "Sub": { "R1": { "Ref": "P" }, "P": { "Kind": "k" }, "Q": { "Kind": "k" } } }
+        },
+        "Vals": { "Port": 22 }
+    }"#;
+    const REFUSAL_RULES: &str = "rule r { Cfg[ x | Kind == 'k' ] !empty  Cfg[*][ x | Mode exists or Kind == 'k' ].Sub[*][ s | R1 !exists ] !empty or Cfg.Fallback exists  Vals.Port != %x }";
+    // (status; `refusal: true` records under the left-hand query; `refusal: false` records there; the
+    // kinds sentence among them; the refused-read lines; the registry's size)
+    let run = |rules: &str,
+               input: &str,
+               under: &str|
+     -> Result<(Status, usize, usize, bool, usize, usize)> {
+        let rules_file = RulesFile::try_from(rules)?;
+        let mut root = root_scope(&rules_file, Rc::new(PathAwareValue::try_from(input)?));
+        let status = eval_rules_file(&rules_file, &mut root, None)?;
+        let lines = root
+            .warnings()
+            .filter(|line| line.contains("reported here instead"))
+            .count();
+        let registered = crate::rules::eval_context::registered_refusals().len();
+        let mut records = String::new();
+        record_containers_under(&root.reset_recorder().extract(), under, &mut records);
+        Ok((
+            status,
+            records.matches("refusal: true").count(),
+            records.matches("refusal: false").count(),
+            records.contains(THE_SENTENCE),
+            lines,
+            registered,
+        ))
+    };
+    let mut cells = CellFailures::default();
+    let (status, refusals, plain, sentence, lines, registered) = run(
+        BUDGET_RULES,
+        budget_document.as_str(),
+        "Resources.B.Properties.Name",
+    )?;
+    cells.check(
+        "`some Resources.B.Properties.Name != %x` with the `[]` and the key filter's budget marker in `%x`: a decided no (FAIL), no record is a refusal's, the `[]` pair's record reads `refusal: false` with no kinds sentence, no line, nothing registered",
+        (Status::FAIL, 0, true, false, 0, 0),
+        (status, refusals, plain >= 1, sentence, lines, registered),
+    );
+    let (status, refusals, _, sentence, _, registered) =
+        run(REFUSAL_RULES, REFUSAL_DOC, "Vals.Port")?;
+    cells.check(
+        "control: `Vals.Port != %x` with `Port: 22` and the keys beside an own-key REFUSAL's marker: FAIL, the refused pairs' records carry the kinds sentence as refusals (`refusal: true`), the refusal registered",
+        (Status::FAIL, true, true, true),
+        (status, refusals >= 1, sentence, registered >= 1),
+    );
+    cells.assert_all_agreed();
+    Ok(())
+}
+
+/// The document of the two-refusal raise cell: the captured keys and the own-key refusal's marker
+/// (`CAPTURED_KEYS_AND_A_REFUSAL`'s `Cfg`) beside a function whose map-shaped tags a key filter refuses
+/// to read (`Tags[*][ Key IN %wanted ]` leaves its one marker in the selection).
+const TWO_KINDS_OF_REFUSAL: &str = r#"{
+    "Mappings": { "Wanted": { "Keys": [ "Env" ] } },
+    "Resources": {
+        "M": { "Type": "AWS::Serverless::Function", "Properties": { "Handler": "index.handler", "Tags": { "Env": "x" } } }
+    },
+    "Cfg": {
+        "Mode": { "Ref": "ModeParam" },
+        "Fallback": { "Kind": "k" },
+        "A": { "Kind": "k", "Sub": { "R1": { "Ref": "P" }, "P": { "Kind": "k" }, "Q": { "Kind": "k" } } },
+        "B": { "Kind": "k", "Sub": { "R1": { "Ref": "P" }, "P": { "Kind": "k" }, "Q": { "Kind": "k" } } }
+    }
+}"#;
+
+/// A comparison that reads a `let`-bound selection holding a refusal's marker is raised at the bare read
+/// of the binding, BEFORE any pair is compared: the read of the binding's notes (`PassedOn::read_bare` at
+/// the head of `binary_operation` for a left operand, in `eval_guard_access_clause` for a right one)
+/// refuses the selection outside a filter predicate (`LacksKeysNote::refuse_bare_read`, the held
+/// `refuse`), so the raised text is that ONE refusal's sentence, unnumbered, whatever else the comparison
+/// would have met among its values. Pinned as it is, a known gap: `when some %names NOT IN %x` with
+/// `%names` a key filter's refusal (the one marker of a selection over map-shaped tags, bound by `let`)
+/// and `%x` the captured keys beside an own-key refusal's marker meets two refusals, and the raise names
+/// the key filter's alone; the own-key refusal is registered by the walk that delivered its marker and is
+/// in that walk's records, in no error of this clause. The same two texts asserted are the registered
+/// refusal the console prints whole (`refusal: true`). The control meeting ONE refusal (`%x` the keys
+/// alone) is raised on the same one text. `when Resources.B.Type IN %names` with two refusals in the
+/// binding (two map-tagged functions, one marker each) and nothing resolved in `%names` is raised on the
+/// first note's text, and that one text is registered; the second refusal is unreported there (the
+/// let-bound known gap, which a later unit closes). The numbered raise (`raised_refusal_text`,
+/// `(1) ... (2) ...`, the gate and the compared-nothing arm) is reached where two refusals stand AMONG
+/// one comparison's VALUES, which a `let`-bound selection delivers INSIDE a filter predicate, where it is
+/// read as its values, and never at a bare read outside one: the same two-refusal `%names` under
+/// `[ Properties.Tags[*] IN %names ] empty` compares nothing and is raised on both, numbered, with the
+/// two sentences registered and the numbered text registered by nobody (the refusal test accepts it
+/// part by part).
+#[test]
+fn a_raise_beside_two_refusals_names_both_in_registration_order() -> Result<()> {
+    const THE_KEY_FILTER_REFUSAL: &str = "a name bound outside the predicate";
+    const LETS: &str = "let wanted = Mappings.Wanted.Keys\nlet names = Resources.*[ Type == 'AWS::Serverless::Function' ].Properties.Tags[*][ Key IN %wanted ]\n";
+    // (the raised text, read from the records and the run's own error alike; how many of the two texts are
+    // registered; whether the records say the raised message is a refusal)
+    let run = |rules: &str, document: &str| -> Result<(String, usize, bool)> {
+        let rules_file = RulesFile::try_from(rules)?;
+        let mut root = root_scope(&rules_file, Rc::new(PathAwareValue::try_from(document)?));
+        let status = eval_rules_file(&rules_file, &mut root, None);
+        let registered = crate::rules::eval_context::registered_refusals()
+            .iter()
+            .filter(|text| {
+                (text.contains(THE_OWN_KEY_REFUSAL) || text.contains(THE_KEY_FILTER_REFUSAL))
+                    && !text.contains("(1) ")
+            })
+            .count();
+        let records = format!("{:?}", root.reset_recorder().extract());
+        let raised = match status {
+            Ok(_) => records.clone(),
+            Err(e) => format!("{records} {e}"),
+        };
+        Ok((raised, registered, records.contains("refusal: true")))
+    };
+    // Known gap, pinned as it is: `%names` is a `let`-bound selection, so the clause is raised at the bare
+    // read of the binding on the key filter's sentence alone, unnumbered (no `(1) ` anywhere in the dump
+    // or the error), before the comparison meets the own-key refusal's marker in `%x`. Both texts are
+    // registered (the own-key refusal by the walk that delivered its marker, the key filter's by the
+    // raise) and both are in the dump (the own-key text in that walk's records), but the raise names one.
+    // A raise naming both, numbered in registration order, needs the two refusals AMONG one comparison's
+    // values, which a `let`-bound selection does not deliver.
+    let mut cells = CellFailures::default();
+    let two_sides = format!(
+        "{LETS}rule r {{ Cfg[ x | Kind == 'k' ] !empty  {REFUSED_WALK_INTO_X}  when some %names NOT IN %x {{ Cfg exists }} }}"
+    );
+    let (raised, registered, _) = run(&two_sides, TWO_KINDS_OF_REFUSAL)?;
+    cells.check(
+        "`when some %names NOT IN %x`, a `let`-bound key filter's refusal on the left and an own-key refusal's marker on the right: raised at the binding's bare read on the key filter's sentence, unnumbered, the own-key text in the walk's records; both registered (known gap: the raise names one)",
+        (true, true, false, 2),
+        (
+            raised.contains(THE_OWN_KEY_REFUSAL),
+            raised.contains(THE_KEY_FILTER_REFUSAL),
+            raised.contains("(1) "),
+            registered,
+        ),
+    );
+    let two_sides_asserted = format!(
+        "{LETS}rule r {{ Cfg[ x | Kind == 'k' ] !empty  {REFUSED_WALK_INTO_X}  some %names NOT IN %x }}"
+    );
+    let (raised, registered, a_refusal) = run(&two_sides_asserted, TWO_KINDS_OF_REFUSAL)?;
+    cells.check(
+        "the same comparison asserted: raised at the binding's bare read on the key filter's sentence, unnumbered, recorded as the refusal it is (`refusal: true`); both registered (known gap: the raise names one)",
+        (true, true, false, true, 2),
+        (
+            raised.contains(THE_OWN_KEY_REFUSAL),
+            raised.contains(THE_KEY_FILTER_REFUSAL),
+            raised.contains("(1) "),
+            a_refusal,
+            registered,
+        ),
+    );
+    let one_side = format!(
+        "{LETS}rule r {{ Cfg[ x | Kind == 'k' ] !empty  when some %names NOT IN %x {{ Cfg exists }} }}"
+    );
+    let (raised, registered, _) = run(&one_side, TWO_KINDS_OF_REFUSAL)?;
+    cells.check(
+        "the control, `%x` the keys alone: the one refusal met is raised as it is, unnumbered; one registered",
+        (false, true, false, 1),
+        (
+            raised.contains(THE_OWN_KEY_REFUSAL),
+            raised.contains(THE_KEY_FILTER_REFUSAL),
+            raised.contains("(1) "),
+            registered,
+        ),
+    );
+    // Two map-tagged functions and nothing resolved in `%names`: two key filter refusals in one `let`-bound
+    // selection. Read bare as the right operand of a positive `IN` in a `when`, the let-bound known gap,
+    // pinned as it is: the bare read of the binding refuses it on the FIRST note's text before any pair is
+    // compared (the compared-nothing arm, which would number both, is never reached), so the raised text
+    // is that one sentence, unnumbered, and one text is registered; a later unit closes the gap. Read
+    // INSIDE a filter predicate, the same binding is read as its values, so the comparison meets both
+    // refusals, compares nothing and is raised on the numbered form, both sentences registered.
+    const TWO_REFUSALS_ON_THE_RIGHT: &str = r#"{
+    "Mappings": { "Wanted": { "Keys": [ "Env" ] } },
+    "Resources": {
+        "B": { "Type": "AWS::S3::Bucket", "Properties": { "Tags": [ { "Key": "Env", "Value": "x" } ] } },
+        "M1": { "Type": "AWS::Serverless::Function", "Properties": { "Handler": "index.handler", "Tags": { "Env": "x" } } },
+        "M2": { "Type": "AWS::Serverless::Function", "Properties": { "Handler": "index.handler", "Tags": { "Env": "y" } } }
+    }
+}"#;
+    let compared_nothing =
+        format!("{LETS}rule r {{ when Resources.B.Type IN %names {{ Resources.B exists }} }}");
+    let (raised, registered, _) = run(&compared_nothing, TWO_REFUSALS_ON_THE_RIGHT)?;
+    cells.check(
+        "`when Resources.B.Type IN %names`, two refusals in the `let`-bound `%names` and nothing resolved: raised at the binding's bare read on one refusal's sentence, unnumbered; one registered (the let-bound known gap: the bare read refuses the binding before the comparison meets both; a later unit closes it)",
+        (true, false, 1),
+        (
+            raised.contains(THE_KEY_FILTER_REFUSAL),
+            raised.contains("(1) "),
+            registered,
+        ),
+    );
+    // The numbered form, where the join IS reached: the same binding read inside a filter predicate is
+    // read as its values, the comparison meets both refusals and compares nothing (every pair skipped
+    // under the positive `IN` against markers alone), and the compared-nothing arm raises the numbered
+    // text, `(1) <M1's> (2) <M2's>`, the two sentences registered and the numbered text registered by
+    // nobody (the registry counts the refusals met, two; the refusal test accepts the numbered text part
+    // by part).
+    let join_reached = format!(
+        "{LETS}rule r {{ Resources.*[ Type == 'AWS::S3::Bucket' ][ Properties.Tags[*] IN %names ] empty }}"
+    );
+    let (raised, registered, _) = run(&join_reached, TWO_REFUSALS_ON_THE_RIGHT)?;
+    cells.check(
+        "`[ Properties.Tags[*] IN %names ] empty` inside a filter predicate, two refusals in the `let`-bound `%names` and nothing resolved: compared nothing, raised on the numbered text naming both; two registered (the two sentences, never the numbered text)",
+        (true, true, 2),
+        (
+            raised.contains(THE_KEY_FILTER_REFUSAL),
+            raised.contains("(1) "),
+            registered,
+        ),
+    );
+    cells.assert_all_agreed();
+    Ok(())
+}
+
+/// The text a raise carries, from the pure function alone: a reason that is one of the refused reads is
+/// carried as it is (one text, unnumbered); a reason that is none of them beside one read leads a
+/// numbered text of two, `(1) <reason> (2) <read>`, so a key filter's marker or a spent budget beside a
+/// refusal names both; two reads led by the first are numbered in the order the site met them, the
+/// reason not repeated; and no reads at all leaves the reason as it is, whatever it says. The joining
+/// is a property of the text, not of a run, so the cells read the function directly.
+#[test]
+fn the_raised_text_numbers_a_leading_reason_and_several_reads_and_keeps_one_text_as_it_is() {
+    const REFUSAL: &str = "`[*]` then no kept entry holds a key the predicate names.";
+    const SECOND: &str = "`[*]` then no kept entry holds a key the predicate names, at path /Cfg2.";
+    const BUDGET: &str = "the regex `/(a+)+b/` spent its budget on the value at /Maps/M1";
+    let mut cells = CellFailures::default();
+    cells.check(
+        "the reason among the reads: carried as it is, unnumbered",
+        REFUSAL.to_string(),
+        raised_refusal_text(REFUSAL.to_string(), &[REFUSAL.to_string()]),
+    );
+    cells.check(
+        "a reason that is no read beside one read: two numbered texts, the reason first",
+        format!("(1) {BUDGET} (2) {REFUSAL}"),
+        raised_refusal_text(BUDGET.to_string(), &[REFUSAL.to_string()]),
+    );
+    cells.check(
+        "the first of two reads as the reason: both numbered in the order met, the reason not repeated",
+        format!("(1) {REFUSAL} (2) {SECOND}"),
+        raised_refusal_text(REFUSAL.to_string(), &[REFUSAL.to_string(), SECOND.to_string()]),
+    );
+    cells.check(
+        "no reads: the reason as it is",
+        BUDGET.to_string(),
+        raised_refusal_text(BUDGET.to_string(), &[]),
+    );
+    cells.assert_all_agreed();
+}
+
+/// Two refusals AMONG one comparison's values, one on each side, reach the numbered raise; the numbered
+/// text the raise carries is registered by NOBODY and is accepted by the refusal test part by part. `%x`
+/// and `%y` are captures of two own-key walks over two maps whose keys share nothing (`Cfg` holds
+/// `Fallback`, `A`, `B`; `Cfg2` holds `Other`, `C`, `D`), each holding its keys beside its walk's refusal
+/// marker, two distinct sentences (each names its own map). `when some %x NOT IN %y`: every resolved key
+/// on the left differs from every resolved key on the right, so no pair is a decided NO, the passes are
+/// unknown beside the right-hand marker, and the gate raises on the right-hand refusal with the left-hand
+/// marker's refusal numbered after it, `(1) <Cfg2's> (2) <Cfg's>`; the rule fails closed. A capture is
+/// read as its values, not refused at a bare read as a `let`-bound selection holding a key filter's note
+/// is (`a_raise_beside_two_refusals_names_both_in_registration_order` pins that gap), so this is the
+/// shape that delivers two refusals to one comparison. The registry holds the two sentences and NO text
+/// with `(1) `: the registry's size is what the run's output counts as the refused reads met, so a raise
+/// that registered its joined text would have the console say three reads were refused where two were.
+/// The block record carries the numbered text whole (read as the records' `Debug` rendering spells it),
+/// and an `Unevaluatable` carrying that text IS a refusal to the test (`is_refusal`: every numbered part
+/// is a registered refusal), where the same shape with one part the registry does not hold is not. The
+/// gate's BLOCK record is a plain undecidable error (`refusal: false`; its kind is read from the variant,
+/// a later change), read from that one record (`record_containers_list`, the clause's records one Debug
+/// string each, the block record the one holding the numbered text): the whole dump reads `refusal:
+/// true` for every spelling, from the per-value records of the marker pairs and the refused walks'
+/// records, which say nothing about the block record, and a cell that read the dump as a whole measured
+/// those. The same comparison asserted (`some %x NOT IN %y`) is raised as an `Unevaluatable` on the same
+/// numbered text, nothing registered for it, and its block record reads `refusal: true`, so the console
+/// prints it whole under the refusal's bound. The reason the gate chooses here is the LEFT-hand marker's
+/// refusal (its pair is the first to record a reason), and the strict raise tells a refusal's reason by
+/// the refused reads met on either side; read on the right-hand side alone, as it was, that reason was
+/// no refusal to it, the raise was a plain undecidable error and this record read `refusal: false`. The control, `when %x NOT IN Plain.Keys`, `%x` compared
+/// under `match_all` against the keys of `Cfg2` read plain (no marker on the right), meets the left-hand
+/// refusal alone: raised on that one text, unnumbered.
+#[test]
+fn a_gates_numbered_raise_is_accepted_part_by_part_and_registered_by_nobody() -> Result<()> {
+    const TWO_MAPS: &str = r#"{
+    "Cfg": {
+        "Mode": { "Ref": "ModeParam" },
+        "Fallback": { "Kind": "k" },
+        "A": { "Kind": "k", "Sub": { "R1": { "Ref": "P" }, "P": { "Kind": "k" }, "Q": { "Kind": "k" } } },
+        "B": { "Kind": "k", "Sub": { "R1": { "Ref": "P" }, "P": { "Kind": "k" }, "Q": { "Kind": "k" } } }
+    },
+    "Cfg2": {
+        "Mode": { "Ref": "ModeParam" },
+        "Other": { "Kind": "k" },
+        "C": { "Kind": "k", "Sub": { "R1": { "Ref": "P" }, "P": { "Kind": "k" }, "Q": { "Kind": "k" } } },
+        "D": { "Kind": "k", "Sub": { "R1": { "Ref": "P" }, "P": { "Kind": "k" }, "Q": { "Kind": "k" } } }
+    },
+    "Plain": { "Keys": [ "Other", "C", "D" ] }
+}"#;
+    const REFUSED_WALK_INTO_Y: &str =
+        "Cfg2[*][ y | Mode exists or Kind == 'k' ].Sub[*][ s | R1 !exists ] !empty or Cfg2.Other exists";
+    struct Run {
+        status: Status,
+        /// How many registered texts hold `(1) ` (the registry never holds a joined text).
+        numbered_registered: usize,
+        /// How many registered texts name the own-key sentence (the two refusals met).
+        own_key_registered: usize,
+        /// Whether the records carry the numbered text `(1) <Cfg2's> (2) <Cfg's>` whole, as `Debug`
+        /// spells it, the two sentences read from the registry.
+        records_carry_the_numbered_text: bool,
+        /// Whether an `Unevaluatable` carrying that numbered text is a refusal to the test.
+        numbered_text_accepted: bool,
+        /// Whether the same shape with a part the registry does not hold is refused by the test.
+        unregistered_part_refused: bool,
+        /// The `refusal` flag of the clause's BLOCK record alone (the one record under the clause that
+        /// holds the numbered text, or the clause's one block record for the control), `None` when no
+        /// such record is found; never the dump as a whole, whose per-value records carry their own.
+        block_record_refusal: Option<bool>,
+    }
+    let run = |clause: &str| -> Result<Run> {
+        let rules = format!(
+            "rule r {{ Cfg[ x | Kind == 'k' ] !empty  {REFUSED_WALK_INTO_X}  Cfg2[ y | Kind == 'k' ] !empty  {REFUSED_WALK_INTO_Y}  {clause} }}"
+        );
+        let rules_file = RulesFile::try_from(rules.as_str())?;
+        let mut root = root_scope(&rules_file, Rc::new(PathAwareValue::try_from(TWO_MAPS)?));
+        // A raise held at the clause fails the rule closed (Ok(FAIL)); an error that reached the caller
+        // reads as that FAIL too, so a cell on the registry is not cut short by the shape of the return.
+        let status = eval_rules_file(&rules_file, &mut root, None).unwrap_or(Status::FAIL);
+        let registered = crate::rules::eval_context::registered_refusals();
+        let numbered_registered = registered
+            .iter()
+            .filter(|text| text.contains("(1) "))
+            .count();
+        let own_key: Vec<&String> = registered
+            .iter()
+            .filter(|text| text.contains(THE_OWN_KEY_REFUSAL))
+            .collect();
+        let of_cfg2 = own_key.iter().find(|text| text.contains("Cfg2"));
+        let of_cfg = own_key.iter().find(|text| !text.contains("Cfg2"));
+        // The right-hand refusal (`%y`, over `Cfg2`) first, the left-hand marker's (`%x`, over `Cfg`)
+        // after it, the order the raise numbers them in.
+        let numbered_text = match (of_cfg2, of_cfg) {
+            (Some(y), Some(x)) => format!("(1) {y} (2) {x}"),
+            _ => String::new(),
+        };
+        let numbered_text_accepted =
+            !numbered_text.is_empty() && is_refusal(&Error::Unevaluatable(numbered_text.clone()));
+        let unregistered_part_refused = of_cfg2.is_some_and(|y| {
+            !is_refusal(&Error::Unevaluatable(format!(
+                "(1) {y} (2) a sentence the registry does not hold"
+            )))
+        });
+        let extracted = root.reset_recorder().extract();
+        let records = format!("{:?}", extracted);
+        let spelled = format!("{numbered_text:?}");
+        let spelled = &spelled[1..spelled.len() - 1];
+        let records_carry_the_numbered_text =
+            !numbered_text.is_empty() && records.contains(spelled);
+        // The clause's own records, one Debug string each (` IN ` names the comparison, spelled `not IN`
+        // in a record's context, and none of the walks before it); the block record is the
+        // `GuardClauseBlockCheck` among them, the one holding the numbered text where there is one. A
+        // `BlockCheck` has one `refusal` field, so its flag is read from that string alone.
+        let mut under_the_clause = Vec::new();
+        record_containers_list(&extracted, " IN ", &mut under_the_clause);
+        let block_record_refusal = under_the_clause
+            .iter()
+            .find(|record| {
+                record.contains("GuardClauseBlockCheck")
+                    && (numbered_text.is_empty() || record.contains(spelled))
+            })
+            .map(|record| record.contains("refusal: true"));
+        Ok(Run {
+            status,
+            numbered_registered,
+            own_key_registered: own_key.len(),
+            records_carry_the_numbered_text,
+            numbered_text_accepted,
+            unregistered_part_refused,
+            block_record_refusal,
+        })
+    };
+    let mut cells = CellFailures::default();
+    let gate = run("when some %x NOT IN %y { Cfg exists }")?;
+    cells.check(
+        "`when some %x NOT IN %y`, a refusal's marker among the values on each side: raised (FAIL) on the numbered text `(1) <Cfg2's> (2) <Cfg's>`, carried whole by the block record; the registry holds the two sentences and no numbered text; the numbered text is a refusal to the test, the same shape with an unregistered part is not; the gate's block record is a plain undecidable error (`refusal: false`, read from that record alone)",
+        (Status::FAIL, 0, 2, true, true, true, Some(false)),
+        (
+            gate.status,
+            gate.numbered_registered,
+            gate.own_key_registered,
+            gate.records_carry_the_numbered_text,
+            gate.numbered_text_accepted,
+            gate.unregistered_part_refused,
+            gate.block_record_refusal,
+        ),
+    );
+    let asserted = run("some %x NOT IN %y")?;
+    cells.check(
+        "`some %x NOT IN %y` asserted: raised on the same numbered text, nothing registered for it (the two sentences alone), carried whole by the block record, which reads `refusal: true` (read from that record alone)",
+        (Status::FAIL, 0, 2, true, Some(true)),
+        (
+            asserted.status,
+            asserted.numbered_registered,
+            asserted.own_key_registered,
+            asserted.records_carry_the_numbered_text,
+            asserted.block_record_refusal,
+        ),
+    );
+    // `match_all`, not `some`: under `some` the keys of `Cfg` pass `NOT IN` the plain list for real (no
+    // marker on the right), so the clause would be settled by a passing value and the gate would
+    // decline; under `match_all` the left-hand marker's pair is the one undecided FAIL status, so the
+    // gate raises on that refusal alone.
+    let control = run("when %x NOT IN Plain.Keys { Cfg exists }")?;
+    cells.check(
+        "the control, `%x` against the plain keys of `Cfg2`: the left-hand refusal alone, raised unnumbered (FAIL), nothing with `(1) ` registered, no numbered text in the records",
+        (Status::FAIL, 0, false),
+        (
+            control.status,
+            control.numbered_registered,
+            control.records_carry_the_numbered_text,
+        ),
+    );
+    cells.assert_all_agreed();
+    Ok(())
+}
+
+/// Every absence that decides a comparison beside a refused read reports it, from ONE source. The
+/// refused read beside an absence is read after the clause's values are read, from the evidence that
+/// an absence decided a comparison (`ResultEvidence::absent_failure`, which every arm that decides by an
+/// absence sets) beside a refusal's marker among the right-hand values, not from a note each deciding arm
+/// made. So an EMPTY left-hand collection (`[ Properties.Tags == %names ]`, `!=` and `NOT IN` alike over
+/// `Tags: []`, where the operators push one marker pair per left-hand value, the empty list included,
+/// and no `EmptyCollection`) and a RIGHT-HAND reference the document lacks beside the marker (a bucket
+/// lacking `Tags` leaves one in `%names`; `[ Properties.Owner == %names ]` over a bucket whose `Owner`
+/// holds a value compares it against that reference and the marker alone) read as the missing `Tags` does:
+/// deselected, the refusal registered once, one line. One source means one behavior for every absence:
+/// the empty left-hand list and the absent right-hand reference register and write the line beside the
+/// same `%names` exactly as the missing `Tags` does; the clause reference promises the line for "a value
+/// the document lacks" without naming which absence.
+#[test]
+fn every_absence_that_decides_beside_a_refused_read_reports_it() -> Result<()> {
+    const THE_LINE: &str = "was decided by a value the document lacks";
+    const THE_REFUSAL: &str = "a name bound outside the predicate";
+    const LETS: &str =
+        "let wanted = Mappings.Wanted.Keys\nlet names = Resources.*.Properties.Tags[*][ Key IN %wanted ]";
+    // `D` holds the EMPTY tag list; `E` lacks `Tags`; `M` is the map-tagged function whose twin cannot
+    // read `%wanted`, the one refusal in `%names`. Each template holds one bucket, so the one clause site
+    // is decided once per run.
+    const EMPTY_TAGS: &str = r#"
+    {
+        Mappings: { Wanted: { Keys: [ 'Env' ] } },
+        Resources: {
+            D: { Type: 'AWS::S3::Bucket', Properties: { Tags: [] } },
+            M: { Type: 'AWS::Serverless::Function', Properties: { Handler: 'index.handler', Tags: { Env: 'x' } } }
+        }
+    }
+    "#;
+    const MISSING_TAGS: &str = r#"
+    {
+        Mappings: { Wanted: { Keys: [ 'Env' ] } },
+        Resources: {
+            E: { Type: 'AWS::S3::Bucket', Properties: { Handler: 'none' } },
+            M: { Type: 'AWS::Serverless::Function', Properties: { Handler: 'index.handler', Tags: { Env: 'x' } } }
+        }
+    }
+    "#;
+    // `N` holds an `Owner` and no `Tags`, so `%names` holds the reference its missing `Tags` resolved to
+    // nothing and `M`'s marker, and no resolved value: `Owner` is compared against an absence and the
+    // marker alone.
+    const ABSENT_REFERENCE: &str = r#"
+    {
+        Mappings: { Wanted: { Keys: [ 'Env' ] } },
+        Resources: {
+            N: { Type: 'AWS::S3::Bucket', Properties: { Owner: 'o' } },
+            M: { Type: 'AWS::Serverless::Function', Properties: { Handler: 'index.handler', Tags: { Env: 'x' } } }
+        }
+    }
+    "#;
+    let run = |predicate: &str, input: &str| -> Result<(Status, usize, usize)> {
+        let rules = format!(
+            "{LETS}\nrule r {{ Resources.*[ Type == 'AWS::S3::Bucket' ][ {predicate} ] empty }}"
+        );
+        let rules_file = RulesFile::try_from(rules.as_str())?;
+        let mut root = root_scope(&rules_file, Rc::new(PathAwareValue::try_from(input)?));
+        let status = eval_rules_file(&rules_file, &mut root, None)?;
+        let registered = crate::rules::eval_context::registered_refusals()
+            .iter()
+            .filter(|text| text.contains(THE_REFUSAL))
+            .count();
+        let lines = root
+            .warnings()
+            .filter(|line| {
+                line.contains(THE_LINE) && line.contains(THE_REFUSAL) && line.contains("%names")
+            })
+            .count();
+        Ok((status, registered, lines))
+    };
+    let mut cells = CellFailures::default();
+    for op in ["==", "!=", "NOT IN"] {
+        let predicate = format!("Properties.Tags {op} %names");
+        let empty = run(&predicate, EMPTY_TAGS)?;
+        let missing = run(&predicate, MISSING_TAGS)?;
+        cells.check(
+            &format!("`[ {predicate} ] empty` over `Tags: []`: deselected on the empty collection (PASS), the refusal registered once, one line naming the clause and the refusal"),
+            (Status::PASS, 1, 1),
+            empty,
+        );
+        cells.check(
+            &format!("`[ {predicate} ] empty` over `Tags: []` reads as over a bucket lacking `Tags`: the same (status, registered, lines)"),
+            missing,
+            empty,
+        );
+    }
+    cells.check(
+        "`[ Properties.Owner == %names ] empty` with `%names` holding an absent reference and the marker alone: decided on the absence (PASS), the refusal registered once, one line",
+        (Status::PASS, 1, 1),
+        run("Properties.Owner == %names", ABSENT_REFERENCE)?,
+    );
+    cells.assert_all_agreed();
+    Ok(())
+}
+
+/// The refused-read line follows the VERDICT and names every refusal the site met. Inside a filter
+/// predicate (where a refused `%name` on a comparison's right arrives as a marker among the right-hand
+/// values; asserted outside one it is the clause's own error), `[ some Properties.A[*].B == %names ]
+/// empty` over a bucket whose `A` holds an element lacking `B` and an element whose `B` is a map no resolved
+/// pair equals: element 1 is decided on the absence, element 2 is a decided no against the resolved pairs
+/// and nobody's answer against the marker, so `some` is undecided and the predicate is refused (the rule
+/// fails closed) with the refusal in its failure; a line saying the refusal was not raised would
+/// contradict that failure, so none is written, and the registry holds the refusal's text once all the
+/// same, since the quiet read registers nothing and the collection does. `some .. !=` reads the same way
+/// (element 2's pass beside the marker is not a pass). Written per value arm as the absence was met, the
+/// line would go out before the verdict and stand beside the raise.
+///
+/// Two map-shaped tag sets in the template leave TWO refusals in `%names`, each naming its own resource:
+/// `[ Properties.Owner == %names ] empty` over buckets lacking `Owner` registers BOTH texts and writes
+/// ONE line at the clause site that counts them ("the 2 refused reads ... the first is reported here");
+/// collected as the first refused read among the right-hand values alone, the second resource's text
+/// would be neither registered nor counted.
+#[test]
+fn the_refused_read_line_follows_the_verdict_and_counts_the_sites_refusals() -> Result<()> {
+    const THE_LINE: &str = "reported here instead";
+    const THE_REFUSAL: &str = "a name bound outside the predicate";
+    const LETS: &str =
+        "let wanted = Mappings.Wanted.Keys\nlet names = Resources.*.Properties.Tags[*][ Key IN %wanted ]\n";
+    let run = |predicate: &str, input: &str| -> Result<(Status, Vec<String>, Vec<String>)> {
+        let rules = format!(
+            "{LETS}rule r {{ Resources.*[ Type == 'AWS::S3::Bucket' ][ {predicate} ] empty }}"
+        );
+        let rules_file = RulesFile::try_from(rules.as_str())?;
+        let mut root = root_scope(&rules_file, Rc::new(PathAwareValue::try_from(input)?));
+        let status = eval_rules_file(&rules_file, &mut root, None)?;
+        let registered: Vec<String> = crate::rules::eval_context::registered_refusals()
+            .into_iter()
+            .filter(|text| text.contains(THE_REFUSAL))
+            .collect();
+        let lines: Vec<String> = root
+            .warnings()
+            .filter(|line| line.contains(THE_LINE))
+            .cloned()
+            .collect();
+        Ok((status, registered, lines))
+    };
+    // `%names`: bucket B's resolved pair beside the marker the twin's refusal leaves for function M's
+    // map-shaped tags; B's `A` holds the absent-`B` element and the element whose `B` no pair equals.
+    const ONE: &str = r#"
+    {
+        Mappings: { Wanted: { Keys: [ 'Env' ] } },
+        Resources: {
+            B: { Type: 'AWS::S3::Bucket', Properties: { A: [ { C: 1 }, { B: { Key: 'Owner', Value: 'o' } } ], Tags: [ { Key: 'Env', Value: 'x' } ] } },
+            M: { Type: 'AWS::Serverless::Function', Properties: { Handler: 'index.handler', Tags: { Env: 'x' } } }
+        }
+    }
+    "#;
+    let mut cells = CellFailures::default();
+    for (label, predicate) in [
+        (
+            "`[ some Properties.A[*].B == %names ] empty`: element 1 absent, element 2 undecided beside the marker: refused, the rule fails closed, NO line, the refusal registered once",
+            "some Properties.A[*].B == %names",
+        ),
+        (
+            "`[ some Properties.A[*].B != %names ] empty`: the same under the negated comparator",
+            "some Properties.A[*].B != %names",
+        ),
+    ] {
+        let (status, registered, lines) = run(predicate, ONE)?;
+        cells.check(
+            label,
+            (Status::FAIL, 1, 0),
+            (status, registered.len(), lines.len()),
+        );
+    }
+    // Two functions with map-shaped tags: `%names` holds two refusals, each naming its own resource.
+    const TWO: &str = r#"
+    {
+        Mappings: { Wanted: { Keys: [ 'Env' ] } },
+        Resources: {
+            B: { Type: 'AWS::S3::Bucket', Properties: { Tags: [ { Key: 'Env', Value: 'x' } ] } },
+            M1: { Type: 'AWS::Serverless::Function', Properties: { Handler: 'index.handler', Tags: { Env: 'x' } } },
+            M2: { Type: 'AWS::Serverless::Function', Properties: { Handler: 'index.handler', Tags: { Env: 'y' } } }
+        }
+    }
+    "#;
+    let (status, registered, lines) = run("Properties.Owner == %names", TWO)?;
+    cells.check(
+        "`[ Properties.Owner == %names ] empty` with two refusals in `%names`: deselected on the absence, PASS, BOTH refusals registered (each naming its resource), ONE line counting both",
+        (Status::PASS, 2, true, 1, true),
+        (
+            status,
+            registered.len(),
+            registered.iter().any(|text| text.contains("M1"))
+                && registered.iter().any(|text| text.contains("M2")),
+            lines.len(),
+            lines
+                .iter()
+                .any(|line| line.contains("the 2 refused reads")),
+        ),
+    );
+    cells.assert_all_agreed();
+    Ok(())
+}
+
+/// A positive `IN` a listed value settles beside a REFUSAL's marker PASSES (the marker cannot undo a
+/// match, and the passing clause carries no failing child record) and is never silent: the refusal is
+/// registered and the run's output carries one `Warning:` line at the clause site saying the clause passed
+/// by a value that holds and the refused read among its other values was not raised by it, in a filter
+/// predicate and as a `when` condition over that predicate alike (a refused `%name` arrives as a marker
+/// inside a filter predicate; read bare outside one it is the clause's own error). A reference the document
+/// lacks beside the same listed value still FAILS the membership, with nothing registered and no line, so
+/// a refused read is reported where an absence fails; the line is what keeps the two from reading as one
+/// (the two readings stand as released: an absent reference is a decided failure on the document, a
+/// refusal is a read nobody could make). A KEY FILTER's marker beside a listed value is not a refusal and
+/// stays silent: nothing registered, no line.
+#[test]
+fn a_membership_a_listed_value_settles_reports_the_refused_read_beside_it() -> Result<()> {
+    const THE_LINE: &str = "passed by a value that holds";
+    let lines_of = |warnings: Vec<String>| -> Vec<String> {
+        warnings
+            .into_iter()
+            .filter(|line| line.contains(THE_LINE))
+            .collect()
+    };
+    let mut cells = CellFailures::default();
+    // The filter predicate: bucket B's `Env` pair is among `%names`'s resolved pairs beside function M's
+    // refusal marker.
+    const MATCHING: &str = r#"
+    {
+        Mappings: { Wanted: { Keys: [ 'Env' ] } },
+        Resources: {
+            B: { Type: 'AWS::S3::Bucket', Properties: { Tags: [ { Key: 'Env', Value: 'allowed' } ] } },
+            M: { Type: 'AWS::Serverless::Function', Properties: { Handler: 'index.handler', Tags: { Env: 'x' } } }
+        }
+    }
+    "#;
+    {
+        let rules = "let wanted = Mappings.Wanted.Keys\nlet names = Resources.*.Properties.Tags[*][ Key IN %wanted ]\nrule r { Resources.*[ Type == 'AWS::S3::Bucket' ][ Properties.Tags[*] IN %names ] !empty }";
+        let rules_file = RulesFile::try_from(rules)?;
+        let mut root = root_scope(&rules_file, Rc::new(PathAwareValue::try_from(MATCHING)?));
+        let status = eval_rules_file(&rules_file, &mut root, None)?;
+        let registered = crate::rules::eval_context::registered_refusals()
+            .into_iter()
+            .filter(|text| text.contains("a name bound outside the predicate"))
+            .count();
+        let lines = lines_of(root.warnings().cloned().collect());
+        cells.check(
+            "`[ Properties.Tags[*] IN %names ] !empty`, a listed pair beside the refusal's marker: PASS, the refusal registered, one line naming the clause and the refusal",
+            (Status::PASS, 1, 1, true),
+            (
+                status,
+                registered,
+                lines.len(),
+                lines
+                    .iter()
+                    .any(|line| line.contains("%names") && line.contains("a name bound outside the predicate")),
+            ),
+        );
+    }
+    // The `when` form: the same membership as a gate's condition opens the body, and the line is written
+    // all the same.
+    {
+        let rules = "let wanted = Mappings.Wanted.Keys\nlet names = Resources.*.Properties.Tags[*][ Key IN %wanted ]\nrule r when Resources.*[ Type == 'AWS::S3::Bucket' ][ Properties.Tags[*] IN %names ] !empty { Resources.B.Type == 'AWS::S3::Bucket' }";
+        let rules_file = RulesFile::try_from(rules)?;
+        let mut root = root_scope(&rules_file, Rc::new(PathAwareValue::try_from(MATCHING)?));
+        let status = eval_rules_file(&rules_file, &mut root, None)?;
+        let lines = lines_of(root.warnings().cloned().collect());
+        cells.check(
+            "`when Resources.*[ .. ][ Properties.Tags[*] IN %names ] !empty { .. }`: the body runs (PASS), one line naming the clause",
+            (Status::PASS, 1, true),
+            (
+                status,
+                lines.len(),
+                lines.iter().any(|line| line.contains("%names")),
+            ),
+        );
+    }
+    // The gate and the assertion through a CAPTURE: `%x` holds the keys the first capture bound
+    // (`Fallback`, `A`, `B`) and the marker the refused walk sharing the capture's name leaves (a refusal's,
+    // `refused: true`, placed by the `Cfg[*]` loop whose walk under `A` the own-key filter `Sub[*][ s | R1
+    // !exists ]` refused, `captures_after_a_refused_walk`); `Cfg.Mode.Ref` is `A`, among the keys. Every
+    // entry of `Cfg` is a map: a scalar entry (`Pick: 'A'`) makes `Cfg[*][ x | ... ]` a filter over a mixed
+    // map, refused at the root before any walk, and that refusal, raised with no loop above it, binds no
+    // marker into `x` (`deliver_wildcard_filter_refusal` notes the map for a loop that is not there), so
+    // `%x` held the keys alone and the cells passed with nothing to report. The four counters say how the
+    // refusal travels (`MARKER_PAIR_SKIPS`, `UNRAISED_REFUSAL_FORWARDS`, `UNRAISED_REFUSAL_ROOT_CALLS`,
+    // `UNRAISED_REFUSAL_RECORDS`): a pass with no skipped pair means the operator filed none, a forward
+    // with no root call means a scope dropped it, a root call with no record means a measurement.
+    const CAPTURED: &str = r#"{
+        "Cfg": {
+            "Mode": { "Ref": "A" },
+            "Fallback": { "Kind": "k" },
+            "A": { "Kind": "k", "Sub": { "R1": { "Ref": "P" }, "P": { "Kind": "k" }, "Q": { "Kind": "k" } } },
+            "B": { "Kind": "k", "Sub": { "R1": { "Ref": "P" }, "P": { "Kind": "k" }, "Q": { "Kind": "k" } } }
+        }
+    }"#;
+    const REFUSED_WALK: &str =
+        "Cfg[*][ x | Mode exists or Kind == 'k' ].Sub[*][ s | R1 !exists ] !empty or Cfg.Fallback exists";
+    let counters = || -> (usize, usize, usize, usize) {
+        (
+            crate::rules::eval::MARKER_PAIR_SKIPS.with(|c| c.get()),
+            crate::rules::eval::UNRAISED_REFUSAL_FORWARDS.with(|c| c.get()),
+            crate::rules::eval::UNRAISED_REFUSAL_ROOT_CALLS.with(|c| c.get()),
+            crate::rules::eval::UNRAISED_REFUSAL_RECORDS.with(|c| c.get()),
+        )
+    };
+    let reset = || {
+        crate::rules::eval::MARKER_PAIR_SKIPS.with(|c| c.set(0));
+        crate::rules::eval::UNRAISED_REFUSAL_FORWARDS.with(|c| c.set(0));
+        crate::rules::eval::UNRAISED_REFUSAL_ROOT_CALLS.with(|c| c.set(0));
+        crate::rules::eval::UNRAISED_REFUSAL_RECORDS.with(|c| c.set(0));
+    };
+    for (label, rules) in [
+        (
+            "`when Cfg.Mode.Ref IN %x` with the keys and the refusal's marker, `Ref` among the keys: the body runs (PASS), one line, the refusal reached the root once and was recorded once",
+            format!("rule r when Cfg[ x | Kind == 'k' ] !empty  {REFUSED_WALK}  Cfg.Mode.Ref IN %x {{ Cfg.Mode.Ref == 'A' }}"),
+        ),
+        (
+            "`Cfg.Mode.Ref IN %x` asserted with the keys and the refusal's marker: PASS, one line, the refusal reached the root once and was recorded once",
+            format!("rule r {{ Cfg[ x | Kind == 'k' ] !empty  {REFUSED_WALK}  Cfg.Mode.Ref IN %x }}"),
+        ),
+    ] {
+        reset();
+        let rules_file = RulesFile::try_from(rules.as_str())?;
+        let mut root = root_scope(&rules_file, Rc::new(PathAwareValue::try_from(CAPTURED)?));
+        let status = eval_rules_file(&rules_file, &mut root, None)?;
+        let (skips, forwards, root_calls, records) = counters();
+        let lines = lines_of(root.warnings().cloned().collect());
+        cells.check(
+            label,
+            (Status::PASS, 1, true, 1, 1),
+            (
+                status,
+                lines.len(),
+                // The clause as the author wrote it (`Cfg.Mode.Ref in %x`, the form a reader greps the
+                // rules file for), never the record tree's `Cfg.Mode.Ref IN  %x`.
+                lines.iter().any(|line| line.contains("Cfg.Mode.Ref in %x")),
+                root_calls,
+                records,
+            ),
+        );
+        // The travel, as a row of its own whose label carries every counter, so a red reads them all:
+        // the operator pairs the one left value with the marker once (one skipped pair), the call
+        // reaches the root once and is recorded once; the forwards are the scopes between.
+        cells.check(
+            &format!(
+                "{label}: the travel (skipped pairs {skips}, forwards {forwards}, root calls {root_calls}, records {records})"
+            ),
+            (1, 1, 1),
+            (skips, root_calls, records),
+        );
+    }
+    // The contrast: a reference the document lacks beside the same listed `x` (`%x` holds bucket B's
+    // `EnvName` and nothing for function M, which lacks it) still FAILS the membership, with nothing
+    // registered and no line: a refused read is reported where an absence fails.
+    const ABSENT_REFERENCE: &str = r#"
+    {
+        Resources: {
+            B: { Type: 'AWS::S3::Bucket', Properties: { W: 'x', EnvName: 'x' } },
+            M: { Type: 'AWS::Serverless::Function', Properties: { Handler: 'index.handler' } }
+        }
+    }
+    "#;
+    {
+        let rules = "let x = Resources.*.Properties.EnvName\nrule r { Resources.*[ Type == 'AWS::S3::Bucket' ][ Properties.W IN %x ] !empty }";
+        let rules_file = RulesFile::try_from(rules)?;
+        let mut root = root_scope(
+            &rules_file,
+            Rc::new(PathAwareValue::try_from(ABSENT_REFERENCE)?),
+        );
+        let status = eval_rules_file(&rules_file, &mut root, None)?;
+        let registered = crate::rules::eval_context::registered_refusals().len();
+        let lines = lines_of(root.warnings().cloned().collect());
+        cells.check(
+            "the contrast: `[ Properties.W IN %x ] !empty` with `x` listed beside a reference the document lacks: FAIL, nothing registered, no line",
+            (Status::FAIL, 0, 0),
+            (status, registered, lines.len()),
+        );
+    }
+    // The control: a KEY FILTER's marker (`A.Maps` under a regex that spends its budget) beside the
+    // resolved `x`, with `W == x` listed: PASS, nothing registered, no line.
+    let key_filter = format!(
+        "{{ Resources: {{ B: {{ Type: 'AWS::S3::Bucket', Properties: {{ W: 'x' }} }}, A: {{ Type: 'AWS::IAM::Role', Properties: {{ Maps: {{ M1: {{ {long}: 'z' }}, M2: {{ aab: 'x' }} }} }} }} }} }}",
+        long = "a".repeat(30)
+    );
+    {
+        let rules = "let cfg = Resources.A.Properties.Maps.*[ keys == /(?!x)((a+)+)b/ ].*\nrule r { Resources.*[ Type == 'AWS::S3::Bucket' ][ Properties.W IN %cfg ] !empty }";
+        let rules_file = RulesFile::try_from(rules)?;
+        let mut root = root_scope(
+            &rules_file,
+            Rc::new(PathAwareValue::try_from(key_filter.as_str())?),
+        );
+        let status = eval_rules_file(&rules_file, &mut root, None)?;
+        let registered = crate::rules::eval_context::registered_refusals().len();
+        let lines = lines_of(root.warnings().cloned().collect());
+        cells.check(
+            "the control: `[ Properties.W IN %cfg ] !empty` with `x` listed beside a KEY FILTER's marker: PASS, nothing registered, no line",
+            (Status::PASS, 0, 0),
+            (status, registered, lines.len()),
+        );
+    }
+    cells.assert_all_agreed();
+    Ok(())
+}
+
+/// A `some` assertion whose pairs are {absent, decided no, undecided} with no passing pair is UNDECIDED,
+/// not decided by its absence: `OR(no, unknown)` is unknown, since the value the marker hides may be the
+/// one `some` passes on. Through a capture holding the keys and a refusal's marker (`%x`, the shape the
+/// membership cells use), `some Vals[*].Name == %x` over `Vals: [ {}, { Name: 'Z' } ]` (element 1 lacks
+/// `Name`, element 2 equals no key and its pair against the marker is nobody's answer) is raised on the
+/// marker's reason: the rule FAILS as a clause that could not be evaluated, the refusal is registered, and
+/// NO "decided by a value the document lacks" line is written, since the absence decided nothing. Decided
+/// on element 1's absence alone, the assertion would fail on its statuses unraised and the line would say
+/// the absence decided a clause the hidden value could have passed. Under `match_all` the same comparison
+/// IS decided by element 1's absence (`AND(no, ..)` is no): it fails on its statuses, not raised, and the
+/// line is written; and `some` over `Vals: [ {}, {} ]`, every value absent, is decided by the absences (no
+/// value can be the one `some` passes on): not raised, the line written.
+#[test]
+fn a_some_assertion_with_an_undecided_pair_and_no_pass_is_raised_not_decided_by_an_absence(
+) -> Result<()> {
+    const THE_LINE: &str = "was decided by a value the document lacks";
+    const THE_REFUSAL: &str = "then no kept entry holds a key the predicate names";
+    const RAISED: &str = "when handling clause";
+    const REFUSED_WALK: &str =
+        "Cfg[*][ x | Mode exists or Kind == 'k' ].Sub[*][ s | R1 !exists ] !empty or Cfg.Fallback exists";
+    // Every entry of `Cfg` is a map, so the own-key filter under `A` refuses inside the `Cfg[*]` loop and
+    // the loop places the refusal's marker into `x`; `Vals` sits beside `Cfg`, outside the refused walk.
+    let doc = |vals: &str| {
+        format!(
+            r#"{{
+                "Cfg": {{
+                    "Mode": {{ "Ref": "A" }},
+                    "Fallback": {{ "Kind": "k" }},
+                    "A": {{ "Kind": "k", "Sub": {{ "R1": {{ "Ref": "P" }}, "P": {{ "Kind": "k" }}, "Q": {{ "Kind": "k" }} }} }},
+                    "B": {{ "Kind": "k", "Sub": {{ "R1": {{ "Ref": "P" }}, "P": {{ "Kind": "k" }}, "Q": {{ "Kind": "k" }} }} }}
+                }},
+                "Vals": {vals}
+            }}"#
+        )
+    };
+    // (status, refusals registered, "decided by" lines, the `Vals` clause raised: its own records hold the
+    // error sentence the assertion role's `Err` arm writes; the refused walk's clause holds one of its
+    // own, so the records are read under the `Vals` clause alone)
+    let run = |clause: &str, input: &str| -> Result<(Status, usize, usize, bool)> {
+        let rules = format!("rule r {{ Cfg[ x | Kind == 'k' ] !empty  {REFUSED_WALK}  {clause} }}");
+        let rules_file = RulesFile::try_from(rules.as_str())?;
+        let mut root = root_scope(&rules_file, Rc::new(PathAwareValue::try_from(input)?));
+        let status = eval_rules_file(&rules_file, &mut root, None)?;
+        let registered = crate::rules::eval_context::registered_refusals()
+            .iter()
+            .filter(|text| text.contains(THE_REFUSAL))
+            .count();
+        let lines = root
+            .warnings()
+            .filter(|line| line.contains(THE_LINE))
+            .count();
+        let mut vals = String::new();
+        record_containers_under(&root.reset_recorder().extract(), "Vals[*].Name", &mut vals);
+        Ok((status, registered, lines, vals.contains(RAISED)))
+    };
+    let mut cells = CellFailures::default();
+    cells.check(
+        "`some Vals[*].Name == %x` over an element lacking `Name` and an element equal to no key, beside the marker: RAISED (FAIL as a clause that could not be evaluated), the refusal registered, no \"decided by\" line",
+        (Status::FAIL, 1, 0, true),
+        run("some Vals[*].Name == %x", &doc(r#"[ {}, { "Name": "Z" } ]"#))?,
+    );
+    cells.check(
+        "`Vals[*].Name == %x` (`match_all`) over the same: decided by element 1's absence, FAIL on its statuses (not raised), the refusal registered, the line written",
+        (Status::FAIL, 1, 1, false),
+        run("Vals[*].Name == %x", &doc(r#"[ {}, { "Name": "Z" } ]"#))?,
+    );
+    cells.check(
+        "`some Vals[*].Name == %x` over two elements lacking `Name`: every value absent, decided by the absences (not raised), the refusal registered, the line written",
+        (Status::FAIL, 1, 1, false),
+        run("some Vals[*].Name == %x", &doc(r#"[ {}, {} ]"#))?,
+    );
+    cells.assert_all_agreed();
+    Ok(())
+}
+
+/// A refused read beside a DECIDED NO is reported as one beside an absence is: a resolved mismatch or
+/// collision decides the clause (`AND(no, unknown)` is no under `match_all`; under `some` every value a
+/// decided NO settles it), the marker's pair is never consulted, and without this third trigger the
+/// refused read in `%names` would go unreported where the clause reference promises the line. Three shapes: `[
+/// Properties.Owner == %names ] empty` over a bucket whose `Owner` equals no listed pair (deselected,
+/// PASS, the refusal registered, one line in the "does not match" wording); a gate `when Cfg.Mode.Ref ==
+/// %x` through a capture holding the keys and the refusal's marker, `ModeParam` equal to no key (not
+/// applicable, SKIP, 1, 1); and `when some Names[*] NOT IN %x` with every name a key (every value a decided
+/// NO, SKIP, 1, 1). The wording follows the comparator's polarity: under `==` the deciding value "does
+/// not match", under `NOT IN` it MATCHES a listed key, so the line says "matches a denied value"; one
+/// wording for both would call the colliding names non-matching.
+#[test]
+fn a_refused_read_beside_a_decided_mismatch_is_reported() -> Result<()> {
+    const THE_LINE: &str = "was decided by a value that does not match";
+    const THE_COLLISION_LINE: &str = "was decided by a value that matches a denied value";
+    const OWNER_FIXTURE: &str = r#"
+    {
+        Mappings: { Wanted: { Keys: [ 'Env' ] } },
+        Resources: {
+            B: { Type: 'AWS::S3::Bucket', Properties: { Owner: 'alice', Tags: [ { Key: 'Env', Value: 'allowed' } ] } },
+            M: { Type: 'AWS::Serverless::Function', Properties: { Handler: 'index.handler', Tags: { Env: 'x' } } }
+        }
+    }
+    "#;
+    const CAPTURED: &str = r#"{
+        "Cfg": {
+            "Mode": { "Ref": "ModeParam" },
+            "Fallback": { "Kind": "k" },
+            "A": { "Kind": "k", "Sub": { "R1": { "Ref": "P" }, "P": { "Kind": "k" }, "Q": { "Kind": "k" } } },
+            "B": { "Kind": "k", "Sub": { "R1": { "Ref": "P" }, "P": { "Kind": "k" }, "Q": { "Kind": "k" } } }
+        },
+        "Names": [ "A", "B" ]
+    }"#;
+    const REFUSED_WALK: &str =
+        "Cfg[*][ x | Mode exists or Kind == 'k' ].Sub[*][ s | R1 !exists ] !empty or Cfg.Fallback exists";
+    // (status; the refusal in the registry; the refused-read lines in the given wording naming the refusal;
+    // the lines in the OTHER mismatch wording, which must be none)
+    let run = |rules: &str,
+               refusal: &str,
+               wording: &str,
+               input: &str|
+     -> Result<(Status, usize, usize, usize)> {
+        let rules_file = RulesFile::try_from(rules)?;
+        let mut root = root_scope(&rules_file, Rc::new(PathAwareValue::try_from(input)?));
+        let status = eval_rules_file(&rules_file, &mut root, None)?;
+        let registered = crate::rules::eval_context::registered_refusals()
+            .iter()
+            .filter(|text| text.contains(refusal))
+            .count();
+        let other_wording = if wording == THE_LINE {
+            THE_COLLISION_LINE
+        } else {
+            THE_LINE
+        };
+        let lines = root
+            .warnings()
+            .filter(|line| line.contains(wording) && line.contains(refusal))
+            .count();
+        let other = root
+            .warnings()
+            .filter(|line| line.contains(other_wording))
+            .count();
+        Ok((status, registered, lines, other))
+    };
+    let mut cells = CellFailures::default();
+    cells.check(
+        "`[ Properties.Owner == %names ] empty` over `Owner: alice` beside the refusal's marker: deselected on the mismatch (PASS), the refusal registered, one line in the \"does not match\" wording",
+        (Status::PASS, 1, 1, 0),
+        run(
+            "let wanted = Mappings.Wanted.Keys\nlet names = Resources.*.Properties.Tags[*][ Key IN %wanted ]\nrule r { Resources.*[ Type == 'AWS::S3::Bucket' ][ Properties.Owner == %names ] empty }",
+            "a name bound outside the predicate",
+            THE_LINE,
+            OWNER_FIXTURE,
+        )?,
+    );
+    cells.check(
+        "`when Cfg.Mode.Ref == %x { .. }` with `ModeParam` equal to no key beside the marker: not applicable (SKIP), the refusal registered, one line in the \"does not match\" wording",
+        (Status::SKIP, 1, 1, 0),
+        run(
+            &format!("rule r when Cfg[ x | Kind == 'k' ] !empty  {REFUSED_WALK}  Cfg.Mode.Ref == %x {{ Cfg.Mode.Ref == 'ModeParam' }}"),
+            "then no kept entry holds a key the predicate names",
+            THE_LINE,
+            CAPTURED,
+        )?,
+    );
+    cells.check(
+        "`when some Names[*] NOT IN %x { .. }` with every name a key beside the marker: every value a decided NO, not applicable (SKIP), the refusal registered, one line in the \"matches a denied value\" wording and none in the \"does not match\" wording",
+        (Status::SKIP, 1, 1, 0),
+        run(
+            &format!("rule r when Cfg[ x | Kind == 'k' ] !empty  {REFUSED_WALK}  some Names[*] NOT IN %x {{ Cfg.Mode.Ref == 'ModeParam' }}"),
+            "then no kept entry holds a key the predicate names",
+            THE_COLLISION_LINE,
+            CAPTURED,
+        )?,
+    );
+    cells.assert_all_agreed();
+    Ok(())
+}
+
+/// A `let` that reads `.Value` after a key filter whose predicate names a LIST-bound `%name`, compared
+/// against through a second `let`: over a MAP-shaped `Cfg` the filter's twin cannot read the name, the
+/// `.Value` read after it is REFUSED (the refusal names the read after the filter, as
+/// `an_undecidable_twin_with_a_continuation_is_refused_and_leaves_no_note` pins for the clause spelling),
+/// the rule that compares against the `let` fails on that refusal, and nothing is reported as an unraised
+/// read (the refusal is raised, not carried as a marker into the `let`); over the LIST-shaped `Cfg` the
+/// filter keeps the wanted pair, `.Value` reads its value and `some Limit > %limits` passes. The labels
+/// carry the clause records, so a disagreement names what the `let` resolved to.
+#[test]
+fn a_value_read_after_a_key_filter_over_a_list_bound_name_is_refused_over_a_map_and_read_over_a_list(
+) -> Result<()> {
+    const MAP_CFG: &str = r#"
+    {
+        Mappings: { Wanted: { Keys: [ 'Env' ] } },
+        Resources: {
+            F: { Type: 'AWS::Serverless::Function', Properties: { Handler: 'index.handler', Limit: 2, Cfg: { Env: 1, Team: 3 } } }
+        }
+    }
+    "#;
+    const LIST_CFG: &str = r#"
+    {
+        Mappings: { Wanted: { Keys: [ 'Env' ] } },
+        Resources: {
+            F: { Type: 'AWS::Serverless::Function', Properties: { Handler: 'index.handler', Limit: 2, Cfg: [ { Key: 'Env', Value: 1 }, { Key: 'Team', Value: 3 } ] } }
+        }
+    }
+    "#;
+    const RULES: &str = "let wanted = Mappings.Wanted.Keys\nlet limits = Resources.*.Properties.Cfg[*][ Key IN %wanted ].Value\nrule r { some Resources.*.Properties.Limit > %limits }";
+    const CONTINUATION_REFUSAL: &str = "`Value` is read from that selection after the filter";
+    let run = |input: &str| -> Result<(String, usize, String)> {
+        let rules_file = RulesFile::try_from(RULES)?;
+        let mut root = root_scope(&rules_file, Rc::new(PathAwareValue::try_from(input)?));
+        let status = match eval_rules_file(&rules_file, &mut root, None) {
+            Ok(status) => format!("{status:?}"),
+            Err(e) => format!("Err({e})"),
+        };
+        let lines = root
+            .warnings()
+            .filter(|line| line.contains("reported here instead"))
+            .count();
+        let record = format!("{:?}", root.reset_recorder().extract());
+        Ok((status, lines, record))
+    };
+    let mut cells = CellFailures::default();
+    let (status, lines, record) = run(MAP_CFG)?;
+    cells.check(
+        &format!("over the map-shaped `Cfg`: the `.Value` read after the filter is refused, the rule fails, no refused-read line (records: {record})"),
+        (format!("{:?}", Status::FAIL), true, 0),
+        (status, record.contains(CONTINUATION_REFUSAL), lines),
+    );
+    let (status, lines, record) = run(LIST_CFG)?;
+    cells.check(
+        &format!("over the list-shaped `Cfg`: the wanted pair's value is read and `some Limit > %limits` passes, no line (records: {record})"),
+        (format!("{:?}", Status::PASS), false, 0),
+        (status, record.contains(CONTINUATION_REFUSAL), lines),
+    );
+    cells.assert_all_agreed();
+    Ok(())
+}
+
+/// An absent right-hand REFERENCE beside a MARKER under a positive `IN` decides nothing for the clause:
+/// `Resources.B.Properties.Owner IN %names` with `%names` holding resolved tag maps, a refusal's marker (a
+/// map-shaped `Tags`) and a reference the document lacks (a resource with no `Tags`), `Owner` equal to no
+/// listed value, is `OR(no, .., unknown)`, unknown, so the gate is RAISED under `match_all` as under
+/// `some` (the rule fails closed on the marker's reason, no "decided by a value the document lacks" line;
+/// the quantifiers agree). The absent pair keeps its own decided NO and its FAIL record; the clause-wide
+/// absence (`absent_failure`) is set by a left-hand absence and by a right-hand one under the AND
+/// comparators, never by a right-hand one under the OR comparator beside a marker. The control with no
+/// marker (every `Tags` list-shaped, one resource lacking it) keeps the released decision: every pair a
+/// decided NO, the gate not applicable (SKIP), no line (nothing refused).
+#[test]
+fn an_absent_reference_beside_a_marker_under_a_positive_in_is_raised_not_decided() -> Result<()> {
+    const THE_LINE: &str = "was decided by a value the document lacks";
+    const WITH_MARKER: &str = r#"
+    {
+        Mappings: { Wanted: { Keys: [ 'Env' ] } },
+        Resources: {
+            B: { Type: 'AWS::S3::Bucket', Properties: { Owner: 'alice', Tags: [ { Key: 'Env', Value: 'allowed' } ] } },
+            M: { Type: 'AWS::Serverless::Function', Properties: { Handler: 'index.handler', Tags: { Env: 'x' } } },
+            N: { Type: 'AWS::SNS::Topic', Properties: { TopicName: 'n' } }
+        }
+    }
+    "#;
+    const NO_MARKER: &str = r#"
+    {
+        Mappings: { Wanted: { Keys: [ 'Env' ] } },
+        Resources: {
+            B: { Type: 'AWS::S3::Bucket', Properties: { Owner: 'alice', Tags: [ { Key: 'Env', Value: 'allowed' } ] } },
+            M: { Type: 'AWS::Serverless::Function', Properties: { Handler: 'index.handler', Tags: [ { Key: 'Env', Value: 'x' } ] } },
+            N: { Type: 'AWS::SNS::Topic', Properties: { TopicName: 'n' } }
+        }
+    }
+    "#;
+    const LETS: &str = "let wanted = Mappings.Wanted.Keys\nlet names = Resources.*.Properties.Tags[*][ Key IN %wanted ]\n";
+    let run = |condition: &str, input: &str| -> Result<(Status, usize)> {
+        let rules =
+            format!("{LETS}rule r when {condition} {{ Resources.B.Type == 'AWS::S3::Bucket' }}");
+        let rules_file = RulesFile::try_from(rules.as_str())?;
+        let mut root = root_scope(&rules_file, Rc::new(PathAwareValue::try_from(input)?));
+        let status = eval_rules_file(&rules_file, &mut root, None)?;
+        let lines = root
+            .warnings()
+            .filter(|line| line.contains(THE_LINE))
+            .count();
+        Ok((status, lines))
+    };
+    let mut cells = CellFailures::default();
+    cells.check(
+        "`when Resources.B.Properties.Owner IN %names` with a reference the document lacks AND a marker among the values: raised (the rule fails closed), no absence line",
+        (Status::FAIL, 0),
+        run("Resources.B.Properties.Owner IN %names", WITH_MARKER)?,
+    );
+    cells.check(
+        "`when some Resources.B.Properties.Owner IN %names`, the same values: raised, no absence line (the quantifiers agree)",
+        (Status::FAIL, 0),
+        run("some Resources.B.Properties.Owner IN %names", WITH_MARKER)?,
+    );
+    cells.check(
+        "control: `when Resources.B.Properties.Owner IN %names` with the reference the document lacks and NO marker: every pair a decided NO, not applicable (SKIP), no line",
+        (Status::SKIP, 0),
+        run("Resources.B.Properties.Owner IN %names", NO_MARKER)?,
+    );
+    cells.assert_all_agreed();
+    Ok(())
+}
+
+/// A positive `IN` that FAILS beside a refusal's marker failed on the marker's own pair and writes no
+/// refused-read line: whether a value that does not match decides the clause is the comparator's question,
+/// answered once for the pre-pass over the marker and for the line's verdict (`a_mismatch_decides`), and
+/// under membership a no decides nothing, since the entry the marker hides may be the one the value is
+/// among. Asserted through a capture holding the keys and the marker, `Cfg.Mode.Ref IN %x` with `Ref` equal
+/// to no key FAILS, the marker pair's record names the refusal, and no line is written (a line saying the
+/// refused read "was not raised by it" would stand beside the failure that raised it); with two left-hand
+/// values, one a key accepts and one no key does, the clause FAILS on the second's marker pair with no line,
+/// the accepted value's skipped pair noting no pass. `NOT IN` agrees: `Ref` equal to no key fails on the
+/// marker's pair with no line, and `Ref` equal to a key is a decided NO the marker cannot undo, the line in
+/// the negated comparators' wording, "matches a denied value" (the deciding value equals a listed key,
+/// so "does not match" would say the opposite). A right-hand reference the document lacks beside the marker, with no
+/// resolved value listed, is a LISTED entry: inside a filter predicate the clause is unknown (the rule fails
+/// closed, as a `when` over the predicate does) and BOTH pairs file their records, the absence's and the
+/// marker's, so a record names the reason the clause failed closed for; were the marker alone the
+/// reference's company, the marker's pair would be dropped as under a marker-only right-hand side and the
+/// only record would blame the absence.
+#[test]
+fn a_membership_that_fails_beside_the_marker_writes_no_line_and_keeps_the_markers_record(
+) -> Result<()> {
+    const THE_LINE: &str = "reported here instead";
+    const MISMATCH: &str = "was decided by a value that matches a denied value";
+    const THE_REFUSAL: &str = "then no kept entry holds a key the predicate names";
+    const THE_MARKER_PAIR: &str = "to: Some(UnResolved(";
+    const REFUSED_WALK: &str =
+        "Cfg[*][ x | Mode exists or Kind == 'k' ].Sub[*][ s | R1 !exists ] !empty or Cfg.Fallback exists";
+    // Every entry of `Cfg` is a map, so the own-key filter under `A` refuses inside the `Cfg[*]` loop and
+    // the loop places the refusal's marker into `x` beside the keys `Fallback`, `A` and `B`; `Vals` sits
+    // beside `Cfg`, outside the refused walk.
+    let doc = |mode: &str, vals: &str| {
+        format!(
+            r#"{{
+                "Cfg": {{
+                    "Mode": {{ "Ref": "{mode}" }},
+                    "Fallback": {{ "Kind": "k" }},
+                    "A": {{ "Kind": "k", "Sub": {{ "R1": {{ "Ref": "P" }}, "P": {{ "Kind": "k" }}, "Q": {{ "Kind": "k" }} }} }},
+                    "B": {{ "Kind": "k", "Sub": {{ "R1": {{ "Ref": "P" }}, "P": {{ "Kind": "k" }}, "Q": {{ "Kind": "k" }} }} }}
+                }},
+                "Vals": {vals}
+            }}"#
+        )
+    };
+    // (status; the clause's records hold the marker pair and name the refusal; the refused-read lines, any
+    // wording and the negated comparators' "matches a denied value" wording)
+    let run =
+        |clause: &str, under: &str, input: &str| -> Result<(Status, bool, bool, usize, usize)> {
+            let rules =
+                format!("rule r {{ Cfg[ x | Kind == 'k' ] !empty  {REFUSED_WALK}  {clause} }}");
+            let rules_file = RulesFile::try_from(rules.as_str())?;
+            let mut root = root_scope(&rules_file, Rc::new(PathAwareValue::try_from(input)?));
+            let status = eval_rules_file(&rules_file, &mut root, None)?;
+            let lines: Vec<String> = root
+                .warnings()
+                .filter(|line| line.contains(THE_LINE))
+                .cloned()
+                .collect();
+            let mismatch = lines.iter().filter(|line| line.contains(MISMATCH)).count();
+            let mut records = String::new();
+            record_containers_under(&root.reset_recorder().extract(), under, &mut records);
+            Ok((
+                status,
+                records.contains(THE_MARKER_PAIR),
+                records.contains(THE_REFUSAL),
+                lines.len(),
+                mismatch,
+            ))
+        };
+    let mut cells = CellFailures::default();
+    for (label, clause, mode, wanted) in [
+        (
+            "`Cfg.Mode.Ref IN %x` asserted with `Ref` equal to no key beside the marker: FAIL on the marker's pair, its record names the refusal, NO line",
+            "Cfg.Mode.Ref IN %x",
+            "Z",
+            (Status::FAIL, true, true, 0, 0),
+        ),
+        (
+            "`Cfg.Mode.Ref NOT IN %x` asserted with `Ref` equal to no key: the same under the negated comparator (parity)",
+            "Cfg.Mode.Ref NOT IN %x",
+            "Z",
+            (Status::FAIL, true, true, 0, 0),
+        ),
+        (
+            "`Cfg.Mode.Ref NOT IN %x` asserted with `Ref` equal to a key: a decided NO the marker cannot undo, FAIL, the marker pair's record kept, one line in the \"matches a denied value\" wording",
+            "Cfg.Mode.Ref NOT IN %x",
+            "A",
+            (Status::FAIL, true, true, 1, 1),
+        ),
+    ] {
+        cells.check(label, wanted, run(clause, "Cfg.Mode.Ref", &doc(mode, "[]"))?);
+    }
+    cells.check(
+        "`Vals[*].Name IN %x` asserted over one name a key accepts and one no key does: FAIL on the second's marker pair, its record names the refusal, NO line (the accepted value's skipped pair notes no pass)",
+        (Status::FAIL, true, true, 0, 0),
+        run(
+            "Vals[*].Name IN %x",
+            "Vals[*].Name",
+            &doc("A", r#"[ { "Name": "A" }, { "Name": "Z" } ]"#),
+        )?,
+    );
+    // A reference the document lacks beside the marker and no resolved value: function M's map-shaped
+    // `Tags` leave the twin's refusal marker in `%names`, topic N has no `Tags`, and nothing else is listed.
+    const ABSENT_AND_MARKER: &str = r#"
+    {
+        Mappings: { Wanted: { Keys: [ 'Env' ] } },
+        Resources: {
+            M: { Type: 'AWS::Serverless::Function', Properties: { Handler: 'index.handler', Tags: { Env: 'x' } } },
+            N: { Type: 'AWS::SNS::Topic', Properties: { TopicName: 'n' } }
+        }
+    }
+    "#;
+    const LETS: &str =
+        "let wanted = Mappings.Wanted.Keys\nlet names = Resources.*.Properties.Tags[*][ Key IN %wanted ]\n";
+    const TWIN_REFUSAL: &str = "a name bound outside the predicate";
+    // (status; the unresolved right-hand pairs on the clause's records, the absence's and the marker's;
+    // the refusal named among them; the refused-read lines)
+    let run_let = |rule: &str| -> Result<(Status, usize, bool, usize)> {
+        let rules = format!("{LETS}{rule}");
+        let rules_file = RulesFile::try_from(rules.as_str())?;
+        let mut root = root_scope(
+            &rules_file,
+            Rc::new(PathAwareValue::try_from(ABSENT_AND_MARKER)?),
+        );
+        let status = eval_rules_file(&rules_file, &mut root, None)?;
+        let lines = root
+            .warnings()
+            .filter(|line| line.contains(THE_LINE))
+            .count();
+        let mut records = String::new();
+        record_containers_under(
+            &root.reset_recorder().extract(),
+            "Properties.TopicName IN",
+            &mut records,
+        );
+        Ok((
+            status,
+            records.matches(THE_MARKER_PAIR).count(),
+            records.contains(TWIN_REFUSAL),
+            lines,
+        ))
+    };
+    for (label, rule) in [
+        (
+            "`[ Properties.TopicName IN %names ] !empty` over the topic, `%names` a reference the document lacks and the marker: unknown (FAIL), TWO unresolved pairs on record, the absence's and the marker's, the refusal named, no line",
+            "rule r { Resources.*[ Type == 'AWS::SNS::Topic' ][ Properties.TopicName IN %names ] !empty }",
+        ),
+        (
+            "the same predicate as a `when` condition: raised (FAIL), the two records, the refusal named, no line",
+            "rule r when Resources.*[ Type == 'AWS::SNS::Topic' ][ Properties.TopicName IN %names ] !empty { Resources.N.Type == 'AWS::SNS::Topic' }",
+        ),
+    ] {
+        cells.check(label, (Status::FAIL, 2, true, 0), run_let(rule)?);
+    }
+    cells.assert_all_agreed();
+    Ok(())
+}
+
+/// A REFUSAL TO COMPARE KINDS beside a marker is a decided no of its own kind, not a resolved mismatch or
+/// collision: `when Vals.Port != %x` with `Port: 22` and the capture holding the keys `Fallback`, `A`, `B`
+/// beside the refusal's marker refuses `22` against each key on kinds (an int against a String), the gate
+/// declines on the decided no and the rule is not applicable (SKIP), the refusal is registered, and the
+/// refused-read line names the decision in the kind wording, "was decided by a value of another kind",
+/// never "matches a denied value" (the negated comparators' wording for a resolved collision, which `22`
+/// against `'Fallback'` is not, since the pair compared nothing); under `==` a value of another kind "does
+/// not match", a true statement, so the positive comparator keeps that landed wording and writes no kind
+/// line; asserted, the `!=` clause FAILS on the decided no with the same line. Under `!=` each refused
+/// pair's record carries the refusal's own sentence, the two kinds and the comparator as written, with
+/// `refusal` set so the console prints it whole (two refused pairs, the keys the capture holds beside the
+/// marker); the marker's own pair is a refusal's record too (the arm writes its flag from the marker's
+/// kind), and the one record under the clause that is no refusal's is the clause's own block record. The
+/// `NOT IN` twin with the marker on the LEFT is pinned as the engine reads it today, not as the wording
+/// would have it: `%names NOT IN Haystack` with `%names` a key filter's selection over a bucket's
+/// list-shaped tags (the tag map) and a function's map-shaped tags (the filter's refusal marker), against
+/// a string the document holds, is RAISED on the marker (the gate fails the rule closed, FAIL; asserted,
+/// FAIL on the marker's pair), one refusal registered, no refused-read line in any wording and no kind
+/// sentence recorded: the kind arm does not decide this shape, so the line never says "matches a denied
+/// value" of it either. A known gap for the final-review list; whether the engine should decide the
+/// left-marker negated membership by the kind refusal is the engine's call, and these two rows go red
+/// when it does, naming the new reading.
+#[test]
+fn a_refusal_to_compare_kinds_beside_a_marker_is_worded_as_its_own_refusal() -> Result<()> {
+    const KIND_LINE: &str = "was decided by a value of another kind";
+    const COLLISION_LINE: &str = "was decided by a value that matches a denied value";
+    const MISMATCH_LINE: &str = "was decided by a value that does not match";
+    const THE_REFUSAL: &str = "then no kept entry holds a key the predicate names";
+    const THE_SENTENCE: &str = "int and String are kinds the comparator does not compare";
+    const REFUSED_WALK: &str =
+        "Cfg[*][ x | Mode exists or Kind == 'k' ].Sub[*][ s | R1 !exists ] !empty or Cfg.Fallback exists";
+    // Every entry of `Cfg` is a map, so the own-key filter under `A` refuses inside the `Cfg[*]` loop and
+    // the loop places the refusal's marker into `x` beside the keys `Fallback`, `A` and `B`; `Vals.Port` is
+    // an int beside `Cfg`, outside the refused walk, of another kind than every key.
+    const DOC: &str = r#"{
+        "Cfg": {
+            "Mode": { "Ref": "ModeParam" },
+            "Fallback": { "Kind": "k" },
+            "A": { "Kind": "k", "Sub": { "R1": { "Ref": "P" }, "P": { "Kind": "k" }, "Q": { "Kind": "k" } } },
+            "B": { "Kind": "k", "Sub": { "R1": { "Ref": "P" }, "P": { "Kind": "k" }, "Q": { "Kind": "k" } } }
+        },
+        "Vals": { "Port": 22 }
+    }"#;
+    // (status; the refusal in the registry; the refused-read lines in the kind wording naming the refusal;
+    // the lines in either resolved wording, which must be none; the records under `under`, one Debug string
+    // per record)
+    let run = |rules: &str, under: &str| -> Result<(Status, usize, usize, usize, Vec<String>)> {
+        let rules_file = RulesFile::try_from(rules)?;
+        let mut root = root_scope(&rules_file, Rc::new(PathAwareValue::try_from(DOC)?));
+        let status = eval_rules_file(&rules_file, &mut root, None)?;
+        let registered = crate::rules::eval_context::registered_refusals()
+            .iter()
+            .filter(|text| text.contains(THE_REFUSAL))
+            .count();
+        let kind = root
+            .warnings()
+            .filter(|line| line.contains(KIND_LINE) && line.contains(THE_REFUSAL))
+            .count();
+        let resolved = root
+            .warnings()
+            .filter(|line| line.contains(COLLISION_LINE) || line.contains(MISMATCH_LINE))
+            .count();
+        let mut records = Vec::new();
+        record_containers_list(&root.reset_recorder().extract(), under, &mut records);
+        Ok((status, registered, kind, resolved, records))
+    };
+    let mut cells = CellFailures::default();
+    for (label, clause, wanted) in [
+        (
+            "`when Vals.Port != %x { .. }` with `Port: 22` beside the keys and the marker: every pair refused on kinds, a decided no, not applicable (SKIP), the refusal registered, one line in the kind wording and none in the \"matches a denied value\" wording",
+            "Vals.Port != %x",
+            (Status::SKIP, 1, 1, 0),
+        ),
+        (
+            "`when Vals.Port == %x { .. }` under the positive comparator: a value of another kind does not match, so the landed \"does not match\" wording stays (one line) and no kind line is written",
+            "Vals.Port == %x",
+            (Status::SKIP, 1, 0, 1),
+        ),
+    ] {
+        let (status, registered, kind, resolved, _) = run(
+            &format!(
+                "rule r when Cfg[ x | Kind == 'k' ] !empty  {REFUSED_WALK}  {clause} {{ Cfg.Mode.Ref == 'ModeParam' }}"
+            ),
+            "Vals.Port",
+        )?;
+        cells.check(label, wanted, (status, registered, kind, resolved));
+    }
+    // Asserted: the clause FAILS on the decided no, and its records carry the refusal's own sentence.
+    let (status, registered, kind, resolved, records) = run(
+        &format!("rule r {{ Cfg[ x | Kind == 'k' ] !empty  {REFUSED_WALK}  Vals.Port != %x }}"),
+        "Vals.Port",
+    )?;
+    cells.check(
+        "`Vals.Port != %x` asserted with `Port: 22` beside the keys and the marker: FAIL on the decided no, the refusal registered, one line in the kind wording and none in a resolved wording",
+        (Status::FAIL, 1, 1, 0),
+        (status, registered, kind, resolved),
+    );
+    // Read per record: every record that carries the kind sentence carries `!=` as written and is a
+    // refusal's; the marker's own pair (`to: Some(UnResolved(`) is a refusal's too, as the arm writes its
+    // flag from the marker's kind; and the records that are no refusal's are block records of the clause
+    // itself, never a pair's.
+    let kind_pairs = records
+        .iter()
+        .filter(|record| record.contains(THE_SENTENCE))
+        .count();
+    let kind_pairs_as_refusals = records
+        .iter()
+        .filter(|record| {
+            record.contains(THE_SENTENCE)
+                && record.contains(" != ")
+                && record.contains("refusal: true")
+        })
+        .count();
+    let marker_pair_a_refusal = records
+        .iter()
+        .any(|record| record.contains("to: Some(UnResolved(") && record.contains("refusal: true"));
+    let not_a_refusal: Vec<&String> = records
+        .iter()
+        .filter(|record| record.contains("refusal: false"))
+        .collect();
+    cells.check(
+        "the records under `Vals.Port`: at least one refused pair, every one of them naming the two kinds and `!=` as written as a refusal (`refusal: true`); the marker's own pair a refusal's record too; one record no refusal's, the clause's own block record",
+        (true, true, true, 1, true),
+        (
+            kind_pairs >= 1,
+            kind_pairs == kind_pairs_as_refusals,
+            marker_pair_a_refusal,
+            not_a_refusal.len(),
+            not_a_refusal
+                .iter()
+                .all(|record| record.contains("BlockCheck")),
+        ),
+    );
+    // The `NOT IN` twin with the marker on the LEFT. The bucket's list-shaped tags give the key filter
+    // the tag map `{ Key: Env, Value: allowed }`; the function's map-shaped tags give it its refusal, so
+    // `%names` holds the map beside the marker, and `Haystack` is a string the map is not.
+    const THE_KEY_FILTER_REFUSAL: &str = "a name bound outside the predicate";
+    const MAP_KIND_SENTENCE: &str = "map and String are kinds the comparator does not compare";
+    const TWIN_DOC: &str = r#"
+    {
+        Haystack: "aws:arn:s3::${s3}",
+        Mappings: { Wanted: { Keys: [ 'Env' ] } },
+        Resources: {
+            B: { Type: 'AWS::S3::Bucket', Properties: { Owner: 'alice', Tags: [ { Key: 'Env', Value: 'allowed' } ] } },
+            M: { Type: 'AWS::Serverless::Function', Properties: { Handler: 'index.handler', Tags: { Env: 'x' } } }
+        }
+    }
+    "#;
+    const TWIN_LETS: &str = "let wanted = Mappings.Wanted.Keys\nlet names = Resources.*.Properties.Tags[*][ Key IN %wanted ]\n";
+    // (status; the key filter's refusal in the registry; the lines in the kind wording naming it; the
+    // lines in either resolved wording; the records under `%names` hold the map's kind sentence with
+    // `NOT IN` as written, and a record is a refusal's)
+    let twin = |rules: &str| -> Result<(Status, usize, usize, usize, bool, bool)> {
+        let rules_file = RulesFile::try_from(rules)?;
+        let mut root = root_scope(&rules_file, Rc::new(PathAwareValue::try_from(TWIN_DOC)?));
+        let status = eval_rules_file(&rules_file, &mut root, None)?;
+        let registered = crate::rules::eval_context::registered_refusals()
+            .iter()
+            .filter(|text| text.contains(THE_KEY_FILTER_REFUSAL))
+            .count();
+        let kind = root
+            .warnings()
+            .filter(|line| line.contains(KIND_LINE) && line.contains(THE_KEY_FILTER_REFUSAL))
+            .count();
+        let resolved = root
+            .warnings()
+            .filter(|line| line.contains(COLLISION_LINE) || line.contains(MISMATCH_LINE))
+            .count();
+        let mut records = String::new();
+        record_containers_under(&root.reset_recorder().extract(), "%names", &mut records);
+        Ok((
+            status,
+            registered,
+            kind,
+            resolved,
+            records.contains(MAP_KIND_SENTENCE) && records.contains(" NOT IN "),
+            records.contains("refusal: true"),
+        ))
+    };
+    cells.check(
+        "`when %names NOT IN Haystack { .. }` with the tag map beside the key filter's marker on the LEFT: the gate is RAISED on the marker (the rule fails closed, FAIL), the refusal registered once, no refused-read line in any wording, no kind sentence recorded, and the marker's record a refusal's; the kind arm does not decide this shape (a known gap: the engine's to decide)",
+        (Status::FAIL, 1, 0, 0, false, true),
+        twin(&format!(
+            "{TWIN_LETS}rule r when %names NOT IN Haystack {{ Resources exists }}"
+        ))?,
+    );
+    cells.check(
+        "`%names NOT IN Haystack` asserted: FAIL on the marker's pair, the same records and no line",
+        (Status::FAIL, 1, 0, 0, false, true),
+        twin(&format!("{TWIN_LETS}rule r {{ %names NOT IN Haystack }}"))?,
+    );
+    cells.assert_all_agreed();
+    Ok(())
+}
+
+/// The sentence a refusal of kinds records is bounded in the two values it quotes from the template, as
+/// every template part of a refusal is: the console prints a refusal's sentence whole (under the 4096
+/// whole-line bound), on the premise that each part taken from the template is cut on its own at 256
+/// characters with the count cut. `Vals.Port != %x` asserted with `Port: 22`, `%x` a key filter's keys
+/// beside the refusal's marker, one key three thousand plain letters: the refused pair's record names the
+/// key's path and value cut and marked, no run of letters longer than the bound reaches the sentence, and
+/// the one kind sentence under `Vals.Port` stays under the whole-line bound. Beside the marker exactly ONE
+/// entry is compared, the one in `Fallback`'s place in the kind cell's document (the entries under which
+/// the walk refused are the marker's; an entry added beside `Fallback` was not compared either), so the
+/// long key stands in that place: the same position in the document and in key order (it starts with
+/// `F`), no `Sub` under it, and the clause that holds the refusal reads `Vals.Port`. The control runs the
+/// same rules over the same document with the short key `Fallback` back in that place: its one sentence
+/// prints the key whole with no cut marker. Before this the sentence took the two values' `Display` as
+/// they were, so the record carried the three thousand letters twice (the path and the value) and the
+/// console printed them whole as a refusal.
+#[test]
+fn a_refusal_of_kinds_bounds_the_values_it_quotes_from_the_template() -> Result<()> {
+    const THE_SENTENCE: &str = "kinds the comparator does not compare";
+    const SENTENCE_HEAD: &str = "Comparing Path=";
+    const CUT_MARKER: &str = "more characters cut";
+    const REFUSED_WALK: &str =
+        "Cfg[*][ x | Mode exists or Kind == 'k' ].Sub[*][ s | R1 !exists ] !empty or Vals.Port exists";
+    // The kind cell's document with `key` in `Fallback`'s place, held by the key filter and compared
+    // against `Port` on kinds as `Fallback` is.
+    let document = |key: &str| {
+        format!(
+            r#"{{
+        "Cfg": {{
+            "Mode": {{ "Ref": "ModeParam" }},
+            "{key}": {{ "Kind": "k" }},
+            "A": {{ "Kind": "k", "Sub": {{ "R1": {{ "Ref": "P" }}, "P": {{ "Kind": "k" }}, "Q": {{ "Kind": "k" }} }} }},
+            "B": {{ "Kind": "k", "Sub": {{ "R1": {{ "Ref": "P" }}, "P": {{ "Kind": "k" }}, "Q": {{ "Kind": "k" }} }} }}
+        }},
+        "Vals": {{ "Port": 22 }}
+    }}"#
+        )
+    };
+    let rules =
+        format!("rule r {{ Cfg[ x | Kind == 'k' ] !empty  {REFUSED_WALK}  Vals.Port != %x }}");
+    // (status; each kind sentence on record under `Vals.Port`, read out of the records' one Debug string
+    // from its head to its tail: the record's other fields hold the values as they are, so the sentence
+    // is read apart from them)
+    let run = |key: &str| -> Result<(Status, Vec<String>)> {
+        let rules_file = RulesFile::try_from(rules.as_str())?;
+        let doc = document(key);
+        let mut root = root_scope(
+            &rules_file,
+            Rc::new(PathAwareValue::try_from(doc.as_str())?),
+        );
+        let status = eval_rules_file(&rules_file, &mut root, None)?;
+        let mut records = String::new();
+        record_containers_under(&root.reset_recorder().extract(), "Vals.Port", &mut records);
+        let mut sentences: Vec<String> = Vec::new();
+        let mut rest = records.as_str();
+        while let Some(start) = rest.find(SENTENCE_HEAD) {
+            let from = &rest[start..];
+            let Some(end) = from.find(THE_SENTENCE) else {
+                break;
+            };
+            let stop = end + THE_SENTENCE.len();
+            sentences.push(from[..stop].to_string());
+            rest = &from[stop..];
+        }
+        Ok((status, sentences))
+    };
+    // The right-hand value each sentence names, its first 40 characters, so a disagreement says which
+    // keys stood beside the marker.
+    let compared = |sentences: &[String]| -> Vec<String> {
+        sentences
+            .iter()
+            .map(|sentence| {
+                sentence
+                    .split(" != ")
+                    .nth(1)
+                    .unwrap_or("")
+                    .chars()
+                    .take(40)
+                    .collect()
+            })
+            .collect()
+    };
+    let long_key = format!("F{}", "k".repeat(2999));
+    let (status, sentences) = run(&long_key)?;
+    let long_key_sentence = sentences.first().map(String::as_str);
+    let mut cells = CellFailures::default();
+    cells.check(
+        &format!("`Vals.Port != %x` asserted with the long key in `Fallback`'s place beside the marker: FAIL on the decided no, ONE kind sentence on record, the long key's; compared: {:?}", compared(&sentences)),
+        (Status::FAIL, 1, true),
+        (
+            status,
+            sentences.len(),
+            long_key_sentence.is_some_and(|s| s.contains("Fkkkk")),
+        ),
+    );
+    cells.check(
+        "the long key's sentence: cut and marked, no run of letters longer than the bound, under the whole-line bound",
+        (true, false, true),
+        (
+            long_key_sentence.is_some_and(|s| s.contains(CUT_MARKER)),
+            long_key_sentence.is_some_and(|s| s.contains(&"k".repeat(300))),
+            long_key_sentence.is_some_and(|s| s.chars().count() < 4096),
+        ),
+    );
+    let (status, sentences) = run("Fallback")?;
+    let control_sentence = sentences.first().map(String::as_str);
+    cells.check(
+        &format!("the control, the short key `Fallback` in the same place: FAIL, ONE kind sentence, printing the key whole with no cut marker; compared: {:?}", compared(&sentences)),
+        (Status::FAIL, 1, true, false),
+        (
+            status,
+            sentences.len(),
+            control_sentence.is_some_and(|s| s.contains("Value=\\\"Fallback\\\"")),
+            control_sentence.is_some_and(|s| s.contains(CUT_MARKER)),
+        ),
+    );
+    // The comparator in the sentence is spelled as a rules file spells it: `!=` on the record above, and
+    // the table itself for the comparators the record does not reach (the sentence is written under the
+    // negated comparators beside a marker alone; under `==` and `IN` the pair keeps the operators' own
+    // reason), each as the parser reads it and the documentation writes it, never the record tree's
+    // `EQUALS`, `in` or `not in`.
+    cells.check(
+        "the long key's sentence spells the comparator `!=` as written",
+        true,
+        long_key_sentence.is_some_and(|s| s.contains(" != ")),
+    );
+    for (cmp, spelled) in [
+        ((CmpOperator::Eq, false), "=="),
+        ((CmpOperator::Eq, true), "!="),
+        ((CmpOperator::In, false), "IN"),
+        ((CmpOperator::In, true), "NOT IN"),
+        ((CmpOperator::Gt, false), ">"),
+        ((CmpOperator::Ge, false), ">="),
+        ((CmpOperator::Lt, false), "<"),
+        ((CmpOperator::Le, false), "<="),
+    ] {
+        cells.check(
+            &format!("the comparator {cmp:?} is spelled `{spelled}` in a kind sentence"),
+            spelled.to_string(),
+            comparator_as_written(cmp).to_string(),
+        );
+    }
+    cells.assert_all_agreed();
+    Ok(())
+}
+
+/// The control for the kind wording: a RESOLVED collision beside the marker keeps the negated comparators'
+/// wording. `Cfg.Mode.Ref != %x` with `Ref` equal to the key `A` is a decided NO the marker cannot undo
+/// (`'A'` matches a listed value), asserted FAIL and as a gate not applicable (SKIP), the refusal registered,
+/// one line in the "matches a denied value" wording and none in the kind wording, and the collision pair's
+/// record is no refusal (`refusal: false`, beside the marker's own pair, which is one) and carries no kind
+/// sentence: the four resolved verdicts keep their wording for a comparison that was answered. The same
+/// `Ref` under `NOT IN` beside the marker (`Cfg.Mode.Ref NOT IN %x`) is a resolved collision under the
+/// negated membership and keeps that wording too, as a gate and asserted, with no kind sentence recorded.
+#[test]
+fn a_resolved_collision_beside_a_marker_keeps_the_denied_value_wording() -> Result<()> {
+    const KIND_LINE: &str = "was decided by a value of another kind";
+    const COLLISION_LINE: &str = "was decided by a value that matches a denied value";
+    const THE_REFUSAL: &str = "then no kept entry holds a key the predicate names";
+    const THE_SENTENCE: &str = "kinds the comparator does not compare";
+    const REFUSED_WALK: &str =
+        "Cfg[*][ x | Mode exists or Kind == 'k' ].Sub[*][ s | R1 !exists ] !empty or Cfg.Fallback exists";
+    // The same refused walk as the kind cell's, `Mode.Ref` equal to the key `A` the capture holds.
+    const DOC: &str = r#"{
+        "Cfg": {
+            "Mode": { "Ref": "A" },
+            "Fallback": { "Kind": "k" },
+            "A": { "Kind": "k", "Sub": { "R1": { "Ref": "P" }, "P": { "Kind": "k" }, "Q": { "Kind": "k" } } },
+            "B": { "Kind": "k", "Sub": { "R1": { "Ref": "P" }, "P": { "Kind": "k" }, "Q": { "Kind": "k" } } }
+        }
+    }"#;
+    // (status; the refusal in the registry; the lines in the "matches a denied value" wording naming the
+    // refusal; the lines in the kind wording, which must be none; the records under `Cfg.Mode.Ref`)
+    let run = |rules: &str| -> Result<(Status, usize, usize, usize, String)> {
+        let rules_file = RulesFile::try_from(rules)?;
+        let mut root = root_scope(&rules_file, Rc::new(PathAwareValue::try_from(DOC)?));
+        let status = eval_rules_file(&rules_file, &mut root, None)?;
+        let registered = crate::rules::eval_context::registered_refusals()
+            .iter()
+            .filter(|text| text.contains(THE_REFUSAL))
+            .count();
+        let collision = root
+            .warnings()
+            .filter(|line| line.contains(COLLISION_LINE) && line.contains(THE_REFUSAL))
+            .count();
+        let kind = root
+            .warnings()
+            .filter(|line| line.contains(KIND_LINE))
+            .count();
+        let mut records = String::new();
+        record_containers_under(
+            &root.reset_recorder().extract(),
+            "Cfg.Mode.Ref",
+            &mut records,
+        );
+        Ok((status, registered, collision, kind, records))
+    };
+    let mut cells = CellFailures::default();
+    let (status, registered, collision, kind, _) = run(&format!(
+        "rule r when Cfg[ x | Kind == 'k' ] !empty  {REFUSED_WALK}  Cfg.Mode.Ref != %x {{ Cfg.Mode.Ref == 'A' }}"
+    ))?;
+    cells.check(
+        "`when Cfg.Mode.Ref != %x { .. }` with `Ref` equal to the key `A` beside the marker: a resolved collision, not applicable (SKIP), the refusal registered, one line in the \"matches a denied value\" wording and none in the kind wording",
+        (Status::SKIP, 1, 1, 0),
+        (status, registered, collision, kind),
+    );
+    let (status, registered, collision, kind, records) = run(&format!(
+        "rule r {{ Cfg[ x | Kind == 'k' ] !empty  {REFUSED_WALK}  Cfg.Mode.Ref != %x }}"
+    ))?;
+    cells.check(
+        "`Cfg.Mode.Ref != %x` asserted with `Ref` equal to the key `A`: FAIL on the collision, the refusal registered, one line in the \"matches a denied value\" wording and none in the kind wording",
+        (Status::FAIL, 1, 1, 0),
+        (status, registered, collision, kind),
+    );
+    cells.check(
+        "the records under `Cfg.Mode.Ref`: the collision pair is no refusal (`refusal: false` present), no record carries the kind sentence",
+        (true, false),
+        (
+            records.contains("refusal: false"),
+            records.contains(THE_SENTENCE),
+        ),
+    );
+    // The negated membership's control: `Ref` equal to the key `A` under `NOT IN` beside the marker is a
+    // resolved collision too, and keeps the "matches a denied value" wording with no kind line, as a gate
+    // and asserted.
+    let (status, registered, collision, kind, _) = run(&format!(
+        "rule r when Cfg[ x | Kind == 'k' ] !empty  {REFUSED_WALK}  Cfg.Mode.Ref NOT IN %x {{ Cfg.Mode.Ref == 'A' }}"
+    ))?;
+    cells.check(
+        "`when Cfg.Mode.Ref NOT IN %x { .. }` with `Ref` equal to the key `A` beside the marker: a resolved collision under the negated membership, not applicable (SKIP), the refusal registered, one line in the \"matches a denied value\" wording and none in the kind wording",
+        (Status::SKIP, 1, 1, 0),
+        (status, registered, collision, kind),
+    );
+    let (status, registered, collision, kind, records) = run(&format!(
+        "rule r {{ Cfg[ x | Kind == 'k' ] !empty  {REFUSED_WALK}  Cfg.Mode.Ref NOT IN %x }}"
+    ))?;
+    cells.check(
+        "`Cfg.Mode.Ref NOT IN %x` asserted with `Ref` equal to the key `A`: FAIL on the collision, one line in the \"matches a denied value\" wording, none in the kind wording, and no record carries the kind sentence",
+        (Status::FAIL, 1, 1, 0, false),
+        (
+            status,
+            registered,
+            collision,
+            kind,
+            records.contains(THE_SENTENCE),
+        ),
+    );
+    cells.assert_all_agreed();
+    Ok(())
+}
+
+/// A `some` clause whose every pair faced an ABSENT right-hand side is decided by the absence, and its
+/// refused-read line says so, also when a resolved left-hand value was compared: `some %x ==
+/// Properties.Missing` through a capture holding the keys and a refusal's marker, against a reference the
+/// document lacks, FAILS on its statuses (every pair against nothing), and the line is written in the
+/// "decided by a value the document lacks" wording, as the `match_all` spelling writes it; read from the
+/// left-hand values alone (`every_value_absent`), the compared keys would leave the verdict unnamed and the
+/// line unwritten while the comment beside the arm promises it. The registry is not read here: the refused
+/// walk that leaves the marker in `%x` registers its own refusal where it is raised, so a count there would
+/// not be the comparison's (the registration the comparison owns is pinned by
+/// `a_refusal_among_the_right_hand_values_is_registered_whatever_the_verdict`, whose refusals are raised
+/// inside a `let`'s quiet probe and register nothing on their own).
+#[test]
+fn a_some_clause_against_an_absent_right_hand_side_writes_the_absence_line() -> Result<()> {
+    const THE_LINE: &str = "was decided by a value the document lacks";
+    const REFUSED_WALK: &str =
+        "Cfg[*][ x | Mode exists or Kind == 'k' ].Sub[*][ s | R1 !exists ] !empty or Cfg.Fallback exists";
+    const DOC: &str = r#"{
+        "Cfg": {
+            "Mode": { "Ref": "A" },
+            "Fallback": { "Kind": "k" },
+            "A": { "Kind": "k", "Sub": { "R1": { "Ref": "P" }, "P": { "Kind": "k" }, "Q": { "Kind": "k" } } },
+            "B": { "Kind": "k", "Sub": { "R1": { "Ref": "P" }, "P": { "Kind": "k" }, "Q": { "Kind": "k" } } }
+        },
+        "Properties": { "Present": "a" }
+    }"#;
+    let run = |clause: &str| -> Result<(Status, usize)> {
+        let rules = format!("rule r {{ Cfg[ x | Kind == 'k' ] !empty  {REFUSED_WALK}  {clause} }}");
+        let rules_file = RulesFile::try_from(rules.as_str())?;
+        let mut root = root_scope(&rules_file, Rc::new(PathAwareValue::try_from(DOC)?));
+        let status = eval_rules_file(&rules_file, &mut root, None)?;
+        let lines = root
+            .warnings()
+            .filter(|line| line.contains(THE_LINE))
+            .count();
+        Ok((status, lines))
+    };
+    let mut cells = CellFailures::default();
+    for (label, clause) in [
+        (
+            "`some %x == Properties.Missing` asserted, `%x` the keys and the refusal's marker, the right side a reference the document lacks: FAIL on the absences, the absence line written",
+            "some %x == Properties.Missing",
+        ),
+        (
+            "`%x == Properties.Missing` (`match_all`) over the same: FAIL, the line written",
+            "%x == Properties.Missing",
+        ),
+    ] {
+        cells.check(label, (Status::FAIL, 1), run(clause)?);
+    }
+    cells.assert_all_agreed();
+    Ok(())
+}
+
+/// A refusal among a comparison's right-hand values is REGISTERED whatever the clause's verdict, so a later
+/// error or record carrying its text prints whole (`is_refusal`): with the marker alone in `%names` (two
+/// map-tagged functions, nothing resolved) a `when` over `[ Properties.Tags[*] IN %names ] empty` compares
+/// nothing and is raised, no line, BOTH texts in the registry; with one listed pair beside the marker and
+/// a tag no listed pair equals, the predicate `[ Properties.Tags[*] IN %names ] empty` fails closed on the
+/// marker's pair (unknown), no line, the text in the registry. Collected only when a verdict leaves the
+/// read unraised, both shapes would leave the registry empty: the first because its every pair is skipped
+/// and its outcome is the raise, the second because a failure on the marker is neither a pass, an absence
+/// nor a decided mismatch. And where a KEY FILTER's marker stands before the refusal's among the values (a
+/// function whose tag key spends the regex's budget, then one whose map-shaped tags the twin cannot read),
+/// nothing listed, a `when` over the positive `IN` is raised with the REFUSAL's reason, not the first
+/// marker's (a refusal names a rules-file mistake, a key filter's marker a data budget), and the text is
+/// registered; raised on the first reason, the clause would name the budget and the refusal would be
+/// silent.
+#[test]
+fn a_refusal_among_the_right_hand_values_is_registered_whatever_the_verdict() -> Result<()> {
+    const THE_REFUSAL: &str = "a name bound outside the predicate";
+    const THE_LINE: &str = "reported here instead";
+    const A_KEY_FILTERS_REASON: &str = "could not be decided";
+    const TWO_MARKERS: &str = r#"
+    {
+        Mappings: { Wanted: { Keys: [ 'Env' ] } },
+        Resources: {
+            B: { Type: 'AWS::S3::Bucket', Properties: { Tags: [ { Key: 'Env', Value: 'x' } ] } },
+            M1: { Type: 'AWS::Serverless::Function', Properties: { Handler: 'index.handler', Tags: { Env: 'x' } } },
+            M2: { Type: 'AWS::Serverless::Function', Properties: { Handler: 'index.handler', Tags: { Env: 'y' } } }
+        }
+    }
+    "#;
+    const ONE_PAIR_AND_A_MARKER: &str = r#"
+    {
+        Mappings: { Wanted: { Keys: [ 'Env' ] } },
+        Resources: {
+            B: { Type: 'AWS::S3::Bucket', Properties: { Tags: [ { Key: 'Owner', Value: 'other' } ] } },
+            L: { Type: 'AWS::Lambda::Function', Properties: { Handler: 'index.handler', Tags: [ { Key: 'Env', Value: 'zzz' } ] } },
+            M: { Type: 'AWS::Serverless::Function', Properties: { Handler: 'index.handler', Tags: { Env: 'x' } } }
+        }
+    }
+    "#;
+    let run = |rules: &str, input: &str| -> Result<(Status, usize, usize)> {
+        let rules_file = RulesFile::try_from(rules)?;
+        let mut root = root_scope(&rules_file, Rc::new(PathAwareValue::try_from(input)?));
+        let status = eval_rules_file(&rules_file, &mut root, None)?;
+        let registered = crate::rules::eval_context::registered_refusals()
+            .iter()
+            .filter(|text| text.contains(THE_REFUSAL))
+            .count();
+        let lines = root
+            .warnings()
+            .filter(|line| line.contains(THE_LINE))
+            .count();
+        Ok((status, registered, lines))
+    };
+    let mut cells = CellFailures::default();
+    cells.check(
+        "`when Resources.*[ .. ][ Properties.Tags[*] IN %names ] empty { .. }` with two refusals and nothing resolved in `%names`: compared nothing, raised (FAIL), no line, BOTH refusals registered",
+        (Status::FAIL, 2, 0),
+        run(
+            "let wanted = Mappings.Wanted.Keys\nlet names = Resources.*[ Type == 'AWS::Serverless::Function' ].Properties.Tags[*][ Key IN %wanted ]\nrule r when Resources.*[ Type == 'AWS::S3::Bucket' ][ Properties.Tags[*] IN %names ] empty { Resources.B.Type == 'AWS::S3::Bucket' }",
+            TWO_MARKERS,
+        )?,
+    );
+    cells.check(
+        "`[ Properties.Tags[*] IN %names ] empty` with one listed pair and the marker, the bucket's tag equal to no listed pair: fails closed on the marker's pair (FAIL), no line, the refusal registered",
+        (Status::FAIL, 1, 0),
+        run(
+            "let wanted = Mappings.Wanted.Keys\nlet names = Resources.*.Properties.Tags[*][ Key IN %wanted ]\nrule r { Resources.*[ Type == 'AWS::S3::Bucket' ][ Properties.Tags[*] IN %names ] empty }",
+            ONE_PAIR_AND_A_MARKER,
+        )?,
+    );
+    // Function A's tag key spends the regex's budget (a key filter's marker, the first value), function
+    // M's map-shaped tags leave the twin's refusal (the second); the bucket's `W` is listed by nothing.
+    const A_BUDGET_THEN_A_REFUSAL: &str = r#"
+    {
+        Mappings: { Wanted: { Keys: [ 'Env' ] } },
+        Resources: {
+            A: { Type: 'AWS::Serverless::Function', Properties: { Handler: 'index.handler', Tags: [ { Key: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', Value: 'z' } ] } },
+            B: { Type: 'AWS::S3::Bucket', Properties: { W: 'y' } },
+            M: { Type: 'AWS::Serverless::Function', Properties: { Handler: 'index.handler', Tags: { Env: 'x' } } }
+        }
+    }
+    "#;
+    {
+        let rules = "let wanted = Mappings.Wanted.Keys\nlet names = Resources.*[ Type == 'AWS::Serverless::Function' ].Properties.Tags[*][ Key IN %wanted or Key == /(?!x)((a+)+)b/ ]\nrule r when Resources.*[ Type == 'AWS::S3::Bucket' ][ Properties.W IN %names ] !empty { Resources.B.Type == 'AWS::S3::Bucket' }";
+        let rules_file = RulesFile::try_from(rules)?;
+        let mut root = root_scope(
+            &rules_file,
+            Rc::new(PathAwareValue::try_from(A_BUDGET_THEN_A_REFUSAL)?),
+        );
+        let status = eval_rules_file(&rules_file, &mut root, None)?;
+        let registered = crate::rules::eval_context::registered_refusals()
+            .iter()
+            .filter(|text| text.contains(THE_REFUSAL))
+            .count();
+        let lines = root
+            .warnings()
+            .filter(|line| line.contains(THE_LINE))
+            .count();
+        let mut records = String::new();
+        record_containers_under(
+            &root.reset_recorder().extract(),
+            "Properties.W IN",
+            &mut records,
+        );
+        cells.check(
+            &format!("`when [ Properties.W IN %names ] !empty` with a key filter's marker then a refusal's marker and nothing listed: raised with the REFUSAL's reason (FAIL), the text registered, no line, the clause's records naming the refusal and not the budget (records: {records})"),
+            (Status::FAIL, 1, 0, true, false),
+            (
+                status,
+                registered,
+                lines,
+                records.contains(THE_REFUSAL),
+                records.contains(A_KEY_FILTERS_REASON),
+            ),
+        );
+    }
+    // A LISTED pair beside both marker kinds: function L's `Env` tag is listed, so the marker pairs keep
+    // their statuses and the gate, not the compared-nothing arm, raises the clause; it raises the
+    // REFUSAL's reason although the key filter's pair recorded its reason first.
+    const A_LISTED_PAIR_AND_BOTH_MARKERS: &str = r#"
+    {
+        Mappings: { Wanted: { Keys: [ 'Env' ] } },
+        Resources: {
+            A: { Type: 'AWS::Serverless::Function', Properties: { Handler: 'index.handler', Tags: [ { Key: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', Value: 'z' } ] } },
+            B: { Type: 'AWS::S3::Bucket', Properties: { W: 'y' } },
+            L: { Type: 'AWS::Serverless::Function', Properties: { Handler: 'index.handler', Tags: [ { Key: 'Env', Value: 'q' } ] } },
+            M: { Type: 'AWS::Serverless::Function', Properties: { Handler: 'index.handler', Tags: { Env: 'x' } } }
+        }
+    }
+    "#;
+    const BOTH_KINDS_LET: &str = "let wanted = Mappings.Wanted.Keys\nlet names = Resources.*[ Type == 'AWS::Serverless::Function' ].Properties.Tags[*][ Key IN %wanted or Key == /(?!x)((a+)+)b/ ]\n";
+    let run_records = |rule: &str, input: &str| -> Result<(Status, usize, usize, String)> {
+        let rules = format!("{BOTH_KINDS_LET}{rule}");
+        let rules_file = RulesFile::try_from(rules.as_str())?;
+        let mut root = root_scope(&rules_file, Rc::new(PathAwareValue::try_from(input)?));
+        let status = eval_rules_file(&rules_file, &mut root, None)?;
+        let registered = crate::rules::eval_context::registered_refusals()
+            .iter()
+            .filter(|text| text.contains(THE_REFUSAL))
+            .count();
+        let lines = root
+            .warnings()
+            .filter(|line| line.contains(THE_LINE))
+            .count();
+        let mut records = String::new();
+        record_containers_under(
+            &root.reset_recorder().extract(),
+            "Properties.W IN",
+            &mut records,
+        );
+        Ok((status, registered, lines, records))
+    };
+    let (status, registered, lines, records) = run_records(
+        "rule r when Resources.*[ Type == 'AWS::S3::Bucket' ][ Properties.W IN %names ] !empty { Resources.B.Type == 'AWS::S3::Bucket' }",
+        A_LISTED_PAIR_AND_BOTH_MARKERS,
+    )?;
+    cells.check(
+        &format!("`when [ Properties.W IN %names ] !empty` with a listed pair beside a key filter's marker and a refusal's: the gate raises the REFUSAL's reason (FAIL), the text registered, no line, the records naming the refusal and not the budget (records: {records})"),
+        (Status::FAIL, 1, 0, true, false),
+        (
+            status,
+            registered,
+            lines,
+            records.contains(THE_REFUSAL),
+            records.contains(A_KEY_FILTERS_REASON),
+        ),
+    );
+    // Asserted outside a predicate, over the two markers and nothing listed: the compared-nothing arm's
+    // strict raise is the registered refusal (`eval_context::refuse`), so the clause's record reads
+    // `refusal: true`.
+    let (status, registered, lines, records) = run_records(
+        "rule r { Resources.B.Properties.W IN %names }",
+        A_BUDGET_THEN_A_REFUSAL,
+    )?;
+    cells.check(
+        &format!("`Resources.B.Properties.W IN %names` asserted over a key filter's marker and a refusal's, nothing listed: FAIL as the registered refusal, `refusal: true` on the record, no line (records: {records})"),
+        (Status::FAIL, true, 0, true),
+        (
+            status,
+            registered >= 1,
+            lines,
+            records.contains("refusal: true"),
+        ),
+    );
+    cells.assert_all_agreed();
+    Ok(())
+}
+
+/// A `some` under a NEGATED comparator with NO marker among the right-hand values is never settled NO by
+/// an absence alone: `when some Resources.*.Properties.Name != /(?!x)((a+)+)b/` over one resource whose
+/// `Name` is `[]` and one whose `Name` spends the regex's budget is RAISED on the budget (FAIL, the rule
+/// fails closed), as its twin with `Name` missing is (the parity control). The bookkeeping that could
+/// settle `some` runs only beside a marker among the right-hand values, so with a literal on the right its
+/// sets are empty; read as "every value seen was decided NO" over no value seen, the empty list's absence
+/// would settle the clause and the rule would read not applicable (SKIP) while the missing key raises,
+/// so `[]` and a missing key would read differently and a fail-closed gate would stand open. With a
+/// name the regex decides beside the `[]`, `some` passes on it and the body runs (PASS): the raise is
+/// the budget's, not the absence's.
+#[test]
+fn an_empty_left_collection_beside_a_spent_budget_is_raised_not_settled_under_a_negated_some(
+) -> Result<()> {
+    const RULE: &str = "rule r when some Resources.*.Properties.Name != /(?!x)((a+)+)b/ { Resources.A.Type == 'T' }";
+    let doc = |a_properties: &str, s_name: &str| {
+        format!(
+            r#"{{ "Resources": {{ "A": {{ "Type": "T", "Properties": {{ {a_properties} }} }}, "S": {{ "Type": "T", "Properties": {{ "Name": "{s_name}" }} }} }} }}"#
+        )
+    };
+    let spends_the_budget = "a".repeat(30);
+    let run = |input: &str| -> Result<Status> {
+        let rules_file = RulesFile::try_from(RULE)?;
+        let mut root = root_scope(&rules_file, Rc::new(PathAwareValue::try_from(input)?));
+        eval_rules_file(&rules_file, &mut root, None)
+    };
+    let mut cells = CellFailures::default();
+    for (label, a_properties, s_name, wanted) in [
+        (
+            "`Name: []` beside a name that spends the regex's budget: raised on the budget (FAIL), not settled NO by the empty list",
+            r#""Name": []"#,
+            spends_the_budget.as_str(),
+            Status::FAIL,
+        ),
+        (
+            "`Name` missing beside the same name: raised (FAIL), the parity control",
+            r#""Handler": "h""#,
+            spends_the_budget.as_str(),
+            Status::FAIL,
+        ),
+        (
+            "`Name: []` beside a name the regex decides: `some` passes on it and the body runs (PASS)",
+            r#""Name": []"#,
+            "n",
+            Status::PASS,
+        ),
+    ] {
+        cells.check(label, wanted, run(&doc(a_properties, s_name))?);
+    }
+    cells.assert_all_agreed();
+    Ok(())
+}
+
+/// A refusal among the LEFT-hand values is registered whatever the clause's verdict, and reported on the
+/// run's output when the clause is decided without raising it, as a right-hand refusal is: `some %x ==
+/// 'A'` through a capture holding the keys and the refusal's marker PASSES on the key `A`, and the line is
+/// written in the "passed by a value that holds" wording naming the refusal (the marker's pair was never
+/// consulted, and the refusal the predicate's `or` swallowed upstream reached no record of this clause);
+/// a `let` holding two markers on the left (`some %names == 'x'` over two map-tagged functions, with and
+/// without a bucket's listed pair beside them) is a selection nobody can read and is raised at the clause
+/// before any pair is compared (FAIL, at least the raised text registered, no line), so a `let` is not
+/// the route to two left-hand refusals in one comparison, where a capture's marker beside its keys is
+/// compared pair by pair; and `some %x == 'Z'` asserted, the keys mismatching beside the marker, FAILS on
+/// the marker's pair with no line: a `some` with a marker among its left-hand values that did not pass is
+/// decided by nothing, so neither the absence nor the mismatch verdict is written for it.
+#[test]
+fn a_refusal_among_the_left_hand_values_is_registered_and_reported_when_the_clause_is_decided(
+) -> Result<()> {
+    const THE_LINE: &str = "reported here instead";
+    const PASSED: &str = "passed by a value that holds";
+    const THE_CAPTURE_REFUSAL: &str = "then no kept entry holds a key the predicate names";
+    const THE_TWIN_REFUSAL: &str = "a name bound outside the predicate";
+    const REFUSED_WALK: &str =
+        "Cfg[*][ x | Mode exists or Kind == 'k' ].Sub[*][ s | R1 !exists ] !empty or Cfg.Fallback exists";
+    const CAPTURED: &str = r#"{
+        "Cfg": {
+            "Mode": { "Ref": "ModeParam" },
+            "Fallback": { "Kind": "k" },
+            "A": { "Kind": "k", "Sub": { "R1": { "Ref": "P" }, "P": { "Kind": "k" }, "Q": { "Kind": "k" } } },
+            "B": { "Kind": "k", "Sub": { "R1": { "Ref": "P" }, "P": { "Kind": "k" }, "Q": { "Kind": "k" } } }
+        }
+    }"#;
+    const TWO_MARKERS: &str = r#"
+    {
+        Mappings: { Wanted: { Keys: [ 'Env' ] } },
+        Resources: {
+            B: { Type: 'AWS::S3::Bucket', Properties: { Tags: [ { Key: 'Env', Value: 'x' } ] } },
+            M1: { Type: 'AWS::Serverless::Function', Properties: { Handler: 'index.handler', Tags: { Env: 'x' } } },
+            M2: { Type: 'AWS::Serverless::Function', Properties: { Handler: 'index.handler', Tags: { Env: 'y' } } }
+        }
+    }
+    "#;
+    // (status; the refused-read lines naming the refusal, any wording; the lines in the pass wording;
+    // the refusal's texts in the registry)
+    let run = |rules: &str, refusal: &str, input: &str| -> Result<(Status, usize, usize, usize)> {
+        let rules_file = RulesFile::try_from(rules)?;
+        let mut root = root_scope(&rules_file, Rc::new(PathAwareValue::try_from(input)?));
+        let status = eval_rules_file(&rules_file, &mut root, None)?;
+        let lines: Vec<String> = root
+            .warnings()
+            .filter(|line| line.contains(THE_LINE) && line.contains(refusal))
+            .cloned()
+            .collect();
+        let passed = lines.iter().filter(|line| line.contains(PASSED)).count();
+        let registered = crate::rules::eval_context::registered_refusals()
+            .iter()
+            .filter(|text| text.contains(refusal))
+            .count();
+        Ok((status, lines.len(), passed, registered))
+    };
+    let mut cells = CellFailures::default();
+    let (status, lines, passed, registered) = run(
+        &format!("rule r {{ Cfg[ x | Kind == 'k' ] !empty  {REFUSED_WALK}  some %x == 'A' }}"),
+        THE_CAPTURE_REFUSAL,
+        CAPTURED,
+    )?;
+    cells.check(
+        "`some %x == 'A'` asserted, `%x` the keys and the refusal's marker: PASS on the key `A`, one line in the pass wording naming the refusal, the text in the registry",
+        (Status::PASS, 1, 1, true),
+        (status, lines, passed, registered >= 1),
+    );
+    let (status, lines, passed, registered) = run(
+        "let wanted = Mappings.Wanted.Keys\nlet names = Resources.*.Properties.Tags[*][ Key IN %wanted ]\nrule r { some %names == 'x' }",
+        THE_TWIN_REFUSAL,
+        TWO_MARKERS,
+    )?;
+    cells.check(
+        "`some %names == 'x'` asserted with the bucket's listed pair and two refusals in `%names`: a `let` selection nobody can read, raised at the clause (FAIL), no line, the raised text registered",
+        (Status::FAIL, 0, 0, true),
+        (status, lines, passed, registered >= 1),
+    );
+    let (status, lines, passed, registered) = run(
+        "let wanted = Mappings.Wanted.Keys\nlet names = Resources.*[ Type == 'AWS::Serverless::Function' ].Properties.Tags[*][ Key IN %wanted ]\nrule r { some %names == 'x' }",
+        THE_TWIN_REFUSAL,
+        TWO_MARKERS,
+    )?;
+    cells.check(
+        "`some %names == 'x'` asserted with two refusals and nothing resolved in `%names`: a selection nobody can read, raised at the clause (FAIL), no line, the raised text registered",
+        (Status::FAIL, 0, 0, true),
+        (status, lines, passed, registered >= 1),
+    );
+    let (status, lines, passed, registered) = run(
+        &format!("rule r {{ Cfg[ x | Kind == 'k' ] !empty  {REFUSED_WALK}  some %x == 'Z' }}"),
+        THE_CAPTURE_REFUSAL,
+        CAPTURED,
+    )?;
+    cells.check(
+        "`some %x == 'Z'` asserted, the keys mismatching beside the marker: FAIL on the marker's pair, no line (the clause is decided by nothing), the text in the registry",
+        (Status::FAIL, 0, 0, true),
+        (status, lines, passed, registered >= 1),
+    );
+    cells.assert_all_agreed();
+    Ok(())
+}
+
+/// A resolved left-hand value beside a MARKER among the left-hand values, compared against an absent
+/// right-hand side under `match_all`, is a decided NO whatever the marker hides: `when %sel ==
+/// Properties.Missing` with `%sel` = `x` and a key filter's marker (a regex that spends its budget on one
+/// map's key and reads the other's) reads not applicable (SKIP), the condition decided by the absence for
+/// every left-hand value, the marker's own pair included (the clause reference: "a decided failure for each
+/// left-hand value, under every comparator and in both polarities"); raised on the marker instead, the rule
+/// would fail closed where the document decides it.
+#[test]
+fn a_resolved_value_beside_a_left_marker_against_an_absent_right_hand_side_is_decided_under_match_all(
+) -> Result<()> {
+    let document = format!(
+        "{{ Resources: {{ A: {{ Type: 'AWS::IAM::Role', Properties: {{ Maps: {{ M1: {{ {long}: 'z' }}, M2: {{ aab: 'x' }} }} }} }}, B: {{ Type: 'AWS::S3::Bucket', Properties: {{ W: 'y' }} }} }} }}",
+        long = "a".repeat(30)
+    );
+    let rules = "let sel = Resources.A.Properties.Maps.*[ keys == /(?!x)((a+)+)b/ ].*\nrule r when %sel == Properties.Missing { Resources.B.Type == 'AWS::S3::Bucket' }";
+    let rules_file = RulesFile::try_from(rules)?;
+    let mut root = root_scope(
+        &rules_file,
+        Rc::new(PathAwareValue::try_from(document.as_str())?),
+    );
+    let status = eval_rules_file(&rules_file, &mut root, None)?;
+    let mut cells = CellFailures::default();
+    cells.check(
+        "`when %sel == Properties.Missing` with `x` and a key filter's marker in `%sel`, `match_all`: decided NO by the absence, not applicable (SKIP), not raised",
+        Status::SKIP,
+        status,
+    );
+    cells.assert_all_agreed();
+    Ok(())
+}
+
+/// The marker bookkeeping HOLDS the values it notes: the sets are keyed by the address of a left-hand
+/// value's `Rc` and store the `Rc` beside the key, so a value the results owned alone stays allocated
+/// for as long as the evidence lives and no later allocation can take its address and read as a value
+/// already noted. The one `Rc` of a noted value is dropped; a weak reference to it still upgrades (the
+/// evidence holds it), and the fold reads the value as noted (a note sets the flag that says the
+/// bookkeeping ran, so the fold reads the sets).
+#[test]
+fn the_bookkeeping_holds_the_values_it_notes() -> Result<()> {
+    let path = || path_value::Path::new("/Resources/M/Properties/Tags/Env/Key".to_string(), 0, 0);
+    let value = Rc::new(PathAwareValue::String((path(), "Env".to_string())));
+    let weak = Rc::downgrade(&value);
+    let mut evidence = super::ResultEvidence::default();
+    evidence.note_value(&value, true);
+    drop(value);
+    let mut cells = CellFailures::default();
+    cells.check(
+        "the one owner of a noted value dropped: the evidence still holds it (the weak reference upgrades)",
+        true,
+        weak.upgrade().is_some(),
+    );
+    cells.check(
+        "the noted value, decided NO, is read as noted at the fold",
+        true,
+        evidence.every_value_decided_no(),
+    );
+    cells.assert_all_agreed();
+    Ok(())
+}
+
+/// An assertion raised on a REFUSAL's reason is recorded as the refusal it is, and its record says the run
+/// goes on. The two strict-role raises (`undecided_gate`'s strict path: `some Cfg.Mode.Ref NOT IN %x`
+/// beside the marker; the compared-nothing arm: `Cfg.Mode.Ref IN %x` with the marker alone in `%x`) reach
+/// the `Err` arm of `eval_guard_access_clause`, whose block record carries the sentence and the kind: for
+/// a refusal's reason the error is the registered refusal (`eval_context::refuse`), so the record reads
+/// `refusal: true` and the console prints the sentence whole where it holds another sentence to the
+/// recorded-message bound (320 characters; the refusal here is longer, so the bound would cut its path),
+/// and the sentence says the clause is raised and the run continues, which it does (the assertion role
+/// turns the error into the clause's FAIL). The refusal's text is in the record whole, and registered; a
+/// plain undecidable error's record would read `refusal: false` and the console would hold its sentence
+/// to the bound, cutting the refusal's remedy and path.
+#[test]
+fn an_asserted_refusal_raise_is_recorded_as_a_refusal_and_the_run_continues() -> Result<()> {
+    const THE_REFUSAL: &str = "then no kept entry holds a key the predicate names";
+    const CONTINUES: &str = "the clause is raised and the run continues";
+    // The own key the predicate names is quoted in the refusal's sentence, and the path of the map ends
+    // it, so a key this long puts the sentence over the console's recorded-message bound (the query
+    // before the wildcard, which the sentence also quotes, is `Cfg` whatever the predicate's length).
+    const OWN_KEY: &str = "R1_the_own_key_of_the_sub_map_whose_name_is_long_enough_to_carry_the_refusal_past_the_bound";
+    let doc = format!(
+        r#"{{
+        "Cfg": {{
+            "Mode": {{ "Ref": "ModeParam" }},
+            "Fallback": {{ "Kind": "k" }},
+            "A": {{ "Kind": "k", "Sub": {{ "{OWN_KEY}": {{ "Ref": "P" }}, "P": {{ "Kind": "k" }}, "Q": {{ "Kind": "k" }} }} }},
+            "B": {{ "Kind": "k", "Sub": {{ "{OWN_KEY}": {{ "Ref": "P" }}, "P": {{ "Kind": "k" }}, "Q": {{ "Kind": "k" }} }} }}
+        }}
+    }}"#
+    );
+    let refused_walk = format!(
+        "Cfg[*][ x | Mode exists or Kind == 'k' ].Sub[*][ s | {OWN_KEY} !exists ] !empty or Cfg.Fallback exists"
+    );
+    // (status; the refusal registered and over 320 characters; the raise's record: `refusal: true`,
+    // the sentence whole with its path, "the run continues", no "bailing")
+    let run = |rules: &str| -> Result<(Status, bool, bool, bool, bool, bool)> {
+        let rules_file = RulesFile::try_from(rules)?;
+        let mut root = root_scope(
+            &rules_file,
+            Rc::new(PathAwareValue::try_from(doc.as_str())?),
+        );
+        let status = eval_rules_file(&rules_file, &mut root, None)?;
+        let refusal = crate::rules::eval_context::registered_refusals()
+            .into_iter()
+            .find(|text| text.contains(THE_REFUSAL));
+        let mut records = String::new();
+        record_containers_under(
+            &root.reset_recorder().extract(),
+            "Cfg.Mode.Ref",
+            &mut records,
+        );
+        // Whole: the registered sentence, as the records' `Debug` spells it, sits in the clause's record,
+        // and the sentence ends with the map's path (the own-key ending's last part, whatever word
+        // introduces it).
+        let whole = refusal.as_deref().is_some_and(|text| {
+            let quoted = format!("{text:?}");
+            records.contains(&quoted[1..quoted.len() - 1]) && text.contains("path /Cfg/A/Sub")
+        });
+        Ok((
+            status,
+            refusal
+                .as_deref()
+                .is_some_and(|text| text.chars().count() > 320),
+            records.contains("refusal: true"),
+            whole,
+            records.contains(CONTINUES),
+            records.contains("bailing"),
+        ))
+    };
+    let mut cells = CellFailures::default();
+    for (label, rules) in [
+        (
+            "`some Cfg.Mode.Ref NOT IN %x` asserted beside the marker (the strict path's raise): FAIL, the refusal registered and over 320 characters, the record a refusal with the sentence whole, the run continues, no \"bailing\"",
+            format!("rule r {{ Cfg[ x | Kind == 'k' ] !empty  {refused_walk}  some Cfg.Mode.Ref NOT IN %x }}"),
+        ),
+        (
+            "`Cfg.Mode.Ref IN %x` asserted with the marker alone in `%x` (the compared-nothing raise): the same",
+            format!("rule r {{ {refused_walk}  Cfg.Mode.Ref IN %x }}"),
+        ),
+    ] {
+        cells.check(
+            label,
+            (Status::FAIL, true, true, true, true, false),
+            run(&rules)?,
+        );
+    }
+    cells.assert_all_agreed();
+    Ok(())
+}
+
+/// A clause that PASSES beside a refused read under a positive comparator other than `IN` reports it as
+/// the `IN` a listed value settles does: `some Cfg.Mode.Ref > %x` asserted through a capture holding the
+/// keys and a refusal's marker passes on the ordering of `ModeParam` against a key (`M` after `F`, the
+/// string ordering), and `some Properties.A[*].B == %names` inside a predicate with one `B` equal to a
+/// listed pair passes on it, each with the refusal registered and the site's line in the passed wording:
+/// the pass flag is set for every positive comparator, as the clause reference's own sentence has it (a
+/// `some` passing on another value is the third trigger, under `==` and the orderings as under `IN`).
+#[test]
+fn a_pass_beside_a_refused_read_reports_it_under_every_positive_comparator() -> Result<()> {
+    const THE_LINE: &str = "passed by a value that holds";
+    let run = |rules: &str, refusal: &str, input: &str| -> Result<(Status, usize, usize)> {
+        let rules_file = RulesFile::try_from(rules)?;
+        let mut root = root_scope(&rules_file, Rc::new(PathAwareValue::try_from(input)?));
+        let status = eval_rules_file(&rules_file, &mut root, None)?;
+        let registered = crate::rules::eval_context::registered_refusals()
+            .iter()
+            .filter(|text| text.contains(refusal))
+            .count();
+        let lines = root
+            .warnings()
+            .filter(|line| line.contains(THE_LINE) && line.contains(refusal))
+            .count();
+        Ok((status, registered, lines))
+    };
+    // The capture shape: `%x` holds `Fallback`, `A`, `B` and the marker the refused walk under `A` leaves
+    // (the own-key filter `Sub[*][ s | R1 !exists ]`); `Cfg.Mode.Ref` is `ModeParam`, after `Fallback`.
+    const CAPTURED: &str = r#"{
+        "Cfg": {
+            "Mode": { "Ref": "ModeParam" },
+            "Fallback": { "Kind": "k" },
+            "A": { "Kind": "k", "Sub": { "R1": { "Ref": "P" }, "P": { "Kind": "k" }, "Q": { "Kind": "k" } } },
+            "B": { "Kind": "k", "Sub": { "R1": { "Ref": "P" }, "P": { "Kind": "k" }, "Q": { "Kind": "k" } } }
+        }
+    }"#;
+    const REFUSED_WALK: &str =
+        "Cfg[*][ x | Mode exists or Kind == 'k' ].Sub[*][ s | R1 !exists ] !empty or Cfg.Fallback exists";
+    const EQUALITY: &str = r#"
+    {
+        Mappings: { Wanted: { Keys: [ 'Env' ] } },
+        Resources: {
+            B: { Type: 'AWS::S3::Bucket', Properties: { A: [ { B: { Key: 'Env', Value: 'other' } }, { B: { Key: 'Env', Value: 'x' } } ], Tags: [ { Key: 'Env', Value: 'x' } ] } },
+            M: { Type: 'AWS::Serverless::Function', Properties: { Handler: 'index.handler', Tags: { Env: 'x' } } }
+        }
+    }
+    "#;
+    let mut cells = CellFailures::default();
+    cells.check(
+        "`some Cfg.Mode.Ref > %x` asserted, `ModeParam` after `Fallback` beside the refusal's marker: PASS, the refusal registered, one line in the passed wording naming it",
+        (Status::PASS, 1, 1),
+        run(
+            &format!("rule r {{ Cfg[ x | Kind == 'k' ] !empty  {REFUSED_WALK}  some Cfg.Mode.Ref > %x }}"),
+            "then no kept entry holds a key the predicate names",
+            CAPTURED,
+        )?,
+    );
+    cells.check(
+        "`[ some Properties.A[*].B == %names ] !empty`, element 2 equal to a listed pair beside the marker, element 1 present and unequal: PASS, the refusal registered, one line in the passed wording naming it",
+        (Status::PASS, 1, 1),
+        run(
+            "let wanted = Mappings.Wanted.Keys\nlet names = Resources.*.Properties.Tags[*][ Key IN %wanted ]\nrule r { Resources.*[ Type == 'AWS::S3::Bucket' ][ some Properties.A[*].B == %names ] !empty }",
+            "a name bound outside the predicate",
+            EQUALITY,
+        )?,
+    );
+    cells.assert_all_agreed();
+    Ok(())
+}
+
+/// One clause site is one line whatever the verdicts that met the refusal, and the registry outlives a
+/// raise. `[ Properties.Tags[*] IN %names ] !empty` with ONE refusal in `%names` over bucket B (its pair
+/// listed: passed) and bucket C (no `Tags`: decided by the absence) writes ONE line counting the two
+/// verdicts ("passed by a value that holds on 1 evaluation and was decided by a value the document lacks on
+/// 1") for ONE refused read, the same line whichever bucket the template names first; keyed by the rendered
+/// line, a site would count one refusal met two ways as a second refused read, in an order-dependent
+/// wording. `%names` holding two map-tagged functions and NOTHING resolved compares nothing under a positive
+/// `IN`: the clause raises the first marker's reason, no line is written, and BOTH refusals are in the
+/// registry, since the texts are registered before the outcome is read; registered after it, the raise's
+/// early return would drop them. And `[ some Properties.A[*].B == %names ] !empty` with element 1 holding a
+/// `B` no listed pair equals and element 2 equal to a listed pair PASSES on element 2 while the refused
+/// read beside element 1 was never raised: the line says the clause passed by a value that holds (the
+/// third trigger beside an absence and a listed value: `some` settled by another value, under `==`; with
+/// element 1 present the absence trigger cannot be the one that writes it).
+#[test]
+fn the_sites_line_counts_the_verdicts_and_the_registry_outlives_a_raise() -> Result<()> {
+    const THE_REFUSAL: &str = "a name bound outside the predicate";
+    let run = |rules: &str, input: &str| -> Result<(Status, usize, Vec<String>)> {
+        let rules_file = RulesFile::try_from(rules)?;
+        let mut root = root_scope(&rules_file, Rc::new(PathAwareValue::try_from(input)?));
+        let status = eval_rules_file(&rules_file, &mut root, None)?;
+        let registered = crate::rules::eval_context::registered_refusals()
+            .into_iter()
+            .filter(|text| text.contains(THE_REFUSAL))
+            .count();
+        let lines: Vec<String> = root
+            .warnings()
+            .filter(|line| line.contains("reported here instead"))
+            .cloned()
+            .collect();
+        Ok((status, registered, lines))
+    };
+    const LETS: &str =
+        "let wanted = Mappings.Wanted.Keys\nlet names = Resources.*.Properties.Tags[*][ Key IN %wanted ]\n";
+    let mut cells = CellFailures::default();
+    // Bucket B's pair is listed, bucket C has no `Tags`; the two templates name them in either order.
+    let b_then_c = r#"
+    {
+        Mappings: { Wanted: { Keys: [ 'Env' ] } },
+        Resources: {
+            B: { Type: 'AWS::S3::Bucket', Properties: { Tags: [ { Key: 'Env', Value: 'x' } ] } },
+            C: { Type: 'AWS::S3::Bucket', Properties: { W: 'y' } },
+            M: { Type: 'AWS::Serverless::Function', Properties: { Handler: 'index.handler', Tags: { Env: 'x' } } }
+        }
+    }
+    "#;
+    let c_then_b = r#"
+    {
+        Mappings: { Wanted: { Keys: [ 'Env' ] } },
+        Resources: {
+            C: { Type: 'AWS::S3::Bucket', Properties: { W: 'y' } },
+            B: { Type: 'AWS::S3::Bucket', Properties: { Tags: [ { Key: 'Env', Value: 'x' } ] } },
+            M: { Type: 'AWS::Serverless::Function', Properties: { Handler: 'index.handler', Tags: { Env: 'x' } } }
+        }
+    }
+    "#;
+    // The `let` reads the tags of the resources that HAVE tags: read over every resource, bucket C's
+    // missing `Tags` puts a reference the document lacks into `%names` beside the pairs and the marker,
+    // and the site's line would then also report that absence (the parity cell of the membership fn);
+    // this cell is about the one refusal met two ways, so the `let` keeps the absence out.
+    let both_ways = "let wanted = Mappings.Wanted.Keys\nlet names = Resources.*[ Properties.Tags exists ].Properties.Tags[*][ Key IN %wanted ]\nrule r { Resources.*[ Type == 'AWS::S3::Bucket' ][ Properties.Tags[*] IN %names ] !empty }".to_string();
+    let (status, registered, lines) = run(&both_ways, b_then_c)?;
+    let (other_status, other_registered, other_lines) = run(&both_ways, c_then_b)?;
+    cells.check(
+        "one refusal met beside a pass (B) and beside an absence (C) at one site: PASS, 1 registered, ONE line counting both verdicts for one refused read, the same in either resource order",
+        (Status::PASS, 1, 1, true, false, true),
+        (
+            status,
+            registered,
+            lines.len(),
+            lines.iter().any(|line| {
+                line.contains(
+                    "passed by a value that holds on 1 evaluation and was decided by a value the document lacks on 1",
+                ) && line.contains("the refused read among its other values")
+            }),
+            lines.iter().any(|line| line.contains("refused reads")),
+            (other_status, other_registered, &other_lines) == (status, registered, &lines),
+        ),
+    );
+    // Two map-tagged functions and nothing else in `%names`: the marker alone on the right.
+    const TWO_MARKERS: &str = r#"
+    {
+        Mappings: { Wanted: { Keys: [ 'Env' ] } },
+        Resources: {
+            B: { Type: 'AWS::S3::Bucket', Properties: { Tags: [ { Key: 'Env', Value: 'x' } ] } },
+            M1: { Type: 'AWS::Serverless::Function', Properties: { Handler: 'index.handler', Tags: { Env: 'x' } } },
+            M2: { Type: 'AWS::Serverless::Function', Properties: { Handler: 'index.handler', Tags: { Env: 'y' } } }
+        }
+    }
+    "#;
+    let (status, registered, lines) = run(
+        "let wanted = Mappings.Wanted.Keys\nlet names = Resources.*[ Type == 'AWS::Serverless::Function' ].Properties.Tags[*][ Key IN %wanted ]\nrule r { Resources.*[ Type == 'AWS::S3::Bucket' ][ Properties.Tags[*] IN %names ] empty }",
+        TWO_MARKERS,
+    )?;
+    cells.check(
+        "`[ Properties.Tags[*] IN %names ] empty` with two refusals and nothing resolved in `%names`: compared nothing, raised (FAIL), no line, BOTH refusals registered",
+        (Status::FAIL, 2, 0),
+        (status, registered, lines.len()),
+    );
+    // `some` settled by element 2, the refused read beside element 1 (present, equal to no listed pair)
+    // never raised: the pass alone writes the line.
+    const SOME_PASSES: &str = r#"
+    {
+        Mappings: { Wanted: { Keys: [ 'Env' ] } },
+        Resources: {
+            B: { Type: 'AWS::S3::Bucket', Properties: { A: [ { B: { Key: 'Env', Value: 'other' } }, { B: { Key: 'Env', Value: 'x' } } ], Tags: [ { Key: 'Env', Value: 'x' } ] } },
+            M: { Type: 'AWS::Serverless::Function', Properties: { Handler: 'index.handler', Tags: { Env: 'x' } } }
+        }
+    }
+    "#;
+    let (status, registered, lines) = run(
+        &format!(
+            "{LETS}rule r {{ Resources.*[ Type == 'AWS::S3::Bucket' ][ some Properties.A[*].B == %names ] !empty }}"
+        ),
+        SOME_PASSES,
+    )?;
+    cells.check(
+        "`[ some Properties.A[*].B == %names ] !empty`, element 1 present and equal to no listed pair, element 2 equal to one: PASS on element 2, 1 registered, one line in the passed wording",
+        (Status::PASS, 1, 1, true),
+        (
+            status,
+            registered,
+            lines.len(),
+            lines
+                .iter()
+                .any(|line| line.contains("passed by a value that holds")),
+        ),
+    );
+    cells.assert_all_agreed();
+    Ok(())
+}
+
+/// `!=` and `NOT IN` read a KEY FILTER's marker among the right-hand values alike: under `some` a value
+/// that differs from every resolved value is not a pass beside the marker under either negated comparator
+/// (the unread map may hold it), so `when some Resources.B.Properties.W != %cfg` and `when some
+/// Resources.B.Properties.W NOT IN %cfg` with `%cfg` holding the resolved `x` and the marker, over `W: y`,
+/// both fail their rule closed. Read for the refusal's marker alone under `!=`, the `!=` spelling would
+/// pass on `y` where its `NOT IN` spelling fails closed.
+#[test]
+fn a_key_filter_marker_reads_alike_under_not_equal_and_not_in() -> Result<()> {
+    let document = format!(
+        "{{ Resources: {{ B: {{ Type: 'AWS::S3::Bucket', Properties: {{ W: 'y' }} }}, A: {{ Type: 'AWS::IAM::Role', Properties: {{ Maps: {{ M1: {{ {long}: 'z' }}, M2: {{ aab: 'x' }} }} }} }} }} }}",
+        long = "a".repeat(30)
+    );
+    const CFG: &str = "let cfg = Resources.A.Properties.Maps.*[ keys == /(?!x)((a+)+)b/ ].*\n";
+    let run = |gate: &str| -> Result<Status> {
+        let rules = format!("{CFG}rule r when {gate} {{ Resources.B.Properties.W == 'y' }}");
+        let rules_file = RulesFile::try_from(rules.as_str())?;
+        let mut root = root_scope(
+            &rules_file,
+            Rc::new(PathAwareValue::try_from(document.as_str())?),
+        );
+        eval_rules_file(&rules_file, &mut root, None)
+    };
+    let mut cells = CellFailures::default();
+    cells.check(
+        "`when some Resources.B.Properties.W != %cfg` and `when some Resources.B.Properties.W NOT IN %cfg` beside a key filter's marker: both unknown, both rules fail closed, alike",
+        (Status::FAIL, Status::FAIL),
+        (
+            run("some Resources.B.Properties.W != %cfg")?,
+            run("some Resources.B.Properties.W NOT IN %cfg")?,
+        ),
+    );
+    cells.assert_all_agreed();
+    Ok(())
+}
+
+/// An absent left-hand value under `some` beside a refusal's marker is decided NO, as under `match_all`:
+/// `some` passes on a value that passed, an absent value's comparison fails on the absence whatever the
+/// marker hides, and a clause whose every left-hand value is absent has no value left to pass on, so
+/// `[ some Properties.Missing != %names ]`, `NOT IN`, `==` and `IN` each deselect the entry (`empty` PASS,
+/// `!empty` FAIL), as does an empty left-hand collection under each. `docs/CLAUSES.md`: "`some` changes
+/// nothing here". Read as unknown, the negated spellings would fail their rule closed where the bucket
+/// lacking the property is deselected, and the positive ones would be refused by the pre-pass over the
+/// marker.
+#[test]
+fn an_absent_left_value_under_some_beside_a_marker_is_decided() -> Result<()> {
+    const TEMPLATE: &str = r#"
+    {
+        Mappings: { Wanted: { Keys: [ 'Env', 'Owner' ] } },
+        Resources: {
+            B: { Type: 'AWS::S3::Bucket', Properties: { Tags: [ { Key: 'Env', Value: 'allowed' } ], Empty: [] } },
+            M: { Type: 'AWS::Serverless::Function', Properties: { Handler: 'index.handler', Tags: { Env: 'x' } } }
+        }
+    }
+    "#;
+    let run = |predicate: &str, tail: &str| -> Result<Status> {
+        let rules = format!(
+            "let wanted = Mappings.Wanted.Keys\nlet names = Resources.*.Properties.Tags[*][ Key IN %wanted ]\nrule r {{ Resources.*[ Type == 'AWS::S3::Bucket' ][ {predicate} ]{tail} }}"
+        );
+        let rules_file = RulesFile::try_from(rules.as_str())?;
+        let mut root = root_scope(&rules_file, Rc::new(PathAwareValue::try_from(TEMPLATE)?));
+        eval_rules_file(&rules_file, &mut root, None)
+    };
+    let mut cells = CellFailures::default();
+    for (predicate, shape) in [
+        (
+            "some Properties.Missing != %names",
+            "an absent left value under `some` with `!=`",
+        ),
+        (
+            "some Properties.Missing NOT IN %names",
+            "an absent left value under `some` with `NOT IN`",
+        ),
+        (
+            "some Properties.Missing == %names",
+            "an absent left value under `some` with `==`",
+        ),
+        (
+            "some Properties.Missing IN %names",
+            "an absent left value under `some` with `IN`",
+        ),
+        (
+            "some Properties.Empty[*] != %names",
+            "an empty left-hand collection, its elements asked for, under `some` with `!=`",
+        ),
+        (
+            "some Properties.Empty NOT IN %names",
+            "an empty left-hand collection under `some` with `NOT IN`",
+        ),
+        (
+            "some Properties.Empty IN %names",
+            "an empty left-hand collection under `some` with `IN`",
+        ),
+        (
+            "some Properties.Empty == %names",
+            "an empty left-hand collection under `some` with `==` (a refusal of kinds, no `EmptyCollection` result)",
+        ),
+        (
+            "some Properties.Empty != %names",
+            "an empty left-hand collection under `some` with `!=` (the same)",
+        ),
+    ] {
+        cells.check(
+            &format!("`[ {predicate} ]` beside the marker, {shape}: decided NO, the entry deselected (`empty` PASS, `!empty` FAIL)"),
+            (Status::PASS, Status::FAIL),
+            (run(predicate, " empty")?, run(predicate, " !empty")?),
+        );
+    }
+    // The mirrors: the marker's selection on the LEFT of an absent right-hand value. Every pair, the
+    // marker's own included, is against an absence, so `some` is settled NO in both polarities as the
+    // `match_all` spellings are; read as a value nobody knows against the absence, the marker would leave
+    // the clause unknown and the entry refused where its mirror deselects.
+    for (predicate, shape) in [
+        (
+            "some %names != Properties.Missing",
+            "the marker's selection on the left of an absent right-hand value, under `some` with `!=`",
+        ),
+        (
+            "some %names NOT IN Properties.Missing",
+            "the same under `some` with `NOT IN`",
+        ),
+    ] {
+        cells.check(
+            &format!("`[ {predicate} ]`, {shape}: decided NO, the entry deselected (`empty` PASS, `!empty` FAIL)"),
+            (Status::PASS, Status::FAIL),
+            (run(predicate, " empty")?, run(predicate, " !empty")?),
+        );
+    }
+    // Control: the same `some` spellings over the bucket's own resolved pair, which `%names` holds, keep
+    // their readings beside the marker (a resolved match is a decided NO under the negated comparators and
+    // a YES under the positive ones).
+    for (predicate, shape, wanted) in [
+        (
+            "some Properties.Tags[*] != %names",
+            "a resolved match under `some` with `!=`: decided NO, deselected",
+            (Status::PASS, Status::FAIL),
+        ),
+        (
+            "some Properties.Tags[*] IN %names",
+            "a resolved match under `some` with `IN`: a YES, selected",
+            (Status::FAIL, Status::PASS),
+        ),
+    ] {
+        cells.check(
+            &format!("control: `[ {predicate} ]` beside the marker, {shape}"),
+            wanted,
+            (run(predicate, " empty")?, run(predicate, " !empty")?),
+        );
+    }
     cells.assert_all_agreed();
     Ok(())
 }
@@ -43166,6 +46781,18 @@ fn record_containers_under(record: &EventRecord<'_>, needle: &str, out: &mut Str
     }
     for child in &record.children {
         record_containers_under(child, needle, out);
+    }
+}
+
+/// [`record_containers_under`] with one Debug string PER record, for a cell that reads a field beside a
+/// text in the same record (a pair's `refusal` flag beside its message), which the joined dump cannot tell
+/// from the same two in two records.
+fn record_containers_list(record: &EventRecord<'_>, needle: &str, out: &mut Vec<String>) {
+    if record.context.contains(needle) {
+        out.push(format!("{:?}", record.container));
+    }
+    for child in &record.children {
+        record_containers_list(child, needle, out);
     }
 }
 
@@ -43243,6 +46870,11 @@ fn a_markers_pair_keeps_its_failing_status_under_a_negated_membership_in_every_r
             (Status::FAIL, true, false),
         ),
         (
+            "`Cfg.Mode.Ref IN %x` with the keys and the marker, the value among no resolved key, as an assertion: FAIL, and the marker pair's record names the refusal (dropped for every value, the report showed the resolved mismatch alone)",
+            format!("rule r {{ Cfg[ x | Kind == 'k' ] !empty  {REFUSED_WALK}  Cfg.Mode.Ref IN %x }}"),
+            (Status::FAIL, true, false),
+        ),
+        (
             "`some Cfg.Mode.Ref NOT IN %x` with the keys and the marker, as an assertion: the pass beside the marker is unknown, so the clause fails on the refusal where its statuses alone passed it",
             format!("rule r {{ Cfg[ x | Kind == 'k' ] !empty  {REFUSED_WALK}  some Cfg.Mode.Ref NOT IN %x }}"),
             (Status::FAIL, true, false),
@@ -43265,6 +46897,32 @@ fn a_markers_pair_keeps_its_failing_status_under_a_negated_membership_in_every_r
     ] {
         cells.check(label, wanted, run(&rules)?);
     }
+    // The mixed shape in the strict role names BOTH halves of its failure in the clause's records: the
+    // value no resolved key equals (the resolved mismatch's record carries the value itself) and the
+    // marker pair's reason, side by side; a pair dropped for every value would show the mismatch alone.
+    let mixed =
+        format!("rule r {{ Cfg[ x | Kind == 'k' ] !empty  {REFUSED_WALK}  Cfg.Mode.Ref IN %x }}");
+    let rules_file = RulesFile::try_from(mixed.as_str())?;
+    let mut root = root_scope(
+        &rules_file,
+        Rc::new(PathAwareValue::try_from(REFUSED_CONTINUATION)?),
+    );
+    let status = eval_rules_file(&rules_file, &mut root, None)?;
+    let mut sibling = String::new();
+    record_containers_under(
+        &root.reset_recorder().extract(),
+        "Cfg.Mode.Ref",
+        &mut sibling,
+    );
+    cells.check(
+        "`Cfg.Mode.Ref IN %x` with the keys and the marker, as an assertion: the records name the value no key equals (`ModeParam`) and the refusal, side by side",
+        (Status::FAIL, true, true),
+        (
+            status,
+            sibling.contains("ModeParam"),
+            sibling.contains(THE_REFUSAL),
+        ),
+    );
     cells.assert_all_agreed();
     Ok(())
 }
@@ -43418,6 +47076,55 @@ fn a_key_filter_marker_on_the_right_is_read_pair_by_pair() -> Result<()> {
             (run(rules, CONTROL)?, run(rules, marker.as_str())?),
         );
     }
+    // Under a NEGATED comparator the key filter's marker is read as a refusal's is: a value that differs
+    // from every resolved value (`Y`, `y`, against the resolved `x`) may equal the one the unread map
+    // holds, so that pass is not a pass and `some Y != <selection>` is unknown in every role, agreeing
+    // with its `NOT IN` spelling; read for the refusal's marker alone it would pass, and the `!=` gate
+    // would open its body where the `NOT IN` gate fails closed. The control (no marker) passes on the
+    // mismatch.
+    let selection = "Resources.A.Properties.Maps.*[ keys == /(?!x)((a+)+)b/ ].*";
+    cells.check(
+        "gate `when some Y != <selection>`, `Y` equal to no resolved value: the body passes over the control, the rule fails closed beside the marker",
+        (Status::PASS, Status::FAIL),
+        (
+            run(
+                &format!("rule r when some Resources.A.Properties.Y != {selection} {{ Resources.A.Properties.Y == 'y' }}"),
+                CONTROL,
+            )?,
+            run(
+                &format!("rule r when some Resources.A.Properties.Y != {selection} {{ Resources.A.Properties.Y == 'y' }}"),
+                marker.as_str(),
+            )?,
+        ),
+    );
+    cells.check(
+        "assertion `some Y != <selection>`: PASS over the control, FAIL (unknown) beside the marker",
+        (Status::PASS, Status::FAIL),
+        (
+            run(
+                &format!("rule r {{ some Resources.A.Properties.Y != {selection} }}"),
+                CONTROL,
+            )?,
+            run(
+                &format!("rule r {{ some Resources.A.Properties.Y != {selection} }}"),
+                marker.as_str(),
+            )?,
+        ),
+    );
+    cells.check(
+        "filter `[ some Properties.Y != Properties.Maps.*[ keys == /re/ ].* ]`: selected over the control (`empty` FAIL, `!empty` PASS), unknown beside the marker (FAIL, FAIL)",
+        ((Status::FAIL, Status::PASS), (Status::FAIL, Status::FAIL)),
+        (
+            (
+                run("rule r { Resources.*[ some Properties.Y != Properties.Maps.*[ keys == /(?!x)((a+)+)b/ ].* ] empty }", CONTROL)?,
+                run("rule r { Resources.*[ some Properties.Y != Properties.Maps.*[ keys == /(?!x)((a+)+)b/ ].* ] !empty }", CONTROL)?,
+            ),
+            (
+                run("rule r { Resources.*[ some Properties.Y != Properties.Maps.*[ keys == /(?!x)((a+)+)b/ ].* ] empty }", marker.as_str())?,
+                run("rule r { Resources.*[ some Properties.Y != Properties.Maps.*[ keys == /(?!x)((a+)+)b/ ].* ] !empty }", marker.as_str())?,
+            ),
+        ),
+    );
     cells.assert_all_agreed();
     Ok(())
 }
@@ -43556,13 +47263,15 @@ fn a_one_object_refusal_reaches_a_predicates_right_hand_side_under_every_spellin
     Ok(())
 }
 
-/// An absent value beside a KEY FILTER's marker is unknown on either side of `==`, as beside a refusal's
-/// marker: `[ Properties.Missing == %cfg ]` with `let cfg = Maps.*[ keys == /(?!x)((a+)+)b/ ].*` (the
-/// resolved `x` and the marker of the map whose key the regex could not read) fails closed under both
-/// tails, as `[ %cfg == Properties.Missing ]` does; over the control, whose keys the regex reads, both
-/// spellings are decided (the absent value fails the comparison, the entry is deselected).
+/// An absent value beside a KEY FILTER's marker is decided on either side of `==`, as beside a refusal's
+/// marker and as with no marker at all: `[ Properties.Missing == %cfg ]` with `let cfg = Maps.*[ keys ==
+/// /(?!x)((a+)+)b/ ].*` (the resolved `x` and the marker of the map whose key the regex could not read)
+/// deselects the entry under both tails, as `[ %cfg == Properties.Missing ]` does and as both do over the
+/// control, whose keys the regex reads: the absent value fails the comparison on the document, whatever
+/// the unread map holds. Read as unknown beside the marker, both spellings would fail the rule closed
+/// where the control deselects.
 #[test]
-fn an_absent_value_beside_a_key_filters_marker_is_unknown_on_either_side() -> Result<()> {
+fn an_absent_value_beside_a_key_filters_marker_is_decided_on_either_side() -> Result<()> {
     let document = |m1_key: &str| {
         format!(
             "{{ Resources: {{ B: {{ Type: 'AWS::S3::Bucket', Properties: {{ Tags: [ {{ Key: 'Env', Value: 'allowed' }} ] }} }}, A: {{ Type: 'AWS::IAM::Role', Properties: {{ Maps: {{ M1: {{ {m1_key}: 'z' }}, M2: {{ aab: 'x' }} }} }} }} }} }}"
@@ -43587,8 +47296,8 @@ fn an_absent_value_beside_a_key_filters_marker_is_unknown_on_either_side() -> Re
         ),
     ] {
         cells.check(
-            &format!("`[ {predicate} ]`, {shape}, beside the key filter's marker: unknown, FAIL under both tails"),
-            (Status::FAIL, Status::FAIL),
+            &format!("`[ {predicate} ]`, {shape}, beside the key filter's marker: decided, the entry deselected, as over the control"),
+            (Status::PASS, Status::FAIL),
             (
                 run(predicate, " empty", &marker)?,
                 run(predicate, " !empty", &marker)?,
@@ -43607,10 +47316,122 @@ fn an_absent_value_beside_a_key_filters_marker_is_unknown_on_either_side() -> Re
     Ok(())
 }
 
-/// The per-value bookkeeping the marker pre-pass reads (`ResultEvidence::note_value`) runs only for a
-/// comparison with a marker among its right-hand values: a comparison with none records nothing, and one
-/// with a marker records one entry per result per left-hand value (here one pair against one resolved pair
-/// and against the marker: two).
+/// A right-hand REFERENCE the document lacks beside a key filter's marker, with no resolved value among
+/// the right-hand values, decides `match_all` and is RAISED under `some`, in both polarities, and the two
+/// quantifiers are right to differ: the marker's pair may resolve to the one value the left-hand value
+/// passes against, and `some` is decided by any pair that passed. `when Resources.A.Properties.Port !=
+/// <selection>` over `Port: 22`, one resource lacking `Cfg` (the reference the document lacks) and one whose
+/// `Cfg` key the regex budget cannot decide (the marker): the absence's FAIL status fails the `match_all`
+/// clause whatever the marker hides, so the rule is not applicable; under `some` the clause did not pass,
+/// and whether it would is the marker's question. The two readings of the marker, with no marker in sight,
+/// show it: the same template with the unread key readable and its value `80` passes `some Port != ..` on
+/// the resolved pair (the absence's FAIL stands beside a PASS) and leaves `Port != ..` not applicable;
+/// with its value `22` both spellings are not applicable. One left-hand value, two statuses, and the
+/// quantifiers read them differently; a `some` settled NO on the absence would report the rule not
+/// applicable at exit 0 where the unread map may hold `80`. Under `==` the readings mirror: `22` is the
+/// resolution that passes `some Port == ..`, `80` the one that leaves both spellings not applicable, and
+/// beside the marker `some` is raised where `match_all` is decided. The control with the reference present
+/// (`Cfg: { ab: 80 }` beside the marker) is raised under both quantifiers: the resolved pair's pass may
+/// equal the hidden value under `!=`, and under `==` the one left-hand value matched nothing resolved.
+#[test]
+fn an_absent_right_hand_reference_beside_a_marker_is_raised_under_some_and_decided_under_match_all(
+) -> Result<()> {
+    let document = |b_properties: &str, c_key: &str, c_value: &str| {
+        format!(
+            "{{ Resources: {{ A: {{ Type: 'AWS::X::Y', Properties: {{ Port: 22 }} }}, B: {{ Type: 'AWS::Z::W', Properties: {{ {b_properties} }} }}, C: {{ Type: 'AWS::Z::W', Properties: {{ Cfg: {{ {c_key}: {c_value} }} }} }} }} }}"
+        )
+    };
+    let long = "a".repeat(30);
+    // `B` lacks `Cfg`, the reference the document lacks; `C`'s key spends the regex budget, the marker.
+    let marker = document("", &long, "80");
+    // The marker resolved two ways, with the reference still absent: `C`'s key readable, its value a
+    // value `Port` differs from, or `Port`'s own.
+    let resolved_differs = document("", "ab", "80");
+    let resolved_equal = document("", "ab", "22");
+    // The reference present (`B` holds a readable `Cfg`) beside the marker.
+    let reference_present = document("Cfg: { ab: 80 }", &long, "80");
+    let run = |condition: &str, input: &str| -> Result<Status> {
+        let rules = format!(
+            "rule r when {condition} Resources.*[ Type == 'AWS::Z::W' ].Properties.Cfg[ keys == /(?!x)((a+)+)b/ ].* {{ Resources.A.Properties.Port == 22 }}"
+        );
+        let rules_file = RulesFile::try_from(rules.as_str())?;
+        let mut root = root_scope(&rules_file, Rc::new(PathAwareValue::try_from(input)?));
+        eval_rules_file(&rules_file, &mut root, None)
+    };
+    let mut cells = CellFailures::default();
+    // (label, the document, wanted (`some`, `match_all`)) under `!=`, then under `==`.
+    for (label, input, wanted) in [
+        (
+            "`!=`: the reference the document lacks beside the marker: `some` raised (the rule fails closed), `match_all` decided by the absence (not applicable)",
+            &marker,
+            (Status::FAIL, Status::SKIP),
+        ),
+        (
+            "`!=`: the marker resolved to `80` (no marker): `some` passes on the resolved pair beside the absence, `match_all` not applicable",
+            &resolved_differs,
+            (Status::PASS, Status::SKIP),
+        ),
+        (
+            "`!=`: the marker resolved to `22` (no marker): both spellings not applicable",
+            &resolved_equal,
+            (Status::SKIP, Status::SKIP),
+        ),
+        (
+            "`!=`: control, the reference present beside the marker: raised under both quantifiers",
+            &reference_present,
+            (Status::FAIL, Status::FAIL),
+        ),
+    ] {
+        cells.check(
+            label,
+            wanted,
+            (
+                run("some Resources.A.Properties.Port !=", input)?,
+                run("Resources.A.Properties.Port !=", input)?,
+            ),
+        );
+    }
+    for (label, input, wanted) in [
+        (
+            "`==`: the reference the document lacks beside the marker: `some` raised, `match_all` decided by the absence (not applicable)",
+            &marker,
+            (Status::FAIL, Status::SKIP),
+        ),
+        (
+            "`==`: the marker resolved to `22` (no marker): `some` passes on the resolved pair beside the absence, `match_all` not applicable",
+            &resolved_equal,
+            (Status::PASS, Status::SKIP),
+        ),
+        (
+            "`==`: the marker resolved to `80` (no marker): both spellings not applicable",
+            &resolved_differs,
+            (Status::SKIP, Status::SKIP),
+        ),
+        (
+            "`==`: control, the reference present beside the marker: `some` raised, `match_all` decided by the right-hand value no left-hand value equals",
+            &reference_present,
+            (Status::FAIL, Status::SKIP),
+        ),
+    ] {
+        cells.check(
+            label,
+            wanted,
+            (
+                run("some Resources.A.Properties.Port ==", input)?,
+                run("Resources.A.Properties.Port ==", input)?,
+            ),
+        );
+    }
+    cells.assert_all_agreed();
+    Ok(())
+}
+
+/// The per-value bookkeeping the marker pre-pass reads (`ResultEvidence::note_value`) runs only where its
+/// one reader does, a NEGATED comparator with a marker among its right-hand values: a comparison with no
+/// marker records nothing, a positive comparator beside the marker records nothing (`==`, whose pre-pass
+/// reads a refusal's marker but never the sets; `IN`, whose pre-pass reads the marker but never the sets),
+/// and `!=` beside the marker records one entry per result per left-hand value (here one pair against one
+/// resolved pair and against the marker: two).
 #[test]
 fn the_marker_bookkeeping_runs_only_beside_a_marker() -> Result<()> {
     const OTHER: &str = r#"
@@ -43624,12 +47445,22 @@ fn the_marker_bookkeeping_runs_only_beside_a_marker() -> Result<()> {
     }
     "#;
     let visits = |rules: &str| -> Result<usize> {
-        crate::rules::eval_context::MARKER_BOOKKEEPING_VISITS.with(|visits| visits.set(0));
+        crate::rules::eval::MARKER_BOOKKEEPING_VISITS.with(|visits| visits.set(0));
         let rules_file = RulesFile::try_from(rules)?;
         let mut root = root_scope(&rules_file, Rc::new(PathAwareValue::try_from(OTHER)?));
         eval_rules_file(&rules_file, &mut root, None)?;
-        Ok(crate::rules::eval_context::MARKER_BOOKKEEPING_VISITS.with(|visits| visits.get()))
+        Ok(crate::rules::eval::MARKER_BOOKKEEPING_VISITS.with(|visits| visits.get()))
     };
+    // The refused-read texts the comparison collected after its loop (`REFUSAL_TEXTS_COLLECTED`): none
+    // where no arm met a refusal, the one refusal where an absence was decided beside it.
+    let collected = |rules: &str| -> Result<usize> {
+        crate::rules::eval::REFUSAL_TEXTS_COLLECTED.with(|collected| collected.set(0));
+        let rules_file = RulesFile::try_from(rules)?;
+        let mut root = root_scope(&rules_file, Rc::new(PathAwareValue::try_from(OTHER)?));
+        eval_rules_file(&rules_file, &mut root, None)?;
+        Ok(crate::rules::eval::REFUSAL_TEXTS_COLLECTED.with(|collected| collected.get()))
+    };
+    const LETS: &str = "let wanted = Mappings.Wanted.Keys\nlet names = Resources.*.Properties.Tags[*][ Key IN %wanted ]\n";
     let mut cells = CellFailures::default();
     cells.check(
         "`[ Properties.Tags[*] != Resources.L.Properties.Tags[*] ]`, no marker: nothing recorded",
@@ -43637,10 +47468,690 @@ fn the_marker_bookkeeping_runs_only_beside_a_marker() -> Result<()> {
         visits("rule r { Resources.*[ Type == 'AWS::S3::Bucket' ][ Properties.Tags[*] != Resources.L.Properties.Tags[*] ] empty }")?,
     );
     cells.check(
-        "`[ Properties.Tags[*] != %names ]`, the marker among the right-hand values: one entry per result per left-hand value",
-        2,
-        visits("let wanted = Mappings.Wanted.Keys\nlet names = Resources.*.Properties.Tags[*][ Key IN %wanted ]\nrule r { Resources.*[ Type == 'AWS::S3::Bucket' ][ Properties.Tags[*] != %names ] empty }")?,
+        "`[ Properties.Tags[*] != Resources.L.Properties.Tags[*] ]`, no marker: no refused-read text collected",
+        0,
+        collected("rule r { Resources.*[ Type == 'AWS::S3::Bucket' ][ Properties.Tags[*] != Resources.L.Properties.Tags[*] ] empty }")?,
     );
+    cells.check(
+        "`[ Properties.Owner == %names ]`, the absence decided beside the refusal: the one refused-read text collected",
+        1,
+        collected(&format!("{LETS}rule r {{ Resources.*[ Type == 'AWS::S3::Bucket' ][ Properties.Owner == %names ] empty }}"))?,
+    );
+    cells.check(
+        "`[ Properties.Tags[*] != %names ]`, the marker among the right-hand values under `!=`: one entry per result per left-hand value",
+        2,
+        visits(&format!("{LETS}rule r {{ Resources.*[ Type == 'AWS::S3::Bucket' ][ Properties.Tags[*] != %names ] empty }}"))?,
+    );
+    cells.check(
+        "`[ Properties.Tags[*] == %names ]`, the marker among the right-hand values under `==`: nothing recorded (no reader)",
+        0,
+        visits(&format!("{LETS}rule r {{ Resources.*[ Type == 'AWS::S3::Bucket' ][ Properties.Tags[*] == %names ] empty }}"))?,
+    );
+    cells.check(
+        "`[ Properties.Tags[*] IN %names ]`, the marker among the right-hand values under `IN`: nothing recorded (no reader)",
+        0,
+        visits(&format!("{LETS}rule r {{ Resources.*[ Type == 'AWS::S3::Bucket' ][ Properties.Tags[*] IN %names ] empty }}"))?,
+    );
+    cells.assert_all_agreed();
+    Ok(())
+}
+
+/// An absent left-hand value under `some` with a negated comparator, asserted beside a marker, fails on
+/// the absence with its comparison record kept: `some Cfg.Missing NOT IN %x` (`%x` the keys an earlier
+/// capture bound and the refusal's marker) FAILs by its statuses, which already deny every value, and
+/// `undecided_gate` leaves it to them; raised instead, the clause's block record was rewritten into an
+/// error naming the marker's reason ("... when handling clause, bailing"), blaming the refusal for an
+/// absent property's failure. The raise is for the one assertion its statuses alone would pass, `some`
+/// with a negated comparator over a value no resolved value equals, pinned beside it.
+#[test]
+fn an_absent_value_asserted_under_some_beside_a_marker_fails_on_the_absence_not_the_marker(
+) -> Result<()> {
+    const REFUSED_CONTINUATION: &str = r#"{
+        "Cfg": {
+            "Mode": { "Ref": "ModeParam" },
+            "Fallback": { "Kind": "k" },
+            "A": { "Kind": "k", "Sub": { "R1": { "Ref": "P" }, "P": { "Kind": "k" }, "Q": { "Kind": "k" } } },
+            "B": { "Kind": "k", "Sub": { "R1": { "Ref": "P" }, "P": { "Kind": "k" }, "Q": { "Kind": "k" } } }
+        }
+    }"#;
+    const REFUSED_WALK: &str =
+        "Cfg[*][ x | Mode exists or Kind == 'k' ].Sub[*][ s | R1 !exists ] !empty or Cfg.Fallback exists";
+    // (the status; the clause's own records hold a comparison check; they hold the raise's sentence)
+    let run = |clause: &str, needle: &str| -> Result<(Status, bool, bool)> {
+        let rules = format!("rule r {{ Cfg[ x | Kind == 'k' ] !empty  {REFUSED_WALK}  {clause} }}");
+        let rules_file = RulesFile::try_from(rules.as_str())?;
+        let mut root = root_scope(
+            &rules_file,
+            Rc::new(PathAwareValue::try_from(REFUSED_CONTINUATION)?),
+        );
+        let status = eval_rules_file(&rules_file, &mut root, None)?;
+        let mut records = String::new();
+        record_containers_under(&root.reset_recorder().extract(), needle, &mut records);
+        Ok((
+            status,
+            records.contains("ClauseValueCheck(Comparison"),
+            records.contains("the clause is raised and the run continues"),
+        ))
+    };
+    let mut cells = CellFailures::default();
+    cells.check(
+        "`some Cfg.Missing NOT IN %x` asserted beside the marker: FAIL on the absence, the comparison record kept, no error rewrite",
+        (Status::FAIL, true, false),
+        run("some Cfg.Missing NOT IN %x", "Cfg.Missing")?,
+    );
+    cells.check(
+        "`some Cfg.Missing != %x` asserted beside the marker: the same under `!=`",
+        (Status::FAIL, true, false),
+        run("some Cfg.Missing != %x", "Cfg.Missing")?,
+    );
+    cells.check(
+        "control: `some Cfg.Mode.Ref NOT IN %x` asserted beside the marker, a value no resolved key equals: raised on the marker, the block record rewritten beside the comparison records",
+        (Status::FAIL, true, true),
+        run("some Cfg.Mode.Ref NOT IN %x", "Cfg.Mode.Ref")?,
+    );
+    cells.assert_all_agreed();
+    Ok(())
+}
+
+/// A left-hand value NO resolved entry accepted under a positive `IN` beside a marker keeps the marker
+/// pair's FAIL status and record: the clause fails closed on it (unknown), and the record is where the
+/// report names the marker's reason beside the value. Asserted, `Resources.B.Properties.Tags[*] IN
+/// %names` over a pair no resolved value holds FAILs and its records name the refusal; as a filter
+/// predicate the same clause is unknown under both tails, as before, and the entry's records name it.
+/// Were the pair dropped for every value, the clause would show the resolved mismatch alone and the
+/// refusal would be raised nowhere; the pair of a value a resolved entry DID accept still files nothing
+/// (`a_passing_membership_beside_a_marker_carries_no_failing_child_record`).
+#[test]
+fn an_unmatched_value_under_a_positive_in_beside_a_marker_carries_the_markers_reason() -> Result<()>
+{
+    const OTHER: &str = r#"
+    {
+        Mappings: { Wanted: { Keys: [ 'Env' ] } },
+        Resources: {
+            B: { Type: 'AWS::S3::Bucket', Properties: { Tags: [ { Key: 'Owner', Value: 'other' } ] } },
+            L: { Type: 'AWS::Lambda::Function', Properties: { Handler: 'index.handler', Tags: [ { Key: 'Env', Value: 'zzz' } ] } },
+            M: { Type: 'AWS::Serverless::Function', Properties: { Handler: 'index.handler', Tags: { Env: 'x' } } }
+        }
+    }
+    "#;
+    // The marker pair's own record: a comparison check whose right-hand side is the unresolved marker
+    // (`to: Some(UnResolved(..))`); the resolved mismatch's record lists resolved entries. The reason's
+    // text alone does not tell the two apart: the `let`'s own filter records, which carry the twin's
+    // refusal, sit under the clause that first reads the `let` for real.
+    const THE_MARKER_PAIR: &str = "to: Some(UnResolved(";
+    const THE_REFUSAL: &str = "no one scalar literal";
+    let run = |rule: &str| -> Result<(Status, bool, bool)> {
+        let rules = format!(
+            "let wanted = Mappings.Wanted.Keys\nlet names = Resources.*.Properties.Tags[*][ Key IN %wanted ]\n{rule}"
+        );
+        let rules_file = RulesFile::try_from(rules.as_str())?;
+        let mut root = root_scope(&rules_file, Rc::new(PathAwareValue::try_from(OTHER)?));
+        let status = eval_rules_file(&rules_file, &mut root, None)?;
+        let mut clause = String::new();
+        record_containers_under(
+            &root.reset_recorder().extract(),
+            "Properties.Tags[*] IN",
+            &mut clause,
+        );
+        Ok((
+            status,
+            clause.contains(THE_MARKER_PAIR),
+            clause.contains(THE_REFUSAL),
+        ))
+    };
+    let mut cells = CellFailures::default();
+    // Asserted OUTSIDE a predicate, a refused bare read of `%names` is the clause's own error, not a
+    // marker among the right-hand values (the marker arrives inside a filter predicate, or through a
+    // capture: `a_markers_pair_keeps_its_failing_status_under_a_negated_membership_in_every_role` pins the
+    // assertion with a capture-held marker), so no marker pair is filed there; the reason is named all the
+    // same. Pinned as the boundary of this reading.
+    cells.check(
+        "`Resources.B.Properties.Tags[*] IN %names` asserted outside a predicate: FAIL on the refusal as the clause's own error, no marker pair (none exists there), the reason named",
+        (Status::FAIL, false, true),
+        run("rule r { Resources.B.Properties.Tags[*] IN %names }")?,
+    );
+    for tail in [" empty", " !empty"] {
+        cells.check(
+            &format!("`[ Properties.Tags[*] IN %names ]{tail}` over the same pair: unknown, FAIL, the entry's marker pair record is filed and names the reason"),
+            (Status::FAIL, true, true),
+            run(&format!(
+                "rule r {{ Resources.*[ Type == 'AWS::S3::Bucket' ][ Properties.Tags[*] IN %names ]{tail} }}"
+            ))?,
+        );
+    }
+    cells.assert_all_agreed();
+    Ok(())
+}
+
+/// A refusal to compare kinds under MEMBERSHIP beside a marker is not a decided miss: membership refuses
+/// a value only when NO entry can be compared with it, one comparable entry turns the refusal into a
+/// decided answer, and the entry the marker hides may be that one. `when some Ports[*] NOT IN %denied`
+/// over `Ports: [22]` with `%denied` the resolved `'ssh'` and the marker of a map whose key the regex
+/// could not read: `22` against `'ssh'` is a kind refusal, the hidden entry may be the int `80` (which
+/// `22` is not, so the clause may pass) or `22` itself, so the gate is unknown and the rule fails closed;
+/// the same clause as a filter predicate is refused, and under `match_all` (`Ports[*] NOT IN %denied`) the
+/// gate is unknown too. Noted as a decided NO, the refusal would settle the `some` and the rule would be
+/// skipped at exit 0 with its body unchecked. Over the control, whose keys the regex reads (`'ssh'` alone, no
+/// marker), the refusal IS the decided miss: not applicable, deselected.
+#[test]
+fn a_kind_refusal_under_membership_beside_a_marker_is_not_a_decided_miss() -> Result<()> {
+    let document = |m1_key: &str| {
+        format!(
+            "{{ Resources: {{ A: {{ Type: 'AWS::IAM::Role', Properties: {{ Maps: {{ M1: {{ {m1_key}: 'z' }}, M2: {{ aab: 'ssh' }} }} }} }}, B: {{ Type: 'AWS::S3::Bucket', Properties: {{ Ports: [ 22 ], W: 'y' }} }} }} }}"
+        )
+    };
+    let marker = document(&"a".repeat(30));
+    let control = document("c");
+    const DENIED: &str =
+        "let denied = Resources.A.Properties.Maps.*[ keys == /(?!x)((a+)+)b/ ].*\n";
+    let run = |rule: &str, input: &str| -> Result<Status> {
+        let rules = format!("{DENIED}{rule}");
+        let rules_file = RulesFile::try_from(rules.as_str())?;
+        let mut root = root_scope(&rules_file, Rc::new(PathAwareValue::try_from(input)?));
+        eval_rules_file(&rules_file, &mut root, None)
+    };
+    let mut cells = CellFailures::default();
+    for (label, rule, wanted) in [
+        (
+            "gate `when some Ports[*] NOT IN %denied`: not applicable over the control, unknown (the rule fails closed) beside the marker",
+            "rule r when some Resources.B.Properties.Ports[*] NOT IN %denied { Resources.B.Properties.W == 'y' }",
+            (Status::SKIP, Status::FAIL),
+        ),
+        (
+            "gate `when Ports[*] NOT IN %denied` (`match_all`): the same",
+            "rule r when Resources.B.Properties.Ports[*] NOT IN %denied { Resources.B.Properties.W == 'y' }",
+            (Status::SKIP, Status::FAIL),
+        ),
+        (
+            "filter `[ some Properties.Ports[*] NOT IN %denied ] empty`: deselected over the control (PASS), refused beside the marker (FAIL)",
+            "rule r { Resources.*[ Type == 'AWS::S3::Bucket' ][ some Properties.Ports[*] NOT IN %denied ] empty }",
+            (Status::PASS, Status::FAIL),
+        ),
+        (
+            "filter `[ some Properties.Ports[*] NOT IN %denied ] !empty`: FAIL over the control (deselected), FAIL beside the marker (refused)",
+            "rule r { Resources.*[ Type == 'AWS::S3::Bucket' ][ some Properties.Ports[*] NOT IN %denied ] !empty }",
+            (Status::FAIL, Status::FAIL),
+        ),
+    ] {
+        cells.check(label, wanted, (run(rule, &control)?, run(rule, &marker)?));
+    }
+    cells.assert_all_agreed();
+    Ok(())
+}
+
+/// A clause whose LEFT operand is a literal is one left-hand value to the marker bookkeeping, whatever
+/// the operators make the subject of its pairs: `let lit = 'x'` and `[ some %lit != %cfg ]` with `%cfg`
+/// the resolved `x` and a key filter's marker is a resolved collision, so the clause is decided NO and the
+/// entry deselected, as over the control. The operators build the literal-left pairs with the DOCUMENT
+/// value as the pair's subject, so keyed by the result's own `lhs` the collision would be noted under the
+/// document value and the marker's pair under the literal, two values with one decided NO between them,
+/// and the clause would be refused where it is decided. A literal equal to no resolved value stays unknown
+/// beside the marker (the control selects the entry on it).
+#[test]
+fn a_literal_left_operand_beside_a_marker_is_one_value() -> Result<()> {
+    let document = |m1_key: &str| {
+        format!(
+            "{{ Resources: {{ B: {{ Type: 'AWS::S3::Bucket', Properties: {{ W: 'y' }} }}, A: {{ Type: 'AWS::IAM::Role', Properties: {{ Maps: {{ M1: {{ {m1_key}: 'z' }}, M2: {{ aab: 'x' }} }} }} }} }} }}"
+        )
+    };
+    let marker = document(&"a".repeat(30));
+    let control = document("c");
+    let run = |literal: &str, predicate: &str, tail: &str, input: &str| -> Result<Status> {
+        let rules = format!(
+            "let lit = '{literal}'\nlet cfg = Resources.A.Properties.Maps.*[ keys == /(?!x)((a+)+)b/ ].*\nrule r {{ Resources.*[ Type == 'AWS::S3::Bucket' ][ {predicate} ]{tail} }}"
+        );
+        let rules_file = RulesFile::try_from(rules.as_str())?;
+        let mut root = root_scope(&rules_file, Rc::new(PathAwareValue::try_from(input)?));
+        eval_rules_file(&rules_file, &mut root, None)
+    };
+    let mut cells = CellFailures::default();
+    for (predicate, shape) in [
+        ("some %lit != %cfg", "under `some`"),
+        ("%lit != %cfg", "under `match_all`"),
+    ] {
+        cells.check(
+            &format!("`[ {predicate} ]` with `%lit` equal to the resolved `x`, {shape}: decided NO beside the marker as over the control, the entry deselected (`empty` PASS, `!empty` FAIL)"),
+            ((Status::PASS, Status::FAIL), (Status::PASS, Status::FAIL)),
+            (
+                (
+                    run("x", predicate, " empty", &control)?,
+                    run("x", predicate, " !empty", &control)?,
+                ),
+                (
+                    run("x", predicate, " empty", &marker)?,
+                    run("x", predicate, " !empty", &marker)?,
+                ),
+            ),
+        );
+    }
+    cells.check(
+        "control: `[ some %lit != %cfg ]` with `%lit` equal to no resolved value: selected over the control (`empty` FAIL, `!empty` PASS), unknown beside the marker (FAIL, FAIL)",
+        ((Status::FAIL, Status::PASS), (Status::FAIL, Status::FAIL)),
+        (
+            (
+                run("q", "some %lit != %cfg", " empty", &control)?,
+                run("q", "some %lit != %cfg", " !empty", &control)?,
+            ),
+            (
+                run("q", "some %lit != %cfg", " empty", &marker)?,
+                run("q", "some %lit != %cfg", " !empty", &marker)?,
+            ),
+        ),
+    );
+    cells.assert_all_agreed();
+    Ok(())
+}
+
+/// A MARKER among the left-hand values is a value nobody knows, not an absence, so it never settles a
+/// `some`: `when some %cfg NOT IN %names { .. }` with the marker alone in `%cfg` (a key filter over a map
+/// whose one key the regex could not read) and `%names` holding a resolved value beside a marker of its
+/// own is unknown and RAISES, the rule failing closed, under `NOT IN` and under `IN` alike; `some X IN
+/// %names` over an `X` that selects an absent key on one resource and the marker on another raises too,
+/// since the marker may be the member. Read as an absence (every left-hand value absent, none compared),
+/// each would settle NO and the rule would be skipped at exit 0 with its body unchecked. The control: a
+/// resolved value in place of the marker, equal to a resolved name, is a decided collision, settled NO,
+/// the rule not applicable.
+#[test]
+fn a_marker_among_the_left_hand_values_is_not_an_absence() -> Result<()> {
+    // `A.Maps` holds the long key alone, so `%cfg` is the marker alone; `B.Maps2` holds the long key and
+    // `x`, so `%names` is the resolved `x` beside a marker; `B` has no `Maps`, so a query over every
+    // resource's `Maps` selects an absence for `B` and the marker for `A`; `A.Other` is `x`.
+    let long = "a".repeat(30);
+    let document = format!(
+        "{{ Resources: {{ A: {{ Type: 'AWS::IAM::Role', Properties: {{ Other: 'x', Maps: {{ M1: {{ {long}: 'z' }} }} }} }}, B: {{ Type: 'AWS::S3::Bucket', Properties: {{ Maps2: {{ M1: {{ {long}: 'z' }}, M2: {{ aab: 'x' }} }} }} }} }} }}"
+    );
+    const LETS: &str = "let cfg = Resources.A.Properties.Maps.*[ keys == /(?!x)((a+)+)b/ ].*\nlet names = Resources.B.Properties.Maps2.*[ keys == /(?!x)((a+)+)b/ ].*\nlet other = Resources.A.Properties.Other\n";
+    let run = |gate: &str| -> Result<Status> {
+        let rules = format!("{LETS}rule r when {gate} {{ Resources.A.Type == 'AWS::IAM::Role' }}");
+        let rules_file = RulesFile::try_from(rules.as_str())?;
+        let mut root = root_scope(
+            &rules_file,
+            Rc::new(PathAwareValue::try_from(document.as_str())?),
+        );
+        eval_rules_file(&rules_file, &mut root, None)
+    };
+    let mut cells = CellFailures::default();
+    for (label, gate, wanted) in [
+        (
+            "`when some %cfg NOT IN %names`, the marker alone on the left: unknown, the rule fails closed",
+            "some %cfg NOT IN %names",
+            Status::FAIL,
+        ),
+        (
+            "`when some %cfg IN %names`, the marker alone on the left: unknown, the rule fails closed",
+            "some %cfg IN %names",
+            Status::FAIL,
+        ),
+        (
+            "`when some Resources.*.Properties.Maps.*[ keys == /re/ ].* IN %names`, an absence and the marker on the left: unknown, the rule fails closed",
+            "some Resources.*.Properties.Maps.*[ keys == /(?!x)((a+)+)b/ ].* IN %names",
+            Status::FAIL,
+        ),
+        (
+            "control: `when some %other NOT IN %names`, the resolved `x` on the left equal to the resolved name: a decided collision, settled NO, not applicable",
+            "some %other NOT IN %names",
+            Status::SKIP,
+        ),
+    ] {
+        cells.check(label, wanted, run(gate)?);
+    }
+    cells.assert_all_agreed();
+    Ok(())
+}
+
+/// A right-hand side that holds the marker ALONE under a positive `IN` compares nothing: no entry could
+/// have accepted a left-hand value, so the marker's pairs file neither a status nor a record, the clause
+/// answers with the marker's reason through the compared-nothing arm and the assertion is raised (its
+/// block record carries the error), UNKNOWN of record; with one resolved key listed beside the marker a
+/// value no key accepted keeps its marker pair, a FAIL status with the reason in its comparison record,
+/// and nothing is raised. The two shapes are told apart by their records.
+#[test]
+fn a_marker_only_right_hand_side_under_a_positive_in_compares_nothing() -> Result<()> {
+    const REFUSED_CONTINUATION: &str = r#"{
+        "Cfg": {
+            "Mode": { "Ref": "ModeParam" },
+            "Fallback": { "Kind": "k" },
+            "A": { "Kind": "k", "Sub": { "R1": { "Ref": "P" }, "P": { "Kind": "k" }, "Q": { "Kind": "k" } } },
+            "B": { "Kind": "k", "Sub": { "R1": { "Ref": "P" }, "P": { "Kind": "k" }, "Q": { "Kind": "k" } } }
+        }
+    }"#;
+    const REFUSED_WALK: &str =
+        "Cfg[*][ x | Mode exists or Kind == 'k' ].Sub[*][ s | R1 !exists ] !empty or Cfg.Fallback exists";
+    // (the status; the clause's records hold a comparison check; they hold the raise's sentence, the
+    // one the clause's `Err` arm records for an unevaluatable error, "the clause is raised and the run
+    // continues")
+    let run = |rules: &str| -> Result<(Status, bool, bool)> {
+        let rules_file = RulesFile::try_from(rules)?;
+        let mut root = root_scope(
+            &rules_file,
+            Rc::new(PathAwareValue::try_from(REFUSED_CONTINUATION)?),
+        );
+        let status = eval_rules_file(&rules_file, &mut root, None)?;
+        let mut records = String::new();
+        record_containers_under(
+            &root.reset_recorder().extract(),
+            "Cfg.Mode.Ref",
+            &mut records,
+        );
+        Ok((
+            status,
+            records.contains("ClauseValueCheck(Comparison"),
+            records.contains("the clause is raised and the run continues"),
+        ))
+    };
+    let mut cells = CellFailures::default();
+    cells.check(
+        "`Cfg.Mode.Ref IN %x` with the marker alone in `%x`: no comparison record, the clause raised on the marker's reason (unknown)",
+        (Status::FAIL, false, true),
+        run(&format!("rule r {{ {REFUSED_WALK}  Cfg.Mode.Ref IN %x }}"))?,
+    );
+    cells.check(
+        "`Cfg.Mode.Ref IN %x` with the keys and the marker in `%x`, the value among no key: the marker pair's comparison record filed, nothing raised",
+        (Status::FAIL, true, false),
+        run(&format!(
+            "rule r {{ Cfg[ x | Kind == 'k' ] !empty  {REFUSED_WALK}  Cfg.Mode.Ref IN %x }}"
+        ))?,
+    );
+    cells.assert_all_agreed();
+    Ok(())
+}
+
+/// The marker bookkeeping keys a left-hand value by the identity of its `Rc`, never by its path: two
+/// distinct values at ONE path, one decided NO and one not, are two values to it, so the clause is not
+/// settled on the decided one (`ResultEvidence::note_value` called directly with two `Rc`s sharing a
+/// path; keyed by path they would merge, one decided NO standing for both, and `every_value_decided_no`
+/// would hold).
+#[test]
+fn the_bookkeeping_keys_a_left_hand_value_by_identity_not_by_path() -> Result<()> {
+    let path = || path_value::Path::new("/Resources/M/Properties/Tags/Env/Key".to_string(), 0, 0);
+    let twin_key = Rc::new(PathAwareValue::String((path(), "Env".to_string())));
+    let sibling = Rc::new(PathAwareValue::String((path(), "x".to_string())));
+    let mut cells = CellFailures::default();
+    // A note sets the flag that says the bookkeeping ran, so the fold reads the sets.
+    let mut evidence = super::ResultEvidence::default();
+    evidence.note_value(&twin_key, true);
+    evidence.note_value(&sibling, false);
+    cells.check(
+        "two distinct values at one path, one decided NO: not every value decided NO",
+        false,
+        evidence.every_value_decided_no(),
+    );
+    let mut evidence = super::ResultEvidence::default();
+    evidence.note_value(&twin_key, true);
+    evidence.note_value(&twin_key, false);
+    cells.check(
+        "control: the SAME value noted twice, once decided NO: every value decided NO",
+        true,
+        evidence.every_value_decided_no(),
+    );
+    cells.assert_all_agreed();
+    Ok(())
+}
+
+/// A twin pair's `Key` node and a sibling key spelled with a slash are two values to the marker
+/// bookkeeping, as every two left-hand values are: over the map `Tags: { Env: dev, 'Env/Key': x }` the
+/// `Env` pair's `Key` node sits at the path `.../Tags/Env/Key`, the very path of the sibling entry spelled
+/// `Env/Key`. `some Resources.M.Properties.Tags[*][ Key != 'none' ].Key NOT IN %x` (the pair-shaped
+/// filter keeps both pairs, so the twin's `Key` nodes are the left-hand values; a bare `Tags[*]` over a
+/// map hands the map on whole) with `%x` holding the resolved `Env` and a key filter's marker reads two
+/// left-hand values, `Env` (a resolved collision, decided NO) and `Env/Key` (equal to no resolved value,
+/// unknown beside the marker), so the clause is unknown and fails closed as an assertion and in a filter,
+/// and the control without the marker passes on `Env/Key`. The two colliding nodes, the `Env` pair's `Key`
+/// and the `Env/Key` ENTRY, never sit in one left operand (`.Key` of the `Env/Key` pair is one level
+/// deeper), so this is a PIN of the shape the twin produces, green under a path key too; the identity
+/// keying itself is pinned by `the_bookkeeping_keys_a_left_hand_value_by_identity_not_by_path`.
+#[test]
+fn a_twin_key_node_and_a_sibling_key_spelled_with_a_slash_are_two_values_to_the_bookkeeping(
+) -> Result<()> {
+    let document = |m1_key: &str| {
+        format!(
+            "{{ Resources: {{ M: {{ Type: 'AWS::Serverless::Function', Properties: {{ Handler: 'index.handler', Tags: {{ Env: 'dev', 'Env/Key': 'x' }} }} }}, A: {{ Type: 'AWS::IAM::Role', Properties: {{ Maps: {{ M1: {{ {m1_key}: 'z' }}, M2: {{ aab: 'Env' }} }} }} }} }} }}"
+        )
+    };
+    let marker = document(&"a".repeat(30));
+    let control = document("c");
+    const X: &str = "let x = Resources.A.Properties.Maps.*[ keys == /(?!x)((a+)+)b/ ].*\n";
+    let run = |rule: &str, input: &str| -> Result<Status> {
+        let rules = format!("{X}{rule}");
+        let rules_file = RulesFile::try_from(rules.as_str())?;
+        let mut root = root_scope(&rules_file, Rc::new(PathAwareValue::try_from(input)?));
+        eval_rules_file(&rules_file, &mut root, None)
+    };
+    let mut cells = CellFailures::default();
+    // The twin's pairs exist under a pair-shaped filter (`[ Key != 'none' ]` keeps both pairs); a bare
+    // `Tags[*]` over a map hands the map on whole, and `.Key` of it is an absent key.
+    const KEYS: &str = "Properties.Tags[*][ Key != 'none' ].Key";
+    cells.check(
+        "assertion `some Resources.M.Properties.Tags[*][ Key != 'none' ].Key NOT IN %x`: PASS over the control (on `Env/Key`), FAIL (unknown) beside the marker",
+        (Status::PASS, Status::FAIL),
+        (
+            run(
+                &format!("rule r {{ some Resources.M.{KEYS} NOT IN %x }}"),
+                &control,
+            )?,
+            run(
+                &format!("rule r {{ some Resources.M.{KEYS} NOT IN %x }}"),
+                &marker,
+            )?,
+        ),
+    );
+    let filter = |tail: &str| {
+        format!("rule r {{ Resources.*[ Type == 'AWS::Serverless::Function' ][ some {KEYS} NOT IN %x ]{tail} }}")
+    };
+    cells.check(
+        "filter `[ some Properties.Tags[*][ Key != 'none' ].Key NOT IN %x ]` over the function: selected over the control (`empty` FAIL, `!empty` PASS), unknown beside the marker (FAIL, FAIL)",
+        ((Status::FAIL, Status::PASS), (Status::FAIL, Status::FAIL)),
+        (
+            (
+                run(&filter(" empty"), &control)?,
+                run(&filter(" !empty"), &control)?,
+            ),
+            (run(&filter(" empty"), &marker)?, run(&filter(" !empty"), &marker)?),
+        ),
+    );
+    // The exact path token (quote-terminated in the records' rendering), so the `Env/Key` pair's own `Key`
+    // node at `.../Tags/Env/Key/Key` is not what matches.
+    cells.check(
+        "the paths collide: the `Env` pair's `Key` node (read through the twin) and the `Env/Key` entry (read through `Tags.*`) report at one path, exactly",
+        (true, true),
+        {
+            let records_of = |rules: &str| -> Result<String> {
+                let rules_file = RulesFile::try_from(rules)?;
+                let mut root = root_scope(
+                    &rules_file,
+                    Rc::new(PathAwareValue::try_from(control.as_str())?),
+                );
+                let _ = eval_rules_file(&rules_file, &mut root, None)?;
+                let mut records = String::new();
+                record_containers_under(&root.reset_recorder().extract(), "Tags", &mut records);
+                Ok(records)
+            };
+            (
+                records_of(&format!("rule r {{ Resources.M.{KEYS} == 'zzz' }}"))?
+                    .contains("/Resources/M/Properties/Tags/Env/Key\""),
+                records_of("rule r { Resources.M.Properties.Tags.* == 'zzz' }")?
+                    .contains("/Resources/M/Properties/Tags/Env/Key\""),
+            )
+        },
+    );
+    cells.assert_all_agreed();
+    Ok(())
+}
+
+/// An empty left-hand collection and a missing one read ALIKE beside a key filter's marker, both decided:
+/// `[ Properties.Tags == %cfg ]` with `let cfg = Maps.*[ keys == /(?!x)((a+)+)b/ ].*` over `Tags: []` and
+/// over a bucket with no `Tags` deselects the entry under both tails and, written as a `when` condition,
+/// reads the rule not applicable, as the arm's own sentence promises ("`Ports: []` and a missing `Ports`
+/// on the same gate read the same way"); the mirror `[ %cfg == Properties.Tags ]` over `Tags: []` and the
+/// two shapes under `!=` are decided too. Were the missing `Tags` read as unknown beside the marker, it
+/// would fail closed where the empty one deselects, two readings of one fact about the document. The
+/// reading does not rest on an `EmptyCollection` result: `some Tags != %cfg` between two queries refuses
+/// `[]` on kinds and pushes none, and a marker-only `%x` leaves the marker pair as the list's only result,
+/// and the empty list is an absence to the evidence in those arms too, so `[ some Properties.Tags != %cfg
+/// ]` deselects, `when some .. != %cfg` is not applicable, and `[ Tags == %x ]` and `when .. NOT IN %x`
+/// with the marker alone in `%x` are decided over `Tags: []` as over the missing key. The positive `IN`
+/// beside the marker alone, `[ Tags IN %x ]` and `when Tags IN %x`, files no status for the empty list's
+/// marker pair (no resolved entry could have accepted it), so the clause reaches the compared-nothing arm
+/// with nothing to fold: it is decided there on the absence, deselecting and not applicable as over the
+/// missing key, where a raise of the marker would read `Tags: []` as unknown and fail the rule closed.
+/// Under `some` the same two clauses are settled by the absence too: whether `some` is decided NO is read
+/// from the evidence inside the gate (`ResultEvidence::settled_no`), for the compared-nothing answer as
+/// for a per-value one, so `when some Tags IN %x` is not applicable over `Tags: []` as over the missing
+/// key; were it set by the pre-pass alone, which runs over per-value statuses only, `Tags: []` would fail
+/// the rule closed under `some` where the missing key is not applicable.
+#[test]
+fn an_empty_left_collection_and_a_missing_one_read_alike_beside_a_key_filters_marker() -> Result<()>
+{
+    // `A.Maps` yields the resolved `x` beside the marker (`%cfg`); `A.Maps2` the marker alone (`%x`).
+    let document = |tags: &str| {
+        format!(
+            "{{ Resources: {{ B: {{ Type: 'AWS::S3::Bucket', Properties: {{ W: 'y'{tags} }} }}, A: {{ Type: 'AWS::IAM::Role', Properties: {{ Maps: {{ M1: {{ {long}: 'z' }}, M2: {{ aab: 'x' }} }}, Maps2: {{ M1: {{ {long}: 'z' }} }} }} }} }} }}",
+            long = "a".repeat(30)
+        )
+    };
+    let empty = document(", Tags: []");
+    let missing = document("");
+    const CFG: &str = "let cfg = Resources.A.Properties.Maps.*[ keys == /(?!x)((a+)+)b/ ].*\nlet x = Resources.A.Properties.Maps2.*[ keys == /(?!x)((a+)+)b/ ].*\n";
+    let run = |rule: &str, input: &str| -> Result<Status> {
+        let rules = format!("{CFG}{rule}");
+        let rules_file = RulesFile::try_from(rules.as_str())?;
+        let mut root = root_scope(&rules_file, Rc::new(PathAwareValue::try_from(input)?));
+        eval_rules_file(&rules_file, &mut root, None)
+    };
+    let mut cells = CellFailures::default();
+    // (label, the rule, wanted over `Tags: []`, wanted over no `Tags`)
+    for (label, rule, wanted) in [
+        (
+            "filter `[ Properties.Tags == %cfg ] empty`: deselected, PASS, over the empty list and over the missing key alike",
+            "rule r { Resources.*[ Type == 'AWS::S3::Bucket' ][ Properties.Tags == %cfg ] empty }",
+            (Status::PASS, Status::PASS),
+        ),
+        (
+            "filter `[ Properties.Tags == %cfg ] !empty`: deselected, FAIL, over both alike",
+            "rule r { Resources.*[ Type == 'AWS::S3::Bucket' ][ Properties.Tags == %cfg ] !empty }",
+            (Status::FAIL, Status::FAIL),
+        ),
+        (
+            "gate `when Resources.B.Properties.Tags == %cfg`: not applicable over both alike",
+            "rule r when Resources.B.Properties.Tags == %cfg { Resources.B.Properties.W == 'y' }",
+            (Status::SKIP, Status::SKIP),
+        ),
+        (
+            "filter `[ Properties.Tags != %cfg ] empty`: deselected, PASS, over both alike",
+            "rule r { Resources.*[ Type == 'AWS::S3::Bucket' ][ Properties.Tags != %cfg ] empty }",
+            (Status::PASS, Status::PASS),
+        ),
+        (
+            "gate `when Resources.B.Properties.Tags != %cfg`: not applicable over both alike",
+            "rule r when Resources.B.Properties.Tags != %cfg { Resources.B.Properties.W == 'y' }",
+            (Status::SKIP, Status::SKIP),
+        ),
+        (
+            "filter `[ some Properties.Tags != %cfg ] empty` (no `EmptyCollection` result under `!=` between two queries): deselected, PASS, over both alike",
+            "rule r { Resources.*[ Type == 'AWS::S3::Bucket' ][ some Properties.Tags != %cfg ] empty }",
+            (Status::PASS, Status::PASS),
+        ),
+        (
+            "gate `when some Resources.B.Properties.Tags != %cfg`: not applicable over both alike",
+            "rule r when some Resources.B.Properties.Tags != %cfg { Resources.B.Properties.W == 'y' }",
+            (Status::SKIP, Status::SKIP),
+        ),
+        (
+            "filter `[ Properties.Tags == %x ] empty` with the marker alone in `%x` (the marker pair the list's only result): deselected, PASS, over both alike",
+            "rule r { Resources.*[ Type == 'AWS::S3::Bucket' ][ Properties.Tags == %x ] empty }",
+            (Status::PASS, Status::PASS),
+        ),
+        (
+            "gate `when Resources.B.Properties.Tags NOT IN %x` with the marker alone in `%x`: not applicable over both alike",
+            "rule r when Resources.B.Properties.Tags NOT IN %x { Resources.B.Properties.W == 'y' }",
+            (Status::SKIP, Status::SKIP),
+        ),
+        (
+            "filter `[ Properties.Tags IN %x ] empty` with the marker alone in `%x` (the marker pair files no status; the compared-nothing arm decides on the absence): deselected, PASS, over both alike",
+            "rule r { Resources.*[ Type == 'AWS::S3::Bucket' ][ Properties.Tags IN %x ] empty }",
+            (Status::PASS, Status::PASS),
+        ),
+        (
+            "gate `when Resources.B.Properties.Tags IN %x` with the marker alone in `%x`: not applicable over both alike",
+            "rule r when Resources.B.Properties.Tags IN %x { Resources.B.Properties.W == 'y' }",
+            (Status::SKIP, Status::SKIP),
+        ),
+        (
+            "gate `when some Resources.B.Properties.Tags IN %x` with the marker alone in `%x` (`some` settled by the absence, read from the evidence for the compared-nothing answer as for a per-value one): not applicable over both alike",
+            "rule r when some Resources.B.Properties.Tags IN %x { Resources.B.Properties.W == 'y' }",
+            (Status::SKIP, Status::SKIP),
+        ),
+        (
+            "filter `[ some Properties.Tags IN %x ] empty` with the marker alone in `%x`: deselected, PASS, over both alike",
+            "rule r { Resources.*[ Type == 'AWS::S3::Bucket' ][ some Properties.Tags IN %x ] empty }",
+            (Status::PASS, Status::PASS),
+        ),
+    ] {
+        cells.check(label, wanted, (run(rule, &empty)?, run(rule, &missing)?));
+    }
+    cells.check(
+        "the mirror `[ %cfg == Properties.Tags ] empty` over `Tags: []`: deselected, PASS",
+        Status::PASS,
+        run(
+            "rule r { Resources.*[ Type == 'AWS::S3::Bucket' ][ %cfg == Properties.Tags ] empty }",
+            &empty,
+        )?,
+    );
+    cells.check(
+        "the marker exists: `[ Properties.W IN %cfg ] empty` over the bucket (a value no resolved entry holds, beside the marker) is unknown, FAIL",
+        Status::FAIL,
+        run(
+            "rule r { Resources.*[ Type == 'AWS::S3::Bucket' ][ Properties.W IN %cfg ] empty }",
+            &empty,
+        )?,
+    );
+    cells.assert_all_agreed();
+    Ok(())
+}
+
+/// A `[]` the AUTHOR wrote is a value, never an absence: `let e = []` with `when %e == %x`, the marker a
+/// key filter leaves alone in `%x`, is unknown and the rule fails closed (the marker's reason is the gate's
+/// answer), as `when %e != %x` is; the control `when %e == 'x'` is a refusal of kinds between two literals,
+/// a decided no, so the rule is not applicable. Only a document value can be the empty collection (the
+/// operators' own line, and the guard the `NotComparable` arm applies); read as a document absence, the
+/// gate beside the marker would be not applicable and the rule skipped at exit 0 with its body unchecked.
+#[test]
+fn a_rules_file_empty_list_on_the_left_is_a_value_not_an_absence() -> Result<()> {
+    let document = format!(
+        "{{ Resources: {{ B: {{ Type: 'AWS::S3::Bucket', Properties: {{ W: 'y' }} }}, A: {{ Type: 'AWS::IAM::Role', Properties: {{ Maps2: {{ M1: {{ {long}: 'z' }} }} }} }} }} }}",
+        long = "a".repeat(30)
+    );
+    const LETS: &str =
+        "let e = []\nlet x = Resources.A.Properties.Maps2.*[ keys == /(?!x)((a+)+)b/ ].*\n";
+    let run = |gate: &str| -> Result<Status> {
+        let rules = format!("{LETS}rule r when {gate} {{ Resources.B.Properties.W == 'y' }}");
+        let rules_file = RulesFile::try_from(rules.as_str())?;
+        let mut root = root_scope(
+            &rules_file,
+            Rc::new(PathAwareValue::try_from(document.as_str())?),
+        );
+        eval_rules_file(&rules_file, &mut root, None)
+    };
+    let mut cells = CellFailures::default();
+    for (label, gate, wanted) in [
+        (
+            "`when %e == %x` with the marker alone in `%x`: unknown, the rule fails closed on the marker's reason",
+            "%e == %x",
+            Status::FAIL,
+        ),
+        (
+            "`when %e != %x` with the marker alone in `%x`: the same",
+            "%e != %x",
+            Status::FAIL,
+        ),
+        (
+            "the control `when %e == 'x'`: a refusal of kinds between two literals, decided, not applicable",
+            "%e == 'x'",
+            Status::SKIP,
+        ),
+    ] {
+        cells.check(label, wanted, run(gate)?);
+    }
     cells.assert_all_agreed();
     Ok(())
 }
@@ -59289,9 +63800,11 @@ fn a_refused_body_inside_a_predicate_is_marked_in_either_clause_order() -> Resul
 /// nothing; a query-bound `%name` in the predicate, a key the one object lacks, and a body read of a name
 /// over the empty selection each raise a refusal through `refuse`; and a refusal raised INSIDE a filter
 /// predicate (`Sid` read after an inner filter kept nothing) travels as the marker's reason, an
-/// `UnResolved` of kind `Undecidable { refused: true }`, never as an error, so it registers nothing and
-/// the reporters print that reason as a value. The expectation per shape is the row's own pin, so a
-/// shape that stops refusing, or one that starts to, is seen here and not only in a count.
+/// `UnResolved` of kind `Undecidable { refused: true }`, never as an error, and the comparison that reads
+/// the marker among its left-hand values registers the reason (`binary_operation`'s collection, whatever
+/// the verdict), so a later error carrying it prints whole; the reporters print that reason as a value.
+/// The expectation per shape is the row's own pin, so a shape that stops refusing, or one that starts to,
+/// is seen here and not only in a count.
 #[test]
 fn every_registered_refusal_is_the_evaluators_own_sentence() -> Result<()> {
     const VALUE_TOKEN: &str = "FIXTUREVALUE7731";
@@ -59316,7 +63829,7 @@ fn every_registered_refusal_is_the_evaluators_own_sentence() -> Result<()> {
         ("rule r { Resources.*.Properties.Cfg[ Owner !exists ] !empty }", true),
         ("rule r { Resources.*.Properties.PolicyDocument.Statement[*][ Principal == '*' ] { this exists\n %flag == true } }\nlet flag = true", true),
         ("let kind = Resources.*.Properties.PolicyName\nrule r { Resources.*[ Properties.PolicyDocument.Statement[*][ Principal == '*' ] { let n = parse_int(%kind)\n %n == 1\n Sid exists } ] empty }", false),
-        ("rule r { Resources.*[ Properties.PolicyDocument.Statement[*][ Principal == '*' ].Sid == 'x' ] empty }", false),
+        ("rule r { Resources.*[ Properties.PolicyDocument.Statement[*][ Principal == '*' ].Sid == 'x' ] empty }", true),
     ];
     let mut cells = CellFailures::default();
     for (rules_text, refuses) in rules {
@@ -60914,6 +65427,7 @@ fn an_empty_collection_compared_with_a_value_is_one_status(
         gac.access_clause.query.match_all,
         RhsEnumeration::Names,
         false,
+        &gac,
     )?;
     let EvaluationResult::QueryValueResult(statuses) = result else {
         panic!("{}: compared nothing", clause);

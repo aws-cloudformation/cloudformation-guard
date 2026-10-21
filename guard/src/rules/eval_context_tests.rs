@@ -268,6 +268,14 @@ impl<'record, 'value, 'loc: 'value> EvalContext<'value, 'loc>
     }
     fn record_warning(&mut self, _: &FileLocation<'_>, _: &str, _: &str, _: String) {}
     fn record_capture_warning(&mut self, _: &FileLocation<'_>, _: &str, _: String) {}
+    fn record_unraised_refusal(
+        &mut self,
+        _: &FileLocation<'_>,
+        _: &str,
+        _: crate::rules::UnraisedVerdict,
+        _: &[String],
+    ) {
+    }
     /// Binds no variables, so nothing here is resolved.
     fn variable_is_resolved(&self, _: &str) -> bool {
         false
@@ -1916,6 +1924,15 @@ impl<'value, 'loc: 'value> EvalContext<'value, 'loc> for BindingsOnly<'value, 'l
         todo!()
     }
     fn record_capture_warning(&mut self, _: &FileLocation<'_>, _: &str, _: String) {
+        todo!()
+    }
+    fn record_unraised_refusal(
+        &mut self,
+        _: &FileLocation<'_>,
+        _: &str,
+        _: crate::rules::UnraisedVerdict,
+        _: &[String],
+    ) {
         todo!()
     }
     fn data_file_name(&self) -> Option<&'value str> {
@@ -6365,6 +6382,16 @@ impl<'scope, 'value, 'loc: 'value> EvalContext<'value, 'loc>
     fn record_capture_warning(&mut self, site: &FileLocation<'_>, capture: &str, notice: String) {
         self.inner.record_capture_warning(site, capture, notice)
     }
+    fn record_unraised_refusal(
+        &mut self,
+        site: &FileLocation<'_>,
+        context: &str,
+        verdict: crate::rules::UnraisedVerdict,
+        refusals: &[String],
+    ) {
+        self.inner
+            .record_unraised_refusal(site, context, verdict, refusals)
+    }
     fn variable_is_resolved(&self, variable_name: &str) -> bool {
         self.inner.variable_is_resolved(variable_name)
     }
@@ -7649,6 +7676,222 @@ fn a_unary_report_over_a_traversed_value_is_no_refusal_whatever_the_record_says(
     assert!(
         over_a_path.refusal,
         "a sentence that interpolates no value keeps the record's kind"
+    );
+    Ok(())
+}
+
+/// One clause site is one line, counting DISTINCT refusal TEXTS and the verdicts that met them
+/// (`record_unraised_refusal`, `SiteWarning::also_unraised`): the same text reported again (the next
+/// value a block evaluates the clause over, the same `let`) adds no refusal, a different text is counted
+/// as a second refused read, and the verdict clause counts the evaluations each way once both ways were
+/// met, so one refusal met beside a pass and beside an absence is one refusal and the verdict wording
+/// does not depend on which came first; the texts are named in the order the site MET them, numbered, so
+/// the same two texts met in the other order are named in the other order; a rendering that ordered the
+/// texts by their sort order would name them alike for both orders, and one that named the first alone
+/// would leave the second a count. The fourth verdict, a value that matches a denied entry, and the fifth,
+/// a value of another kind (a pair the comparator refused on kinds), each have their own wording.
+#[test]
+fn a_sites_line_counts_distinct_refusal_texts_and_the_verdicts_that_met_them() -> Result<()> {
+    let rules_file = RulesFile::try_from("rule r { Resources exists }")?;
+    let mut root = root_scope(
+        &rules_file,
+        Rc::new(PathAwareValue::try_from("{ Resources: {} }")?),
+    );
+    let site = FileLocation {
+        file_name: "rules.guard",
+        line: 1,
+        column: 10,
+    };
+    use crate::rules::UnraisedVerdict;
+    let first = vec![String::from("the first refusal")];
+    let second = vec![String::from("the second refusal")];
+    // The line ends with the clause's position; a scope built with no data file and no case names no
+    // input after it.
+    const AT: &str = " The clause is at Location[file:rules.guard, line:1, column:10].";
+    root.record_unraised_refusal(&site, "Y IN %x", UnraisedVerdict::Passed, &first);
+    root.record_unraised_refusal(&site, "Y IN %x", UnraisedVerdict::Passed, &first);
+    let after_the_repeat: Vec<String> = root.warnings().cloned().collect();
+    assert_eq!(after_the_repeat.len(), 1, "one site, one line");
+    assert_eq!(
+        after_the_repeat[0],
+        crate::utils::writer::warning(format_args!(
+            "Y IN %x passed by a value that holds, so the refused read among its other values was not \
+             raised by it; the refusal is reported here instead: the first refusal.{AT}"
+        )),
+        "the same text twice: one refusal, one verdict, no count; the position ends the line"
+    );
+    root.record_unraised_refusal(&site, "Y IN %x", UnraisedVerdict::DecidedByAbsence, &second);
+    let after_the_second: Vec<String> = root.warnings().cloned().collect();
+    assert_eq!(after_the_second.len(), 1, "still one line");
+    assert_eq!(
+        after_the_second[0],
+        crate::utils::writer::warning(format_args!(
+            "Y IN %x passed by a value that holds on 2 evaluations and was decided by a value the \
+             document lacks on 1 evaluation, so the 2 refused reads among its other values were not \
+             raised by it; they are reported here instead: (1) the first refusal (2) the second \
+             refusal.{AT}"
+        )),
+        "a second distinct text and the other verdict: both counted, both texts named in the order met"
+    );
+    // The third verdict, with its own wording.
+    root.record_unraised_refusal(&site, "Y IN %x", UnraisedVerdict::DecidedByMismatch, &first);
+    let after_the_mismatch: Vec<String> = root.warnings().cloned().collect();
+    assert_eq!(
+        after_the_mismatch[0],
+        crate::utils::writer::warning(format_args!(
+            "Y IN %x passed by a value that holds on 2 evaluations and was decided by a value the \
+             document lacks on 1 evaluation and was decided by a value that does not match on 1 \
+             evaluation, so the 2 refused reads among its other values were not raised by it; they are \
+             reported here instead: (1) the first refusal (2) the second refusal.{AT}"
+        )),
+        "a value that does not match is the third counted way"
+    );
+    // The fourth verdict, the negated comparators' no, with its own wording.
+    root.record_unraised_refusal(
+        &site,
+        "Y IN %x",
+        UnraisedVerdict::DecidedByCollision,
+        &first,
+    );
+    let after_the_collision: Vec<String> = root.warnings().cloned().collect();
+    assert_eq!(
+        after_the_collision[0],
+        crate::utils::writer::warning(format_args!(
+            "Y IN %x passed by a value that holds on 2 evaluations and was decided by a value the \
+             document lacks on 1 evaluation and was decided by a value that does not match on 1 \
+             evaluation and was decided by a value that matches a denied value on 1 evaluation, so the \
+             2 refused reads among its other values were not raised by it; they are reported here \
+             instead: (1) the first refusal (2) the second refusal.{AT}"
+        )),
+        "a value that matches a denied value is the fourth counted way"
+    );
+    // The fifth verdict, a pair the comparator refused on kinds, with its own wording.
+    root.record_unraised_refusal(&site, "Y IN %x", UnraisedVerdict::DecidedByKinds, &first);
+    let after_the_kinds: Vec<String> = root.warnings().cloned().collect();
+    assert_eq!(
+        after_the_kinds[0],
+        crate::utils::writer::warning(format_args!(
+            "Y IN %x passed by a value that holds on 2 evaluations and was decided by a value the \
+             document lacks on 1 evaluation and was decided by a value that does not match on 1 \
+             evaluation and was decided by a value that matches a denied value on 1 evaluation and was \
+             decided by a value of another kind on 1 evaluation, so the 2 refused reads among its other \
+             values were not raised by it; they are reported here instead: (1) the first refusal (2) the \
+             second refusal.{AT}"
+        )),
+        "a value of another kind is the fifth counted way"
+    );
+    // The other order of the same three reports: the same counts, and the text met first ("the second
+    // refusal", which sorts after "the first refusal") is named first.
+    let rules_file = RulesFile::try_from("rule r { Resources exists }")?;
+    let mut other = root_scope(
+        &rules_file,
+        Rc::new(PathAwareValue::try_from("{ Resources: {} }")?),
+    );
+    other.record_unraised_refusal(&site, "Y IN %x", UnraisedVerdict::DecidedByAbsence, &second);
+    other.record_unraised_refusal(&site, "Y IN %x", UnraisedVerdict::Passed, &first);
+    other.record_unraised_refusal(&site, "Y IN %x", UnraisedVerdict::Passed, &first);
+    let the_other_order: Vec<String> = other.warnings().cloned().collect();
+    assert_eq!(
+        the_other_order.len(),
+        1,
+        "one site, one line in the other order too"
+    );
+    assert_eq!(
+        the_other_order[0],
+        crate::utils::writer::warning(format_args!(
+            "Y IN %x passed by a value that holds on 2 evaluations and was decided by a value the \
+             document lacks on 1 evaluation, so the 2 refused reads among its other values were not \
+             raised by it; they are reported here instead: (1) the second refusal (2) the first \
+             refusal.{AT}"
+        )),
+        "the verdict counts do not depend on the order; the texts are named in the order met"
+    );
+    Ok(())
+}
+
+/// A refusal text quoting a document key that holds a line feed and an ESC is written into the
+/// refused-read line as ONE `Warning:`-prefixed line with the two characters as their escapes (`\n`,
+/// `\u{1b}`): the text is escaped once, at the one point the line builder writes it in
+/// (`unraised_refusal_notice`), as the clause and the file name beside it are. A key holding either would
+/// otherwise split the line (its second half with no prefix, read as failure text) or open a terminal
+/// escape sequence; a debug build's `writer::warning` asserts that no such character reached the body, so
+/// a builder that wrote the text in raw fails this cell by that assertion.
+#[test]
+fn a_refusal_text_holding_a_line_feed_and_an_escape_is_one_prefixed_line() -> Result<()> {
+    let site = FileLocation {
+        file_name: "rules.guard",
+        line: 1,
+        column: 10,
+    };
+    let rules_file = RulesFile::try_from("rule r { Resources exists }")?;
+    let mut root = root_scope(
+        &rules_file,
+        Rc::new(PathAwareValue::try_from("{ Resources: {} }")?),
+    );
+    let refusal = vec![String::from(
+        "the key `a\nb\u{1b}]c` could not be read as the predicate asks",
+    )];
+    root.record_unraised_refusal(
+        &site,
+        "Y IN %x",
+        crate::rules::UnraisedVerdict::Passed,
+        &refusal,
+    );
+    let lines: Vec<String> = root.warnings().cloned().collect();
+    assert_eq!(1, lines.len(), "one line, got {lines:?}");
+    let line = &lines[0];
+    assert_eq!(
+        (true, false, false, true),
+        (
+            line.starts_with("Warning: "),
+            line.contains('\n'),
+            line.contains('\u{1b}'),
+            line.contains("`a\\nb\\u{1b}]c`"),
+        ),
+        "prefixed, holding no line feed and no ESC, the key written with its escapes: {line:?}"
+    );
+    Ok(())
+}
+
+/// The twin's undecidable-pair sentence escapes a long key and bounds it on an ESCAPE BOUNDARY
+/// (`escaped_template_part`): the bound holds on the printed text and no escape is cut in half. A key of
+/// 255 characters, an ESC and a tail prints the 255 and cuts at the ESC, whose six-character escape does
+/// not fit, counting the five source characters left out (nothing of the ESC is printed, raw or half
+/// escaped); a key of 256 bidi overrides, eight printed characters each, prints 32 of them and counts the
+/// 224 left out, where a cut by source characters before the escape printed all 256 at eight times the
+/// bound.
+#[test]
+fn the_twins_undecidable_sentence_cuts_a_key_on_an_escape_boundary() -> Result<()> {
+    use crate::rules::eval_context::{undecidable_pair_text, LONGEST_TEMPLATE_PART_IN_A_REFUSAL};
+    let error = crate::rules::errors::Error::UndecidableComparison(String::from("undecidable"));
+    let key = format!(
+        "{}\u{1b}tail",
+        "k".repeat(LONGEST_TEMPLATE_PART_IN_A_REFUSAL - 1)
+    );
+    let text = undecidable_pair_text(&key, &[], &error);
+    assert_eq!(
+        (true, false, false, false),
+        (
+            text.contains(&format!(
+                "{}...[5 more characters cut]",
+                "k".repeat(LONGEST_TEMPLATE_PART_IN_A_REFUSAL - 1)
+            )),
+            text.contains('\u{1b}'),
+            text.contains("\\u{1b}"),
+            text.contains("k\\...["),
+        ),
+        "the ESC that does not fit is left out whole, the tail counted with it: {text:?}"
+    );
+    let bidi = "\u{202e}".repeat(LONGEST_TEMPLATE_PART_IN_A_REFUSAL);
+    let text = undecidable_pair_text(&bidi, &[], &error);
+    assert_eq!(
+        (32, true, false),
+        (
+            text.matches("\\u{202e}").count(),
+            text.contains("...[224 more characters cut]"),
+            text.contains('\u{202e}'),
+        ),
+        "a key of bidi overrides is bounded on what is printed: {text:?}"
     );
     Ok(())
 }
