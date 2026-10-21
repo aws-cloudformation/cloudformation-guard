@@ -1,0 +1,7 @@
+# Inside a block clause `this.Wanted` is the map's own `Wanted: alpha`, where earlier versions read the
+# block's value, the resource, and its `Wanted: beta` beside the map.
+rule func_key_this_block {
+  Resources.Cfg {
+    Map[ keys == to_lower(this.Wanted) ] == 1
+  }
+}

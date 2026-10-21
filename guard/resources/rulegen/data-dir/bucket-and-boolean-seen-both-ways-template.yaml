@@ -1,0 +1,22 @@
+# One bucket rulegen can write a rule for, beside two volumes that disagree about one boolean.
+#
+# rulegen writes the bucket rule and refuses the volumes' `Encrypted` clause, because a boolean
+# observed both ways would be `IN [false, true]`, which no boolean value can fail; with no other
+# property the volume type gets no rule, and the template still round-trips on the bucket. The
+# round-trip test lists the volume's `Encrypted` property as omitted; with no other property left,
+# no volume rule is expected, so the bucket rule is checked and the missing volume rule is
+# accounted for rather than read as a rule that vanished.
+Resources:
+  Bucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      VersioningConfiguration:
+        Status: Enabled
+  Encrypted:
+    Type: AWS::EC2::Volume
+    Properties:
+      Encrypted: true
+  Unencrypted:
+    Type: AWS::EC2::Volume
+    Properties:
+      Encrypted: false

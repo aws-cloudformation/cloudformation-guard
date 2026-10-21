@@ -1,0 +1,3 @@
+rule listed_from_port {
+    Resources.*.Properties.FromPort IN Mappings.Denied.Ports[*]
+}

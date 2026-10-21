@@ -1,0 +1,5 @@
+let e = Mappings.Allowed.Entries
+
+rule name_in_first_entry {
+    Resources.*.Properties.Name IN %e[0].Name
+}

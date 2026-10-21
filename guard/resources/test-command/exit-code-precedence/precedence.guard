@@ -1,0 +1,11 @@
+#
+# One declared rule, so an expectation naming anything else names nothing at all.
+#
+# Deliberately minimal. The four test data files beside this one differ only in which of the two
+# conditions under test they trigger -- an expectation that ran and was not met, and an expectation
+# that named a rule this file does not declare -- so anything else the rules file did would be noise
+# in a test about which of the two decides the exit code.
+#
+rule R_ONE {
+  Resources.Thing.Properties.Encrypted == true
+}

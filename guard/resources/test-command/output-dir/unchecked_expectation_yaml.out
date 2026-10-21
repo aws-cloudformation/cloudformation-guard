@@ -1,0 +1,24 @@
+rule_file: resources/validate/rules-dir/s3_bucket_server_side_encryption_enabled.guard
+test_cases:
+- name: One real expectation and two that name nothing, first case
+  passed_rules:
+  - name: S3_BUCKET_SERVER_SIDE_ENCRYPTION_ENABLED
+    evaluated: PASS
+  failed_rules: []
+  skipped_rules: []
+  unchecked_expectations:
+  - name: S3_BUCKET_ENCRYPTED
+    reason: No rule named S3_BUCKET_ENCRYPTED is in this file, so its expectation was not checked
+  - name: S3_BUCKET_SERVER_SIDE_ENCRYPTION_ENABLE
+    reason: No rule named S3_BUCKET_SERVER_SIDE_ENCRYPTION_ENABLE is in this file, so its expectation was not checked
+- name: One real expectation and two that name nothing, second case
+  passed_rules:
+  - name: S3_BUCKET_SERVER_SIDE_ENCRYPTION_ENABLED
+    evaluated: PASS
+  failed_rules: []
+  skipped_rules: []
+  unchecked_expectations:
+  - name: S3_BUCKET_ENCRYPTED
+    reason: No rule named S3_BUCKET_ENCRYPTED is in this file, so its expectation was not checked
+  - name: S3_BUCKET_SERVER_SIDE_ENCRYPTION_ENABLE
+    reason: No rule named S3_BUCKET_SERVER_SIDE_ENCRYPTION_ENABLE is in this file, so its expectation was not checked

@@ -1,0 +1,15 @@
+# The same bucket as rules-indexed-then-filtered-template.yaml, with `Rules` behind an intrinsic: the
+# loader keeps `!If` as a map holding one `Fn::If` entry, so a filter that expects a list of rules
+# meets a map here. A rule that binds a capture after `this` over `Rules` binds over the list template
+# and has nothing to bind over this one; the refusal is a verdict on the clause, not a stop of the run.
+Resources:
+  B1:
+    Type: AWS::S3::Bucket
+    Properties:
+      Encrypted: false
+      Rules: !If
+        - IsProd
+        - - Action: allow
+            Name: first
+        - - Action: deny
+            Name: second

@@ -1,0 +1,11 @@
+# A `!!If` global tag, which is not the `!If` short form. What it means is the loader's to decide:
+# a loader that resolves it hands rulegen a RoleName value and rulegen writes a clause for it; a
+# loader that refuses it gives rulegen nothing and rulegen writes no rules. The round-trip test reads
+# the template through the same loader, so it expects whatever rulegen was given, and the two agree
+# whichever way the loader goes. A reader that resolved the tag on its own would expect a rule for
+# `AWS::IAM::Role` under a loader that refuses the tag, and report rulegen as having lost it.
+Resources:
+  Role:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !!If [IsProd, Foo, Bar]

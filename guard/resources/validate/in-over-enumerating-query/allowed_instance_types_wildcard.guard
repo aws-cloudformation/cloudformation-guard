@@ -1,0 +1,3 @@
+rule listed_instance_types {
+    Resources.*.Properties.InstanceType IN Mappings.Denied.Types[*]
+}

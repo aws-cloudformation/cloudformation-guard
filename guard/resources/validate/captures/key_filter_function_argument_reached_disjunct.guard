@@ -1,0 +1,9 @@
+# The positive control for the unreached-disjunct case: the same `when` with the first disjunct
+# false, so the run itself reaches the key filter. The map's `Wanted: alpha` differs from the root's
+# `Wanted: beta`, so the moved reading is one warning, recorded by the run and not by its measurement.
+let names = to_lower(Resources.*.Name)
+rule reached_key_filter when some %names == 'a'
+                           Resources.A.Type == 'X' or
+                           Resources.Cfg.Map[ keys == to_lower(Wanted) ] !empty {
+  Resources.A.Type == 'AWS::S3::Bucket'
+}

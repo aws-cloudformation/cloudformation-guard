@@ -1,0 +1,11 @@
+#
+# The filtered variable is a parameterized rule's parameter. There is no `let` to name, so the notice
+# names the parameter and the rule, and the query the call site bound it to.
+#
+rule has_no_password(m) {
+  %m[ "AWS::CloudFormation::Authentication" exists ]."AWS::CloudFormation::Authentication".*.password !exists
+}
+
+rule FILTER_THROUGH_A_PARAMETER {
+  has_no_password(Resources.Metadata)
+}

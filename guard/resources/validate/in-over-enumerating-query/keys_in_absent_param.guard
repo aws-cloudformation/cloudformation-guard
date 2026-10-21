@@ -1,0 +1,5 @@
+let allowed = Parameters.AllowedBuckets.Default
+
+rule allowed_are_encrypted {
+    Resources[ keys IN %allowed ].Properties.Encrypted == true
+}

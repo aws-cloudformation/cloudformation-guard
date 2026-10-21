@@ -1,7 +1,7 @@
 use fancy_regex::Regex;
 use std::{
     cmp::min,
-    collections::{BTreeSet, HashMap, HashSet},
+    collections::{BTreeMap, BTreeSet, HashSet},
     io::Write,
     rc::Rc,
 };
@@ -26,8 +26,8 @@ use crate::{
             InComparison, RuleReport, UnaryComparison,
         },
         path_value::{
-            traversal::{Node, Traversal, TraversalResult},
-            PathAwareValue,
+            traversal::{unescape_pointer_segment, Node, Traversal, TraversalResult},
+            Location, PathAwareValue,
         },
         Status, UnResolved,
     },
@@ -42,17 +42,58 @@ lazy_static! {
 
 /// First line of the source snippet shown above a reported violation.
 ///
-/// Starts two lines above the violation so there is context, but never below line
-/// 1 because line numbers are 1-based.
+/// Starts two lines above the violation so there is context, clamped to line 1 for
+/// a violation on line 1 or 2, because line numbers are 1-based.
 ///
-/// This was previously written inline as `max(1, line - 2)`, which evaluated the
-/// subtraction *before* the clamp. On an unsigned line number of 0 or 1 that
-/// underflows: a panic in a debug build, and a silent wrap to ~`usize::MAX` in a
-/// release build, where the subsequent seek runs past EOF and the snippet is
-/// dropped from the report without any diagnostic. `saturating_sub` clamps the
-/// input rather than the result.
+/// Line 0 is not a line: it is the position of a value with no source position, and
+/// `emit_code` returns before writing the `Code:` header for one, so a 0 never
+/// reaches this function from the reporter. The 0 case below is kept as an
+/// underflow check only. This was previously written inline as `max(1, line - 2)`,
+/// which evaluated the subtraction *before* the clamp. On an unsigned line number
+/// of 0 or 1 that underflows: a panic in a debug build, and a silent wrap to
+/// ~`usize::MAX` in a release build, where the subsequent seek runs past EOF and
+/// the snippet is dropped from the report without any diagnostic. `saturating_sub`
+/// clamps the input rather than the result.
 fn context_start_line(line: usize) -> usize {
     line.saturating_sub(2).max(1)
+}
+
+/// The `Code:` excerpt under a finding: the source from two lines above the finding's position, six
+/// lines in all.
+///
+/// Nothing for a finding whose position is `L:0,C:0`. That is the position of a value that was not
+/// read from the file at one place: the common path two resources share when a function joins them
+/// sits above both, and the position it carries is the neutral one. Line 0 is not a line, and the
+/// excerpt opened at line 1 of the file, six lines a reader had to work out were unrelated to the
+/// finding above them. The `PropertyPath` line still shows the `[L:0,C:0]`, so the absence of the
+/// excerpt reads as "nothing to point at" rather than as an omission. A finding with a position is
+/// unchanged.
+fn emit_code(
+    code_segment: &mut ReadCursor<'_>,
+    writer: &mut dyn Write,
+    location: &Location,
+    prefix: &str,
+) -> rules::Result<()> {
+    if location.line == 0 && location.col == 0 {
+        return Ok(());
+    }
+    writeln!(writer, "{prefix}Code:", prefix = prefix)?;
+    let new_prefix = format!("{}  ", prefix);
+    if let Some((num, line)) = code_segment.seek_line(context_start_line(location.line)) {
+        let line = format!("{num:>5}.{line}", num = num, line = line).bright_green();
+        writeln!(writer, "{prefix}{line}", prefix = new_prefix, line = line)?;
+    }
+    let mut context = 5;
+    while let Some((num, line)) = code_segment.next() {
+        let line = format!("{num:>5}.{line}", num = num, line = line).bright_green();
+        writeln!(writer, "{prefix}{line}", prefix = new_prefix, line = line)?;
+        context -= 1;
+
+        if context <= 0 {
+            break;
+        }
+    }
+    Ok(())
 }
 
 #[derive(Debug)]
@@ -169,6 +210,20 @@ fn unary_err_msg(
     Ok(width)
 }
 
+/// The signal that this reporter cannot organise a finding by CloudFormation resource.
+///
+/// `report_eval` catches `InternalError` from `single_line` and delegates to the next reporter, so
+/// this is how the fallback is requested rather than an error in the ordinary sense.
+///
+/// The key is formatted in, so the message names the path it could not resolve rather than printing a
+/// literal `{key}`.
+fn unresolved_key(key: &str) -> crate::Error {
+    crate::Error::InternalError(UnresolvedKeyForReporter(format!(
+        "Unable to resolve key {key} for single line-summary when expecting a cloudformation \
+         template, falling back on next reporter"
+    )))
+}
+
 fn single_line(
     writer: &mut dyn Write,
     data_file: &str,
@@ -187,52 +242,86 @@ fn single_line(
     let root_node = Rc::new(String::from(""));
 
     for each_rule in &failure_report.not_compliant {
-        populate_hierarchy_path_trees(each_rule, root_node.clone(), &mut path_tree, &mut hierarchy);
+        populate_hierarchy_path_trees(
+            each_rule,
+            root_node.clone(),
+            data,
+            &mut path_tree,
+            &mut hierarchy,
+        );
     }
 
     let root = data.root().unwrap();
-    let mut by_resources = HashMap::new();
-    for (key, value) in path_tree.range(String::from("/Resources")..) {
-        let matches = key.matches('/').count();
-        let mut count = 1;
+    // `BTreeMap`, not `HashMap`: this map is iterated to write the output, and a
+    // `std::collections::HashMap` seeds its hasher per process, so the `Resource = ...` blocks
+    // came out in a different order on every run. A template with three non-compliant resources
+    // produced five distinct outputs in fifteen runs of one binary, which makes the output
+    // undiffable in CI and made a differential over fixtures report changes that were noise.
+    let mut by_resources = BTreeMap::new();
 
-        if matches > 2 {
-            loop {
-                if matches - count == 0 {
-                    unreachable!()
-                }
-                let resource_name = get_resource_name(key, count, matches);
+    // Every finding has to sit under `/Resources/` for this reporter to say anything true about the
+    // file, so if one does not, the whole file goes to the next reporter.
+    //
+    // The range below was `range("/Resources"..)` with no upper bound, which is wrong in both
+    // directions and silently so. Findings under a section sorting *before* `Resources` were dropped
+    // from the aggregation and the file then reported "Number of non-compliant resources 0" while
+    // exiting 19 -- a failing gate with nothing to act on, which is worse than a crash because it
+    // looks like a report. Findings under a section sorting *after* it were admitted and then
+    // panicked: `Rules` and `Transform` are real CloudFormation sections and both sort after
+    // `Resources` ("Rules" > "Resources" at u vs e), so a SAM template with a `Transform` and a
+    // failing clause under it died at exit 101.
+    // Any *located* path outside `/Resources/` is what this reporter cannot place. The loop below only
+    // consumes keys under `/Resources/`, so every other located path is dropped by it, and the file is
+    // then described by a resource count that does not include the finding.
+    //
+    // Emptiness is the discriminator, and depth is not. A test for a key more than two separators deep
+    // leaves every shallower one silently lost: `Outputs.a`, `Parameters.p`, `Transform.t`,
+    // `Mappings.m` and a bare `/Resources` all sit at two or fewer and all read as "Number of
+    // non-compliant resources 0" with the path never named, and so do the 23 fixtures whose retrieval
+    // error reads "Could not find key Vol inside struct at path /Resources".
+    //
+    // What separates the cases is whether the finding has a path at all. A retrieval error carries an
+    // empty one and is reported further down as "Property traversed until []", so it is not lost by
+    // being absent from the aggregation and must not demote the file.
+    if let Some((key, _)) = path_tree
+        .iter()
+        .find(|(key, _)| !key.is_empty() && !key.starts_with("/Resources/"))
+    {
+        return Err(unresolved_key(key));
+    }
 
-                match handle_resource_aggr(data, root, resource_name, &mut by_resources, value) {
-                    Some(_) => break,
-                    None => count += 1,
-                };
-            }
-        } else {
-            let resource_name = match CFN_RESOURCES.captures(key) {
-                Ok(Some(cap)) => cap.get(1).unwrap().as_str(),
-                _ => {
-                    return Err(crate::Error::InternalError(
-                        UnresolvedKeyForReporter(
-                            String::from(
-                                "Unable to resolve key {key} for single line-summary when expecting a cloudformation template, falling back on next reporter"
-                            )
-                        )
-                    ));
-                }
-            };
-
-            match handle_resource_aggr(
-                data,
-                root,
-                resource_name.to_string(),
-                &mut by_resources,
-                value,
-            ) {
-                Some(_) => {}
-                None => unreachable!(),
-            }
+    // The resource a finding belongs to is the segment after `/Resources/`, and nothing deeper.
+    //
+    // The keys are pointers: `/` separates segments, and a `/` inside a resource name is spelled
+    // `~1`, so `/Resources/A~1B/Type` names the resource `A/B` and `/Resources/A/B/Type` names a key
+    // `B` under the resource `A`. Before the keys were spelled this way the two were one string, and
+    // the loop here peeled candidate names off the key from the longest down -- `A/B/Type`, then
+    // `A/B`, then `A` -- accepting the first that resolved to a node with a `Type`. That is what made
+    // a resource named with a `/` findable at all, and it had two effects beyond that. A nested
+    // property map with its own `Type` key (a CodeBuild `Environment`, an ELBv2 `DefaultActions`
+    // element) resolved before the resource did and was printed as a resource named
+    // `R/Properties/Environment` with the inner `Type`; and in a document that is not CloudFormation
+    // but groups typed items under `Resources.Group.Item`, the item was printed as the resource
+    // `Group/Item`. Now the first prints under `R` with `R`'s `Type`, and the second resolves no
+    // resource and hands the file to the next reporter, as any other non-CloudFormation shape does.
+    //
+    // Not `unreachable!()` on a segment that does not resolve. This reporter organises findings by
+    // CloudFormation resource, and a path under `/Resources` need not name one: guard validates plain
+    // YAML and JSON too. The arm below hands back an `InternalError` and `report_eval` falls through
+    // to the next reporter, which does not assume the shape; a panic here would end the process at
+    // exit 101 on a document whose only fault was not being CloudFormation.
+    for (key, value) in path_tree
+        .range(String::from("/Resources/")..)
+        .take_while(|(key, _)| key.starts_with("/Resources/"))
+    {
+        let resource_segment = match CFN_RESOURCES.captures(key) {
+            Ok(Some(cap)) => cap.get(1).unwrap().as_str(),
+            _ => return Err(unresolved_key(key)),
         };
+
+        if handle_resource_aggr(data, root, resource_segment, &mut by_resources, value).is_none() {
+            return Err(unresolved_key(key));
+        }
     }
 
     writeln!(
@@ -248,6 +337,14 @@ fn single_line(
         "Number of non-compliant resources {}",
         num_of_resources
     )?;
+
+    // What the per-resource output below is about to render, gathered before the loop consumes the map.
+    //
+    // `pprint_clauses` renders a clause only when it is in the resource's own set, so the union of those
+    // sets *is* the rendered set. Handing it to the unattributed section lets that section ask the only
+    // question that matters -- "did anything show this finding?" -- instead of predicting the answer from a
+    // path, which is what it did before and got wrong in both directions.
+    let rendered = super::common::Rendered::of(by_resources.values());
 
     for (_resource_name, resource) in by_resources {
         writeln!(writer, "Resource = {} {{", resource.name.yellow().bold())?;
@@ -277,10 +374,18 @@ fn single_line(
                 _ => unreachable!(),
             };
 
+            // A whole path segment, not a prefix of one. `starts_with` matched `/chk` against
+            // `/chk2/...`, so a resource whose only findings came from rule `chk2` rendered an empty
+            // `Rule = chk { ALL { } }` block as well -- and once the unattributed section existed, `chk`
+            // could appear under a resource while its own finding printed as belonging to no resource.
+            // Paths are `/<rule>/...`, so the segment ends at the next separator or at the end.
             let range = resource
                 .paths
                 .range(rule_name.clone()..)
-                .take_while(|p| p.starts_with(&rule_name))
+                .take_while(|p| {
+                    p.strip_prefix(&rule_name)
+                        .is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))
+                })
                 .count();
             if range > 0 {
                 struct ErrWriter<'w, 'b> {
@@ -295,7 +400,12 @@ fn single_line(
                         prefix: &str,
                     ) -> rules::Result<usize> {
                         if let Some(bc) = bc {
-                            self.emit_code(writer, bc.traversed_to.self_path().1.line, prefix)?;
+                            emit_code(
+                                self.code_segment,
+                                writer,
+                                &bc.traversed_to.self_path().1,
+                                prefix,
+                            )?;
                         }
                         Ok(0)
                     }
@@ -322,7 +432,7 @@ fn single_line(
                             cmp = rules::eval_context::cmp_str(bc.comparison),
                             with = ValueOnlyDisplay(Rc::clone(&bc.to))
                         )?;
-                        self.emit_code(writer, bc.from.self_path().1.line, prefix)?;
+                        emit_code(self.code_segment, writer, &bc.from.self_path().1, prefix)?;
                         Ok(width)
                     }
 
@@ -383,7 +493,7 @@ fn single_line(
                                 with = collected
                             )?;
                         }
-                        self.emit_code(writer, bc.from.self_path().1.line, prefix)?;
+                        emit_code(self.code_segment, writer, &bc.from.self_path().1, prefix)?;
                         Ok(width)
                     }
 
@@ -395,7 +505,7 @@ fn single_line(
                         prefix: &str,
                     ) -> rules::Result<usize> {
                         let width = unary_err_msg(writer, cr, re, prefix)?;
-                        self.emit_code(writer, re.value.self_path().1.line, prefix)?;
+                        emit_code(self.code_segment, writer, &re.value.self_path().1, prefix)?;
                         Ok(width)
                     }
                 }
@@ -409,37 +519,6 @@ fn single_line(
                     prefix.clone(),
                     &mut err_writer,
                 )?;
-
-                impl<'w, 'b> ErrWriter<'w, 'b> {
-                    fn emit_code(
-                        &mut self,
-                        writer: &mut dyn Write,
-                        line: usize,
-                        prefix: &str,
-                    ) -> rules::Result<()> {
-                        writeln!(writer, "{prefix}Code:", prefix = prefix)?;
-                        let new_prefix = format!("{}  ", prefix);
-                        if let Some((num, line)) =
-                            self.code_segment.seek_line(context_start_line(line))
-                        {
-                            let line =
-                                format!("{num:>5}.{line}", num = num, line = line).bright_green();
-                            writeln!(writer, "{prefix}{line}", prefix = new_prefix, line = line)?;
-                        }
-                        let mut context = 5;
-                        while let Some((num, line)) = self.code_segment.next() {
-                            let line =
-                                format!("{num:>5}.{line}", num = num, line = line).bright_green();
-                            writeln!(writer, "{prefix}{line}", prefix = new_prefix, line = line)?;
-                            context -= 1;
-
-                            if context <= 0 {
-                                break;
-                            }
-                        }
-                        Ok(())
-                    }
-                }
             }
         }
         writeln!(writer, "}}")?;
@@ -453,100 +532,26 @@ fn single_line(
     // query, which such a block does not have either. The result was a run that correctly exited 19
     // and printed "Number of non-compliant resources 0" with no reason given anywhere -- the
     // explanation was recorded and then dropped on the floor.
-    let mut unattributed = Vec::new();
-    for each_rule in &failure_report.not_compliant {
-        collect_unattributed_explanations(each_rule, &mut unattributed);
-    }
-    if !unattributed.is_empty() {
-        writeln!(writer, "Could not be evaluated:")?;
-        for (context, message) in unattributed {
-            writeln!(writer, "  {context}")?;
-            writeln!(writer, "    {message}")?;
-        }
-    }
+    super::common::write_unattributed_explanations(
+        writer,
+        &failure_report.not_compliant,
+        &rendered,
+    )?;
 
     Ok(())
 }
 
-/// Collect `(context, explanation)` for failed blocks that carry a message but no resolved value.
-///
-/// `unresolved.is_none()` is the discriminator: a block that failed while traversing a query keeps
-/// the value it got to, and the per-resource output renders that. A block with no such value failed
-/// for a reason that is only in its message.
-fn collect_unattributed_explanations(clause: &ClauseReport<'_>, out: &mut Vec<(String, String)>) {
-    match clause {
-        ClauseReport::Block(blk) if blk.unresolved.is_none() => {
-            if let Some(explanation) = &blk.messages.error_message {
-                out.push((blk.context.to_string(), explanation.clone()));
-            }
-        }
-        ClauseReport::Block(_) | ClauseReport::Clause(_) => {}
-        ClauseReport::Rule(rule) => {
-            // A rule that failed on its own condition has no clause findings underneath it, so the
-            // per-resource output above has nothing to render and this message is the only account
-            // of why the rule failed. `checks.is_empty()` is the discriminator: a rule whose clauses
-            // produced findings has them rendered per resource already, and repeating the rule-level
-            // message there would duplicate rather than explain.
-            //
-            // Reached when a condition cannot be answered across a rule boundary -- a gate whose
-            // referenced or parameterized rule is undecidable. The evaluator records the explanation
-            // on the rule, the JSON reporter has always printed it, and the console reporter printed
-            // "Number of non-compliant resources 0" and nothing else: a run that exits 19 and does
-            // not say why.
-            if rule.checks.is_empty() {
-                if let Some(explanation) = &rule.messages.custom_message {
-                    out.push((format!("rule {}", rule.name), explanation.clone()));
-                }
-            }
-            for child in &rule.checks {
-                collect_unattributed_explanations(child, out);
-            }
-        }
-        ClauseReport::Disjunctions(ors) => {
-            for child in &ors.checks {
-                collect_unattributed_explanations(child, out);
-            }
-        }
-    }
-}
-
-///
-/// takes a key that contains > 2 `/`, and strips all characters to the right of i = matches-count
-///
-/// # Arguments
-///
-/// * `key`: str
-/// * `count`: usize
-/// * `matches`: usize
-///
-/// returns: String
-/// ```
-fn get_resource_name(key: &str, count: usize, matches: usize) -> String {
-    let c = &char::from_u32(0xC).unwrap().to_string();
-    // count = 2; key = "/Resources/foo/bar/baz -> placeholder = "\fResources\ffoo\fbar/baz"
-    let mut placeholder = str::replacen(key, "/", c, matches - count);
-
-    // placeholder = "\fResources\ffoo\fbar/baz" -> placeholder = "/Resources/foo\fbar/baz"
-    placeholder = str::replacen(&placeholder, c, "/", 2); // count = 2 -> because always need to replace the Slashes for /Resources/
-
-    // placeholder = "/Resources/foo\fbar/baz"
-    match CFN_RESOURCES.captures(&placeholder) {
-        Ok(Some(cap)) => {
-            // resource_name = "foo/bar"
-            str::replace(cap.get(1).unwrap().as_str(), c, "/")
-        }
-        _ => unreachable!(),
-    }
-}
-
+/// `resource_segment` is the resource's name as one pointer segment, as it came out of the path tree's
+/// key: already spelled for the lookup, and read back to the name for the report.
 fn handle_resource_aggr<'record, 'value: 'record>(
     data: &'value Traversal<'_>,
     root: &'value Node<'_>,
-    name: String,
-    by_resources: &mut HashMap<String, LocalResourceAggr<'record, 'value>>,
+    resource_segment: &str,
+    by_resources: &mut BTreeMap<String, LocalResourceAggr<'record, 'value>>,
     value: &[Rc<crate::commands::reporters::validate::common::Node<'record, 'value>>],
 ) -> Option<()> {
-    let path = format!("/Resources/{}", name);
+    let name = unescape_pointer_segment(resource_segment).into_owned();
+    let path = format!("/Resources/{}", resource_segment);
     let resource = match data.at(&path, root) {
         Ok(TraversalResult::Value(val)) => val,
         _ => return None,
@@ -555,14 +560,19 @@ fn handle_resource_aggr<'record, 'value: 'record>(
     let resource_type = match data.at("0/Type", resource) {
         Ok(TraversalResult::Value(val)) => match val.value() {
             PathAwareValue::String((_, v)) => v.as_str(),
-            _ => unreachable!(),
+            // Matching the arm below rather than panicking. A `Type` that is not a string means this
+            // is not a resource whose type this reporter can name, which is the same situation as a
+            // `Type` that is absent.
+            _ => return None,
         },
         _ => return None,
     };
     let cdk_path = match data.at("0/Metadata/aws:cdk:path", resource) {
         Ok(TraversalResult::Value(val)) => match val.value() {
             PathAwareValue::String((_, v)) => Some(v.as_str()),
-            _ => unreachable!(),
+            // As with `Type` above, and as the arm below already did for an absent key: a
+            // `aws:cdk:path` that is not a string is a resource with no CDK path to show.
+            _ => None,
         },
         _ => None,
     };
@@ -595,6 +605,11 @@ mod context_start_line_tests {
     /// These three inputs are the regression. With the original
     /// `max(1, line - 2)` they panic in a debug build (which is what a test
     /// binary is) and wrap to ~usize::MAX in release.
+    ///
+    /// The 0 input is an underflow check, not an intended answer: line 0 means
+    /// "no source position", and `emit_code` returns before this function is
+    /// reached for one (see `code_excerpt_tests`). Lines 1 and 2 are the real
+    /// clamp cases.
     #[test]
     fn does_not_underflow_at_or_below_line_two() {
         assert_eq!(1, context_start_line(0));
@@ -619,5 +634,47 @@ mod context_start_line_tests {
                 line
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod code_excerpt_tests {
+    use super::emit_code;
+    use crate::rules::path_value::Location;
+    use crate::utils::ReadCursor;
+
+    const SOURCE: &str =
+        "Resources:\n  A:\n    Type: X\n    Size: 2000\n  B:\n    Type: Y\n    Size: 3000\n";
+
+    fn excerpt_for(location: Location) -> String {
+        let mut cursor = ReadCursor::new(SOURCE);
+        let mut out: Vec<u8> = Vec::new();
+        emit_code(&mut cursor, &mut out, &location, "  ").expect("writing to a Vec cannot fail");
+        String::from_utf8(crate::utils::writer::strip_escape_sequences(&out)).expect("utf8")
+    }
+
+    /// A finding at a position in the file shows the source around it, from two lines above.
+    #[test]
+    fn a_located_finding_shows_the_source_around_it() {
+        let text = excerpt_for(Location::new(4, 11));
+        assert!(text.starts_with("  Code:\n"), "got: {:?}", text);
+        assert!(
+            text.contains("    2.  A:\n") && text.contains("    4.    Size: 2000\n"),
+            "the excerpt starts two lines above line 4, got: {:?}",
+            text
+        );
+    }
+
+    /// A finding with no source position shows no excerpt at all.
+    ///
+    /// `L:0,C:0` is what a value gets when it was not read from the file at a single place: the path
+    /// two resources share when a function joins them, for one. Line 0 is not a line, and an excerpt
+    /// opening at line 1 of the file would show its first six lines under a finding they have
+    /// nothing to do with. A reader sees the `PropertyPath` with its `[L:0,C:0]` and no `Code:`, which
+    /// is the reporter's way of saying there is nothing to point at.
+    #[test]
+    fn a_finding_without_a_source_position_shows_no_excerpt() {
+        let text = excerpt_for(Location::default());
+        assert_eq!(text, "", "no `Code:` header and no lines, got: {:?}", text);
     }
 }

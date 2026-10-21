@@ -1,0 +1,10 @@
+#
+# Every YAML spelling of a non-finite float stays the text the document wrote, on every route. The
+# same document and these rules run under validate, the test command and run_checks, and the verdicts
+# are the ones validate gives, measured with the CLI. `.inf` is the control, the one spelling the
+# routes agreed on before they shared a loader.
+#
+rule VERBATIM_SPELLINGS { A == ".Inf"  B == ".INF"  C == ".NaN"  D == "+.inf"  F == ".NAN"  G == "-.Inf" }
+rule CANONICAL_SPELLINGS { A == ".inf"  B == ".inf"  C == ".nan"  D == ".inf" }
+rule CONTROL_LOWER_INF { E == ".inf" }
+rule CONTROL_IS_STRING { A is_string  B is_string  C is_string  D is_string  E is_string  F is_string  G is_string }

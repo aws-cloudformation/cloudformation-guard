@@ -1,0 +1,7 @@
+rule dotted {
+    Resources.*.Properties."%foo" == "x"
+}
+
+rule bracketed {
+    Resources.*.Properties["%foo"] == "x"
+}

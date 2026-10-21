@@ -1,0 +1,24 @@
+#
+# A variable bound to a map written out in the rules file, and then filtered through the variable
+# with a predicate written against that map's own keys.
+#
+# In the previous release a filter through a variable tested the bound map itself, whatever bound the
+# variable, so `%policy[ Statement exists ]` selected the literal map. The filter now walks the
+# entries of the value the variable holds, as it does after a `let` bound to a key path, so the
+# predicate is tested against the `Version` string and the `Statement` list, matches neither, and
+# selects nothing. The notice on stderr names the literal as the author wrote it.
+#
+let policy = {
+    "Version": "2012-10-17",
+    "Statement": [{ "Effect": "Allow", "Action": "sqs:SendMessage" }]
+}
+
+rule LITERAL_POLICY_HAS_A_STATEMENT when %policy !empty {
+    %policy[ Statement exists ] !empty
+}
+
+# The same document as a YAML map under a key, filtered the same way: the literal spelling, whose
+# answer the filter through the variable now gives, and which is not announced.
+rule CONTROL_KEY_SPELLING {
+    Resources.Q.Properties.Doc[ Statement exists ] !empty
+}

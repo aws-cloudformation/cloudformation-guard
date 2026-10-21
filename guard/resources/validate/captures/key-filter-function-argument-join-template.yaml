@@ -1,0 +1,11 @@
+Parts:
+  - b
+  - a
+Resources:
+  Cfg:
+    Map:
+      Parts:
+        - a
+        - b
+      a-b: 1
+      b-a: 2

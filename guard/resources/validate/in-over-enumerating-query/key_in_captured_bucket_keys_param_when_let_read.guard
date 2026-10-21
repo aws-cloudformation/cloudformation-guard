@@ -1,0 +1,9 @@
+rule prefix_in_keys(x) when Resources[ buckets | Type == 'AWS::S3::Bucket' ] !empty {
+    Resources.*[ Type == 'Custom::Cfg' ].Properties.Prefix IN %buckets
+}
+
+rule prefix_is_contained_in_a_bucket_key {
+    let buckets = Resources.*.Type
+    %buckets !empty
+    prefix_in_keys("x")
+}

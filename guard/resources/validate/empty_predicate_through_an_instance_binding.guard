@@ -1,0 +1,13 @@
+#
+# The `empty` spelling of the absence predicate through a variable holding one resource. `empty` is
+# grounded apart from `not exists` in the notice's rules, so it is pinned on its own: the Metadata and
+# Properties maps lack `Properties.Tags`, so the predicate holds on them and they are selected in the
+# resource's place; the Type string is a scalar entry, passed over. A positive `exists` over the
+# selection passes on the two maps.
+#
+let m = Resources.Only
+let lacking = %m[ Properties.Tags empty ]
+
+rule entries_lacking_the_key_are_selected {
+    %lacking exists
+}

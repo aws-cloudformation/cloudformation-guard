@@ -1,0 +1,5 @@
+let nested = Mappings.Allowed.Nested
+
+rule allowed_volume_types {
+    Resources.*.Properties.VolumeType IN %nested[*].Sub.Name
+}

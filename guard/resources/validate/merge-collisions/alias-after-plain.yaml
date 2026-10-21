@@ -1,0 +1,12 @@
+b:
+  &k x: 1
+  x: 2
+  *k: 3
+#
+# The name `x` three times: anchored, plain, then through the alias. The alias writes the anchored
+# entry again, so the loader moves that entry to the end and `3` stands, written at line 4. The pair
+# of entries is named at lines 2 and 3 with the standing value's own line ("first at L:2,C:3 and
+# again at L:3,C:3. The value written at L:4,C:3 is the one evaluated."), and the alias's write is
+# named as the last of lines 2 and 4 ("first at L:2,C:3 and again at L:4,C:3. The last value is the
+# one evaluated."). Two notices, in that order.
+#

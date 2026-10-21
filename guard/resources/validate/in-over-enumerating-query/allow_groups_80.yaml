@@ -1,0 +1,9 @@
+Mappings:
+  AllowGroups:
+    web: [80, 443]
+    db: [5432]
+Resources:
+  R:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      Ports: [80]

@@ -1,0 +1,15 @@
+#
+# Two `when` conditions over the same empty collection, both not applicable, with different reasons.
+#
+# `ports_guarded` writes the guard the empty-collection reason recommends, as a sibling condition:
+# `Ports !empty` decides the conjunction false. `ports_guarded_alone` has only the comparison, and the
+# empty collection does not satisfy it, as a missing `Ports` would not. Neither rule applies; the summary
+# names the empty collection for both, and neither says the rule failed.
+#
+rule ports_guarded when Resources.*.Properties.Ports !empty Resources.*.Properties.Ports <= 100 {
+    Resources.*.Type == 'AWS::EC2::Instance'
+}
+
+rule ports_guarded_alone when Resources.*.Properties.Ports <= 100 {
+    Resources.*.Type == 'AWS::EC2::Instance'
+}

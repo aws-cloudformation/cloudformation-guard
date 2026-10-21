@@ -1,0 +1,5 @@
+rule r {
+    Resources.A.Type == "x" << m >> Resources.*[
+        Type == "x" ] !empty
+    Resources.B.Properties.Encrypted == true
+}

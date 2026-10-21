@@ -1,0 +1,9 @@
+Mappings:
+  TypesByRegion:
+    useast1: [gp2]
+    uswest2: [gp3]
+Resources:
+  V:
+    Type: AWS::EC2::Volume
+    Properties:
+      VolumeType: gp2

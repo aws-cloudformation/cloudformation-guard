@@ -1,0 +1,6 @@
+# The same two rules, with the reference after the comparison.
+rule helper when Resources[ b | Type == 'AWS::S3::Bucket' ] !empty { Resources exists }
+rule main when Resources[ b | Type == 'AWS::IAM::Role' ] !empty {
+  %b == "MyRole"
+  helper
+}

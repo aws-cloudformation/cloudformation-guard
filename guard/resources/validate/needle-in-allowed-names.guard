@@ -1,0 +1,8 @@
+# A rule literal on the left of a query that resolves to nine separate values. The failure is reported
+# as the query-vs-query spelling reports it: against the entries, each named with its path.
+let allowed_names = Resources.*[ Type == 'AWS::SNS::Topic' ].Properties.Name
+let needle = "gp9"
+
+rule needle_is_allowed {
+    %needle IN %allowed_names
+}

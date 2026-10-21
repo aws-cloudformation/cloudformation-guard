@@ -1,0 +1,16 @@
+###
+# Neither condition: FAIL = 0, unchecked = 0, so the run owes 0.
+#
+# The second control. A change that reddened every run would satisfy the other three cells and fail
+# only this one.
+###
+---
+- name: an expectation that ran and was met
+  input:
+    Resources:
+      Thing:
+        Properties:
+          Encrypted: true
+  expectations:
+    rules:
+      R_ONE: PASS

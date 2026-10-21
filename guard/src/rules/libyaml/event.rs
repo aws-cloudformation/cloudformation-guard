@@ -1,4 +1,8 @@
-use crate::rules::libyaml::{cstr, cstr::CStr, tag::Tag};
+use crate::rules::{
+    errors::Error,
+    libyaml::{cstr, cstr::CStr, tag::Tag},
+    Result,
+};
 use std::{borrow::Cow, fmt, fmt::Debug, ptr::NonNull, slice};
 #[allow(clippy::unsafe_removed_from_name)]
 use unsafe_libyaml as sys;
@@ -19,11 +23,16 @@ pub(crate) enum Event<'input> {
     MappingEnd,
 }
 
+/// The arms below name every `yaml_event_type_t` a parse can produce except `YAML_NO_EVENT`, which
+/// libyaml returns -- successfully, not as a failure -- for any pull made after the stream has
+/// ended. The wildcard returns the type in an error rather than `unimplemented!()`, so a caller that
+/// reads one event too many gets an error back instead of aborting the process, and a miscount stays
+/// diagnosable instead of fatal; `Loader::load` is what stops the miscount.
 pub(crate) unsafe fn convert_event<'input>(
     sys: &sys::yaml_event_t,
     input: &Cow<'input, [u8]>,
-) -> Event<'input> {
-    match sys.type_ {
+) -> Result<Event<'input>> {
+    Ok(match sys.type_ {
         sys::YAML_STREAM_START_EVENT => Event::StreamStart,
         sys::YAML_STREAM_END_EVENT => Event::StreamEnd,
         sys::YAML_DOCUMENT_START_EVENT => Event::DocumentStart,
@@ -60,8 +69,13 @@ pub(crate) unsafe fn convert_event<'input>(
             tag: optional_tag(sys.data.mapping_start.tag),
         }),
         sys::YAML_MAPPING_END_EVENT => Event::MappingEnd,
-        _ => unimplemented!(),
-    }
+        other => {
+            return Err(Error::ParseError(format!(
+                "unexpected libyaml event type {} while reading the document",
+                other as u32
+            )))
+        }
+    })
 }
 
 #[allow(dead_code)]
@@ -89,6 +103,13 @@ pub(crate) struct MappingStart {
 
 #[derive(Ord, PartialOrd, Eq, PartialEq)]
 pub(crate) struct Anchor(Box<[u8]>);
+
+impl Anchor {
+    /// The name as the document wrote it, `base` for both `&base` and `*base`.
+    pub(crate) fn name(&self) -> String {
+        String::from_utf8_lossy(&self.0).into_owned()
+    }
+}
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub(crate) enum ScalarStyle {

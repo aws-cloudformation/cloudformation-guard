@@ -1,0 +1,7 @@
+Resources:
+  F:
+    Type: AWS::Serverless::Function
+    Properties:
+      Tags:
+        - Key: Env
+          Value: dev

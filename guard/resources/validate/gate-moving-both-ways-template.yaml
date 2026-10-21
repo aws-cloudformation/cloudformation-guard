@@ -1,0 +1,27 @@
+# Four buckets and one resource without Tags, for gate_moving_both_ways.guard: the `Kind: x` buckets
+# are decided by `%p !empty` and the `Kind: y` buckets by `some %p !exists`, so the one `when` in that
+# file moves in both directions over this template and records a notice per direction at its one site.
+Resources:
+  X1:
+    Type: "AWS::S3::Bucket"
+    Properties:
+      Tags: "a"
+      Kind: "x"
+  Y1:
+    Type: "AWS::S3::Bucket"
+    Properties:
+      Tags: "c"
+      Kind: "y"
+  X2:
+    Type: "AWS::S3::Bucket"
+    Properties:
+      Tags: "d"
+      Kind: "x"
+  Y2:
+    Type: "AWS::S3::Bucket"
+    Properties:
+      Tags: "e"
+      Kind: "y"
+  B:
+    Properties:
+      Other: 1

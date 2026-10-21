@@ -135,11 +135,11 @@ impl<'value> std::fmt::Display for ClauseCheck<'value> {
                 ))?;
             }
 
-            ClauseCheck::NoValueForEmptyCheck(message) => {
+            ClauseCheck::NoValueForEmptyCheck(check) => {
                 f.write_fmt(format_args!(
                     "GuardClause(Status={}, Empty, {})",
                     Status::FAIL,
-                    message.as_ref().map_or("", |s| s.as_ref())
+                    check.custom_message.as_ref().map_or("", |s| s.as_ref())
                 ))?;
             }
 

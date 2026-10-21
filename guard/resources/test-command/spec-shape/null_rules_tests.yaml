@@ -1,0 +1,7 @@
+# `rules:` with nothing after it is an empty set of expectations, not an error: the case runs and
+# checks nothing.
+- name: a case that expects nothing yet
+  input:
+    A: 1
+  expectations:
+    rules:

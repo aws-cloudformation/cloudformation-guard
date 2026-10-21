@@ -1,0 +1,51 @@
+slash-named-resource-beside-nested-template.yaml Status = FAIL
+FAILED rules
+every_type_is_outer.guard/every_resource_type_is_outer    FAIL
+every_type_is_outer.guard/nested_type_is_outer            FAIL
+---
+Evaluating data slash-named-resource-beside-nested-template.yaml against rules every_type_is_outer.guard
+Number of non-compliant resources 2
+Resource = A {
+  Type      = Outer::Resource
+  Rule = nested_type_is_outer {
+    ALL {
+      Check =  Resources.A.B.Type EQUALS  "Outer::Resource" {
+        ComparisonError {
+          Error            = Check was not compliant as property value [Path=/Resources/A/B/Type[L:5,C:13] Value="Nested::Child"] not equal to value [Path=[L:0,C:0] Value="Outer::Resource"].
+          PropertyPath    = /Resources/A/B/Type[L:5,C:13]
+          Operator        = EQUAL
+          Value           = "Nested::Child"
+          ComparedWith    = "Outer::Resource"
+          Code:
+                3.    Type: Outer::Resource
+                4.    B:
+                5.      Type: Nested::Child
+                6.  "A/B":
+                7.    Type: Flat::Resource
+
+        }
+      }
+    }
+  }
+}
+Resource = A/B {
+  Type      = Flat::Resource
+  Rule = every_resource_type_is_outer {
+    ALL {
+      Check =  Resources.*.Type EQUALS  "Outer::Resource" {
+        ComparisonError {
+          Error            = Check was not compliant as property value [Path=/Resources/A/B/Type[L:7,C:11] Value="Flat::Resource"] not equal to value [Path=[L:0,C:0] Value="Outer::Resource"].
+          PropertyPath    = /Resources/A/B/Type[L:7,C:11]
+          Operator        = EQUAL
+          Value           = "Flat::Resource"
+          ComparedWith    = "Outer::Resource"
+          Code:
+                5.      Type: Nested::Child
+                6.  "A/B":
+                7.    Type: Flat::Resource
+
+        }
+      }
+    }
+  }
+}

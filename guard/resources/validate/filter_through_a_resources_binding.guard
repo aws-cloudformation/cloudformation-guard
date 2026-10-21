@@ -1,0 +1,17 @@
+#
+# The common idiom: `Resources` (one map, bound by a plain key path) filtered through the variable.
+# In the previous release the filter tested the `Resources` map itself, matched nothing, and the rule was
+# SKIP on a template whose authentication block carries a password. The filter now walks the
+# resources, selects the one whose Type matches, and the rule FAILs on the password. No notice goes
+# out here: the old reading selected nothing, so there is no selection to tell the author about.
+#
+# The resource type is not a real CloudFormation type; it comes from a published rule's own test
+# data, which gives a resource that type and puts the block at the resource's top level. A template
+# writes an authentication block under a resource's Metadata, as `AWS::CloudFormation::Authentication`
+# is a Metadata key and not a type; the templates this file runs against mirror that test data.
+#
+let r = Resources
+let auth = %r[ Type == "AWS::CloudFormation::Authentication" ]
+rule FILTER_THROUGH_A_RESOURCES_BINDING when %auth !empty {
+  %auth."AWS::CloudFormation::Authentication".*.password !exists
+}

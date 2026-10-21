@@ -1,0 +1,5 @@
+let p = Parameters.Allowed
+
+rule name_in_default {
+    Resources.*.Properties.Name IN %p.Default
+}

@@ -1,0 +1,28 @@
+# gate-moving-both-ways-template.yaml with the buckets under other logical ids, so that a run over the
+# pair draws both of the `when`'s notices from both files: the texts differ (each names the first bucket
+# that moved its way), the two sites are the same, and the trailer after the run has two notices of two
+# kinds at one site to tell apart.
+Resources:
+  P1:
+    Type: "AWS::S3::Bucket"
+    Properties:
+      Tags: "a"
+      Kind: "x"
+  Q1:
+    Type: "AWS::S3::Bucket"
+    Properties:
+      Tags: "c"
+      Kind: "y"
+  P2:
+    Type: "AWS::S3::Bucket"
+    Properties:
+      Tags: "d"
+      Kind: "x"
+  Q2:
+    Type: "AWS::S3::Bucket"
+    Properties:
+      Tags: "e"
+      Kind: "y"
+  B:
+    Properties:
+      Other: 1

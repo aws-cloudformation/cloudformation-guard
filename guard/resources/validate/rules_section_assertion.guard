@@ -1,0 +1,3 @@
+rule assertion_is_right {
+    Rules.RegionCheck.Assertions[*].Assert == "right"
+}

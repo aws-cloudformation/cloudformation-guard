@@ -1,0 +1,623 @@
+# One input anchored in the first case and aliased by the ninety-nine cases after it. The copies an
+# alias makes are counted against the expansion budget, and the budget is per test case, so each case
+# here costs one copy of the shared input however many cases alias it, and every case runs.
+#
+# The shared input is 9,908 nodes: the mapping, `A`, the 101-node `Pad`, `More` holding 97 copies
+# of `Pad` (9,798), and the 7-node `Last`. The first case charges 9,797 (the 97 copies of `Pad`;
+# recording the two anchors is not charged) and each alias 9,908 more: 980,781 after the
+# ninety-ninth case and 990,689 at the hundredth. Counted over the whole file that is inside the
+# budget, and one more case would cross it, so which case failed would depend on how many came
+# before it; counted per case, every case costs one copy and the count of cases is no limit.
+- name: the case that declares the shared input
+  input: &shared
+    A: 1
+    Pad: &row [x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x,
+               x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x,
+               x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x,
+               x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x,
+               x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x]
+    More: [*row, *row, *row, *row, *row, *row, *row, *row, *row, *row, *row, *row, *row, *row, *row, *row,
+           *row, *row, *row, *row, *row, *row, *row, *row, *row, *row, *row, *row, *row, *row, *row, *row,
+           *row, *row, *row, *row, *row, *row, *row, *row, *row, *row, *row, *row, *row, *row, *row, *row,
+           *row, *row, *row, *row, *row, *row, *row, *row, *row, *row, *row, *row, *row, *row, *row, *row,
+           *row, *row, *row, *row, *row, *row, *row, *row, *row, *row, *row, *row, *row, *row, *row, *row,
+           *row, *row, *row, *row, *row, *row, *row, *row, *row, *row, *row, *row, *row, *row, *row, *row,
+           *row]
+    Last: [z, z, z, z, z, z]
+  expectations:
+    rules:
+      a_is_one: PASS
+
+- name: case 2 reusing the shared input
+  input: *shared
+  expectations:
+    rules:
+      a_is_one: PASS
+
+- name: case 3 reusing the shared input
+  input: *shared
+  expectations:
+    rules:
+      a_is_one: PASS
+
+- name: case 4 reusing the shared input
+  input: *shared
+  expectations:
+    rules:
+      a_is_one: PASS
+
+- name: case 5 reusing the shared input
+  input: *shared
+  expectations:
+    rules:
+      a_is_one: PASS
+
+- name: case 6 reusing the shared input
+  input: *shared
+  expectations:
+    rules:
+      a_is_one: PASS
+
+- name: case 7 reusing the shared input
+  input: *shared
+  expectations:
+    rules:
+      a_is_one: PASS
+
+- name: case 8 reusing the shared input
+  input: *shared
+  expectations:
+    rules:
+      a_is_one: PASS
+
+- name: case 9 reusing the shared input
+  input: *shared
+  expectations:
+    rules:
+      a_is_one: PASS
+
+- name: case 10 reusing the shared input
+  input: *shared
+  expectations:
+    rules:
+      a_is_one: PASS
+
+- name: case 11 reusing the shared input
+  input: *shared
+  expectations:
+    rules:
+      a_is_one: PASS
+
+- name: case 12 reusing the shared input
+  input: *shared
+  expectations:
+    rules:
+      a_is_one: PASS
+
+- name: case 13 reusing the shared input
+  input: *shared
+  expectations:
+    rules:
+      a_is_one: PASS
+
+- name: case 14 reusing the shared input
+  input: *shared
+  expectations:
+    rules:
+      a_is_one: PASS
+
+- name: case 15 reusing the shared input
+  input: *shared
+  expectations:
+    rules:
+      a_is_one: PASS
+
+- name: case 16 reusing the shared input
+  input: *shared
+  expectations:
+    rules:
+      a_is_one: PASS
+
+- name: case 17 reusing the shared input
+  input: *shared
+  expectations:
+    rules:
+      a_is_one: PASS
+
+- name: case 18 reusing the shared input
+  input: *shared
+  expectations:
+    rules:
+      a_is_one: PASS
+
+- name: case 19 reusing the shared input
+  input: *shared
+  expectations:
+    rules:
+      a_is_one: PASS
+
+- name: case 20 reusing the shared input
+  input: *shared
+  expectations:
+    rules:
+      a_is_one: PASS
+
+- name: case 21 reusing the shared input
+  input: *shared
+  expectations:
+    rules:
+      a_is_one: PASS
+
+- name: case 22 reusing the shared input
+  input: *shared
+  expectations:
+    rules:
+      a_is_one: PASS
+
+- name: case 23 reusing the shared input
+  input: *shared
+  expectations:
+    rules:
+      a_is_one: PASS
+
+- name: case 24 reusing the shared input
+  input: *shared
+  expectations:
+    rules:
+      a_is_one: PASS
+
+- name: case 25 reusing the shared input
+  input: *shared
+  expectations:
+    rules:
+      a_is_one: PASS
+
+- name: case 26 reusing the shared input
+  input: *shared
+  expectations:
+    rules:
+      a_is_one: PASS
+
+- name: case 27 reusing the shared input
+  input: *shared
+  expectations:
+    rules:
+      a_is_one: PASS
+
+- name: case 28 reusing the shared input
+  input: *shared
+  expectations:
+    rules:
+      a_is_one: PASS
+
+- name: case 29 reusing the shared input
+  input: *shared
+  expectations:
+    rules:
+      a_is_one: PASS
+
+- name: case 30 reusing the shared input
+  input: *shared
+  expectations:
+    rules:
+      a_is_one: PASS
+
+- name: case 31 reusing the shared input
+  input: *shared
+  expectations:
+    rules:
+      a_is_one: PASS
+
+- name: case 32 reusing the shared input
+  input: *shared
+  expectations:
+    rules:
+      a_is_one: PASS
+
+- name: case 33 reusing the shared input
+  input: *shared
+  expectations:
+    rules:
+      a_is_one: PASS
+
+- name: case 34 reusing the shared input
+  input: *shared
+  expectations:
+    rules:
+      a_is_one: PASS
+
+- name: case 35 reusing the shared input
+  input: *shared
+  expectations:
+    rules:
+      a_is_one: PASS
+
+- name: case 36 reusing the shared input
+  input: *shared
+  expectations:
+    rules:
+      a_is_one: PASS
+
+- name: case 37 reusing the shared input
+  input: *shared
+  expectations:
+    rules:
+      a_is_one: PASS
+
+- name: case 38 reusing the shared input
+  input: *shared
+  expectations:
+    rules:
+      a_is_one: PASS
+
+- name: case 39 reusing the shared input
+  input: *shared
+  expectations:
+    rules:
+      a_is_one: PASS
+
+- name: case 40 reusing the shared input
+  input: *shared
+  expectations:
+    rules:
+      a_is_one: PASS
+
+- name: case 41 reusing the shared input
+  input: *shared
+  expectations:
+    rules:
+      a_is_one: PASS
+
+- name: case 42 reusing the shared input
+  input: *shared
+  expectations:
+    rules:
+      a_is_one: PASS
+
+- name: case 43 reusing the shared input
+  input: *shared
+  expectations:
+    rules:
+      a_is_one: PASS
+
+- name: case 44 reusing the shared input
+  input: *shared
+  expectations:
+    rules:
+      a_is_one: PASS
+
+- name: case 45 reusing the shared input
+  input: *shared
+  expectations:
+    rules:
+      a_is_one: PASS
+
+- name: case 46 reusing the shared input
+  input: *shared
+  expectations:
+    rules:
+      a_is_one: PASS
+
+- name: case 47 reusing the shared input
+  input: *shared
+  expectations:
+    rules:
+      a_is_one: PASS
+
+- name: case 48 reusing the shared input
+  input: *shared
+  expectations:
+    rules:
+      a_is_one: PASS
+
+- name: case 49 reusing the shared input
+  input: *shared
+  expectations:
+    rules:
+      a_is_one: PASS
+
+- name: case 50 reusing the shared input
+  input: *shared
+  expectations:
+    rules:
+      a_is_one: PASS
+
+- name: case 51 reusing the shared input
+  input: *shared
+  expectations:
+    rules:
+      a_is_one: PASS
+
+- name: case 52 reusing the shared input
+  input: *shared
+  expectations:
+    rules:
+      a_is_one: PASS
+
+- name: case 53 reusing the shared input
+  input: *shared
+  expectations:
+    rules:
+      a_is_one: PASS
+
+- name: case 54 reusing the shared input
+  input: *shared
+  expectations:
+    rules:
+      a_is_one: PASS
+
+- name: case 55 reusing the shared input
+  input: *shared
+  expectations:
+    rules:
+      a_is_one: PASS
+
+- name: case 56 reusing the shared input
+  input: *shared
+  expectations:
+    rules:
+      a_is_one: PASS
+
+- name: case 57 reusing the shared input
+  input: *shared
+  expectations:
+    rules:
+      a_is_one: PASS
+
+- name: case 58 reusing the shared input
+  input: *shared
+  expectations:
+    rules:
+      a_is_one: PASS
+
+- name: case 59 reusing the shared input
+  input: *shared
+  expectations:
+    rules:
+      a_is_one: PASS
+
+- name: case 60 reusing the shared input
+  input: *shared
+  expectations:
+    rules:
+      a_is_one: PASS
+
+- name: case 61 reusing the shared input
+  input: *shared
+  expectations:
+    rules:
+      a_is_one: PASS
+
+- name: case 62 reusing the shared input
+  input: *shared
+  expectations:
+    rules:
+      a_is_one: PASS
+
+- name: case 63 reusing the shared input
+  input: *shared
+  expectations:
+    rules:
+      a_is_one: PASS
+
+- name: case 64 reusing the shared input
+  input: *shared
+  expectations:
+    rules:
+      a_is_one: PASS
+
+- name: case 65 reusing the shared input
+  input: *shared
+  expectations:
+    rules:
+      a_is_one: PASS
+
+- name: case 66 reusing the shared input
+  input: *shared
+  expectations:
+    rules:
+      a_is_one: PASS
+
+- name: case 67 reusing the shared input
+  input: *shared
+  expectations:
+    rules:
+      a_is_one: PASS
+
+- name: case 68 reusing the shared input
+  input: *shared
+  expectations:
+    rules:
+      a_is_one: PASS
+
+- name: case 69 reusing the shared input
+  input: *shared
+  expectations:
+    rules:
+      a_is_one: PASS
+
+- name: case 70 reusing the shared input
+  input: *shared
+  expectations:
+    rules:
+      a_is_one: PASS
+
+- name: case 71 reusing the shared input
+  input: *shared
+  expectations:
+    rules:
+      a_is_one: PASS
+
+- name: case 72 reusing the shared input
+  input: *shared
+  expectations:
+    rules:
+      a_is_one: PASS
+
+- name: case 73 reusing the shared input
+  input: *shared
+  expectations:
+    rules:
+      a_is_one: PASS
+
+- name: case 74 reusing the shared input
+  input: *shared
+  expectations:
+    rules:
+      a_is_one: PASS
+
+- name: case 75 reusing the shared input
+  input: *shared
+  expectations:
+    rules:
+      a_is_one: PASS
+
+- name: case 76 reusing the shared input
+  input: *shared
+  expectations:
+    rules:
+      a_is_one: PASS
+
+- name: case 77 reusing the shared input
+  input: *shared
+  expectations:
+    rules:
+      a_is_one: PASS
+
+- name: case 78 reusing the shared input
+  input: *shared
+  expectations:
+    rules:
+      a_is_one: PASS
+
+- name: case 79 reusing the shared input
+  input: *shared
+  expectations:
+    rules:
+      a_is_one: PASS
+
+- name: case 80 reusing the shared input
+  input: *shared
+  expectations:
+    rules:
+      a_is_one: PASS
+
+- name: case 81 reusing the shared input
+  input: *shared
+  expectations:
+    rules:
+      a_is_one: PASS
+
+- name: case 82 reusing the shared input
+  input: *shared
+  expectations:
+    rules:
+      a_is_one: PASS
+
+- name: case 83 reusing the shared input
+  input: *shared
+  expectations:
+    rules:
+      a_is_one: PASS
+
+- name: case 84 reusing the shared input
+  input: *shared
+  expectations:
+    rules:
+      a_is_one: PASS
+
+- name: case 85 reusing the shared input
+  input: *shared
+  expectations:
+    rules:
+      a_is_one: PASS
+
+- name: case 86 reusing the shared input
+  input: *shared
+  expectations:
+    rules:
+      a_is_one: PASS
+
+- name: case 87 reusing the shared input
+  input: *shared
+  expectations:
+    rules:
+      a_is_one: PASS
+
+- name: case 88 reusing the shared input
+  input: *shared
+  expectations:
+    rules:
+      a_is_one: PASS
+
+- name: case 89 reusing the shared input
+  input: *shared
+  expectations:
+    rules:
+      a_is_one: PASS
+
+- name: case 90 reusing the shared input
+  input: *shared
+  expectations:
+    rules:
+      a_is_one: PASS
+
+- name: case 91 reusing the shared input
+  input: *shared
+  expectations:
+    rules:
+      a_is_one: PASS
+
+- name: case 92 reusing the shared input
+  input: *shared
+  expectations:
+    rules:
+      a_is_one: PASS
+
+- name: case 93 reusing the shared input
+  input: *shared
+  expectations:
+    rules:
+      a_is_one: PASS
+
+- name: case 94 reusing the shared input
+  input: *shared
+  expectations:
+    rules:
+      a_is_one: PASS
+
+- name: case 95 reusing the shared input
+  input: *shared
+  expectations:
+    rules:
+      a_is_one: PASS
+
+- name: case 96 reusing the shared input
+  input: *shared
+  expectations:
+    rules:
+      a_is_one: PASS
+
+- name: case 97 reusing the shared input
+  input: *shared
+  expectations:
+    rules:
+      a_is_one: PASS
+
+- name: case 98 reusing the shared input
+  input: *shared
+  expectations:
+    rules:
+      a_is_one: PASS
+
+- name: case 99 reusing the shared input
+  input: *shared
+  expectations:
+    rules:
+      a_is_one: PASS
+
+- name: case 100 reusing the shared input
+  input: *shared
+  expectations:
+    rules:
+      a_is_one: PASS

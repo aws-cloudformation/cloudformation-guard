@@ -1,0 +1,13 @@
+Mappings:
+  Allowed:
+    Names: [x]
+Resources:
+  Cfg:
+    Map:
+      alpha: 2
+      x: 2
+    Tags:
+      - Key: alpha
+        Value: one
+      - Key: x
+        Value: two

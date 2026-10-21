@@ -1,0 +1,6 @@
+#
+# docs/KNOWN_ISSUES.md item 15's tag probe: `[*]` then a filter asking which tags carry a `Type` key, `!empty`
+# requiring that one does. Over list-shaped tags the filter selects the elements carrying the key; a tag
+# list of Key/Value pairs holds none, so the selection is empty and the clause fails.
+#
+rule r { Resources.*.Properties.Tags[*][ Type exists ] !empty }

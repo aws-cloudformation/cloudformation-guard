@@ -1,0 +1,52 @@
+# The two bindings below hold the same map. `direct` reaches it by plain key descent; `projected`
+# reaches the isomorphic copy through a wildcard and a filter and then descends the same last key.
+# Neither fact about how they were written changes what either variable HOLDS, so the two rules --
+# identical apart from the variable each reads -- have to reach the same verdict.
+#
+# They did not. `query_projects` answered `true` for `projected` because *some* part of its query
+# projected, which consumed the slot `access_query` reserves in a variable-rooted query and left the
+# filter testing the whole `Nested` map as one subject instead of its entries. The predicate matched
+# nothing, an assertion over an empty selection is not applicable, and so the projected spelling
+# reported SKIP at exit 0 on the violation the direct spelling reported at exit 19.
+#
+# Both rules are asserted, and by the path each names, so that a fix cannot satisfy this fixture by
+# silencing the side that already worked.
+let direct = Outer.Nested
+let projected = Wrapper.*[ Marker == 'selected' ].Nested
+
+rule filter_over_a_direct_binding {
+    %direct[ Type == 'Match' ].Value == 'no-such-value-zzz'
+}
+
+rule filter_over_a_projected_binding {
+    %projected[ Type == 'Match' ].Value == 'no-such-value-zzz'
+}
+
+# The same defect over a map whose entries are SCALARS, which needs its own pair because it inverts
+# the polarity of the pair above rather than repeating it.
+#
+# `Config` is `{ Status: Enabled }`. Two facts differ from `Nested` and both matter. A scalar entry is
+# not a member a filter over the map's entries selects among, so expanding the map and filtering its
+# entries passes the scalar over and selects nothing. And `Status` IS a key of `Config`, so testing the
+# whole map as one subject MATCHES.
+#
+# The result was that the PROJECTED spelling -- the one that consumed the slot and tested the whole
+# map -- found the real violation, while the direct spelling walked the entries. Above, it is the
+# projected spelling that went silent. Same defect, opposite presentation. Both spellings now read the
+# map the same way: every entry is a scalar, passed over, and `Status` is a key of the map itself, so
+# the filter is refused in the report under both, naming the key.
+#
+# So what is asserted is agreement, not a verdict. Which answer is correct here is a language
+# question this fixture deliberately does not settle: the engine may report either, and may change
+# which it reports, but it has to report the same one for both spellings, because `%direct_scalars`
+# and `%projected_scalars` hold the same map.
+let direct_scalars = Outer.Config
+let projected_scalars = Wrapper.*[ Marker == 'selected' ].Config
+
+rule filter_over_a_direct_scalar_entry_binding {
+    %direct_scalars[ Status == 'Enabled' ].Status == 'no-such-value-zzz'
+}
+
+rule filter_over_a_projected_scalar_entry_binding {
+    %projected_scalars[ Status == 'Enabled' ].Status == 'no-such-value-zzz'
+}

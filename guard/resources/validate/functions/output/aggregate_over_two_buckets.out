@@ -1,0 +1,10 @@
+two_buckets.yaml Status = FAIL
+FAILED rules
+aggregate_over_two_buckets.guard/three_buckets    FAIL
+aggregate_over_two_buckets.guard/joined_names     FAIL
+---
+Evaluation of rules aggregate_over_two_buckets.guard against data two_buckets.yaml
+--
+Property [/Resources] in data [two_buckets.yaml] is not compliant with [joined_names] because provided value ["a,b"] did not match expected value ["x"]. Error Message [ Violation: joined names differ ]
+Property [/Resources] in data [two_buckets.yaml] is not compliant with [three_buckets] because provided value [2] did not match expected value [3]. Error Message [ Violation: expected exactly three buckets ]
+--

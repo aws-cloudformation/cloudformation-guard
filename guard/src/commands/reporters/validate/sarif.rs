@@ -22,6 +22,11 @@ struct SarifTool {
 #[derive(Debug, Deserialize, Serialize, Clone, Default)]
 struct SarifRun {
     tool: SarifTool,
+    /// Omitted entirely when the run had nothing to report about itself, which keeps a clean run's
+    /// document byte-for-byte what it was. SARIF permits that: `runs.invocations` is not in `run`'s
+    /// required set, and an absent array-valued property defaults to empty.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    invocations: Vec<SarifInvocation>,
     artifacts: Vec<SarifArtifact>,
     results: SarifResults,
 }
@@ -30,7 +35,7 @@ impl From<&[FileReport<'_>]> for SarifRun {
     fn from(value: &[FileReport<'_>]) -> Self {
         let mut sarif_unique_artifacts: HashSet<&str> = HashSet::new();
 
-        value
+        let mut run = value
             .iter()
             .filter(|report| matches!(report.status, Status::FAIL))
             .fold(SarifRun::default(), |mut runs, report| {
@@ -46,8 +51,52 @@ impl From<&[FileReport<'_>]> for SarifRun {
                 });
 
                 runs
-            })
+            });
+
+        // Outside the fold above, which only visits FAIL reports. A run whose rules did not parse
+        // evaluated nothing, so every report is SKIP and the fold sees none of them -- which is
+        // exactly how an unreadable ruleset came to produce the same document as a clean run.
+        run.invocations = build_invocations(value);
+
+        run
     }
+}
+
+/// The single `invocation` describing this run, when there is something about the run itself to
+/// report. Empty otherwise, so the successful path is unchanged.
+///
+/// A rules file that will not parse is a fact about how the tool was configured rather than a
+/// finding about the template under analysis, and SARIF separates the two. Filing it as a `result`
+/// would make it an alert against the customer's code, which is both wrong and, for a consumer that
+/// tracks alerts across runs, actively misleading.
+fn build_invocations(reports: &[FileReport<'_>]) -> Vec<SarifInvocation> {
+    let mut seen: HashSet<&str> = HashSet::new();
+    let notifications = reports
+        .iter()
+        .flat_map(|report| report.rule_file_errors.iter())
+        // `rule_file_errors` is repeated in every file report, because the json and yaml document is
+        // an array of those and has nowhere above them to carry it. One notification per rules file
+        // is what belongs here.
+        .filter(|rule_file_error| seen.insert(&rule_file_error.file_name))
+        .map(|rule_file_error| SarifNotification {
+            level: String::from("error"),
+            message: SarifMessage {
+                text: format!(
+                    "Rules file {} could not be parsed, so none of its rules were evaluated: {}",
+                    rule_file_error.file_name, rule_file_error.error
+                ),
+            },
+        })
+        .collect::<Vec<_>>();
+
+    if notifications.is_empty() {
+        return vec![];
+    }
+
+    vec![SarifInvocation {
+        execution_successful: false,
+        tool_configuration_notifications: notifications,
+    }]
 }
 
 impl SarifRun {
@@ -87,6 +136,42 @@ struct SarifArtifactLocation {
 #[derive(Debug, Deserialize, Serialize, Clone)]
 struct SarifMessage {
     text: String,
+}
+
+/// SARIF's place for what happened to the tool, as opposed to what the tool found.
+///
+/// `executionSuccessful` is the one member `invocation` requires, and it is the property a consumer
+/// reads to decide whether an empty `results` array means "nothing wrong" or "nothing checked".
+/// `toolConfigurationNotifications` is for "conditions detected by the tool that are relevant to the
+/// tool's configuration", which is what an unreadable rules file is -- the ruleset is Guard's
+/// configuration. Its sibling `toolExecutionNotifications` is for runtime conditions during the
+/// analysis, and a file rejected before any rule was loaded is not one of those.
+///
+/// Source: the SARIF 2.1.0 schema this report already declares in `$schema`,
+/// <https://docs.oasis-open.org/sarif/sarif/v2.1.0/errata01/os/schemas/sarif-schema-2.1.0.json>.
+#[derive(Debug, Deserialize, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct SarifInvocation {
+    execution_successful: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    tool_configuration_notifications: Vec<SarifNotification>,
+}
+
+/// A `notification`: per SARIF's own terminology a "reporting item that describes a condition
+/// encountered by a tool during its execution", as distinct from a `result`.
+///
+/// `message` is the only required member. `level` is given explicitly because it defaults to
+/// `warning`, and a ruleset that could not be read is an error.
+///
+/// No `locations`. The member exists, and a rules file is now known by the path it was given rather
+/// than by its basename, but that path is still whatever string the caller passed -- relative to a
+/// working directory the consumer of this report does not have, when the caller passed a relative one.
+/// SARIF wants a `uri` a consumer can resolve to an artifact, and this is not reliably one. Naming the
+/// file in the message says what is known without asserting a location that is not.
+#[derive(Debug, Deserialize, Serialize, Clone)]
+struct SarifNotification {
+    level: String,
+    message: SarifMessage,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -136,16 +221,12 @@ impl From<(&ClauseReport<'_>, &str)> for SarifResults {
                     rule_id = extract_rule_id(rule.name)
                 }
 
-                let (start_line, start_column) = match messages.location {
-                    Some(location) => (location.line, location.col),
-                    None => (0, 0),
-                };
-
                 let message = SarifMessage {
                     text: handle_messages(&messages),
                 };
 
-                let locations = generate_sarif_locations(name, start_line, start_column);
+                let locations =
+                    generate_sarif_locations(name, messages.location.and_then(build_region));
 
                 results.push(SarifResult {
                     rule_id,
@@ -163,14 +244,23 @@ impl From<(&ClauseReport<'_>, &str)> for SarifResults {
 #[serde(rename_all = "camelCase")]
 struct SarifPhysicalLocation {
     artifact_location: SarifArtifactLocation,
-    region: SarifRegion,
+    /// Absent when the record carries no position. `region` is not in `physicalLocation`'s required
+    /// set -- its only constraint is an `anyOf` demanding `address` or `artifactLocation`, and this
+    /// always has the latter -- so a location without one is well formed and means "somewhere in this
+    /// artifact".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    region: Option<SarifRegion>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 struct SarifRegion {
     start_line: usize,
-    start_column: usize,
+    /// Absent when the record's column is 0, Guard's marker for a position it does not have.
+    /// `region`'s `anyOf` is satisfied by `startLine` alone, so a line without a column is well
+    /// formed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    start_column: Option<usize>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -226,32 +316,100 @@ fn handle_messages(messages: &Messages) -> String {
     )
 }
 
+/// The rule's name, unchanged.
+///
+/// `ruleId` is the identity a SARIF consumer keys on: code scanning matches alerts across runs by
+/// it, and suppressions and baselines are written against it. It has to be the name the rule
+/// actually has.
+///
+/// What was here read a rule name as though it were a file name -- `split('.')`, take the first
+/// part, upper-case it -- and so produced neither. `s3_versioning_enabled` came out as
+/// `S3_VERSIONING_ENABLED`, a name that appears in no rules file and cannot be suppressed by name.
+/// A rule declared at file scope in `My.Dotted-Rules.guard` is named
+/// `My.Dotted-Rules.guard/default`, and came out as `MY`: the file stem rather than the rule, cut at
+/// the first dot, colliding with every other rules file whose name starts `My.`.
+///
+/// Returning the name verbatim also makes the id cross-referenceable, which is the practical loss.
+/// json and yaml report this same finding under `"name"` and the console prints it after `Rule =`;
+/// all three now agree with sarif for the same run. Taking the half after `.guard/` -- which is what
+/// junit's `<failure message>` does -- was rejected: it reduces every file-scoped rule to `default`,
+/// so two rules files collide, and it matches none of the other three formats.
 fn extract_rule_id(rule_name: &str) -> String {
-    let first_part_of_rule_file_name: Vec<&str> = rule_name.split('.').collect();
-
-    first_part_of_rule_file_name
-        .first()
-        .map_or(String::default(), |&s| s.to_uppercase())
+    rule_name.to_string()
 }
 
+/// An absolute path as a `file://` URI, percent-encoded per segment. Anything that is not an
+/// absolute path is returned unchanged.
+///
+/// `artifactLocation.uri` is declared in the SARIF schema as "A string containing a valid relative or
+/// absolute URI", with `"format": "uri-reference"`. What was here removed the leading `/` from a
+/// path that `validate` has already canonicalised to absolute, which produces neither: not an
+/// absolute URI, because it has no scheme, and not a usable relative reference, because there is no
+/// `uriBaseId` -- nor any `runs[].originalUriBaseIds` -- to say what it is relative to. So
+/// `/home/me/repo/template.yaml` was emitted as `home/me/repo/template.yaml`, which resolves to a
+/// real file only against `/`.
+///
+/// That matters for the consumer this repository ships an Action for. GitHub code scanning
+/// "interprets results that are reported with relative paths as relative to the root of the
+/// repository analyzed", and separately states that "if a result contains an absolute URI, the URI is
+/// converted to a relative URI" using the checkout path. A stripped absolute path names nothing at
+/// the repository root, so the alert had no file to attach to; a `file://` URI is converted for us.
+///
+/// Adding a `uriBaseId` and an `originalUriBaseIds` entry was the alternative. It was rejected
+/// because Guard does not know a repository root -- it is run against arbitrary paths -- so the base
+/// would have to be invented. An absolute URI needs no base.
+///
+/// Percent-encoding is per segment rather than over the whole string, so the `/` separators survive.
+/// Without it a path containing `#` is truncated at the fragment delimiter by any URI parser, `?`
+/// starts a query, a space is not legal in a URI at all, and a literal `%` is an invalid escape.
 fn sanitize_path(path: &str) -> String {
-    path.strip_prefix('/').unwrap_or(path).to_string()
+    if !path.starts_with('/') {
+        return path.to_string();
+    }
+
+    let encoded = path
+        .split('/')
+        .map(|segment| urlencoding::encode(segment).into_owned())
+        .collect::<Vec<String>>()
+        .join("/");
+
+    format!("file://{encoded}")
 }
 
-fn generate_sarif_locations(
-    path_string: &str,
-    start_line: usize,
-    start_column: usize,
-) -> Vec<SarifLocation> {
+/// The region for a record that has a position, or `None` for one that does not.
+///
+/// What was here read the position as `(0, 0)` when the record carried none, then raised both to 1
+/// with `.max(1)` to satisfy the schema's `"minimum": 1` on `startLine` and `startColumn`. That
+/// turns "unknown" into "line 1, column 1", which a consumer renders as a real position. Measured on
+/// a template whose `Resources` sits on line 23 behind a long header, every result reported
+/// `{"startLine": 1, "startColumn": 1}` while the message text of the same result located the finding
+/// at `L:22,C:11` -- so code scanning annotated the `AWSTemplateFormatVersion` line for a finding
+/// about `Resources`.
+///
+/// Omitting is the correct alternative rather than a lesser one. A `physicalLocation` with no
+/// `region` says "somewhere in this artifact", which is exactly what is known. A `startLine` of 1
+/// says "here", and it is not here.
+///
+/// A location whose line is 0 is treated as no position for the same reason: `startLine` cannot be 0,
+/// so there is no line to report, and clamping it would be the same fabrication.
+fn build_region(location: crate::rules::path_value::Location) -> Option<SarifRegion> {
+    if location.line < 1 {
+        return None;
+    }
+
+    Some(SarifRegion {
+        start_line: location.line,
+        start_column: (location.col >= 1).then_some(location.col),
+    })
+}
+
+fn generate_sarif_locations(path_string: &str, region: Option<SarifRegion>) -> Vec<SarifLocation> {
     vec![SarifLocation {
         physical_location: SarifPhysicalLocation {
             artifact_location: SarifArtifactLocation {
                 uri: sanitize_path(path_string),
             },
-            region: SarifRegion {
-                start_line: start_line.max(1),
-                start_column: start_column.max(1),
-            },
+            region,
         },
     }]
 }

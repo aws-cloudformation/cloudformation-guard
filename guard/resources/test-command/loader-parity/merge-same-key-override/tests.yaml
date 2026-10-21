@@ -1,0 +1,17 @@
+- name: a merged key under an explicit key of the same kind is an override, and a gated rule skips
+  input:
+    Resources:
+      B:
+        Type: AWS::S3::Bucket
+        Properties:
+          <<:
+            BucketName: merged
+            "1": merged
+          BucketName: explicit
+          "1": explicit
+  expectations:
+    rules:
+      explicit_bucket_name_wins: PASS
+      explicit_quoted_key_wins: PASS
+      merge_key_is_folded: PASS
+      skipped_without_tags: SKIP

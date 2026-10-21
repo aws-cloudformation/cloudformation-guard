@@ -1,0 +1,48 @@
+###
+# Two cases over `resources/validate/filter_through_a_key_tailed_projection.guard`, each with one
+# instance carrying ImageId, under a DIFFERENT logical id. The filter loses its selection in both, so
+# the notice it raises names a different map each time (`/Resources/EC2A/Properties`,
+# `/Resources/EC2B/Properties`). One filter site, so one line: the test command keeps the once-per-site
+# reading across cases by site, not by text.
+#
+# Each instance's Properties holds a `Monitoring` sub-map beside its scalars: the walk passes the
+# scalars over and tests the sub-map, which lacks ImageId, so nothing is selected and the rule is SKIP
+# with its notice. A Properties map of scalars alone, under a predicate that names a key the map
+# itself holds, is refused instead (the map's own key), which is a verdict in the report and not a notice.
+###
+---
+- name: Instance named EC2A
+  input:
+    Resources:
+      Role:
+        Type: "AWS::IAM::Role"
+        Properties:
+          Path: "/"
+      EC2A:
+        Type: "AWS::EC2::Instance"
+        Properties:
+          ImageId: "ami-6df1e514"
+          InstanceType: "t2.micro"
+          Monitoring:
+            Enabled: true
+  expectations:
+    rules:
+      FILTER_THROUGH_A_KEY_TAILED_PROJECTION: SKIP
+
+- name: Instance named EC2B
+  input:
+    Resources:
+      Role:
+        Type: "AWS::IAM::Role"
+        Properties:
+          Path: "/"
+      EC2B:
+        Type: "AWS::EC2::Instance"
+        Properties:
+          ImageId: "ami-6df1e514"
+          InstanceType: "t2.micro"
+          Monitoring:
+            Enabled: true
+  expectations:
+    rules:
+      FILTER_THROUGH_A_KEY_TAILED_PROJECTION: SKIP

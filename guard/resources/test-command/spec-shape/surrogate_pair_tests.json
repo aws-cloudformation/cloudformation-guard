@@ -1,0 +1,7 @@
+[
+  {
+    "name": "a JSON string escaped as a surrogate pair, the way Python's json.dumps writes a character outside the BMP",
+    "input": {"A": 1, "Label": "\ud83d\ude00"},
+    "expectations": {"rules": {"a_is_one": "PASS", "label_is_the_emoji": "PASS"}}
+  }
+]

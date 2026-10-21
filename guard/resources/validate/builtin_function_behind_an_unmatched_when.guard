@@ -1,0 +1,5 @@
+let buckets = Resources.*[ Type == "AWS::S3::Bucket" ]
+
+rule r when Resources.NoSuchResource exists {
+    count(%buckets)
+}

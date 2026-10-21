@@ -1,0 +1,25 @@
+# One role whose Properties map holds only maps and lists: an assume-role document and a policy list,
+# no scalar. By shape alone such a map is a collection, and a filter after the author's own `[*]`
+# enumerates its entries; over a map with a scalar entry (a resource's `Type`, an instance's `ImageId`)
+# the same `[*]` hands the one object on and the filter tests it. Paired with
+# filter_with_an_authored_star_on_a_projecting_binding.guard, whose filter names a key of this map
+# itself that no entry holds: that filter is refused by name in both polarities, so the gated rule
+# fails and nothing is announced, where the enumeration used to select nothing at exit 0.
+Resources:
+  RootRole:
+    Type: "AWS::IAM::Role"
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: "Allow"
+            Principal:
+              Service:
+                - "ec2.amazonaws.com"
+            Action:
+              - "sts:AssumeRole"
+      Policies:
+        - PolicyName: "p"
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement: []

@@ -1,0 +1,7 @@
+rule every_resource_type_is_outer {
+    Resources.*.Type == 'Outer::Resource'
+}
+
+rule nested_type_is_outer {
+    Resources.A.B.Type == 'Outer::Resource'
+}

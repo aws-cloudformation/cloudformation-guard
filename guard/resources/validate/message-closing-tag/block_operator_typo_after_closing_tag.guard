@@ -1,0 +1,5 @@
+rule r {
+    Resources.A.Type == "x" <<
+    a message
+    >> Resources.B.Properties.Encrypted = true
+}

@@ -1,0 +1,14 @@
+# One property whose name holds a tab, and a colon-space after it, beside one rulegen can write.
+#
+# A guard string literal ends at the end of its line, so rulegen refuses a clause for a property
+# name holding a control character and prints the warning with the control character escaped, the
+# tab as `\t`, so the warning stays one line. The round-trip test lists that property as omitted by
+# the name the template holds and matches the warning in rulegen's escaped form, so a name holding a
+# tab or a `: ` is accounted for the same as any other.
+Resources:
+  Bucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      "Tab\t: Name": c
+      VersioningConfiguration:
+        Status: Enabled

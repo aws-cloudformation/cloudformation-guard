@@ -1,0 +1,9 @@
+Resources:
+  B:
+    Type: AWS::S3::Bucket
+    Properties:
+      <<:
+        BucketName: merged
+        "1": merged
+      BucketName: explicit
+      "1": explicit

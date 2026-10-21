@@ -1,0 +1,8 @@
+# The `this` arm of the pass-over refusal over a map of scalars, inside a block over the member with a long
+# real query: `Settings` holds `Mode` and `Level`, both passed over, and lacks both keys, so the filter is
+# refused; the console shows the whole text, the definition of `X` and the one-object remedy first.
+rule r {
+    Resources.WebServer.Properties.Configuration.Settings {
+        this[ ServerSideEncryptionConfiguration !exists LoggingConfiguration !exists ] empty
+    }
+}

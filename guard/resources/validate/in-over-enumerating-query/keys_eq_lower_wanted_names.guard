@@ -1,0 +1,4 @@
+# A function over a query as the key filter's RHS: the names the query resolved are lowered and the
+# filter selects by them. A member of `Wanted` with no `Name` is a value the query did not resolve,
+# which the function hands on, and the filter fails closed on it as on the bare query.
+rule r_members { Resources.*.Map[ keys == to_lower(Wanted[*].Name) ] == 2 }

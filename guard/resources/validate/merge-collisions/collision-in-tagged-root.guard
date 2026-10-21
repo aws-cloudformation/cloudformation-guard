@@ -1,0 +1,7 @@
+#
+# A collision in a tagged root mapping. The tag puts the whole document under its long function name,
+# so the value is at /Fn::Foo/1, and validate reports the collision there ("Warning: duplicate key
+# /Fn::Foo/1 in data file <name>, first at L:2,C:7 and again at L:3,C:1. The last value is the one
+# evaluated.").
+#
+rule explicit_value_stands { "Fn::Foo"."1" == "b" }

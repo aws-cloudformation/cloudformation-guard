@@ -1,0 +1,8 @@
+# The kept-member arm of the pass-over refusal under a `when` gate with a long real query and a two-clause
+# predicate: `Config` holds the scalar `Mode` beside the sub-map `Inner`, which lacks both keys and is kept
+# in the map's place, and `Config` itself lacks both keys too, so the filter is refused; the console shows
+# the whole text, the definition of `X` and the remedy first; no sub-map holds either key, so the remedy
+# is the one-object spelling `X[*][ ... ]`.
+rule r when Resources.WebServer.Properties.Configuration.Config[ ServerSideEncryptionConfiguration !exists LoggingConfiguration !exists ] !empty {
+    Resources.WebServer.Type == 'X'
+}

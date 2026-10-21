@@ -1,0 +1,6 @@
+Resources:
+  Note: a string beside the resources
+  A:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: a

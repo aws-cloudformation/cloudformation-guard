@@ -1,0 +1,10 @@
+# Two clauses in one rule: one that resolves to a value with a path, and one over a literal that cannot.
+#
+# The per-resource output renders each clause only if it is in that resource's set, so the pathless one was
+# skipped there -- and a rule-level "was anything placed?" gate then suppressed it from the unattributed
+# section too, because its sibling *was* placed. It appeared nowhere, while the JSON carried its reason.
+let numeric = 5
+rule a_placed_and_a_pathless_clause {
+    Resources.One.Type == "AWS::EC2::Volume"
+    %numeric empty
+}

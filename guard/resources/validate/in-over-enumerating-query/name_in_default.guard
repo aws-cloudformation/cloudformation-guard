@@ -1,0 +1,3 @@
+rule name_in_default {
+    Resources.*.Properties.Name IN Parameters.Allowed.Default
+}

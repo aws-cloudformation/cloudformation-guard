@@ -1,0 +1,19 @@
+# One resource one of whose entries, `Wrapper`, is itself a map carrying a `Metadata` map with an
+# `AWS::CloudFormation::Authentication` block. A positive predicate on that path, walked through a variable
+# holding the resource, holds on the `Wrapper` entry alone: the resource's own `Metadata` map has no
+# `Metadata` key, `Properties` has none, and the `Type` string is not a value the predicate applies to.
+Resources:
+  Only:
+    Type: AWS::EC2::Instance
+    Metadata:
+      Note: no authentication block at this level
+    Wrapper:
+      Metadata:
+        AWS::CloudFormation::Authentication:
+          WrappedCreds:
+            type: basic
+            username: deploy
+            password: sensitive_password
+    Properties:
+      ImageId: ami-6df1e514
+      InstanceType: t2.micro

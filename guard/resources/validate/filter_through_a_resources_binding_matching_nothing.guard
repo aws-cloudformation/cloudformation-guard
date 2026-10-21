@@ -1,0 +1,11 @@
+#
+# `Resources` bound by a plain key path and filtered through the variable for a Type the template
+# does not define. The walk selects nothing, and the predicate does not hold on the `Resources` map
+# either -- `Resources` has no `Type` key -- so the old reading selected nothing too and there is no
+# lost selection to announce. SKIP, no notice. This row pins the third condition of the notice: a
+# filter that selects nothing is announced only when the bound map itself satisfies its predicate.
+#
+let r = Resources
+rule FILTER_THROUGH_A_RESOURCES_BINDING_MATCHING_NOTHING when %r[ Type == "AWS::S3::Bucket" ] !empty {
+  %r[ Type == "AWS::S3::Bucket" ].Properties.BucketName exists
+}

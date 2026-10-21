@@ -1,0 +1,15 @@
+#
+# A binding whose query projects in the middle and ends in a key: `Resources.*[ Type exists ].Properties`
+# holds one `Properties` map per resource, several maps. Its last act is a key, so the reader walks the
+# reserved slot for it as for a plain binding, and the filter tests each map's entries.
+#
+# In the previous release the slot was consumed for every value a binding held, so this filter tested
+# each `Properties` map as a whole and selected the one carrying `ImageId`; the rule gated on that
+# selection FAILed on the body (exit 19). It now selects nothing from any of them and the rule is SKIP
+# (exit 0). Measured over a template of two resources that both carry Properties, so the move is the
+# filter's and not an unresolved value's. One notice, naming the map that lost its selection.
+#
+let props = Resources.*[ Type exists ].Properties
+rule FILTER_THROUGH_A_KEY_TAILED_PROJECTION when %props[ ImageId exists ] !empty {
+  %props[ ImageId exists ].ImageId == "no-such-image-zzz"
+}

@@ -1,0 +1,14 @@
+# A SAM template. `Transform` and `Rules` are real CloudFormation sections, and both sort after
+# `Resources` lexicographically -- "Rules" > "Resources" at u vs e -- which is what made findings under
+# them reach the console reporter's aggregate-by-resource path.
+Transform: AWS::Serverless-2016-10-31
+Resources:
+  Bucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: my-bucket
+Rules:
+  RegionCheck:
+    Assertions:
+      - Assert: wrong
+        AssertDescription: must be right

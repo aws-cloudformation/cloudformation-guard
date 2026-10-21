@@ -1,0 +1,22 @@
+# The two resources of two-properties-maps-one-with-image-template.yaml with the instance's `ImageId`
+# removed: it draws the `InstanceType exists` site of filter_through_image_and_instance_type_sites.guard
+# and not the `ImageId exists` site.
+Resources:
+  RootRole:
+    Type: "AWS::IAM::Role"
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: "Allow"
+            Principal:
+              Service:
+                - "ec2.amazonaws.com"
+            Action:
+              - "sts:AssumeRole"
+  Node:
+    Type: "AWS::EC2::Instance"
+    Properties:
+      InstanceType: "t2.micro"
+      SubnetId:
+        "Ref": "subnetId"

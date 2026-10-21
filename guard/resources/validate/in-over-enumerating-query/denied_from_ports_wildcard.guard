@@ -1,0 +1,3 @@
+rule no_denied_from_port {
+    Resources.*.Properties.FromPort NOT IN Mappings.Denied.Ports[*]
+}

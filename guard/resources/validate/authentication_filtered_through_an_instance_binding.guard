@@ -1,0 +1,28 @@
+#
+# The spelling docs/CLAUSES.md warns about: a variable holding one resource, filtered for a key that
+# resource has. The filter walks the resource's entries. Its Metadata and Properties maps have no
+# Metadata key, so the predicate rejects them; its Type string is a scalar entry, passed over,
+# neither selected nor reported. Nothing is selected in the resource's place, and a DEPRECATION
+# notice on stderr names the `let` and the filter.
+#
+# What each rule then reports, on a template whose WebServer block holds a password: the selection
+# is empty, so all three are SKIP, not applicable, where the old reading failed on the password (the
+# fail-open direction):
+# - the ungated `!exists` over nothing;
+# - the same assertion behind `when %auth !empty`, whose gate does not apply;
+# - a positive `exists` over nothing.
+#
+let m = Resources.WebServer
+let auth = %m[ Metadata."AWS::CloudFormation::Authentication" exists ]
+
+rule authentication_has_no_password {
+    %auth.Metadata."AWS::CloudFormation::Authentication".*.password !exists
+}
+
+rule authentication_has_no_password_when_selected when %auth !empty {
+    %auth.Metadata."AWS::CloudFormation::Authentication".*.password !exists
+}
+
+rule authentication_block_is_selected {
+    %auth exists
+}

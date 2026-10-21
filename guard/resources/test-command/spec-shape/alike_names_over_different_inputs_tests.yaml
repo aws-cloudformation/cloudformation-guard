@@ -1,0 +1,20 @@
+# One name over two cases that differ in both input and expectations: a suite grouping the cases that
+# exercise one scenario under one label. Neither case repeats the other, so the command warns about
+# nothing.
+- name: a single scenario
+  input:
+    A: 1
+    B: 3
+  expectations:
+    rules:
+      a_is_one: PASS
+      b_is_two: FAIL
+
+- name: a single scenario
+  input:
+    A: 2
+    B: 2
+  expectations:
+    rules:
+      a_is_one: FAIL
+      b_is_two: PASS

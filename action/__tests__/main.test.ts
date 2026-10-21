@@ -8,6 +8,7 @@ import * as handleValidate from '../src/handleValidate';
 import * as uploadCodeScan from '../src/uploadCodeScan';
 import * as handlePullRequestRun from '../src/handlePullRequestRun';
 import * as handlePushRun from '../src/handlePushRun';
+import * as handleWriteActionSummary from '../src/handleWriteActionSummary';
 import * as github from '@actions/github';
 import { GithubEventNames, ErrorStrings } from '../src/stringEnums';
 
@@ -37,6 +38,12 @@ jest.mock('../src/handleValidate', () => {
 jest.mock('../src/uploadCodeScan', () => ({
   __esModule: true,
   uploadCodeScan: jest.fn(),
+  default: jest.fn()
+}));
+jest.mock('../src/handleWriteActionSummary', () => ({
+  __esModule: true,
+  handleWriteActionSummary: jest.fn(),
+  handleWriteRulesFileFailureSummary: jest.fn(),
   default: jest.fn()
 }));
 jest.mock('../src/handlePullRequestRun', () => {
@@ -237,5 +244,123 @@ describe('main', () => {
     expect(uploadCodeScan.uploadCodeScan).toHaveBeenCalled();
     expect(handlePullRequestRun.handlePullRequestRun).not.toHaveBeenCalled();
     expect(handlePullRequestRun.handleCreateReview).not.toHaveBeenCalled();
+  });
+
+  it('fails the run when a rules file could not be parsed, even with no results', async () => {
+    (getConfig as jest.Mock).mockReturnValue({
+      analyze: false,
+      checkout: false,
+      createReview: false,
+      dataPath: 'stub',
+      rulesPath: 'stub',
+      token: 'stub'
+    });
+    jest
+      .mocked(handleValidate.handleValidate)
+      .mockResolvedValueOnce(mocks.sarifResultFixtureUnparsedRules);
+
+    await run();
+
+    expect(core.setFailed).toHaveBeenCalledWith(
+      ErrorStrings.RULES_FILE_FAILURE
+    );
+    expect(core.setFailed).toHaveBeenCalledWith(
+      mocks.unparsedRulesFileNotificationText
+    );
+    expect(
+      handleWriteActionSummary.handleWriteRulesFileFailureSummary
+    ).toHaveBeenCalledWith({
+      messages: [mocks.unparsedRulesFileNotificationText]
+    });
+    expect(handleValidate.handleValidate).toHaveBeenCalled();
+    expect(handlePushRun.handlePushRun).not.toHaveBeenCalled();
+    expect(handlePullRequestRun.handlePullRequestRun).not.toHaveBeenCalled();
+    expect(
+      handleWriteActionSummary.handleWriteActionSummary
+    ).not.toHaveBeenCalled();
+  });
+
+  it('fails for both the rules file that did not parse and the violations the other rules found', async () => {
+    github.context.eventName = GithubEventNames.PUSH;
+    (getConfig as jest.Mock).mockReturnValue({
+      analyze: false,
+      checkout: false,
+      createReview: false,
+      dataPath: 'stub',
+      rulesPath: 'stub',
+      token: 'stub'
+    });
+    jest
+      .mocked(handleValidate.handleValidate)
+      .mockResolvedValueOnce(mocks.sarifResultFixtureMixed);
+
+    await run();
+
+    expect(core.setFailed).toHaveBeenCalledWith(
+      ErrorStrings.RULES_FILE_FAILURE
+    );
+    expect(core.setFailed).toHaveBeenCalledWith(
+      mocks.unparsedRulesFileNotificationText
+    );
+    expect(core.setFailed).toHaveBeenCalledWith(
+      ErrorStrings.VALIDATION_FAILURE
+    );
+    expect(
+      handleWriteActionSummary.handleWriteRulesFileFailureSummary
+    ).toHaveBeenCalledWith({
+      messages: [mocks.unparsedRulesFileNotificationText]
+    });
+    expect(handlePushRun.handlePushRun).toHaveBeenCalled();
+    expect(
+      handleWriteActionSummary.handleWriteActionSummary
+    ).toHaveBeenCalledWith({
+      results: [
+        ['file1.ts', 'Violation message 1', 'rule-id-1'],
+        ['file2.ts', 'Violation message 2', 'rule-id-2']
+      ]
+    });
+  });
+
+  it('still reports the violations when the rules file failure summary cannot be written', async () => {
+    github.context.eventName = GithubEventNames.PUSH;
+    (getConfig as jest.Mock).mockReturnValue({
+      analyze: false,
+      checkout: false,
+      createReview: false,
+      dataPath: 'stub',
+      rulesPath: 'stub',
+      token: 'stub'
+    });
+    jest
+      .mocked(handleValidate.handleValidate)
+      .mockResolvedValueOnce(mocks.sarifResultFixtureMixed);
+    jest
+      .mocked(handleWriteActionSummary.handleWriteRulesFileFailureSummary)
+      .mockRejectedValueOnce(
+        new Error(
+          'Unable to find environment variable for $GITHUB_STEP_SUMMARY'
+        )
+      );
+    const warning = jest.spyOn(core, 'warning').mockImplementation(() => {});
+
+    await run();
+
+    expect(core.setFailed).toHaveBeenCalledWith(
+      ErrorStrings.RULES_FILE_FAILURE
+    );
+    expect(core.setFailed).toHaveBeenCalledWith(
+      ErrorStrings.VALIDATION_FAILURE
+    );
+    expect(core.setFailed).not.toHaveBeenCalledWith(
+      expect.stringContaining(ErrorStrings.ACTION_FAILURE)
+    );
+    expect(warning).toHaveBeenCalledWith(
+      expect.stringContaining('$GITHUB_STEP_SUMMARY')
+    );
+    expect(handlePushRun.handlePushRun).toHaveBeenCalled();
+    expect(
+      handleWriteActionSummary.handleWriteActionSummary
+    ).toHaveBeenCalled();
+    warning.mockRestore();
   });
 });

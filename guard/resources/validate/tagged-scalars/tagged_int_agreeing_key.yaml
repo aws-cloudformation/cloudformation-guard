@@ -1,0 +1,5 @@
+Resources:
+  F:
+    Properties:
+      !!int 007: seven
+      Mode: 7

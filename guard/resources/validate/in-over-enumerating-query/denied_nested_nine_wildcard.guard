@@ -1,0 +1,3 @@
+rule no_denied_nest {
+    Resources.*.Properties.Nest NOT IN Mappings.DenyNestedNine[*]
+}

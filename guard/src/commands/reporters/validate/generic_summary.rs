@@ -12,7 +12,6 @@ use super::common::*;
 use super::summary_table::SummaryType;
 use crate::rules::eval_context::{simplified_json_from_root, EventRecord};
 use crate::rules::path_value::traversal::Traversal;
-use crate::rules::values::CmpOperator;
 
 #[derive(Debug)]
 pub(crate) struct GenericSummary {
@@ -218,14 +217,13 @@ fn binary_error_message(
 ) -> crate::rules::Result<String> {
     Ok(format!(
         "Property [{path}] in data [{data}] is not compliant with [{rule}] because \
-     provided value [{provided}] {op_msg} {cmp_msg} [{expected}]. Error \
+     provided value [{provided}] {verdict} [{expected}]. Error \
      Message [{msg}]",
         path = info.path,
         provided = info
             .provided
             .as_ref()
             .map_or(&serde_json::Value::Null, std::convert::identity),
-        op_msg = op_msg,
         data = data_file,
         rule = info.rule,
         msg = info.message.replace('\n', ";"),
@@ -233,14 +231,69 @@ fn binary_error_message(
             .expected
             .as_ref()
             .map_or(&serde_json::Value::Null, |v| v),
-        cmp_msg = info.comparison.as_ref().map_or("", |c| {
-            if c.operator == CmpOperator::In {
-                "match expected value in"
-            } else {
-                "match expected value"
-            }
-        })
+        verdict = membership_verdict(op_msg, info)?
     ))
+}
+
+/// The clause of a binary failure that says what the comparison found.
+///
+/// Two states, so that `IN` and `NOT IN` never claim an answer they do not have. A decided `NOT IN`
+/// failure renders "did match expected value in" and a decided `IN` failure "did not match" -- both
+/// assertions that the comparison ran -- and a membership comparison the regex engine abandoned must
+/// not reach those sentences, where a blank reason would contradict nothing.
+///
+/// A reason being present is the discriminator, and it is usable because the record carries one:
+/// without it, the code could not tell a refusal from a decided mismatch here. So this is
+/// deliberately NOT a rewording of membership failures. A decided `NOT IN` failure means the value
+/// really did match something the denylist names, and "did match expected value in" is the correct
+/// sentence for it -- replacing that to fix the refused minority would make the common case worse
+/// and churn every golden file for nothing.
+///
+/// The discrimination is made once, on the record, by `InComparisonCheck::lead`, and `NameInfo`
+/// carries the answer. Every membership-shaped record gets it, whatever operator the author wrote:
+/// `IN` and `NOT IN`, and a key filter's `==` or `!=` against a set, which is decided as membership
+/// and recorded in this shape under the written operator. A scalar `==` or `!=` is a plain comparison
+/// with no lead, and its undecided map-key spelling renders through `retrieval_error` rather than
+/// here.
+///
+/// TWO live renderers carry this sentence, not three: a count of one per site that builds the
+/// sentence overstates it by the dead one. The live two are this
+/// function, reached from `print_name_info` for the console, and `eval_context.rs`'s
+/// `ClauseCheck::InComparison` arm, which serves `-o json`, `--structured`, the FFI and the Lambda.
+/// The third, `SingleLineReporter` in `cfn_reporter.rs`, is unreachable: nothing constructs
+/// `CfnReporter`, so its edit is consistency rather than coverage.
+///
+/// Established by mutation rather than by reading, because grepping for constructors cannot rule out
+/// macro-generated or reflective construction and a sentinel run can. Both arms of that renderer's
+/// conditional were replaced with sentinel strings and the suite run: 3138 passed / 0 failed /
+/// 0 ignored over 16 suites, tallies identical to the unmutated tree, and zero occurrences of either
+/// sentinel anywhere in the output. Deleting the module outright is the stronger form of the same
+/// measurement -- the crate still builds and the suite is still 3138 / 0 / 0 with identical counts.
+///
+/// So `a_refused_membership_does_not_claim_a_match_happened` covers the two reachable renderers and
+/// structurally cannot cover the third. Any test would have the same problem, which is the reason
+/// this is written down instead of a cell being added.
+///
+/// The unreachable renderer is left in place, and that is a choice with a measured reason rather than
+/// a preference. `CfnReporter` is `pub(crate)`, so no external consumer can name it and removing it
+/// would break no published surface -- but the removal does not stand alone. It was the only caller of
+/// `common::print_compliant_skipped_info`, so deleting it makes that function dead too and
+/// `cargo clippy --all-targets -- -D warnings` exits 101 on the result. Landing the deletion means a
+/// dead-code sweep of unknown depth, which is a different change from repairing a sentence. Keeping
+/// the edit means that if the type is ever wired up it carries this conditional rather than
+/// reintroducing the claim that a comparison ran when it did not. Its own `{msg} match with`
+/// template is untested, for the same reason.
+fn membership_verdict(op_msg: &str, info: &NameInfo<'_>) -> crate::rules::Result<String> {
+    // A membership-shaped record carries its own lead, decided once on the record, and the shared
+    // `membership_lead_verdict` is the one place that turns a lead into words: nothing here re-reads
+    // the operator or the message to decide which state the record is in. A record with no lead is a
+    // plain comparison.
+    Ok(
+        match super::common::membership_lead_verdict(op_msg, info)? {
+            Some(verdict) => verdict,
+            None => format!("{op_msg} match expected value"),
+        },
+    )
 }
 
 fn print_rules_output(
@@ -256,12 +309,12 @@ fn print_rules_output(
     // Rust seeds its hasher per process, so iterating it directly printed the compliant rules in a
     // different order on every run of the same binary over the same input.
     //
-    // This section was the worst of the three, and was missed when the other two were sorted.
-    // Measured on `seven-compliant-rules.guard` with `--show-summary pass`: twenty runs of the
-    // merge-base produced twenty distinct orderings in one measurement and nineteen in another.
-    // The count varies between measurements because the orderings come from a per-process hasher
-    // seed, so treat any single figure as an illustration rather than a constant -- what is fixed is
-    // that the merge-base produced many and the sorted version produces one.
+    // This section is the most order-sensitive of the three. Measured on `seven-compliant-rules.guard`
+    // with `--show-summary pass`: twenty unsorted runs produce twenty distinct orderings in one
+    // measurement and nineteen in another. The count varies
+    // between measurements because the orderings come from a per-process hasher seed, so treat any
+    // single figure as an illustration rather than a constant -- what is fixed is that the unsorted
+    // set produces many orderings and the sorted one produces one.
     let mut rules = rules.into_iter().collect::<Vec<String>>();
     rules.sort();
     for rule in rules {
@@ -331,10 +384,10 @@ impl GenericReporter for SingleLineSummary {
             // failing rules in whatever order the hasher produced -- two runs of the same binary
             // over the same input printed the same findings in different orders.
             //
-            // Measured on `three-failing-rules.guard`, twenty runs each: the merge-base produced six
-            // distinct reports with `--show-summary all` and five by default; sorted, it produces
-            // one. Pre-existing rather than introduced here, but it makes report diffing useless and
-            // any golden file covering two or more failing rules flaky.
+            // Measured on `three-failing-rules.guard`, twenty runs each: unsorted, the map's order
+            // produces six distinct reports with `--show-summary all` and five by default; sorted, it
+            // produces one. An unsorted order makes report diffing useless and any golden file
+            // covering two or more failing rules flaky.
             //
             // The distinct-report count is itself unstable between measurements, which is worth
             // knowing before treating any single figure here as exact: the orderings are drawn from a

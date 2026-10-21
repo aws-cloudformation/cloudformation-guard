@@ -1,0 +1,19 @@
+# Two resources, two arguments. Beside the first map only `Wanted` differs from the map's; beside the
+# second only `Pattern` does. Each argument moved on one map, and neither moved on the other's.
+Resources:
+  First:
+    Wanted: beta
+    Pattern: '^x'
+    Map:
+      Wanted: xlpha
+      Pattern: '^x'
+      alpha: 1
+      beta: 2
+  Second:
+    Wanted: xlpha
+    Pattern: '^y'
+    Map:
+      Wanted: xlpha
+      Pattern: '^x'
+      alpha: 1
+      beta: 2

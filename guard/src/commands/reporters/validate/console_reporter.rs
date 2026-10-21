@@ -65,17 +65,22 @@ fn pprint_failed_sub_tree(
 
         Some(RecordType::ClauseValueCheck(check)) => {
             match check {
-                ClauseCheck::NoValueForEmptyCheck(msg) => {
-                    let custom_message = msg
+                ClauseCheck::NoValueForEmptyCheck(check) => {
+                    let custom_message = check
+                        .custom_message
                         .as_ref()
                         .map_or("".to_string(), |s| s.replace('\n', ";"));
 
+                    // This record is written only when a `!empty` selected nothing, so the selection
+                    // was empty and the line says so. It names the
+                    // query the record carries, filters spelled out, so two clauses that filter one
+                    // collection differently read differently here as they do in the summary.
                     writeln!(
                         writer,
-                        "{}{}Check was not compliant as variable in context [{}] was not empty. Message [{}]",
+                        "{}{}Check was not compliant as the query [{}] selected no values to test. Message [{}]",
                         prefix,
                         prefix_current,
-                        current.context,
+                        check.query,
                         custom_message
                     )?;
                 }
@@ -120,6 +125,7 @@ fn pprint_failed_sub_tree(
                             from,
                             message,
                             custom_message,
+                            ..
                         },
                 }) => {
                     let cmp_msg = match cmp {
@@ -343,5 +349,66 @@ impl Reporter for ConsoleReporter {
             _data_file,
             _write,
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::pprint_failed_sub_tree;
+    use crate::rules::eval::eval_rules_file;
+    use crate::rules::eval_context::root_scope;
+    use crate::rules::exprs::RulesFile;
+    use crate::rules::path_value::PathAwareValue;
+    use crate::rules::Status;
+    use std::convert::TryFrom;
+    use std::rc::Rc;
+
+    /// The failed-clause tree says an empty selection selected nothing, and names the query.
+    ///
+    /// This arm said the selection "was not empty", the opposite of why the clause failed, and named
+    /// the clause's own rendering, which stands `(filter-clauses)` in for every filter, so two rules
+    /// that filter one collection differently printed one line. Each rule now gets a line that spells
+    /// its own filter, with its literals in the rule language. The record is also written for a lone
+    /// variable bound to an empty selection, whose line names the variable.
+    #[test]
+    fn an_empty_selection_names_its_query_in_the_failed_tree() -> crate::rules::Result<()> {
+        let data = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(
+            "Items:\n  - Name: a\n  - Name: b\n",
+        )?)?;
+        let rules = RulesFile::try_from(
+            r#"
+            let v = Items[ Name == 'zzz' ]
+            rule first_filter { Items[ Name == 'zzz' ] !empty }
+            rule second_filter { Items[ Name == 'yyy' ] !empty }
+            rule lone_variable { %v !empty }
+            "#,
+        )?;
+        let mut scope = root_scope(&rules, Rc::new(data));
+        assert_eq!(Status::FAIL, eval_rules_file(&rules, &mut scope, None)?);
+        let root = scope.reset_recorder().extract();
+
+        let mut out = Vec::new();
+        pprint_failed_sub_tree(&root, String::new(), true, "rules", "data", &mut out)?;
+        let printed = String::from_utf8(out).expect("the tree is text");
+
+        for sentence in [
+            "the query [Items[ Name EQUALS 'zzz' ]] selected no values to test",
+            "the query [Items[ Name EQUALS 'yyy' ]] selected no values to test",
+            "the query [%v] selected no values to test",
+        ] {
+            assert_eq!(
+                1,
+                printed.matches(sentence).count(),
+                "each filter's line names its own query once, expected {:?} in:\n{}",
+                sentence,
+                printed
+            );
+        }
+        assert!(
+            !printed.contains("was not empty"),
+            "an empty selection must not be reported as not empty, in:\n{}",
+            printed
+        );
+        Ok(())
     }
 }

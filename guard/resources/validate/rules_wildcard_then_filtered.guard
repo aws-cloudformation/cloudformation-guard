@@ -1,0 +1,19 @@
+rule wildcard_then_filter { Resources.B1.Properties.Rules[*][ Action == 'allow' ] exists }
+rule wildcard_then_filter_then_key { Resources.B1.Properties.Rules[*][ Action == 'allow' ].Name == 'first' }
+rule wildcard_then_filter_rejects { Resources.B1.Properties.Rules[*][ Action == 'nothing' ] !exists }
+rule key_over_the_collection { Resources[ Type == 'AWS::S3::Bucket' ].Properties.Encrypted == true }
+rule key_over_a_member { Resources.B1[ Type == 'AWS::S3::Bucket' ] exists }
+rule the_members_property_in_a_wildcard_block {
+    Resources.B1.Properties.Rules[*] {
+        Action == 'allow'
+    }
+}
+rule wildcard_then_filter_on_a_scalar { Resources.B1.Properties.Names[*][ this == 'a' ] exists }
+rule wildcard_then_filter_rejects_a_scalar { Resources.B1.Properties.Names[*][ this == 'x' ] !exists }
+rule dot_wildcard_then_filter_on_a_scalar { Resources.B1.Properties.Names.*[ this == 'a' ] exists }
+rule dot_wildcard_then_filter_rejects_a_scalar { Resources.B1.Properties.Names.*[ this == 'z' ] !exists }
+rule dot_wildcard_then_filter_on_scalar_entries { Resources.B1.Properties.Statement.*[ Effect == 'Allow' ].Action != 's3:*' }
+rule capture_after_a_key { Resources[ nm | Type == 'AWS::S3::Bucket' ] exists }
+rule p(props) when %props.Kind == 'bucket' { %props.Encrypted == false }
+rule rule_reference_in_a_filter { Resources.*[ p(Properties) ].Type == 'AWS::S3::Bucket' }
+rule negated_rule_reference_as_a_gate when not p(Resources.Q1.Properties) { Resources.Q1.Type == 'AWS::SQS::Queue' }

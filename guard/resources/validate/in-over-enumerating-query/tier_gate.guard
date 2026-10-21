@@ -1,0 +1,3 @@
+rule regulated_volumes_encrypted when Resources.*[ Type == 'Custom::Volume' ].Properties.Tier IN Mappings.Regulated.Tiers[*] {
+    Resources.*[ Type == 'Custom::Volume' ].Properties.Encrypted == true
+}

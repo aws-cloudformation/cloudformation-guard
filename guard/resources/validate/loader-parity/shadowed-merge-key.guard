@@ -1,0 +1,15 @@
+#
+# A merge source whose two keys read as one name (the integer 1 and the string "1") sits under an
+# explicit "1". Neither merged value is ever read, so the document has one reading, `explicit`, on
+# every route. The merged "1" is a same-key override of the explicit "1" and is silent; the merged 1 is
+# a key of another kind that reads as the explicit one, a collision, so validate prints one
+# duplicate-key notice for this file: "Warning: duplicate key /Resources/B/Properties/1 in data file
+# <name>, first at L:6,C:9 and again at L:8,C:7. The last value is the one evaluated." -- the merged
+# integer's line first, the explicit key's line second, and the explicit (last) value the one read.
+# The serde conversion, which has no notice channel, refuses the same document. The same document and
+# these rules run under validate, the test command and run_checks, and the verdicts are the ones
+# validate gives, measured with the CLI.
+#
+rule explicit_wins { Resources.B.Properties."1" == "explicit" }
+rule merged_values_are_not_read { Resources.B.Properties."1" != "merged_number"  Resources.B.Properties."1" != "merged_string" }
+rule merge_key_is_folded { Resources.B.Properties."<<" !exists }

@@ -1,0 +1,9 @@
+Mappings:
+  Policy:
+    Statement:
+      Action: s3:GetObject
+Resources:
+  R:
+    Type: Custom::Grant
+    Properties:
+      Action: s3:GetObject

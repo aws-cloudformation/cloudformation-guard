@@ -1,0 +1,6 @@
+# Every rule names the map entry `alpha`, whose value is 1. The two `Wanted` spellings read the
+# map's own `Wanted: alpha`; the two controls spell the key out.
+rule plain_key { Resources.Cfg.Map[ keys == Wanted ] == 1 }
+rule func_key { Resources.Cfg.Map[ keys == to_lower(Wanted) ] == 1 }
+rule func_key_literal_control { Resources.Cfg.Map[ keys == to_lower('ALPHA') ] == 1 }
+rule plain_value_control { Resources.Cfg.Map[ keys == 'alpha' ] == 1 }

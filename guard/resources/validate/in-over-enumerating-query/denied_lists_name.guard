@@ -1,0 +1,3 @@
+rule no_denied_protocols {
+    Resources.*.Properties.Protocols NOT IN Mappings.Denied.Entries[*].Name
+}

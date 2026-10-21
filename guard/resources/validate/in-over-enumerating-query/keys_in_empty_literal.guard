@@ -1,0 +1,5 @@
+let names = []
+
+rule member_keys_are_two {
+    Resources.*.Map[ keys IN %names ] == 2
+}

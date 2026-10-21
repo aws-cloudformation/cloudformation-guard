@@ -1,0 +1,21 @@
+#
+# A variable bound to a function's result -- the map `json_parse` returns -- and then filtered through
+# the variable with a predicate written against that map's own keys.
+#
+# In the previous release a filter through a variable tested the bound map itself, whatever bound the
+# variable, so `%doc[ Statement exists ]` selected the parsed map. The filter now walks the entries of
+# the value the variable holds, as it does after a `let` bound to a key path, so the predicate is
+# tested against the `Version` string and the `Statement` list, matches neither, and selects nothing.
+# The notice on stderr names the call as the author wrote it.
+#
+let doc = json_parse(Resources.Q.Properties.PolicyText)
+
+rule POLICY_HAS_A_STATEMENT when %doc !empty {
+    %doc[ Statement exists ] !empty
+}
+
+# The same document as a YAML map under a key, filtered the same way: the literal spelling, whose
+# answer the filter through the variable now gives, and which is not announced.
+rule CONTROL_KEY_SPELLING {
+    Resources.Q.Properties.Doc[ Statement exists ] !empty
+}

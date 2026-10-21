@@ -1,0 +1,13 @@
+#
+# A pattern in the rules file that does not compile, applied to a property that is not a string.
+#
+# The pattern is wrong whatever the template holds, so it is reported whether or not a string ever
+# reaches it. Before the pattern was compiled once up front, it was compiled per string element, and a
+# template whose property was an integer or absent never showed the author the broken pattern.
+#
+let t = Resources.Fn.Properties.Timeout
+
+rule BAD_PATTERN_OVER_INT {
+    let r = regex_replace(%t, "(", "x")
+    %r == "x"
+}

@@ -1,0 +1,4 @@
+# The document is one sequence tagged `!!If`, which is `!If` with one `!` too many. The loader marks
+# the container unreadable, and an unreadable value where the sequence of cases should be leaves
+# nothing to run, so the file is refused: the message names what was expected and carries the tag.
+!!If [a]

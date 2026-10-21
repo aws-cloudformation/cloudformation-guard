@@ -1,0 +1,11 @@
+# One resource whose entries are exactly two maps and one scalar: `Type` (a string), `Metadata` (a map) and
+# `Properties` (a map). Neither map has a `Tags` key. Built for the filters that walk a single resource's
+# entries through a variable, so that what they select, and what they report unresolved, is pinned to a
+# shape no other test depends on.
+Resources:
+  Only:
+    Type: AWS::S3::Bucket
+    Metadata:
+      Note: kept for the filter to walk
+    Properties:
+      BucketName: only-bucket

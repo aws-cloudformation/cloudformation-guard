@@ -1,0 +1,1 @@
+rule r { Resources.*.Properties.PolicyDocument.Statement[*][ Effect == 'Allow' Action == '*' ] empty }
