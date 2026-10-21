@@ -14,10 +14,17 @@ asserted by the validate test `the_wildcard_filter_fixtures_draw_the_pinned_curr
 asserted. Exit codes: `PASS` and `SKIP` (the rule not applicable) exit 0, `FAIL` exits 19; "panic 101" is
 the released CloudFormation reporter's `internal error: entered unreachable code` after it printed
 `Status = FAIL` and the rule's `FAIL` line, so the verdict was read and the exit code was the panic's;
+"internal error, no verdict" is the same `internal error: entered unreachable code` at exit 101 raised in
+the evaluator before any `Status` line, so no verdict was read;
 "error 255" is `Unable to resolve type block query: AWS::S3::Bucket`; "FAIL, error 19" is the released
 engines' retrieval error on a scalar entry under `.*` then a filter (`Filter on value type that was not a
 struct or array int /spec/replicas`), reported as the rule's `FAIL` at exit 19. The exit code of every cell was the
-same under the plain invocation, `--verbose` and `--show-summary all`.
+same under the plain invocation, `--verbose` and `--show-summary all`. The table's last three rows are also
+the probe set behind the sentence on a refused read beside a value that does not match (the
+behavior-change entry on a marker among a comparison's right-hand values in docs/CLAUSES.md, and the
+README's bullet on it). The `3.1.12` column is the binary built at the commit the `3.1.12` tag names,
+whose manifest reads `3.1.2`, so that binary prints `cfn-guard 3.1.2` (docs/KNOWN_ISSUES.md records the
+same); no release column was re-measured for this table since it was written.
 
 ## What the released trees show
 
@@ -99,6 +106,9 @@ Rules files are named for the clause they hold; `after_star` is `X[*][ ... ]`, `
 | bucket_name_exists_after_star.guard | bucket_without_a_bucket_name.yaml | not run | not run | not run | FAIL |
 | bucket_name_exists_after_the_key.guard | bucket_without_a_bucket_name.yaml | not run | not run | not run | FAIL |
 | tags_absent_not_empty_through_a_variable_bound_to_properties.guard | scalar_properties_without_tags.yaml | not run | not run | not run | FAIL |
+| mode_ref_equals_captured_keys_gate.guard | captured_modes_beside_a_refused_walk.yaml | SKIP | SKIP | SKIP | SKIP |
+| some_names_not_in_captured_keys_gate.guard | captured_modes_beside_a_refused_walk.yaml | SKIP | SKIP | SKIP | SKIP |
+| owner_equals_tag_names_empty.guard | bucket_owner_beside_map_shaped_tags.yaml | internal error, no verdict | internal error, no verdict | internal error, no verdict | PASS |
 | tag_specifications_absent_gate_through_a_variable.guard | launch_template_with_tag_specifications.yaml | not run | not run | not run | SKIP |
 | type_or_name_not_empty_after_star.guard | bucket_with_rules_members.yaml | not run | not run | not run | FAIL |
 | type_is_bucket_not_empty_after_star.guard | bucket_with_rules_members.yaml | not run | not run | not run | FAIL |

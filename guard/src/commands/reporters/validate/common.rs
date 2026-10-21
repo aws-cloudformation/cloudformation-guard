@@ -356,18 +356,21 @@ fn shortened(message: &str) -> String {
 }
 
 /// The longest refusal explanation the console section prints, in characters. A refusal is the
-/// evaluator's own sentence about a read it would not make (`eval_context::refuse`): its definition of `X`, the
-/// remedy and the predicate, bounded by the author's query and predicate, and the parts it takes from the
-/// template (the path, an entry's or a key's name), each cut on its own at
-/// `eval_context::LONGEST_TEMPLATE_PART_IN_A_REFUSAL` characters with a marker, so no template decides its
-/// length and it is printed whole. This bound is only a backstop that keeps the line finite
+/// evaluator's own sentence about a read it would not make (`eval_context::refuse`): its definition of
+/// `X`, the remedy and the predicate, bounded by the author's query and predicate, and the parts it takes
+/// from the template (the path, an entry's or a key's name), each cut on its own at
+/// `eval_context::LONGEST_TEMPLATE_PART_IN_A_REFUSAL` characters with a marker, so no template decides
+/// its length and it is printed whole. This bound is only a backstop that keeps the line finite
 /// whatever a future refusal's sentence holds; the longest refusal text in the fixtures and tests is
 /// under a third of it.
 ///
 /// Which messages are refusals is the evaluator's to say, and it says so on the record
-/// (`Messages::refusal`, copied from `BlockCheck::refusal`, `ValueCheck::refusal` or
-/// `NamedStatus::refusal`, each set from `eval_context::is_refusal` where the error was written into the
-/// message). The text cannot say: every `Error::Unevaluatable` displays the same `Clause could not be
+/// (`Messages::refusal`, copied from `BlockCheck::refusal`, `ValueCheck::refusal`, `NamedStatus::refusal`
+/// or `ComparisonClauseCheck::refusal`, each set where the error was written into the message, from
+/// `eval_context::is_refusal` or from the kind of the marker the record carries: a refusal beside an
+/// absence after the retrieval's own reason, or a refusal beside a value no listed entry accepted under a
+/// positive `IN`, both written as comparison records; `InComparisonCheck::refusal` keeps the two records'
+/// shapes alike and is never written true). The text cannot say: every `Error::Unevaluatable` displays the same `Clause could not be
 /// evaluated against the incoming context` wrapper a refusal does, and the sentences that wrap another
 /// error under it ("the body could not be read over the empty selection, so the read is refused: {e}";
 /// a converter's "failed to convert a string: {val} into an int at {path}") carry a traversed value.
@@ -1599,13 +1602,28 @@ fn emit_messages(
     Ok(())
 }
 
+/// The sentence a retrieval error's finding prints on its `Error =` line: the record's own sentence when
+/// the record is a refusal's (`Messages::refusal`, the sentence bounded by the evaluator), and nothing
+/// otherwise. A missing property's sentence restates the block's `MissingProperty` and `Reason` lines and
+/// is not printed, as released, while a refused read beside the absence is in the sentence alone, and a
+/// finding that dropped it left the refusal to stderr and the structured output.
+fn refusal_sentence(messages: &Messages) -> &str {
+    match messages.refusal {
+        true => messages.error_message.as_deref().unwrap_or(""),
+        false => "",
+    }
+}
+
+/// `messages` is the record's: its custom message is printed as released, and its own sentence is printed
+/// on an `Error =` line before the property block, as a decided comparison's finding prints its sentence
+/// (`BinaryCheck::Resolved` below), for a refusal's record alone (`refusal_sentence`).
 fn emit_retrieval_error(
     writer: &mut dyn Write,
     prefix: &str,
     vur: &ValueUnResolved,
     clause: &ClauseReport<'_>,
     context: &str,
-    message: &str,
+    messages: &Messages,
     err_emitter: &mut dyn ComparisonErrorWriter,
 ) -> crate::rules::Result<()> {
     writeln!(
@@ -1616,7 +1634,8 @@ fn emit_retrieval_error(
     )?;
     let check_end = format!("{}}}", prefix);
     let prefix = format!("{}  ", prefix);
-    emit_messages(writer, &prefix, message, "", 0)?;
+    let message = messages.custom_message.as_deref().unwrap_or("");
+    emit_messages(writer, &prefix, message, refusal_sentence(messages), 0)?;
 
     // An unresolved result with nothing left of its query is a value that was found and that a
     // function had no answer for (`resolve_function`), not a property that is missing, so it is printed
@@ -1831,10 +1850,7 @@ pub(super) fn pprint_clauses<'report, 'value: 'report>(
                             vur,
                             clause,
                             &ur.context,
-                            ur.messages
-                                .custom_message
-                                .as_ref()
-                                .map_or("", String::as_str),
+                            &ur.messages,
                             err_writer,
                         )?;
                     }
@@ -1888,10 +1904,7 @@ pub(super) fn pprint_clauses<'report, 'value: 'report>(
                             vur,
                             clause,
                             &br.context,
-                            br.messages
-                                .custom_message
-                                .as_ref()
-                                .map_or("", String::as_str),
+                            &br.messages,
                             err_writer,
                         )?;
                     }

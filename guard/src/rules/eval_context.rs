@@ -254,18 +254,202 @@ struct SiteWarning {
     first: String,
     maps: BTreeSet<String>,
     line: String,
+    /// For `WarningKind::UnraisedRefusal` alone: how many evaluations of the clause each verdict decided
+    /// without raising the refusals `maps` holds (their texts, `first` the clause as written). All zero
+    /// for the other kinds, which count maps or cases.
+    counts: UnraisedCounts,
+    /// For `WarningKind::UnraisedRefusal` alone: the distinct refusal texts in the order they were MET,
+    /// each named by the line in that order; `maps` holds the same texts as a set, for the
+    /// de-duplication and the count. Read off the set, the order was alphabetical, not the order met.
+    /// Empty for the other kinds.
+    met: Vec<String>,
+    /// For `WarningKind::UnraisedRefusal` alone: the clause's position (`location_for_notice`) and the
+    /// input it was found in (" in data file <name>" under `validate`, " in <case label>" under `test`,
+    /// nothing for a scope built with neither), which end the line as the other positioned warnings end.
+    position: String,
+    where_found: String,
+}
+
+/// How many evaluations of one clause site each verdict decided without raising the refused reads beside
+/// them, one count per `UnraisedVerdict` (`passed` by a value that holds, `absent` decided by a value the
+/// document lacks, `mismatched` decided by a value that does not match, `collided` decided by a value that
+/// matches a denied value, `kinds` decided by a value of another kind, a pair the comparator refused on
+/// kinds). A site's own counts are per scope; the `test` fold sums the cases of one spec file with `+`, so
+/// the multi-case line is rendered from the same shape the single-case line is.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct UnraisedCounts {
+    pub(crate) passed: usize,
+    pub(crate) absent: usize,
+    pub(crate) mismatched: usize,
+    pub(crate) collided: usize,
+    pub(crate) kinds: usize,
+}
+
+impl UnraisedCounts {
+    /// Count one more evaluation decided the given way.
+    fn count(&mut self, verdict: crate::rules::UnraisedVerdict) {
+        match verdict {
+            crate::rules::UnraisedVerdict::Passed => self.passed += 1,
+            crate::rules::UnraisedVerdict::DecidedByAbsence => self.absent += 1,
+            crate::rules::UnraisedVerdict::DecidedByMismatch => self.mismatched += 1,
+            crate::rules::UnraisedVerdict::DecidedByCollision => self.collided += 1,
+            crate::rules::UnraisedVerdict::DecidedByKinds => self.kinds += 1,
+        }
+    }
+}
+
+impl std::ops::Add for UnraisedCounts {
+    type Output = UnraisedCounts;
+
+    fn add(self, other: UnraisedCounts) -> UnraisedCounts {
+        UnraisedCounts {
+            passed: self.passed + other.passed,
+            absent: self.absent + other.absent,
+            mismatched: self.mismatched + other.mismatched,
+            collided: self.collided + other.collided,
+            kinds: self.kinds + other.kinds,
+        }
+    }
+}
+
+/// The `Warning:` line one clause site writes for the REFUSED reads its verdict did not raise
+/// (`WarningKind::UnraisedRefusal`), rendered from what the site has met so far: the clause as written
+/// (`context`, control characters escaped by the caller), how many evaluations passed by a value that
+/// holds, how many a value the document lacks decided, how many a value that does not match decided, how
+/// many a value that matches a denied entry decided and how many a value of another kind decided (a pair
+/// the comparator refused on kinds; one verdict clause when only one way was met,
+/// each met way with its count when several were, in a fixed order, so the wording does not depend on the
+/// order the evaluations came in), the distinct refusal texts in the order they were met (each named, in
+/// that order, escaped here), whose template parts were cut where each was raised, never a template
+/// value, and the clause's position and the input it was found in, which end the line as the other
+/// positioned warnings end. Also the head of the line `cfn-guard test` prints for one site across the
+/// cases of one spec file (`Notices::absorb_warnings`), rendered from the cases' summed counts and the
+/// texts every case met, with the case count in place of the one case's name.
+pub(crate) fn unraised_refusal_notice(
+    context: &str,
+    verdicts: UnraisedCounts,
+    refusals: &[String],
+    position: &str,
+    where_found: &str,
+) -> String {
+    let ways = [
+        (verdicts.passed, "passed by a value that holds"),
+        (verdicts.absent, "was decided by a value the document lacks"),
+        (
+            verdicts.mismatched,
+            "was decided by a value that does not match",
+        ),
+        (
+            verdicts.collided,
+            "was decided by a value that matches a denied value",
+        ),
+        // A pair the comparator refused on kinds: a decided no that compared nothing, so neither resolved
+        // wording above is true of it, and `22` against `'ssh'` under `!=` is never said to match a
+        // denied value.
+        (verdicts.kinds, "was decided by a value of another kind"),
+    ];
+    let met: Vec<&(usize, &str)> = ways.iter().filter(|(count, _)| *count > 0).collect();
+    let verdict = match met.as_slice() {
+        // Every caller counts a verdict before it renders (`SiteWarning::also_unraised` after
+        // `UnraisedCounts::count`; the `test` fold after summing cases that each counted one), so a line
+        // with no verdict met is never asked for: a debug build says so, and a release build falls back
+        // to the absence wording rather than stopping a run over a warning line.
+        [] => {
+            debug_assert!(
+                false,
+                "the refused-read line is rendered only after a verdict was counted"
+            );
+            String::from("was decided by a value the document lacks")
+        }
+        [(_, phrase)] => phrase.to_string(),
+        several => several
+            .iter()
+            .map(|(count, phrase)| {
+                format!(
+                    "{phrase} on {count} evaluation{}",
+                    if *count == 1 { "" } else { "s" }
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(" and "),
+    };
+    // The one place a refusal's text is written into the line, so each is escaped here and once: the
+    // texts quote template keys and paths, which the builders bound (`template_part`) but do not escape,
+    // and a key holding a line feed or an ESC would otherwise split the line or open a terminal sequence
+    // (`writer::warning` holds a debug build to that and escapes a release's body as a last resort; the
+    // point of writing is where the rule says it is done). Several texts are numbered, so a reader can
+    // tell where one sentence ends and the next begins whatever punctuation each carries.
+    let one_unraised = || {
+        String::from(
+            "the refused read among its other values was not raised by it; the refusal is reported \
+             here instead",
+        )
+    };
+    let (unraised, texts) = match refusals {
+        // Every caller names at least one text (`record_unraised_refusal` is called with the refused
+        // reads it collected, never with none; the `test` fold starts from a case that met one), as the
+        // verdict arm above says of its count: a debug build says so, and a release build writes the
+        // line with no text rather than stopping a run over a warning line.
+        [] => {
+            debug_assert!(
+                false,
+                "the refused-read line is rendered only for a refusal text that was met"
+            );
+            (one_unraised(), String::new())
+        }
+        [first] => (
+            one_unraised(),
+            crate::utils::writer::escaped_controls_for_display(first),
+        ),
+        several => (
+            format!(
+                "the {} refused reads among its other values were not raised by it; they are reported \
+                 here instead",
+                several.len()
+            ),
+            several
+                .iter()
+                .enumerate()
+                .map(|(index, text)| {
+                    format!(
+                        "({}) {}",
+                        index + 1,
+                        crate::utils::writer::escaped_controls_for_display(text)
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(" "),
+        ),
+    };
+    // The texts end as their builders end them (an own-key refusal with a period, the twin's pair
+    // sentence without one), so the line closes the last of them with a period where it has none, and
+    // the position sentence that follows begins where a sentence begins whichever kind was met.
+    let separator = if texts.is_empty() || texts.ends_with('.') {
+        ""
+    } else {
+        "."
+    };
+    crate::utils::writer::warning(format_args!(
+        "{context} {verdict}, so {unraised}: {texts}{separator} The clause is at {position}{where_found}."
+    ))
 }
 
 /// What a warning line is about, part of its key and of what the commands read back
 /// (`WarningSite`, `MovedReading`): a function argument in a map key filter read from the map being
 /// filtered where an earlier release read the enclosing scope (`MovedReading`), counted by the maps it
-/// moved on, or a capture declared where nothing can bind it (`UnboundCapture`), one text per clause
-/// and no count within a scope. Two kinds at one position with one spelling (`nm` the argument, `nm`
-/// the capture) are two lines, not one that swallowed the other.
+/// moved on; a capture declared where nothing can bind it (`UnboundCapture`), one text per clause
+/// and no count within a scope; or a REFUSED read among a comparison's values, on either side, that the
+/// clause's verdict did not raise, a value the document lacks having decided it, a value that holds having
+/// settled it, a value that does not match (or, under a negated comparator, one that matches a denied
+/// entry) having decided it, or a value of another kind, which the comparator refused to compare, having
+/// decided it (`UnraisedRefusal`), one line per clause site naming the distinct refusal
+/// texts met there and counting the evaluations that decided it each way. Two kinds at one position with one spelling (`nm` the
+/// argument, `nm` the capture) are two lines, not one that swallowed the other.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(crate) enum WarningKind {
     MovedReading,
     UnboundCapture,
+    UnraisedRefusal,
 }
 
 /// What a root scope evaluates, for the count at the end of a moved-reading line: a data file under
@@ -286,7 +470,53 @@ impl SiteWarning {
             line: text.clone(),
             maps,
             first: text,
+            counts: UnraisedCounts::default(),
+            met: Vec::new(),
+            position: String::new(),
+            where_found: String::new(),
         }
+    }
+
+    /// The site record of an unraised refusal before its first report: the clause as written in `first`,
+    /// its position and the input it was found in, no refusal text, no evaluation counted;
+    /// `also_unraised` fills it and renders the line.
+    fn unraised(context: &str, position: &str, where_found: &str) -> Self {
+        SiteWarning {
+            kind: WarningKind::UnraisedRefusal,
+            first: crate::utils::writer::escaped_controls_for_display(context),
+            maps: BTreeSet::new(),
+            line: String::new(),
+            counts: UnraisedCounts::default(),
+            met: Vec::new(),
+            position: position.to_string(),
+            where_found: where_found.to_string(),
+        }
+    }
+
+    /// Record one more evaluation of the clause that did not raise the refused reads among its values
+    /// (`WarningKind::UnraisedRefusal`): the verdict it reached (`verdict`: passed by a value that holds,
+    /// decided by a value the document lacks, decided by a value that does not match, decided by a value
+    /// that matches a denied entry, decided by a value of another kind) is counted, the refusal TEXTS join
+    /// the set that holds a moved reading's
+    /// maps (the same text again adds no refusal, a different text is a second refused read) and, when
+    /// new, the list that keeps the order they were met (`met`), and the line is re-rendered from the
+    /// counts and the list (`unraised_refusal_notice`), never from an earlier line, so one refusal met
+    /// beside a pass and beside an absence is one refusal whatever the order of the verdicts, and the
+    /// texts are named in the order the site met them.
+    fn also_unraised(&mut self, verdict: crate::rules::UnraisedVerdict, refusals: &[String]) {
+        self.counts.count(verdict);
+        for text in refusals {
+            if self.maps.insert(text.clone()) {
+                self.met.push(text.clone());
+            }
+        }
+        self.line = unraised_refusal_notice(
+            &self.first,
+            self.counts,
+            &self.met,
+            &self.position,
+            &self.where_found,
+        );
     }
 
     /// Record one more map for this argument at this site and re-render the line. `input` says what
@@ -344,23 +574,39 @@ pub(crate) struct WarningSite {
     spec_file: Option<String>,
 }
 
+impl WarningSite {
+    /// The spec file whose cases this key folds, for the line `test` prints across them; `None` for a
+    /// data file's key and for a scope built with neither.
+    pub(crate) fn spec_file(&self) -> Option<&str> {
+        self.spec_file.as_deref()
+    }
+}
+
 /// One scope's warning for one key, as a command reads it: its kind, the first text recorded, the paths
 /// of the maps the scope recorded it for (one constant stand-in for an unbound capture, which names no
-/// value), which case of the spec file the scope evaluated (its position in the file, from 1; 0 for a
-/// scope built for a data file or for neither, which is one scope per key either way), and the line the
-/// scope rendered for itself, its count covering its own maps. A command that folds several scopes of
+/// value; the distinct refusal texts for an unraised refusal), which case of the spec file the scope
+/// evaluated (its position in the file, from 1; 0 for a scope built for a data file or for neither, which
+/// is one scope per key either way), the line the scope rendered for itself, its count covering its own
+/// maps, and, for an unraised refusal alone, what that line was rendered from: the evaluations the scope
+/// counted under each verdict, the refusal texts in the order it met them and the clause's position (zero
+/// counts, no texts and an empty position for the other kinds). A command that folds several scopes of
 /// one spec file into one line (`Notices::absorb_warnings`) counts the maps of every case from the first
 /// text and the paths, keyed by case, since two cases' maps share their paths and are not one map; for a
-/// capture it counts the cases instead, since the capture has no maps. The case is its position and not
-/// its label: a spec file may name two cases alike, and counted by label those two were one case, so the
-/// file's line said "across 2 cases" for three and the second case's own line stood in place of the
-/// first's.
+/// capture it counts the cases instead, since the capture has no maps; for an unraised refusal it sums the
+/// verdict counts over the cases, joins their texts in case order and re-renders the line from those, so
+/// a later case's refusal text or verdict is named and not reduced to a count. The case is its position
+/// and not its label: a spec file may name two cases alike, and counted by label those two were one case,
+/// so the file's line said "across 2 cases" for three and the second case's own line stood in place of
+/// the first's.
 pub(crate) struct MovedReading<'a> {
     pub(crate) kind: WarningKind,
     pub(crate) first: &'a str,
     pub(crate) maps: &'a BTreeSet<String>,
     pub(crate) case: usize,
     pub(crate) line: &'a str,
+    pub(crate) verdicts: UnraisedCounts,
+    pub(crate) met: &'a [String],
+    pub(crate) position: &'a str,
 }
 
 pub(crate) struct RootScope<'value, 'loc: 'value> {
@@ -2666,9 +2912,11 @@ pub(in crate::rules) fn undecidable_pair_text(
                 .join(", ")
         )
     };
+    // Escaped and bounded on an escape boundary (`escaped_template_part`): the bound holds on what is
+    // printed, a key of bidi controls included, and no escape is cut in half.
     format!(
         "the pair of the entry `{}` could not be read as the predicate asks{under} ({kind})",
-        template_part(&crate::utils::writer::escaped_for_display(name))
+        escaped_template_part(name)
     )
 }
 
@@ -3693,12 +3941,28 @@ thread_local! {
 /// stays as released. With no root scope alive the text is not registered: there is no evaluation for it
 /// to belong to, and a set that outlived every scope would answer for the next one.
 pub(crate) fn refuse(text: String) -> Error {
+    register_refusal(&text);
+    Error::Unevaluatable(text)
+}
+
+/// Registers `text` as a refusal of the newest evaluation alive on this thread without raising it, for
+/// the one place the evaluator meets a refusal it may not raise: a refused read among a comparison's
+/// values, on EITHER side (`eval::binary_operation`, before its outcome is read, for every refusal text
+/// the right-hand side holds and every one a left-hand marker carries, WHATEVER the clause's verdict: a
+/// value the document lacks or a value that holds may decide the clause and leave the read unraised, a
+/// failure or a raise on the marker's pair carries it; the run's once-per-site `Warning:` line,
+/// `unraised_refusal_notice` through `record_unraised_refusal`, alone waits on the verdict). A refusal
+/// raised inside a quiet probe
+/// leaves no registration behind it (the probe writes nothing), so the text joins the set here, whatever
+/// the clause's verdict, and a later error carrying it prints whole (`is_refusal`). The set is keyed by
+/// text, so a text `refuse` already registered is registered once. `refuse` goes through here. With no
+/// root scope alive nothing is registered, for the reason `refuse` registers nothing then.
+pub(crate) fn register_refusal(text: &str) {
     REFUSALS.with(|refusals| {
         if let Some((_, set)) = refusals.borrow_mut().last_mut() {
-            set.insert(text.clone());
+            set.insert(text.to_string());
         }
     });
-    Error::Unevaluatable(text)
 }
 
 /// The most characters a part a refusal's text takes from the TEMPLATE keeps when it is cut: the path of
@@ -3786,16 +4050,99 @@ fn whole_unless_the_cut_is_shorter(text: &str, cut: String) -> String {
     }
 }
 
+/// `text`, a part of a refusal taken from the template, ESCAPED for display (`escaped_for_display`: each
+/// character that breaks or hides a line, and the backslash, as its escape) and bounded on an ESCAPE
+/// BOUNDARY: each character's escaped form is appended while the escaped text stays within
+/// `LONGEST_TEMPLATE_PART_IN_A_REFUSAL` characters, and the marker counts the SOURCE characters left out.
+/// The bound is on what is printed, so a key of 256 bidi controls, which escape to eight characters each,
+/// prints 32 of them and the marker (escaped after a cut by source characters, it printed at eight times
+/// the bound), and no escape is cut in half (cut after escaping by printed characters, the bound could
+/// fall inside `\u{202e}`). For the builders whose sentence is printed whole by the reporters and the
+/// refused-read line (`undecidable_pair_text`); a builder that only bounds, for a caller that escapes
+/// where it writes, keeps `template_part`.
+pub(crate) fn escaped_template_part(text: &str) -> String {
+    let total = text.chars().count();
+    let mut out = String::new();
+    let mut printed = 0usize;
+    for (index, c) in text.chars().enumerate() {
+        let piece = crate::utils::writer::escaped_for_display(&c.to_string());
+        let width = piece.chars().count();
+        if printed + width > LONGEST_TEMPLATE_PART_IN_A_REFUSAL {
+            return format!("{out}...[{} more characters cut]", total - index);
+        }
+        printed += width;
+        out.push_str(&piece);
+    }
+    out
+}
+
+/// `value`, a value quoted from the template (the value a query traversed to, or a value a comparison
+/// decided), rendered for the sentence of a record that carries a REFUSAL
+/// (`ComparisonClauseCheck::refusal`): the `Path=<path> Value=<value>` shape its `Display` gives, with
+/// the path and the value each a template part cut at `LONGEST_TEMPLATE_PART_IN_A_REFUSAL` with the
+/// marker (`template_part`). The console prints a refusal's sentence whole under
+/// `LONGEST_REFUSAL_MESSAGE` on the premise that the sentence is the evaluator's own and every part it
+/// takes from the template is bounded on its own; a quoted value is such a part (for a query that failed
+/// at a key of the root it is the whole document; beside an empty left-hand collection it is a whole
+/// right-hand value), so it takes the same bound, and the refusal's key sentence, remedy and path beside
+/// it stay whole while a 3 KB map prints as 256 characters and the count cut. A record that is no
+/// refusal keeps the unbounded `Display`: the console cuts its sentence at `LONGEST_RECORDED_MESSAGE`
+/// as released.
+pub(crate) fn bounded_traversed_to(value: &PathAwareValue) -> String {
+    format!(
+        "Path={} Value={}",
+        template_part(&value.self_path().to_string()),
+        template_part(&crate::rules::display::ValueOnlyDisplay(Rc::new(value.clone())).to_string())
+    )
+}
+
 /// Whether `e` is a refusal an evaluation alive on this thread raised (`refuse`): an `Unevaluatable`
-/// whose whole text is one the producers registered under a live root scope. Read where an error is
-/// written into a record (`BlockCheck::refusal`, `ValueCheck::refusal`, `NamedStatus::refusal`), so the
-/// reporters can print a refusal whole where they cut a sentence that may carry a value.
+/// whose whole text is one the producers registered under a live root scope, or a NUMBERED text,
+/// `(1) <part> (2) <part> ...`, whose every part is one (the text a comparison raised beside several
+/// refused reads, `eval::raised_refusal_text`, which no one registers: registered, it would be a third
+/// entry beside the two refusals met, and the registry's size is what the run's output counts as the
+/// refused reads). Read where an error is written into a record (`BlockCheck::refusal`,
+/// `ValueCheck::refusal`, `NamedStatus::refusal`), so the reporters can print a refusal whole where they
+/// cut a sentence that may carry a value.
 pub(crate) fn is_refusal(e: &Error) -> bool {
     match e {
-        Error::Unevaluatable(text) => {
-            REFUSALS.with(|refusals| refusals.borrow().iter().any(|(_, set)| set.contains(text)))
-        }
+        Error::Unevaluatable(text) => REFUSALS.with(|refusals| {
+            let refusals = refusals.borrow();
+            let registered =
+                |candidate: &str| refusals.iter().any(|(_, set)| set.contains(candidate));
+            registered(text) || numbered_parts_all(text, &registered)
+        }),
         _ => false,
+    }
+}
+
+/// Whether `text` is `(1) <part> (2) <part> ...` with at least one part and `registered` true of every
+/// part: the shape `eval::raised_refusal_text` writes, read back by its own markers in sequence (` (2) `
+/// after `(1) `, ` (3) ` after that), so a marker inside a part splits nothing unless it is the next one
+/// in order, in which case the split parts are not registered and the text is not accepted (never a
+/// false acceptance). An empty part, a text that does not open with `(1) `, or a part the registry does
+/// not hold is not accepted.
+fn numbered_parts_all(text: &str, registered: &dyn Fn(&str) -> bool) -> bool {
+    let Some(mut rest) = text.strip_prefix("(1) ") else {
+        return false;
+    };
+    let mut next = 2usize;
+    loop {
+        let marker = format!(" ({next}) ");
+        let (part, after) = match rest.find(&marker) {
+            Some(at) => (&rest[..at], Some(&rest[at + marker.len()..])),
+            None => (rest, None),
+        };
+        if part.is_empty() || !registered(part) {
+            return false;
+        }
+        match after {
+            Some(after) => {
+                rest = after;
+                next += 1;
+            }
+            None => return true,
+        }
     }
 }
 
@@ -5424,7 +5771,7 @@ pub(in crate::rules) fn keys_of_projection<'value, 'loc: 'value>(
 /// once per binding from the containers the projection enumerated.
 ///
 /// Decided from the container's kind, never from the member's path string. A path is one string with
-/// `/` between its segments, so reading the key off its tail mis-bound every key that holds a `/`
+/// `/` between its segments, so reading the key off its tail wrongly bound every key that holds a `/`
 /// (`kubernetes.io/name` became `name`, an OpenAPI `/pets` became `pets` and `/` nothing) and read a map
 /// keyed by digits as a list. The member is found in its container by path, which is exact for one
 /// document: a map container gives the key under which the member sits; a list container, or no
@@ -5573,24 +5920,11 @@ thread_local! {
         const { std::cell::Cell::new(0) };
 }
 
-// The number of left-hand values the comparison's marker bookkeeping recorded (`eval.rs`,
-// `ResultEvidence::note_value`), for the test that pins that a comparison with no marker among its
-// right-hand values records nothing and one with a marker records one entry per result per value. Per
-// thread, as above. Declared here, beside the other counters, rather than in `eval.rs`: both the
-// comparison module and its tests name it, so it is kept out of either, and each of the two compiles
-// against an older copy of the other with the counter still defined.
-#[cfg(test)]
-thread_local! {
-    pub(in crate::rules) static MARKER_BOOKKEEPING_VISITS: std::cell::Cell<usize> =
-        const { std::cell::Cell::new(0) };
-}
-
 // The number of times a `let` bound to a query was resolved by evaluating its query (the memo missed), in
 // the root scope and in a block scope alike, for the tests that pin that a one-object filter's quiet read
 // of a query-bound name (`scalar_let_bindings`) resolves it once per evaluation and not once per map or
 // per probed entry, and not at all over a map the one-object reading keeps as written. Per thread, as
-// above. Declared beside the other counters, so each of the engine and its tests compiles against an
-// older copy of the other with the counter still defined.
+// above.
 #[cfg(test)]
 thread_local! {
     pub(in crate::rules) static LET_QUERY_RESOLUTIONS: std::cell::Cell<usize> =
@@ -8954,6 +9288,17 @@ impl<'value, 'loc: 'value, 'eval> EvalContext<'value, 'loc> for QuietScope<'valu
         _site: &FileLocation<'_>,
         _capture: &str,
         _notice: String,
+    ) {
+    }
+
+    /// Dropped, as `record_warning` is: the probe's run is an observation about the evaluation, and the
+    /// clause it re-runs reported its own refused reads when it ran for real.
+    fn record_unraised_refusal(
+        &mut self,
+        _site: &FileLocation<'_>,
+        _context: &str,
+        _verdict: crate::rules::UnraisedVerdict,
+        _refusals: &[String],
     ) {
     }
 
@@ -21573,6 +21918,9 @@ impl<'value, 'loc: 'value> RootScope<'value, 'loc> {
                         maps: &warning.maps,
                         case,
                         line: &warning.line,
+                        verdicts: warning.counts,
+                        met: &warning.met,
+                        position: &warning.position,
                     },
                 )
             })
@@ -21919,6 +22267,50 @@ impl<'value, 'loc: 'value> EvalContext<'value, 'loc> for RootScope<'value, 'loc>
                 capture.to_string(),
             ))
             .or_insert_with(|| SiteWarning::first(WarningKind::UnboundCapture, "", notice));
+    }
+
+    /// Nothing is recorded during a measurement, as for `record_warning`. One line per clause site,
+    /// rendered from what the site has met (`SiteWarning::also_unraised`): the distinct refusal texts and
+    /// the evaluations that decided the clause each way, so a repeat of the same refusal adds nothing, a
+    /// second refusal is counted, and the wording does not depend on the order of the evaluations. The set
+    /// that counts a moved reading's maps holds the refusal texts here.
+    fn record_unraised_refusal(
+        &mut self,
+        site: &FileLocation<'_>,
+        context: &str,
+        verdict: crate::rules::UnraisedVerdict,
+        refusals: &[String],
+    ) {
+        crate::rules::eval::count_unraised_refusal_root_call();
+        if self.measurement != Measurement::Off {
+            return;
+        }
+        crate::rules::eval::count_unraised_refusal_record();
+        // The position and the input the line ends with, as the capture warning names them: the data
+        // file under `validate`, the case and its spec file under `test`, nothing for a scope built with
+        // neither (the unit tests). Built on every call (two small strings) and read only when the
+        // site's record is first made (`or_insert_with`); a later call of the same site builds the same
+        // values, since the site and the scope's input do not change, and drops them.
+        let position = crate::utils::writer::location_for_notice(site);
+        let where_found = match (self.data_file_name, self.case.as_ref()) {
+            (Some(name), _) => format!(
+                " in data file {}",
+                crate::utils::writer::escaped_controls_for_display(name)
+            ),
+            (None, Some(case)) => format!(
+                " in {}",
+                crate::utils::writer::escaped_controls_for_display(&case.label)
+            ),
+            (None, None) => String::new(),
+        };
+        self.warnings
+            .entry((
+                WarningKind::UnraisedRefusal,
+                site.to_string(),
+                String::new(),
+            ))
+            .or_insert_with(|| SiteWarning::unraised(context, &position, &where_found))
+            .also_unraised(verdict, refusals);
     }
 
     fn data_file_name(&self) -> Option<&'value str> {
@@ -24090,6 +24482,18 @@ impl<'value, 'loc: 'value, 'eval> EvalContext<'value, 'loc>
         self.parent.record_capture_warning(site, capture, notice)
     }
 
+    fn record_unraised_refusal(
+        &mut self,
+        site: &FileLocation<'_>,
+        context: &str,
+        verdict: crate::rules::UnraisedVerdict,
+        refusals: &[String],
+    ) {
+        crate::rules::eval::count_unraised_refusal_forward();
+        self.parent
+            .record_unraised_refusal(site, context, verdict, refusals)
+    }
+
     fn data_file_name(&self) -> Option<&'value str> {
         self.parent.data_file_name()
     }
@@ -24554,6 +24958,18 @@ impl<'value, 'loc: 'value, 'eval> EvalContext<'value, 'loc> for ValueScope<'valu
         self.parent.record_capture_warning(site, capture, notice)
     }
 
+    fn record_unraised_refusal(
+        &mut self,
+        site: &FileLocation<'_>,
+        context: &str,
+        verdict: crate::rules::UnraisedVerdict,
+        refusals: &[String],
+    ) {
+        crate::rules::eval::count_unraised_refusal_forward();
+        self.parent
+            .record_unraised_refusal(site, context, verdict, refusals)
+    }
+
     fn data_file_name(&self) -> Option<&'value str> {
         self.parent.data_file_name()
     }
@@ -24984,6 +25400,18 @@ impl<'value, 'loc: 'value, 'eval> EvalContext<'value, 'loc> for BlockScope<'valu
 
     fn record_capture_warning(&mut self, site: &FileLocation<'_>, capture: &str, notice: String) {
         self.parent.record_capture_warning(site, capture, notice)
+    }
+
+    fn record_unraised_refusal(
+        &mut self,
+        site: &FileLocation<'_>,
+        context: &str,
+        verdict: crate::rules::UnraisedVerdict,
+        refusals: &[String],
+    ) {
+        crate::rules::eval::count_unraised_refusal_forward();
+        self.parent
+            .record_unraised_refusal(site, context, verdict, refusals)
     }
 
     fn data_file_name(&self) -> Option<&'value str> {
@@ -26061,9 +26489,11 @@ pub(crate) struct Messages {
     #[serde(skip_serializing)]
     pub(crate) location: Option<Location>,
     /// Whether the evaluator's message here embeds a refusal, copied from the record it was built from
-    /// (`BlockCheck::refusal`, `ValueCheck::refusal`, `NamedStatus::refusal`), except where the report's
-    /// sentence prints a value the query traversed to beside the record's message: that sentence carries
-    /// a template value and is no refusal whatever the record says. The console reporter
+    /// (`BlockCheck::refusal`, `ValueCheck::refusal`, `NamedStatus::refusal`,
+    /// `ComparisonClauseCheck::refusal`, `InComparisonCheck::refusal`); the comparison records' sentences
+    /// name the value the query traversed to beside the record's message and keep the record's kind, so
+    /// a refusal decided beside an absent value, or beside a value no listed entry accepted under `IN`,
+    /// prints whole with the value, whose parts a refusal bounds (`template_part`). The console reporter
     /// bounds a refusal's line by `LONGEST_REFUSAL_MESSAGE` and every other message by
     /// `LONGEST_RECORDED_MESSAGE`, and reads the kind here rather than from the text, which cannot say
     /// (a message that wraps another error displays the same wrapper a refusal does). Not part of the
@@ -27083,6 +27513,7 @@ fn report_all_failed_clauses_for_rules<'value>(
                     from,
                     status: Status::FAIL,
                     to,
+                    refusal,
                 }) => {
                     let custom_message = custom_message
                         .as_ref()
@@ -27092,15 +27523,42 @@ fn report_all_failed_clauses_for_rules<'value>(
                         .as_ref()
                         .map_or("".to_string(), |s| format!(" Error = [{}]", s));
 
+                    // The record's own kind travels with the sentence in every arm below
+                    // (`ComparisonClauseCheck::refusal`): the sentence names the value the query
+                    // traversed to beside the record's message, as the sentences of the other clause
+                    // records do, and the console reads the kind to print a refusal's remedy and path
+                    // whole where it cuts the rest. In a refusal's sentence every value quoted from
+                    // the template (the value a query traversed to, the two values a comparison
+                    // decided) is bounded as every template part of a refusal is
+                    // (`bounded_traversed_to`): printed whole, a document the query failed at the root
+                    // of, or a long right-hand value beside an empty left-hand collection, would fill
+                    // the refusal's bound and the sentence would carry the document.
+                    let refusal = *refusal;
+                    let rendered = |value: &PathAwareValue| match refusal {
+                        true => bounded_traversed_to(value),
+                        false => value.to_string(),
+                    };
                     match from {
                         QueryResult::Literal(_) => unreachable!(),
                         QueryResult::UnResolved(to_unres) => {
-                            let message = format!(
+                            // A left-hand side the evaluator REFUSED to read, whose record carries the
+                            // refusal's text, is named as the refusal (the error the record carries,
+                            // printed whole by the console), not as a missing property spelled with
+                            // the marker's remaining query, as the right-hand arm below names its
+                            // refusal. An absent left-hand value keeps the missing-property sentence.
+                            let message = if to_unres.kind.is_refusal() && message.is_some() {
+                                format!(
+                                    "Check was not compliant as the value to compare from could not be read.{err}",
+                                    err=error_message
+                                )
+                            } else {
+                                format!(
                                     "Check was not compliant as property [{remain}] to compare from is missing. Value traversed to [{to}].{err}",
                                     remain=to_unres.remaining_query,
-                                    to=to_unres.traversed_to,
+                                    to=rendered(&to_unres.traversed_to),
                                     err=error_message
-                                );
+                                )
+                            };
                             clauses.push(ClauseReport::Clause(GuardClauseReport::Binary(
                                 BinaryReport {
                                     context: current.context.to_string(),
@@ -27108,7 +27566,7 @@ fn report_all_failed_clauses_for_rules<'value>(
                                         custom_message: Some(custom_message),
                                         error_message: Some(message),
                                         location: Some(to_unres.traversed_to.self_path().1),
-                                        refusal: false,
+                                        refusal,
                                     },
                                     check: BinaryCheck::UnResolved(ValueUnResolved {
                                         comparison: (*cmp, *not),
@@ -27125,8 +27583,8 @@ fn report_all_failed_clauses_for_rules<'value>(
                                     QueryResult::Resolved(to_res) => {
                                         let message = format!(
                                                 "Check was not compliant as property value [{from}] {op_msg} value [{to}].{err}",
-                                                from=res,
-                                                to=to_res,
+                                                from=rendered(res),
+                                                to=rendered(to_res),
                                                 op_msg=match cmp {
                                                     CmpOperator::Eq => if *not { "equal to" } else { "not equal to" },
                                                     CmpOperator::Le => if *not { "less than equal to" } else { "not less than equal to" },
@@ -27150,19 +27608,32 @@ fn report_all_failed_clauses_for_rules<'value>(
                                                     location: Some(to_res.clone().self_path().1),
                                                     error_message: Some(message),
                                                     custom_message: Some(custom_message),
-                                                    refusal: false,
+                                                    refusal,
                                                 },
                                             }),
                                         ))
                                     }
 
                                     QueryResult::UnResolved(to_unres) => {
-                                        let message = format!(
+                                        // A right-hand side the evaluator REFUSED to read is not a
+                                        // property the template lacks: its sentence names the refusal
+                                        // (the error the record carries, printed whole by the console),
+                                        // not a missing property spelled with the marker's remaining
+                                        // query. An absent right-hand value keeps the missing-property
+                                        // sentence.
+                                        let message = if refusal {
+                                            format!(
+                                                "Check was not compliant as the value to compare to could not be read.{err}",
+                                                err=error_message
+                                            )
+                                        } else {
+                                            format!(
                                                 "Check was not compliant as property [{remain}] to compare to is missing. Value traversed to [{to}].{err}",
                                                 remain=to_unres.remaining_query,
-                                                to=to_unres.traversed_to,
+                                                to=rendered(&to_unres.traversed_to),
                                                 err=error_message
-                                            );
+                                            )
+                                        };
                                         clauses.push(ClauseReport::Clause(
                                             GuardClauseReport::Binary(BinaryReport {
                                                 context: current.context.to_string(),
@@ -27172,7 +27643,7 @@ fn report_all_failed_clauses_for_rules<'value>(
                                                     location: Some(
                                                         to_unres.traversed_to.self_path().1,
                                                     ),
-                                                    refusal: false,
+                                                    refusal,
                                                 },
                                                 check: BinaryCheck::UnResolved(ValueUnResolved {
                                                     comparison: (*cmp, *not),
@@ -27247,7 +27718,9 @@ fn report_all_failed_clauses_for_rules<'value>(
                                 custom_message: custom_message.clone(),
                                 error_message: Some(error_message),
                                 location: Some(from.resolved().unwrap().self_path().1),
-                                refusal: false,
+                                // The record's own kind (`InComparisonCheck::refusal`), as the
+                                // `Comparison` arm copies its record's.
+                                refusal: check.refusal,
                             },
                             check: BinaryCheck::InResolved(InComparison {
                                 from: match from.resolved() {

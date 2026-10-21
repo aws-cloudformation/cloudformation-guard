@@ -59,20 +59,28 @@ pub(crate) struct QueryIn {
     pub(crate) lhs: Vec<Rc<PathAwareValue>>,
     pub(crate) rhs: Vec<Rc<PathAwareValue>>,
     pub(crate) diff_from: DiffFrom,
-    /// The resolved right-hand values no left-hand value equals, for `==` between two queries (the one
-    /// arm that compares both ways); empty for every other shape, whose right-hand extras are not a
-    /// question the operator asks.
+    /// The resolved right-hand values no left-hand value equals, when the arm that built this result
+    /// computed them: `Some` from the equality operator's two-query arm (the one arm that compares both
+    /// ways; carried through the negation wrapper), `Some(empty)` meaning every resolved right-hand value
+    /// found an equal; `None` from every other constructor, meaning NEVER COMPUTED, because right-hand
+    /// extras are not a question those shapes ask.
     ///
     /// Read beside an undecidable marker among the right-hand values, where the two mismatches are not
     /// alike: a right-hand value with no equal on the left makes the sets unequal whatever the marker
     /// hides, so `==` is decided no; a left-hand value with no RESOLVED equal may be the value the marker
-    /// hides, so with this set empty the comparison is not decided by its resolved values.
-    pub(crate) rhs_unmatched: Vec<Rc<PathAwareValue>>,
+    /// hides, so with this set computed and empty the comparison is not decided by its resolved values.
+    /// The two `Option` answers are different answers to `eval.rs`'s question beside such a marker under
+    /// `==` ("may the resolved values still leave the two sets equal?"): a computed empty set says yes and
+    /// leaves the clause to the marker, an uncomputed one says nothing and leaves the decided `Fail` as it
+    /// stands; one collection for both would read "never computed" as "every value matched", and any
+    /// further `==` path building a `QueryIn` would turn a decided no into a fail-closed gate.
+    pub(crate) rhs_unmatched: Option<Vec<Rc<PathAwareValue>>>,
 }
 
 impl QueryIn {
-    /// The same result with `rhs_unmatched` recorded, for the arm that computed it.
-    fn with_rhs_unmatched(mut self, rhs_unmatched: Vec<Rc<PathAwareValue>>) -> QueryIn {
+    /// The same result with `rhs_unmatched` as given: `Some` for the arm that computed it, or the value
+    /// another result carried, which the negation wrapper passes through unchanged.
+    fn with_rhs_unmatched(mut self, rhs_unmatched: Option<Vec<Rc<PathAwareValue>>>) -> QueryIn {
         self.rhs_unmatched = rhs_unmatched;
         self
     }
@@ -93,7 +101,7 @@ impl QueryIn {
             lhs_unmatched: diff.clone(),
             diff,
             diff_from: DiffFrom::Lhs,
-            rhs_unmatched: Vec::new(),
+            rhs_unmatched: None,
         }
     }
 
@@ -123,7 +131,7 @@ impl QueryIn {
             lhs_unmatched: reverse_diff(collides, &diff),
             diff,
             diff_from: DiffFrom::Lhs,
-            rhs_unmatched: Vec::new(),
+            rhs_unmatched: None,
         }
     }
 
@@ -148,7 +156,7 @@ impl QueryIn {
             accepted: reverse_diff(lhs_unmatched.clone(), &lhs),
             lhs,
             rhs,
-            rhs_unmatched: diff.clone(),
+            rhs_unmatched: Some(diff.clone()),
             diff,
             lhs_unmatched,
             diff_from: DiffFrom::Rhs,
@@ -197,7 +205,7 @@ impl QueryIn {
             diff,
             lhs_unmatched,
             diff_from: DiffFrom::Lhs,
-            rhs_unmatched: Vec::new(),
+            rhs_unmatched: None,
         }
     }
 }
@@ -256,6 +264,15 @@ pub(crate) enum Compare {
     ValueIn(LhsRhsPair),
 }
 
+/// One pair's answer. IDENTITY CONTRACT, which `eval::accepted_left_values` and `eval::marker_pair_under_in`
+/// rely on: a `Success` and a `RhsUnresolved` name the LEFT-hand value by the comparison's own `Rc` (a
+/// `Rc::clone` of the value in the left operand, as `membership_in_entries` and the `QueryIn` constructors
+/// pass it), never a fresh box holding the same value. Those readers key the values a resolved entry
+/// accepted under a positive `IN` by `Rc::as_ptr`, and the marker's pair for such a value is dropped by
+/// that key alone; a `Success` that reboxed its left value would read as a value no entry accepted, so the
+/// marker's pair for it would keep a FAIL status beside the pass and the clause would fail closed on a
+/// value a listed entry matched. An arm that expands a list into its elements carries each element's own
+/// `Rc`, and an arm that answers for the whole left value carries the operand's.
 #[derive(Clone, Debug)]
 pub(crate) enum ComparisonResult {
     Success(Compare),
@@ -3397,7 +3414,7 @@ impl Comparator for EqOperation {
                     QueryIn::from_rhs(rhs_unmatched, lhs_unmatched, lhs_compared, rhs_selected)
                 } else {
                     QueryIn::new(lhs_unmatched, lhs_compared, rhs_selected)
-                        .with_rhs_unmatched(rhs_unmatched)
+                        .with_rhs_unmatched(Some(rhs_unmatched))
                 };
 
                 // The refusals first, one per value the operator could not answer, and then the diff

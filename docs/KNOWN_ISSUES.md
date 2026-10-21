@@ -232,7 +232,7 @@ let api_gws = Resources.*[ Type == 'AWS::ApiGateway::RestApi' ]
    Before 3.2 Guard tested the map itself, so a predicate written against the map's own keys selected the map; since 3.2 it selects among the map's entries instead -- nothing, when none of them satisfies it or can be tested -- so a gate or an assertion over that selection moves with its operator and with what the query reads after the filter.
    On the selection itself, `empty` passes and `!empty` fails, while `exists`, `!exists` and a comparison are not applicable (`SKIP`); a key read BELOW a selection of nothing (`%m[ ... ].Key`, any depth) is not applicable under every operator, `empty` and `!empty` included, whether the map lacks the key, holds it with an empty value such as `Tags: []`, or holds it below further held keys.
    The verdicts that moved, by operator and by where the clause reads: the old verdict is the one the bound map's own answer gave, read against whether the path resolved on the map; the new one is the selection's.
-   Measured on binaries built from the 3.1.12, 3.2.0 and 3.2.1 release commits and on this engine, except where a row says otherwise.
+   Measured on binaries built from the 3.1.12, 3.2.0 and 3.2.1 release commits (the commit the `3.1.12` tag names carries the manifest version `3.1.2` and its binary prints `cfn-guard 3.1.2`) and on this engine, except where a row says otherwise.
 
    | the clause | before 3.2 (the bound map tested as one value) | since 3.2 (the selection among the entries) | direction | measured on |
    |---|---|---|---|---|
