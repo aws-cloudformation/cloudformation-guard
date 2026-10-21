@@ -157,4 +157,56 @@ mod functional_tests {
             .unwrap();
         assert_eq!(expected, result);
     }
+
+    /// The non-verbose `run_checks` output carries the reason a comparison had no answer.
+    ///
+    /// This is the surface `guard-ffi/src/lib.rs` and `guard-lambda/src/main.rs` both call, and both
+    /// default `verbose` to false. Neither has a stderr channel, so the string this returns is the
+    /// operator's only record of what happened.
+    ///
+    /// `test_run_check` above also calls `run_checks`, but with `verbose = true`, which returns the
+    /// event-record tree early and never reaches `GenericSummary::report_eval`. So the non-verbose
+    /// formatter had no coverage at all, which is why a missing explanation in it went unnoticed:
+    /// nothing here would have failed.
+    ///
+    /// Four comparators over one eighteen-character map key, which is one byte past where
+    /// `(?!x)((a+)+)b` exhausts `fancy-regex`'s backtracking budget. The pattern compiles -- the engine
+    /// backtracks and accepts the lookahead -- and `is_match` is what gives up. All four are FAIL and
+    /// all four return the same status either way, so the assertion is on the text.
+    #[test]
+    fn non_verbose_run_checks_reports_an_undecided_map_key_comparison() {
+        use cfn_guard::*;
+
+        const REASON: &str = "could not be evaluated";
+        let data = r#"{ "Cfg": { "aaaaaaaaaaaaaaaaaa": 1, "other": 2 } }"#;
+
+        for (operator, rhs) in [
+            ("==", "/(?!x)((a+)+)b/"),
+            ("!=", "/(?!x)((a+)+)b/"),
+            ("in", "[/(?!x)((a+)+)b/]"),
+            ("not in", "[/(?!x)((a+)+)b/]"),
+        ] {
+            let rule = format!("rule r {{ Cfg[ keys {operator} {rhs} ] !empty }}");
+            let serialized = run_checks(
+                ValidateInput {
+                    content: data,
+                    file_name: "functional_test.json",
+                },
+                ValidateInput {
+                    content: &rule,
+                    file_name: "functional_test.rule",
+                },
+                false,
+            )
+            .unwrap();
+
+            assert!(
+                serialized.contains(REASON),
+                "`keys {}` must say the comparison had no answer on the non-verbose surface that the \
+                 FFI and Lambda entry points use, where the report is the only record; got:\n{}",
+                operator,
+                serialized
+            );
+        }
+    }
 }

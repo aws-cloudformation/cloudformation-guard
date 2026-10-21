@@ -1,0 +1,4 @@
+#
+# A rules file that declares no rules, so the spec beside it is read by the path that reports
+# expectations against no rules.
+#

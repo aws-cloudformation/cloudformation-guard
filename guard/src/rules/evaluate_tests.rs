@@ -2343,3 +2343,126 @@ fn test_in_comparison_operator_for_list_of_lists() -> Result<()> {
 
     Ok(())
 }
+
+/// Slot 1 of a `%var`-rooted query is `AllIndices(None)`, and `resolve_variable_query` steps over it.
+///
+/// `access_query` reserves that slot -- the long comment on its variable branch in `parser.rs` says
+/// why -- so the first part the author actually wrote lands at slot 2 or later, unless it is a bare
+/// `[*]`, which that branch lets occupy the slot because it is the same no-op. Two sites spend the
+/// reservation the blunt way, skipping whatever sits at slot 1 on its shape alone: this function and
+/// `PathAwareValue::select`'s `Filter` arm. `eval_context`'s root-variable arm was counted a third and
+/// does not skip -- it decides, asking `query_projects` and `expansion_at`.
+/// `a_filter_skips_an_all_indices_that_follows_it` in `path_value_tests.rs` is the census of the two
+/// blunt sites and of why only this one is safe, so this docstring does not repeat it. This test and
+/// that one are the only pins on the two blunt sites: with this one removed, changing
+/// `QueryPart::AllIndices(_) => 2` to `=> 1` leaves every other test in the workspace green, so the
+/// invariant is load-bearing and otherwise unpinned.
+///
+/// Why the mutation was invisible is the part worth writing down, because it is also what makes a
+/// carelessly chosen witness unable to fail. `AllIndices` is a pass-through no-op on anything that is
+/// not a `List`: `path_value.rs`'s `AllIndices` arm sends a `Map` or a scalar straight on with
+/// `rest.select(all, &query[1..], resolver)`. Applying the reserved slot and skipping it therefore
+/// give the same answer for every non-list value, and every test that reached this line had a `Map` or
+/// a scalar bound. A `List`-valued binding is the only shape where the two differ, which is why this
+/// test binds `%l` to one.
+///
+/// `%l[0]` parses to `[Variable("l"), AllIndices(None), Index(0)]`. Skipping slot 1 asks the list for its
+/// element 0 and gets `10`. Applying slot 1 first flattens the list into its three scalars and then
+/// asks each scalar for an index it does not have, so the mutated form raises
+/// `IncompatibleRetrievalError` rather than answering differently. Either way the assertion below
+/// fails, which is the two-sidedness this test needs.
+#[test]
+fn a_variable_rooted_query_skips_its_reserved_slot_one() -> Result<()> {
+    let value = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(
+        r###"
+    Cfg:
+      Items:
+        - 10
+        - 20
+        - 30
+    "###,
+    )?)?;
+
+    //
+    // What `RootScope::resolve_variable` hands back for `let l = Cfg.Items`: it selects the list and
+    // does not enumerate it, so the binding is one value and that value is the list.
+    //
+    let dummy = DummyEval {};
+    let bound = value.select(true, &AccessQuery::try_from("Cfg.Items")?.query, &dummy)?;
+    assert_eq!(bound.len(), 1, "the binding is the list, not its elements");
+    assert!(
+        matches!(bound[0], PathAwareValue::List(_)),
+        "a list-valued binding is the only shape that can tell skipping slot 1 from applying it, got {:?}",
+        bound[0]
+    );
+
+    struct Bound<'a> {
+        values: Vec<&'a PathAwareValue>,
+    }
+
+    impl<'a> EvaluationContext for Bound<'a> {
+        fn resolve_variable(&self, _variable: &str) -> Result<Vec<&PathAwareValue>> {
+            Ok(self.values.clone())
+        }
+
+        fn rule_status(&self, _rule_name: &str) -> Result<Status> {
+            unimplemented!()
+        }
+
+        fn end_evaluation(
+            &self,
+            _eval_type: EvaluationType,
+            _context: &str,
+            _msg: String,
+            _from: Option<PathAwareValue>,
+            _to: Option<PathAwareValue>,
+            _status: Option<Status>,
+            _cmp: Option<(CmpOperator, bool)>,
+        ) {
+        }
+
+        fn start_evaluation(&self, _eval_type: EvaluationType, _context: &str) {}
+    }
+
+    let resolver = Bound { values: bound };
+
+    let query = AccessQuery::try_from("%l[0]")?;
+    assert_eq!(
+        query.query.len(),
+        3,
+        "the parser must have reserved slot 1, got {:?}",
+        query.query
+    );
+    assert!(
+        matches!(query.query[1], QueryPart::AllIndices(None)),
+        "slot 1 must be the reserved no-op, got {:?}",
+        query.query[1]
+    );
+    assert!(
+        matches!(query.query[2], QueryPart::Index(0)),
+        "the part the author wrote must have landed at slot 2, got {:?}",
+        query.query[2]
+    );
+
+    let selected = resolve_variable_query(query.match_all, "l", &query.query, &resolver)?;
+
+    assert_eq!(
+        selected.len(),
+        1,
+        "%l[0] is element 0 of the binding, so exactly one value, got {:?}",
+        selected
+    );
+    match selected[0] {
+        PathAwareValue::Int((path, number)) => {
+            assert_eq!(*number, 10, "element 0 of [10, 20, 30]");
+            assert_eq!(path.0, "/Cfg/Items/0");
+        }
+        other => panic!(
+            "expected the list's element 0; applying slot 1 instead of skipping it would flatten the \
+             list, got {:?}",
+            other
+        ),
+    }
+
+    Ok(())
+}

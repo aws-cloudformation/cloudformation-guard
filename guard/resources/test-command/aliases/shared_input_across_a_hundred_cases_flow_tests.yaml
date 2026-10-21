@@ -1,0 +1,121 @@
+# shared_input_across_a_hundred_cases_tests.yaml in flow style with short case names: the same
+# hundred cases, the same shared input of 9,908 nodes and 990,689 copies through aliases, in about
+# two thirds of the bytes. The ceiling over the whole document is set by the file's events other than
+# aliases, not by its bytes, so this file is held to the same ceiling as its block-style twin and
+# every case loads. A ceiling of 100 nodes for each byte would stand at the 1,000,000 floor for a
+# file this size and refuse the hundredth case of this file, while accepting the other, which is the
+# same document.
+- {name: c1 declares the shared input,
+   input: &shared {A: 1,
+     Pad: &row [x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x,
+                x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x,
+                x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x,
+                x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x, x],
+     More: [*row, *row, *row, *row, *row, *row, *row, *row, *row, *row, *row, *row, *row, *row,
+            *row, *row, *row, *row, *row, *row, *row, *row, *row, *row, *row, *row, *row, *row,
+            *row, *row, *row, *row, *row, *row, *row, *row, *row, *row, *row, *row, *row, *row,
+            *row, *row, *row, *row, *row, *row, *row, *row, *row, *row, *row, *row, *row, *row,
+            *row, *row, *row, *row, *row, *row, *row, *row, *row, *row, *row, *row, *row, *row,
+            *row, *row, *row, *row, *row, *row, *row, *row, *row, *row, *row, *row, *row, *row,
+            *row, *row, *row, *row, *row, *row, *row, *row, *row, *row, *row, *row, *row],
+     Last: [z, z, z, z, z, z]},
+   expectations: {rules: {a_is_one: PASS}}}
+- {name: c2, input: *shared, expectations: {rules: {a_is_one: PASS}}}
+- {name: c3, input: *shared, expectations: {rules: {a_is_one: PASS}}}
+- {name: c4, input: *shared, expectations: {rules: {a_is_one: PASS}}}
+- {name: c5, input: *shared, expectations: {rules: {a_is_one: PASS}}}
+- {name: c6, input: *shared, expectations: {rules: {a_is_one: PASS}}}
+- {name: c7, input: *shared, expectations: {rules: {a_is_one: PASS}}}
+- {name: c8, input: *shared, expectations: {rules: {a_is_one: PASS}}}
+- {name: c9, input: *shared, expectations: {rules: {a_is_one: PASS}}}
+- {name: c10, input: *shared, expectations: {rules: {a_is_one: PASS}}}
+- {name: c11, input: *shared, expectations: {rules: {a_is_one: PASS}}}
+- {name: c12, input: *shared, expectations: {rules: {a_is_one: PASS}}}
+- {name: c13, input: *shared, expectations: {rules: {a_is_one: PASS}}}
+- {name: c14, input: *shared, expectations: {rules: {a_is_one: PASS}}}
+- {name: c15, input: *shared, expectations: {rules: {a_is_one: PASS}}}
+- {name: c16, input: *shared, expectations: {rules: {a_is_one: PASS}}}
+- {name: c17, input: *shared, expectations: {rules: {a_is_one: PASS}}}
+- {name: c18, input: *shared, expectations: {rules: {a_is_one: PASS}}}
+- {name: c19, input: *shared, expectations: {rules: {a_is_one: PASS}}}
+- {name: c20, input: *shared, expectations: {rules: {a_is_one: PASS}}}
+- {name: c21, input: *shared, expectations: {rules: {a_is_one: PASS}}}
+- {name: c22, input: *shared, expectations: {rules: {a_is_one: PASS}}}
+- {name: c23, input: *shared, expectations: {rules: {a_is_one: PASS}}}
+- {name: c24, input: *shared, expectations: {rules: {a_is_one: PASS}}}
+- {name: c25, input: *shared, expectations: {rules: {a_is_one: PASS}}}
+- {name: c26, input: *shared, expectations: {rules: {a_is_one: PASS}}}
+- {name: c27, input: *shared, expectations: {rules: {a_is_one: PASS}}}
+- {name: c28, input: *shared, expectations: {rules: {a_is_one: PASS}}}
+- {name: c29, input: *shared, expectations: {rules: {a_is_one: PASS}}}
+- {name: c30, input: *shared, expectations: {rules: {a_is_one: PASS}}}
+- {name: c31, input: *shared, expectations: {rules: {a_is_one: PASS}}}
+- {name: c32, input: *shared, expectations: {rules: {a_is_one: PASS}}}
+- {name: c33, input: *shared, expectations: {rules: {a_is_one: PASS}}}
+- {name: c34, input: *shared, expectations: {rules: {a_is_one: PASS}}}
+- {name: c35, input: *shared, expectations: {rules: {a_is_one: PASS}}}
+- {name: c36, input: *shared, expectations: {rules: {a_is_one: PASS}}}
+- {name: c37, input: *shared, expectations: {rules: {a_is_one: PASS}}}
+- {name: c38, input: *shared, expectations: {rules: {a_is_one: PASS}}}
+- {name: c39, input: *shared, expectations: {rules: {a_is_one: PASS}}}
+- {name: c40, input: *shared, expectations: {rules: {a_is_one: PASS}}}
+- {name: c41, input: *shared, expectations: {rules: {a_is_one: PASS}}}
+- {name: c42, input: *shared, expectations: {rules: {a_is_one: PASS}}}
+- {name: c43, input: *shared, expectations: {rules: {a_is_one: PASS}}}
+- {name: c44, input: *shared, expectations: {rules: {a_is_one: PASS}}}
+- {name: c45, input: *shared, expectations: {rules: {a_is_one: PASS}}}
+- {name: c46, input: *shared, expectations: {rules: {a_is_one: PASS}}}
+- {name: c47, input: *shared, expectations: {rules: {a_is_one: PASS}}}
+- {name: c48, input: *shared, expectations: {rules: {a_is_one: PASS}}}
+- {name: c49, input: *shared, expectations: {rules: {a_is_one: PASS}}}
+- {name: c50, input: *shared, expectations: {rules: {a_is_one: PASS}}}
+- {name: c51, input: *shared, expectations: {rules: {a_is_one: PASS}}}
+- {name: c52, input: *shared, expectations: {rules: {a_is_one: PASS}}}
+- {name: c53, input: *shared, expectations: {rules: {a_is_one: PASS}}}
+- {name: c54, input: *shared, expectations: {rules: {a_is_one: PASS}}}
+- {name: c55, input: *shared, expectations: {rules: {a_is_one: PASS}}}
+- {name: c56, input: *shared, expectations: {rules: {a_is_one: PASS}}}
+- {name: c57, input: *shared, expectations: {rules: {a_is_one: PASS}}}
+- {name: c58, input: *shared, expectations: {rules: {a_is_one: PASS}}}
+- {name: c59, input: *shared, expectations: {rules: {a_is_one: PASS}}}
+- {name: c60, input: *shared, expectations: {rules: {a_is_one: PASS}}}
+- {name: c61, input: *shared, expectations: {rules: {a_is_one: PASS}}}
+- {name: c62, input: *shared, expectations: {rules: {a_is_one: PASS}}}
+- {name: c63, input: *shared, expectations: {rules: {a_is_one: PASS}}}
+- {name: c64, input: *shared, expectations: {rules: {a_is_one: PASS}}}
+- {name: c65, input: *shared, expectations: {rules: {a_is_one: PASS}}}
+- {name: c66, input: *shared, expectations: {rules: {a_is_one: PASS}}}
+- {name: c67, input: *shared, expectations: {rules: {a_is_one: PASS}}}
+- {name: c68, input: *shared, expectations: {rules: {a_is_one: PASS}}}
+- {name: c69, input: *shared, expectations: {rules: {a_is_one: PASS}}}
+- {name: c70, input: *shared, expectations: {rules: {a_is_one: PASS}}}
+- {name: c71, input: *shared, expectations: {rules: {a_is_one: PASS}}}
+- {name: c72, input: *shared, expectations: {rules: {a_is_one: PASS}}}
+- {name: c73, input: *shared, expectations: {rules: {a_is_one: PASS}}}
+- {name: c74, input: *shared, expectations: {rules: {a_is_one: PASS}}}
+- {name: c75, input: *shared, expectations: {rules: {a_is_one: PASS}}}
+- {name: c76, input: *shared, expectations: {rules: {a_is_one: PASS}}}
+- {name: c77, input: *shared, expectations: {rules: {a_is_one: PASS}}}
+- {name: c78, input: *shared, expectations: {rules: {a_is_one: PASS}}}
+- {name: c79, input: *shared, expectations: {rules: {a_is_one: PASS}}}
+- {name: c80, input: *shared, expectations: {rules: {a_is_one: PASS}}}
+- {name: c81, input: *shared, expectations: {rules: {a_is_one: PASS}}}
+- {name: c82, input: *shared, expectations: {rules: {a_is_one: PASS}}}
+- {name: c83, input: *shared, expectations: {rules: {a_is_one: PASS}}}
+- {name: c84, input: *shared, expectations: {rules: {a_is_one: PASS}}}
+- {name: c85, input: *shared, expectations: {rules: {a_is_one: PASS}}}
+- {name: c86, input: *shared, expectations: {rules: {a_is_one: PASS}}}
+- {name: c87, input: *shared, expectations: {rules: {a_is_one: PASS}}}
+- {name: c88, input: *shared, expectations: {rules: {a_is_one: PASS}}}
+- {name: c89, input: *shared, expectations: {rules: {a_is_one: PASS}}}
+- {name: c90, input: *shared, expectations: {rules: {a_is_one: PASS}}}
+- {name: c91, input: *shared, expectations: {rules: {a_is_one: PASS}}}
+- {name: c92, input: *shared, expectations: {rules: {a_is_one: PASS}}}
+- {name: c93, input: *shared, expectations: {rules: {a_is_one: PASS}}}
+- {name: c94, input: *shared, expectations: {rules: {a_is_one: PASS}}}
+- {name: c95, input: *shared, expectations: {rules: {a_is_one: PASS}}}
+- {name: c96, input: *shared, expectations: {rules: {a_is_one: PASS}}}
+- {name: c97, input: *shared, expectations: {rules: {a_is_one: PASS}}}
+- {name: c98, input: *shared, expectations: {rules: {a_is_one: PASS}}}
+- {name: c99, input: *shared, expectations: {rules: {a_is_one: PASS}}}
+- {name: c100, input: *shared, expectations: {rules: {a_is_one: PASS}}}

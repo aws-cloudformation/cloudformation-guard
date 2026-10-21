@@ -1,0 +1,15 @@
+#
+# The binding of filter_through_a_key_tailed_projection.guard, filtered at two sites that different
+# templates reach: `ImageId exists` loses its selection on every template whose instance carries an
+# `ImageId`, `Marker exists` only on two-properties-maps-image-and-marker-template.yaml. Over the pair
+# two-properties-maps-one-with-image-template.yaml then the marker template, the first site is drawn by
+# both files and the second by the second file alone, so the single-line output writes one line per site
+# and one trailer, for the first site, naming the second file.
+#
+let props = Resources.*[ Type exists ].Properties
+rule IMAGE_SITE when %props[ ImageId exists ] !empty {
+  %props[ ImageId exists ].ImageId == "no-such-image-zzz"
+}
+rule MARKER_SITE when %props[ Marker exists ] !empty {
+  %props[ Marker exists ].Marker == "no-such-marker-zzz"
+}

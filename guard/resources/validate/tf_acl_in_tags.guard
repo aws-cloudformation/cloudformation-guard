@@ -1,0 +1,13 @@
+#
+# Compares an acl against a variable that resolves to six separate values, one per resource change, so
+# the failure message has more to print than the reporter shows. It caps the list at five and reports the
+# total -- the same cap `volume-type-in-allowed-names.guard` exercises for CloudFormation.
+#
+# The `IN` rendering it goes through was `todo!()` until it was implemented: a failing `IN` on a plan took
+# the process down at exit 101.
+#
+let tags = resource_changes[*].change.after.tag
+
+rule acl_is_among_the_tags {
+    resource_changes[*].change.after.acl IN %tags
+}

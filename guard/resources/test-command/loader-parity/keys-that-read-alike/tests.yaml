@@ -1,0 +1,17 @@
+- name: keys that read as one name resolve last-wins
+  input:
+    Resources:
+      B:
+        Type: AWS::S3::Bucket
+        Properties:
+          Tags:
+            1: first
+            "1": second
+          Flags:
+            true: first
+            "true": second
+  expectations:
+    rules:
+      tag_is_second: PASS
+      flag_is_second: PASS
+      tag_is_first: FAIL

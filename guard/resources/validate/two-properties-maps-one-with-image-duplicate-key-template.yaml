@@ -1,0 +1,27 @@
+# two-properties-maps-one-with-image-template.yaml with one key written twice: the instance's
+# `InstanceType` is given twice with the same value, so the loader reports a duplicate key for this
+# file while the evaluation is the same as over the original. Paired with
+# two-properties-maps-one-with-image-other-id-duplicate-key-template.yaml to show, in one single-line
+# run over both, that a rule's notice is written once across the files while a file's own duplicate-key
+# warning is written once per file.
+Resources:
+  RootRole:
+    Type: "AWS::IAM::Role"
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: "Allow"
+            Principal:
+              Service:
+                - "ec2.amazonaws.com"
+            Action:
+              - "sts:AssumeRole"
+  EC2I4LBA1:
+    Type: "AWS::EC2::Instance"
+    Properties:
+      ImageId: "ami-6df1e514"
+      InstanceType: "t2.micro"
+      InstanceType: "t2.micro"
+      SubnetId:
+        "Ref": "subnetId"

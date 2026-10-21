@@ -1,0 +1,5 @@
+let exempt = Parameters.ExemptBuckets.Default
+
+rule others_are_encrypted {
+    Resources[ keys NOT IN %exempt ].Properties.Encrypted == true
+}

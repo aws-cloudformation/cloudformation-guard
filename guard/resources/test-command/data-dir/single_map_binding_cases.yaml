@@ -1,0 +1,66 @@
+###
+# The two shapes a published registry rule's own tests carry for a resource whose logical id is
+# `Metadata`: an authentication block with a password and one without. The rules file is
+# `resources/validate/filter_through_a_single_map_binding.guard`, shared with the validate-side test so
+# one fixture describes the change.
+#
+# Both expect SKIP, which is the engine's reading: the filter through `%cfn_authentication_rule` walks
+# the entries of the `Metadata` map and selects none, so the `when` gate does not apply. The rules file
+# is evaluated once per case, so the notice is produced for each and collapsed to one before it is
+# written; the test asserts one.
+###
+---
+- name: Authentication block with a password
+  input:
+    Resources:
+      RootRole:
+        Type: "AWS::IAM::Role"
+        Properties:
+          AssumeRolePolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: "Allow"
+                Principal:
+                  Service:
+                    - "ec2.amazonaws.com"
+                Action:
+                  - "sts:AssumeRole"
+      Metadata:
+        Type: AWS::CloudFormation::Authentication
+        AWS::CloudFormation::Authentication:
+          testBasic:
+            type: "basic"
+            username: "testUsername1"
+            password: "sensitive_password"
+            uris:
+              - "http://www.example.com/test"
+  expectations:
+    rules:
+      CFN_AUTHENTICATION_RULE: SKIP
+
+- name: Authentication block without a password
+  input:
+    Resources:
+      RootRole:
+        Type: "AWS::IAM::Role"
+        Properties:
+          AssumeRolePolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: "Allow"
+                Principal:
+                  Service:
+                    - "ec2.amazonaws.com"
+                Action:
+                  - "sts:AssumeRole"
+      Metadata:
+        Type: AWS::CloudFormation::Authentication
+        AWS::CloudFormation::Authentication:
+          testS3:
+            type: "s3"
+            roleName: !Ref RootRole
+            buckets:
+              - "somebucket333"
+  expectations:
+    rules:
+      CFN_AUTHENTICATION_RULE: SKIP

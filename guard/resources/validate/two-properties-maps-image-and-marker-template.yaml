@@ -1,0 +1,27 @@
+# The two resources of two-properties-maps-one-with-image-other-id-template.yaml (the instance under the
+# logical id `Instance`, not the `EC2I4LBA1` of the template without `-other-id-`), with the instance
+# carrying one more property, `Marker`. Paired with filter_through_two_sites_one_hit_later.guard: that file's first
+# filter site (`ImageId exists`) loses its selection on this template and on the one without the marker,
+# while its second site (`Marker exists`) loses one here only. So a run over the pair, the other template
+# first, draws the first site's notice from the first file and the second site's from this one.
+Resources:
+  RootRole:
+    Type: "AWS::IAM::Role"
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: "Allow"
+            Principal:
+              Service:
+                - "ec2.amazonaws.com"
+            Action:
+              - "sts:AssumeRole"
+  Instance:
+    Type: "AWS::EC2::Instance"
+    Properties:
+      ImageId: "ami-6df1e514"
+      InstanceType: "t2.micro"
+      Marker: "x"
+      SubnetId:
+        "Ref": "subnetId"

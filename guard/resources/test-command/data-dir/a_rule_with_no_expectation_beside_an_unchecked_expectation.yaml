@@ -1,0 +1,22 @@
+###
+# Both directions of the expectation/rule mismatch in one case, so the two cannot be confused.
+#
+# The file defines S3_BUCKET_SERVER_SIDE_ENCRYPTION_ENABLED and this case gives no expectation for
+# it, which is a skipped rule. It gives an expectation for S3_BUCKET_ENCRYPTED, which the file does
+# not define, and that is an unchecked expectation. Nothing is passed or failed, and the run exits 0.
+###
+---
+- name: no expectation for the rule the file defines, and an expectation for a rule it does not
+  input:
+    Resources:
+      ExampleS3:
+        Type: AWS::S3::Bucket
+        Properties:
+          BucketName: my-bucket
+          BucketEncryption:
+            ServerSideEncryptionConfiguration:
+              - ServerSideEncryptionByDefault:
+                  SSEAlgorithm: AES256
+  expectations:
+    rules:
+      S3_BUCKET_ENCRYPTED: PASS

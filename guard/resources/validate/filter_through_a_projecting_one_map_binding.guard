@@ -1,0 +1,18 @@
+#
+# A projecting binding that resolves to exactly ONE map, then a filter through it whose predicate
+# names a key of that map over scalar entries. The binding's last act is a key, so the reader walks the
+# reserved slot and the filter would test the map's entries; every entry is a scalar, passed over, and
+# the predicate names `Status`, a key of the map itself, so the filter is refused in both polarities,
+# naming the key and the spellings that read the map itself (`X[*] { Key == value }`), as the literal
+# `Outer.Config[ Status == 'Enabled' ]` is refused.
+#
+# In the previous release the slot was consumed for every binding, projecting or not, so this filter
+# tested the one map `%p` held, `Status == 'Enabled'` matched, the map was selected, and the rule
+# FAILed on the body (exit 19); for one revision the scalar was reported unresolved, the gate did not
+# apply and the rule was SKIP with a notice; it fails on the refusal now (exit 19), with no notice: a
+# refused filter is answered in the report.
+#
+let p = Wrapper.*[ Marker == 'selected' ].Config
+rule FILTER_THROUGH_A_PROJECTING_ONE_MAP_BINDING when %p[ Status == 'Enabled' ] !empty {
+  %p[ Status == 'Enabled' ].Status == 'no-such-value-zzz'
+}

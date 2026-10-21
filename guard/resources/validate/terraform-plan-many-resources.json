@@ -1,0 +1,52 @@
+{
+  "_comment": [
+    "A plan with six resource changes, deliberately not in alphabetical order by name, and with a tag",
+    "value per resource so a query over them resolves to six separate values.",
+    "",
+    "terraform-plan.json has one resource change, and one resource has no order to get wrong and gives a",
+    "query nothing to accumulate. Two things about the Terraform reporter were therefore unreachable from",
+    "the fixture corpus: the order its findings are written in, and the truncation of a long `IN`",
+    "comparison, whose cut-off can only be crossed when the compared-with side has more than five",
+    "elements."
+  ],
+  "format_version": "1.0",
+  "terraform_version": "1.5.0",
+  "resource_changes": [
+    {
+      "address": "aws_s3_bucket.echo",
+      "type": "aws_s3_bucket",
+      "name": "echo",
+      "change": { "actions": ["create"], "after": { "acl": "public-read", "tag": "n4" } }
+    },
+    {
+      "address": "aws_s3_bucket.charlie",
+      "type": "aws_s3_bucket",
+      "name": "charlie",
+      "change": { "actions": ["create"], "after": { "acl": "public-read", "tag": "n2" } }
+    },
+    {
+      "address": "aws_s3_bucket.foxtrot",
+      "type": "aws_s3_bucket",
+      "name": "foxtrot",
+      "change": { "actions": ["create"], "after": { "acl": "public-read", "tag": "n5" } }
+    },
+    {
+      "address": "aws_s3_bucket.alpha",
+      "type": "aws_s3_bucket",
+      "name": "alpha",
+      "change": { "actions": ["create"], "after": { "acl": "public-read", "tag": "n0" } }
+    },
+    {
+      "address": "aws_s3_bucket.delta",
+      "type": "aws_s3_bucket",
+      "name": "delta",
+      "change": { "actions": ["create"], "after": { "acl": "public-read", "tag": "n3" } }
+    },
+    {
+      "address": "aws_s3_bucket.bravo",
+      "type": "aws_s3_bucket",
+      "name": "bravo",
+      "change": { "actions": ["create"], "after": { "acl": "public-read", "tag": "n1" } }
+    }
+  ]
+}

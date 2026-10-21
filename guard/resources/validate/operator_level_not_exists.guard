@@ -1,0 +1,3 @@
+rule chk {
+    Resources.b not exists
+}

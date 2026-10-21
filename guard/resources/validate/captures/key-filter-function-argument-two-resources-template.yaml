@@ -1,0 +1,13 @@
+Resources:
+  First:
+    Wanted: beta
+    Map:
+      Wanted: alpha
+      alpha: 1
+      beta: 2
+  Second:
+    Wanted: gamma
+    Map:
+      Wanted: alpha
+      alpha: 1
+      gamma: 2

@@ -1,0 +1,3 @@
+rule grouped_item_size_is_small {
+    Resources.*.*.Size <= 1000
+}

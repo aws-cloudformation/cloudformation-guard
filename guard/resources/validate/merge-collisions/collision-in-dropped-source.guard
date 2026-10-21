@@ -1,0 +1,7 @@
+#
+# The same collision inside a merge source, but `outer` writes `inner` for itself, so the merged
+# `inner` is a same-key override and the whole source subtree is dropped: nothing in it is evaluated,
+# and validate prints no duplicate-key notice for it, as it prints none for a plain duplicate pair in a
+# dropped subtree.
+#
+rule explicit_value_stands { outer.inner == "explicit" }

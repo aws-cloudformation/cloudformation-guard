@@ -1,0 +1,15 @@
+# A second case pasted without its leading `- ` is one mapping with two of every field. Reading the
+# last value silently would run only the second case and drop the first at exit 0; the case fails
+# instead, naming both positions of the repeated field, and has no name to report, since it has two.
+- name: the first case
+  input:
+    A: 1
+  expectations:
+    rules:
+      a_is_one: PASS
+  name: the second case, pasted without its dash
+  input:
+    A: 2
+  expectations:
+    rules:
+      a_is_one: FAIL

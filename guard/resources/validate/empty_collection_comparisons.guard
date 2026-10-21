@@ -1,0 +1,16 @@
+#
+# Comparisons over a collection that is present and holds nothing. All three fail: an empty collection
+# is a retrieval error like a missing key, so `<=`, `==` and `IN` over it have nothing to compare and
+# fail saying so. `IN` used to pass here, reading an empty list as a subset of any set.
+#
+rule ports_in_range {
+    Resources.*.Properties.Ports <= 100
+}
+
+rule security_group_named {
+    Resources.*.Properties.SecurityGroupIds == "sg-1"
+}
+
+rule ports_allowed {
+    Resources.*.Properties.Ports IN [80, 443]
+}

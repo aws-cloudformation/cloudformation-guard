@@ -32132,6 +32132,10 @@ const RULE_FILE_SUPPORTED_EXTENSIONS = ['.guard', '.ruleset'];
 const formatOutput = ({ result, rulesNames, dataNames }) => {
     const dataPattern = /DATA_STDIN\[(\d+)\]/g;
     const rulesPattern = /RULES_STDIN\[(\d+)\]\/DEFAULT/g;
+    // The core names a rules file it was given through the payload RULES_STDIN[n] wherever it
+    // mentions it, including the notification for a file that did not parse. After the ruleId pass
+    // above, any remaining mention gets the file name the caller supplied.
+    const rulesFilePattern = /RULES_STDIN\[(\d+)\]/g;
     const isWindows = process.platform === 'win32';
     const output = JSON.parse(JSON.stringify(result).replace(dataPattern, (match, index) => {
         const fileIndex = parseInt(index, 10) - 1;
@@ -32145,6 +32149,12 @@ const formatOutput = ({ result, rulesNames, dataNames }) => {
             return fileNameWithoutExtension.toUpperCase();
         }
         return match;
+    }).replace(rulesFilePattern, (match, index) => {
+        const ruleIndex = parseInt(index, 10) - 1;
+        const ruleName = rulesNames[ruleIndex];
+        // The substitution happens inside a JSON-encoded string, so a Windows path separator has to
+        // become `/` here as it does for data names above.
+        return ruleName ? (isWindows ? ruleName.split('\\').join('/') : ruleName) : match;
     }));
     return JSON.parse(output);
 };
@@ -32530,10 +32540,10 @@ exports.deleteComment = deleteComment;
 exports.handleCreateReview = handleCreateReview;
 exports.handlePullRequestRun = handlePullRequestRun;
 const github_1 = __nccwpck_require__(3228);
+const utils_1 = __nccwpck_require__(1798);
 const stringEnums_1 = __nccwpck_require__(9802);
 const debugLog_1 = __importDefault(__nccwpck_require__(7544));
 const getConfig_1 = __importDefault(__nccwpck_require__(3001));
-const utils_1 = __nccwpck_require__(1798);
 /**
  * Get a list of all PR comments
  *
@@ -32659,21 +32669,24 @@ async function handlePullRequestRun({ run }) {
     });
     const filesChanged = listFiles.data.map((file) => file.filename);
     (0, debugLog_1.default)(`Files changed: ${JSON.stringify(filesChanged, null, 2)}`);
-    const tmpComments = run.results.map(result => {
+    const violations = run.results.map(result => {
         const uri = result.locations[0].physicalLocation.artifactLocation.uri;
         const path = root?.length ? (0, utils_1.removeRootPath)(uri) : uri;
         return {
             body: result.message.text,
             path,
-            position: result.locations[0].physicalLocation.region.startLine
+            position: result.locations[0].physicalLocation.region?.startLine
         };
     });
-    const filesWithViolations = tmpComments.map(({ path }) => path);
+    const filesWithViolations = violations.map(({ path }) => path);
     (0, debugLog_1.default)(`Files with violations: ${JSON.stringify(filesWithViolations, null, 2)}`);
     const filesWithViolationsInPr = filesChanged.filter(value => filesWithViolations.includes(value));
     (0, debugLog_1.default)(`Files with violations in PR: ${JSON.stringify(filesWithViolationsInPr, null, 2)}`);
     if (filesWithViolationsInPr.length) {
         if (createReview) {
+            // A review comment is anchored to a line, so a finding whose position
+            // the core does not know is reported in the summary only.
+            const tmpComments = violations.filter((violation) => violation.position !== undefined);
             await handleCreateReview({
                 filesWithViolationsInPr,
                 tmpComments
@@ -32685,7 +32698,7 @@ async function handlePullRequestRun({ run }) {
         const uri = location.physicalLocation.artifactLocation.uri;
         return filesWithViolationsInPr.includes(root?.length ? (0, utils_1.removeRootPath)(uri) : uri)
             ? [
-                `❌ ${uri}:L${location.physicalLocation.region.startLine},C${location.physicalLocation.region.startColumn}`,
+                `❌ ${uri}:${(0, utils_1.formatPosition)(location.physicalLocation.region)}`,
                 text,
                 ruleId
             ]
@@ -32708,6 +32721,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.handlePushRun = handlePushRun;
 const debugLog_1 = __importDefault(__nccwpck_require__(7544));
+const utils_1 = __nccwpck_require__(1798);
 /**
  * Handles the execution of a push run for the CFN Guard action.
  * @param {HandlePushRunParams} params - The parameters for the push run.
@@ -32717,7 +32731,7 @@ const debugLog_1 = __importDefault(__nccwpck_require__(7544));
 async function handlePushRun({ run }) {
     (0, debugLog_1.default)('Handling push run...');
     return run.results.map(({ locations: [location], ruleId, message: { text } }) => [
-        `❌ ${location.physicalLocation.artifactLocation.uri}:L${location.physicalLocation.region.startLine},C${location.physicalLocation.region.startColumn}`,
+        `❌ ${location.physicalLocation.artifactLocation.uri}:${(0, utils_1.formatPosition)(location.physicalLocation.region)}`,
         text,
         ruleId
     ]);
@@ -32836,10 +32850,25 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.handleWriteRulesFileFailureSummary = handleWriteRulesFileFailureSummary;
 exports.handleWriteActionSummary = handleWriteActionSummary;
 const core = __importStar(__nccwpck_require__(7484));
 const stringEnums_1 = __nccwpck_require__(9802);
 const debugLog_1 = __importDefault(__nccwpck_require__(7544));
+/**
+ * Writes the rules files that could not be evaluated to the GitHub Actions summary, so a run that
+ * failed for that reason says why there as well as in the log.
+ * @param {HandleWriteRulesFileFailureSummaryParams} params - The parameters for writing the summary.
+ * @param {string[]} params.messages - One message per rules file, as reported by cfn-guard.
+ * @returns {Promise<void>} - Resolves when the action summary has been written.
+ */
+async function handleWriteRulesFileFailureSummary({ messages }) {
+    (0, debugLog_1.default)('Writing rules file failure summary...');
+    await core.summary
+        .addHeading(stringEnums_1.SummaryStrings.RULES_FILE_HEADING)
+        .addList(messages)
+        .write();
+}
 /**
  * Writes a summary of the validation results to the GitHub Actions summary.
  * @param {HandleWriteActionSummaryParams} params - The parameters for writing the action summary.
@@ -32909,6 +32938,7 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.run = run;
 const core = __importStar(__nccwpck_require__(7484));
 const stringEnums_1 = __nccwpck_require__(9802);
+const handleWriteActionSummary_1 = __nccwpck_require__(2942);
 const checkoutRepository_1 = __nccwpck_require__(4767);
 const github_1 = __nccwpck_require__(3228);
 const debugLog_1 = __nccwpck_require__(7544);
@@ -32916,7 +32946,6 @@ const getConfig_1 = __importDefault(__nccwpck_require__(3001));
 const handlePullRequestRun_1 = __nccwpck_require__(2032);
 const handlePushRun_1 = __nccwpck_require__(8340);
 const handleValidate_1 = __nccwpck_require__(1811);
-const handleWriteActionSummary_1 = __nccwpck_require__(2942);
 const uploadCodeScan_1 = __nccwpck_require__(2762);
 /**
  * The main function for the action.
@@ -32933,6 +32962,26 @@ async function run() {
     try {
         const result = await (0, handleValidate_1.handleValidate)();
         const { runs: [sarifRun] } = result;
+        // An empty `results` array is a clean run only if every rules file was
+        // evaluated. A rules file that did not parse shows up here, not as a
+        // result, so the gate below would otherwise read it as a pass.
+        const failedInvocations = (sarifRun.invocations ?? []).filter(invocation => !invocation.executionSuccessful);
+        if (failedInvocations.length) {
+            core.setFailed(stringEnums_1.ErrorStrings.RULES_FILE_FAILURE);
+            const messages = failedInvocations.flatMap(invocation => (invocation.toolConfigurationNotifications ?? []).map(notification => notification.message.text));
+            for (const message of messages) {
+                core.setFailed(message);
+            }
+            try {
+                await (0, handleWriteActionSummary_1.handleWriteRulesFileFailureSummary)({ messages });
+            }
+            catch (error) {
+                // The failures are already on the log through setFailed. A summary
+                // that cannot be written (no step summary file on this runner) must
+                // not stop the violations below from being reported.
+                core.warning(`${stringEnums_1.ErrorStrings.SUMMARY_FAILURE}: ${error}`);
+            }
+        }
         if (sarifRun.results.length) {
             if (analyze) {
                 (0, debugLog_1.debugLog)('Using analyze');
@@ -32985,6 +33034,8 @@ var ErrorStrings;
     ErrorStrings["VALIDATION_FAILURE"] = "Validation failure. cfn-guard found violations.";
     ErrorStrings["SECURITY_TAB"] = "Check the security tab for results.";
     ErrorStrings["PATH_ERROR"] = "Could not navigate to supplied path. Either path is wrong or the runner is using an unsupported operating system.";
+    ErrorStrings["RULES_FILE_FAILURE"] = "Validation failure. cfn-guard could not evaluate every rules file.";
+    ErrorStrings["SUMMARY_FAILURE"] = "Could not write the rules file failure summary";
 })(ErrorStrings || (exports.ErrorStrings = ErrorStrings = {}));
 var SummaryStrings;
 (function (SummaryStrings) {
@@ -32992,6 +33043,7 @@ var SummaryStrings;
     SummaryStrings["HEADING"] = "Validation Failures";
     SummaryStrings["REASON"] = "Reason";
     SummaryStrings["RULE"] = "Rule";
+    SummaryStrings["RULES_FILE_HEADING"] = "Rules Files Not Evaluated";
 })(SummaryStrings || (exports.SummaryStrings = SummaryStrings = {}));
 
 
@@ -33049,9 +33101,23 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.formatPosition = formatPosition;
 exports.addRootPath = addRootPath;
 exports.removeRootPath = removeRootPath;
 const getConfig_1 = __importDefault(__nccwpck_require__(3001));
+/**
+ * Render a SARIF region as `L<line>,C<column>`, with `?` for a line or a
+ * column the core did not report. A result with no region is a finding whose
+ * position is unknown; the core says so by omitting the region rather than by
+ * reporting line 1.
+ *
+ * @function formatPosition
+ * @param {SarifRegion | undefined} region - The result's region, if it has one
+ * @returns {string}
+ */
+function formatPosition(region) {
+    return `L${region?.startLine ?? '?'},C${region?.startColumn ?? '?'}`;
+}
 /**
  * Handle adding the root when a user supplies a path
  *

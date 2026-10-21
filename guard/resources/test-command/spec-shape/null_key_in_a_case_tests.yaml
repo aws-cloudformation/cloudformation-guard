@@ -1,0 +1,18 @@
+# The second case's mapping has a null key beside its fields. A null key has no text, so the loader
+# cannot read the mapping as a case, and the file is refused: the refusal names the case's position
+# and says the key is null, so the author knows what to quote. Saying only that the case is unreadable
+# would leave the reason out.
+- name: an ordinary case
+  input:
+    A: 1
+  expectations:
+    rules:
+      a_is_one: PASS
+
+- null: 1
+  name: a case with a null key
+  input:
+    A: 1
+  expectations:
+    rules:
+      a_is_one: PASS

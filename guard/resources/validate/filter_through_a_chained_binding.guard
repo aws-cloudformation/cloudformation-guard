@@ -1,0 +1,10 @@
+#
+# The filtered variable is bound to another variable, not to a path. The notice names the `let` the
+# author wrote for the filtered name, `let b = %a`, not the query behind the chain.
+#
+let a = Resources.Metadata
+let b = %a
+
+rule FILTER_THROUGH_A_CHAINED_BINDING when %b[ "AWS::CloudFormation::Authentication" exists ] !empty {
+  %b."AWS::CloudFormation::Authentication".*.password !exists
+}

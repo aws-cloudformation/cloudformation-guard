@@ -1,0 +1,15 @@
+Parameters:
+  Allowed:
+    Type: String
+    Default: production-bucket
+Mappings:
+  Allowed:
+    Parts: [production, bucket]
+    Patterns: ["^production"]
+  Names:
+    prod: production-bucket
+Resources:
+  B:
+    Type: AWS::S3::Bucket
+    Properties:
+      Name: bucket

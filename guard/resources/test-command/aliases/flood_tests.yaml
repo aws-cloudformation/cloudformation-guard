@@ -1,0 +1,93 @@
+# A chain of anchors in the first case, then twelve cases that each alias its fifth level nine times.
+# Each of those cases copies 999,999 nodes, inside the budget one case has, so the budget alone made
+# the number of cases the multiplier: twelve cases were twelve million nodes from a few hundred bytes
+# each. The whole document is held under a ceiling that no case resets, a thousand nodes for each
+# event of the file other than aliases and never below one case's budget. This file is about a
+# hundred such events, so the ceiling is one case's budget in all: the chain charges 123,440 nodes,
+# the first flood case fits seven copies of `e`, and every alias after that is refused naming the
+# ceiling, so the twelve flood cases fail and the chain case keeps its verdict.
+- name: the chain
+  input:
+    A: 1
+    B: 2
+    a: &a [x, x, x, x, x, x, x, x, x, x]
+    b: &b [*a, *a, *a, *a, *a, *a, *a, *a, *a, *a]
+    c: &c [*b, *b, *b, *b, *b, *b, *b, *b, *b, *b]
+    d: &d [*c, *c, *c, *c, *c, *c, *c, *c, *c, *c]
+    e: &e [*d, *d, *d, *d, *d, *d, *d, *d, *d, *d]
+  expectations:
+    rules:
+      a_is_one: PASS
+      b_is_two: PASS
+- name: flood 1
+  input: {A: 1, B: 2, g: [*e, *e, *e, *e, *e, *e, *e, *e, *e]}
+  expectations:
+    rules:
+      a_is_one: PASS
+      b_is_two: PASS
+- name: flood 2
+  input: {A: 1, B: 2, g: [*e, *e, *e, *e, *e, *e, *e, *e, *e]}
+  expectations:
+    rules:
+      a_is_one: PASS
+      b_is_two: PASS
+- name: flood 3
+  input: {A: 1, B: 2, g: [*e, *e, *e, *e, *e, *e, *e, *e, *e]}
+  expectations:
+    rules:
+      a_is_one: PASS
+      b_is_two: PASS
+- name: flood 4
+  input: {A: 1, B: 2, g: [*e, *e, *e, *e, *e, *e, *e, *e, *e]}
+  expectations:
+    rules:
+      a_is_one: PASS
+      b_is_two: PASS
+- name: flood 5
+  input: {A: 1, B: 2, g: [*e, *e, *e, *e, *e, *e, *e, *e, *e]}
+  expectations:
+    rules:
+      a_is_one: PASS
+      b_is_two: PASS
+- name: flood 6
+  input: {A: 1, B: 2, g: [*e, *e, *e, *e, *e, *e, *e, *e, *e]}
+  expectations:
+    rules:
+      a_is_one: PASS
+      b_is_two: PASS
+- name: flood 7
+  input: {A: 1, B: 2, g: [*e, *e, *e, *e, *e, *e, *e, *e, *e]}
+  expectations:
+    rules:
+      a_is_one: PASS
+      b_is_two: PASS
+- name: flood 8
+  input: {A: 1, B: 2, g: [*e, *e, *e, *e, *e, *e, *e, *e, *e]}
+  expectations:
+    rules:
+      a_is_one: PASS
+      b_is_two: PASS
+- name: flood 9
+  input: {A: 1, B: 2, g: [*e, *e, *e, *e, *e, *e, *e, *e, *e]}
+  expectations:
+    rules:
+      a_is_one: PASS
+      b_is_two: PASS
+- name: flood 10
+  input: {A: 1, B: 2, g: [*e, *e, *e, *e, *e, *e, *e, *e, *e]}
+  expectations:
+    rules:
+      a_is_one: PASS
+      b_is_two: PASS
+- name: flood 11
+  input: {A: 1, B: 2, g: [*e, *e, *e, *e, *e, *e, *e, *e, *e]}
+  expectations:
+    rules:
+      a_is_one: PASS
+      b_is_two: PASS
+- name: flood 12
+  input: {A: 1, B: 2, g: [*e, *e, *e, *e, *e, *e, *e, *e, *e]}
+  expectations:
+    rules:
+      a_is_one: PASS
+      b_is_two: PASS

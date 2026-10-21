@@ -1,0 +1,15 @@
+#
+# The population reached through an alias chain: `all` is `Resources`, `r` is `%all`, and the filter is
+# through `r`. The predicate `Properties.Tags empty` holds on the `Resources` map only vacuously, because
+# `Resources` has no `Properties`, and the bound-map filter notice decides such a pass from the map's
+# entries: every resource is a map on which `Properties` resolves, so the notice stays quiet, exactly as
+# for the direct `let r = Resources`, and the chain's shape makes no difference to it. The verdict
+# question is the one that follows the chain to `let all = Resources`, as a parameter passed `%all`
+# already did, so that an empty or absent `Resources` is not applicable through `r` as it is directly.
+#
+let all = Resources
+let r = %all
+
+rule EVERY_RESOURCE_HAS_TAGS {
+  %r[ Properties.Tags empty ] empty
+}

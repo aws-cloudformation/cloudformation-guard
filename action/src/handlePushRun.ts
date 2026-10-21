@@ -1,5 +1,6 @@
 import { SarifRun } from 'cfn-guard';
 import debugLog from './debugLog';
+import { formatPosition } from './utils';
 
 type HandlePushRunParams = {
   run: SarifRun;
@@ -18,7 +19,7 @@ export async function handlePushRun({
 
   return run.results.map(
     ({ locations: [location], ruleId, message: { text } }) => [
-      `❌ ${location.physicalLocation.artifactLocation.uri}:L${location.physicalLocation.region.startLine},C${location.physicalLocation.region.startColumn}`,
+      `❌ ${location.physicalLocation.artifactLocation.uri}:${formatPosition(location.physicalLocation.region)}`,
       text,
       ruleId
     ]

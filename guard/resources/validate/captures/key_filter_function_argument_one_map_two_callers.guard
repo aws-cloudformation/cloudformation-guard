@@ -1,0 +1,7 @@
+# One call site evaluated twice over the same map: a parameterized rule called with the resource from
+# the root and again with every resource, of which there is one. The reading moved, from the resource's
+# `Wanted` to the map's, and the map is one map however many times the call reads it: one warning line,
+# with no count of further maps.
+rule check(scope) { %scope.Map[ keys == to_lower(Wanted) ] == 1 }
+rule from_root { check(Resources.Cfg) }
+rule from_wildcard { check(Resources.*) }

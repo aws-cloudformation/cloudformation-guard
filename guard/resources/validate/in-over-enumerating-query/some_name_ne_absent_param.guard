@@ -1,0 +1,5 @@
+# `some` against a right-hand query the document lacks: the comparison against a value the document lacks
+# is a decided failure for every name, and `some` has no pass to settle on, so the clause fails.
+rule some_name_differs_from_the_default {
+    some Resources.*.Properties.Name != Parameters.Missing.Default
+}

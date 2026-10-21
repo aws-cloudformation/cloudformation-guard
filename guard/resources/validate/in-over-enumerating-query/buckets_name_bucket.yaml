@@ -1,0 +1,13 @@
+Resources:
+  B1:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: production-bucket
+  B2:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: big-bucket
+  Cfg:
+    Type: Custom::Cfg
+    Properties:
+      Name: bucket

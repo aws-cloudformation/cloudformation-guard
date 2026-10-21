@@ -1,0 +1,5 @@
+# The same comparison as a `when` condition: the condition does not hold, so the rule is not applicable and
+# its body is not run. A rule meant to run only when the parameter is present guards on it with `exists`.
+rule names_are_checked when some Resources.*.Properties.Name NOT IN Parameters.Missing.Default {
+    Resources.*.Properties.Name == 'a'
+}

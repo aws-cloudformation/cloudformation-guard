@@ -1,0 +1,8 @@
+#
+# A collision inside a merge source: the source's own `inner` mapping merges `1` under its explicit
+# `"1"`, two keys that read as one name. The merge is applied, so `inner` lands at /outer/inner with
+# `b` as the value, and validate reports the collision once, at the path the value has after the
+# merge ("Warning: duplicate key /outer/inner/1 in data file <name>, first at L:4,C:13 and again at
+# L:5,C:7. The last value is the one evaluated."), not at the source's position under `<<`.
+#
+rule explicit_value_stands { outer.inner."1" == "b" }

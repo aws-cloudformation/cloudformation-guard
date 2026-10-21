@@ -1,0 +1,17 @@
+# Two volumes that disagree about one boolean and agree about one number.
+#
+# rulegen refuses the `Encrypted` clause, because a boolean observed both ways would be
+# `IN [false, true]`, which no boolean value can fail, and it keeps the `Size` clause, so the volume
+# type still gets a rule. The round-trip test lists the one dropped property with the warning
+# rulegen prints for it, and expects the rule: an omission excuses one property, never the type.
+Resources:
+  Encrypted:
+    Type: AWS::EC2::Volume
+    Properties:
+      Encrypted: true
+      Size: 10
+  Unencrypted:
+    Type: AWS::EC2::Volume
+    Properties:
+      Encrypted: false
+      Size: 10

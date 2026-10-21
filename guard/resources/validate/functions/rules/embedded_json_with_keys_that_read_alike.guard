@@ -1,0 +1,29 @@
+#
+# What a rule sees when the string it hands to json_parse holds two keys that read as one name.
+#
+# `{1: "a", "1": "b"}` is two keys to the parser (an integer and a string) and one name to the value
+# model, so the conversion refuses it naming the key; `{"1": "a", "1": "b"}` is two string keys whose
+# resolved values are equal, which the parser refuses before any conversion. Either way the clause
+# cannot be evaluated and the rule FAILs with the refusal as its message; the run goes on, and the
+# unrelated bucket rule beside them is evaluated and PASSes, so the file exits 19, not 255.
+#
+let service = Resources.*[ Type == 'AWS::New::Service' ]
+
+rule KEYS_THAT_READ_ALIKE when %service !empty {
+    let parsed = json_parse(%service.Properties.KeysThatReadAlike)
+    %parsed."1" == "b"
+}
+
+rule EQUAL_VALUED_DUPLICATE when %service !empty {
+    let parsed = json_parse(%service.Properties.EqualValuedDuplicate)
+    %parsed."1" == "b"
+}
+
+rule PLAIN when %service !empty {
+    let parsed = json_parse(%service.Properties.Plain)
+    %parsed."1" == "only"
+}
+
+rule BUCKET_NAMED {
+    Resources.*[ Type == 'AWS::S3::Bucket' ].Properties.BucketName exists
+}

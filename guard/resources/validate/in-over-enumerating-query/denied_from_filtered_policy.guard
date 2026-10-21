@@ -1,0 +1,5 @@
+let denied = Resources.*[ Type == 'Custom::Policy' ].Properties.DeniedTypes
+
+rule no_denied_volume_types {
+    Resources.*[ Type == 'AWS::EC2::Volume' ].Properties.VolumeType NOT IN %denied
+}

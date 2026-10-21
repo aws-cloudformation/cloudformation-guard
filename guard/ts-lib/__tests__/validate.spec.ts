@@ -46,4 +46,29 @@ describe('validate', () => {
     expect(result.runs[0].results.length).toBe(2)
     expect(sanitizeSarifOutput(result)).toMatchSnapshot()
   })
+  it('should resolve with a document, not throw, for a rules file that does not parse', async () => {
+    const result = await validate({
+      rulesPath: path.resolve(__dirname, './__fixtures__/malformed-rules/missing-operand.guard'),
+      dataPath: path.resolve(__dirname, './__fixtures__/data-dir'),
+    })
+
+    // Nothing was evaluated, so there is nothing to report as a result.
+    expect(result.runs[0].results).toEqual([])
+  })
+  // The committed wasm predates the core's `invocations` member, so for a rules file that does not
+  // parse it returns the same document as a clean run. This pins what the rebuilt wasm returns and
+  // is skipped until that rebuild lands.
+  it.skip('should report a failed invocation naming the rules file that does not parse', async () => {
+    const rulesPath = path.resolve(__dirname, './__fixtures__/malformed-rules/missing-operand.guard')
+    const result = await validate({
+      rulesPath,
+      dataPath: path.resolve(__dirname, './__fixtures__/data-dir'),
+    })
+
+    const [invocation] = result.runs[0].invocations ?? []
+    expect(invocation.executionSuccessful).toBe(false)
+    expect(invocation.toolConfigurationNotifications?.[0].message.text).toContain(
+      `Rules file ${rulesPath} could not be parsed`
+    )
+  })
 })

@@ -1,0 +1,17 @@
+#
+# A projecting binding read with the author's own `[*]` before the filter: `%b[*][ ... ]`. The binding
+# holds the role's Properties map, whose entries are all maps or lists, so by shape alone the map is a
+# collection (a map with a scalar entry would be one object, handed on and tested by the filter). The
+# predicate `AssumeRolePolicyDocument exists` names a key of the Properties map itself, which no entry
+# holds: a filter after a wildcard selects among members, and no member carries that key, so the filter
+# is refused in both polarities, naming the key and the spellings that read the map itself,
+# `%b[*] { AssumeRolePolicyDocument exists }` or `%b[*].AssumeRolePolicyDocument exists`, and the gated
+# rule fails. The previous release consumed the slot and tested the map as a whole, so the body ran; in
+# between, the author's `[*]` enumerated the entries, the filter selected nothing, the rule was SKIP at
+# exit 0, and the lost selection was announced on stderr. A refusal is a verdict, so nothing is announced.
+#
+let b = Resources.*[ Type == 'AWS::IAM::Role' ].Properties
+
+rule AUTHORED_STAR_ON_A_PROJECTING_BINDING when %b[*][ AssumeRolePolicyDocument exists ] !empty {
+  %b[*][ AssumeRolePolicyDocument exists ].AssumeRolePolicyDocument.Version == '2012-10-17'
+}

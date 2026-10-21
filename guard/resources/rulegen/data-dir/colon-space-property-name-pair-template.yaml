@@ -1,0 +1,17 @@
+# Two properties on one type, `A` and `A: B`, where only `A: B` is dropped: a boolean observed both
+# ways, which rulegen warns about as `... Properties.A: B: the template holds both true and false ...`.
+# A test that looked for the warning about `A` as the substring `Properties.A: ` would find that
+# line too and count `A` as dropped, when its clause is written; the warning's name is matched
+# against every property name the type's resources hold, longest first, so `A` and `A: B` are told
+# apart.
+Resources:
+  One:
+    Type: AWS::EC2::Volume
+    Properties:
+      A: 1
+      "A: B": true
+  Two:
+    Type: AWS::EC2::Volume
+    Properties:
+      A: 1
+      "A: B": false

@@ -1,0 +1,1 @@
+rule the_alias_value_stands { b.x == 3 }

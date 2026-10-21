@@ -1,9 +1,9 @@
 import { context, getOctokit } from '@actions/github';
+import { formatPosition, removeRootPath } from './utils';
 import { ErrorStrings } from './stringEnums';
 import { SarifRun } from 'cfn-guard';
 import debugLog from './debugLog';
 import getConfig from './getConfig';
-import { removeRootPath } from './utils';
 
 export type HandlePullRequestRunParams = {
   run: SarifRun;
@@ -183,17 +183,17 @@ export async function handlePullRequestRun({
 
   debugLog(`Files changed: ${JSON.stringify(filesChanged, null, 2)}`);
 
-  const tmpComments = run.results.map(result => {
+  const violations = run.results.map(result => {
     const uri = result.locations[0].physicalLocation.artifactLocation.uri;
     const path = root?.length ? removeRootPath(uri) : uri;
     return {
       body: result.message.text,
       path,
-      position: result.locations[0].physicalLocation.region.startLine
+      position: result.locations[0].physicalLocation.region?.startLine
     };
   });
 
-  const filesWithViolations = tmpComments.map(({ path }) => path);
+  const filesWithViolations = violations.map(({ path }) => path);
 
   debugLog(
     `Files with violations: ${JSON.stringify(filesWithViolations, null, 2)}`
@@ -209,6 +209,12 @@ export async function handlePullRequestRun({
 
   if (filesWithViolationsInPr.length) {
     if (createReview) {
+      // A review comment is anchored to a line, so a finding whose position
+      // the core does not know is reported in the summary only.
+      const tmpComments: Comments = violations.filter(
+        (violation): violation is Comments[number] =>
+          violation.position !== undefined
+      );
       await handleCreateReview({
         filesWithViolationsInPr,
         tmpComments
@@ -223,7 +229,7 @@ export async function handlePullRequestRun({
         root?.length ? removeRootPath(uri) : uri
       )
         ? [
-            `❌ ${uri}:L${location.physicalLocation.region.startLine},C${location.physicalLocation.region.startColumn}`,
+            `❌ ${uri}:${formatPosition(location.physicalLocation.region)}`,
             text,
             ruleId
           ]

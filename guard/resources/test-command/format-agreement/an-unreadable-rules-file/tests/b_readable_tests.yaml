@@ -1,0 +1,10 @@
+# Passes. The exit code for this directory comes from the unreadable file beside it, so this suite
+# must contribute nothing of its own to it.
+- name: The second rules file is reached and its expectation is checked
+  input:
+    Resources:
+      ExampleS3:
+        Type: AWS::S3::Bucket
+  expectations:
+    rules:
+      always_passes: PASS

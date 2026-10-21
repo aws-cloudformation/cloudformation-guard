@@ -1,0 +1,3 @@
+rule name_in_first_type {
+    Resources.*.Properties.Name IN Mappings.Allowed.Types[0]
+}

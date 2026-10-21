@@ -1,0 +1,8 @@
+# The kept-scalar arm of the pass-over refusal under a `when` gate with a long real query, beside a member
+# that holds the key: `Mixed` holds `Mode`, kept through the absence of `ServerSideEncryptionConfiguration`,
+# which a scalar holds for want of any key, beside `Inner`, which carries the key and is rejected. The
+# `this` arm compares, so the remedy asks the key of the map first and then names the members spelling
+# with no `this` clause and the entries spelling with no absence clause; the console shows the whole text.
+rule r when Resources.WebServer.Properties.Configuration.Mixed[ ServerSideEncryptionConfiguration !exists or this == 'zzz' ] !empty {
+    Resources.WebServer.Type == 'X'
+}

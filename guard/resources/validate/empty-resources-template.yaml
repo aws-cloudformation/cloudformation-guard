@@ -1,0 +1,4 @@
+# A template whose Resources map is present and empty: the shape `Resources: {}` takes in a YAML file. A
+# filter through a variable bound to it, directly or through an alias, has no entry to walk and nothing
+# to lose, so the bound-map filter notice stays quiet and a rule asserting the selection `empty` passes.
+Resources: {}

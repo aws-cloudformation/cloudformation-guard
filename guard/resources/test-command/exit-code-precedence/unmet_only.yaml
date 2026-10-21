@@ -1,0 +1,17 @@
+###
+# A genuine unmet expectation and nothing else: FAIL = 1, unchecked = 0, so the run owes 7.
+#
+# `R_ONE` is declared, so this expectation is checked; the input makes it FAIL where the expectation
+# says PASS. One of the two controls in the matrix: without it, a change that answered every run with
+# the error code would still satisfy the `both` cell.
+###
+---
+- name: an expectation that ran and was not met
+  input:
+    Resources:
+      Thing:
+        Properties:
+          Encrypted: false
+  expectations:
+    rules:
+      R_ONE: PASS

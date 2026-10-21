@@ -1,0 +1,15 @@
+#
+# The predicate's one clause is `Properties.Tags[ Key == 'Owner' ] empty`: a key path that resolves on
+# the bucket, then a nested filter that selects nothing, because the bucket has no Owner tag. The clause
+# holds on the bucket for real, and before 3.2 the filter selected the bucket. The clause is grounded
+# by the key that resolved, `Properties.Tags`, even though the filter after it returned nothing -- a
+# grounding read from the clause's final results alone saw an empty selection and stayed quiet. The
+# walk now selects the bucket's `Properties` entry (its `Type` string is passed over), so the gate
+# applies and the body fails on the missing Owner tag under `Properties`.
+#
+let b = Resources.Bucket
+let untagged = %b[ Properties.Tags[ Key == 'Owner' ] empty ]
+
+rule BUCKET_HAS_AN_OWNER_TAG when %untagged !empty {
+  %untagged.Properties.Tags[ Key == 'Owner' ] !empty
+}

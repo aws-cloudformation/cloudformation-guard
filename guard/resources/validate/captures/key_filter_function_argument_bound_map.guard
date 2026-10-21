@@ -1,0 +1,6 @@
+# The map itself bound to a variable, and the key filter spelled on the variable. The argument is read
+# from the map, `Map`'s own `Wanted: alpha`, and it always was: a query rooted at a variable runs over
+# the bound value, so `Wanted` here was the map's before arguments became map-relative. Nothing moved
+# for this spelling, whatever the document root holds, so there is nothing to warn about.
+let map = Resources.Cfg.Map
+rule func_key_bound_map { %map[ keys == to_lower(Wanted) ] == 1 }

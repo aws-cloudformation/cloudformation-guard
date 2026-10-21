@@ -1,0 +1,5 @@
+Resources:
+  MyRole:
+    Type: AWS::IAM::Role
+  Bkt:
+    Type: AWS::S3::Bucket

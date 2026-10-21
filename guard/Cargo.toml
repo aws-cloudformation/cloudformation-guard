@@ -22,7 +22,6 @@ nom_locate = "4.0.0"
 indexmap = { version = "1.6.0", features = ["serde-1"] }
 clap_complete = "4.1.2"
 clap = { version = "4.5.0", features = ["derive"] }
-strip-ansi-escapes = "0.1.1"
 serde = { version = "1.0", features = ["derive", "rc"] }
 serde_yaml = "0.9.10"
 walkdir = "2.3.1"
@@ -41,6 +40,9 @@ grep-regex = "0.1.9"
 unsafe-libyaml = "0.2.10"
 rstest = "0.24.0"
 fancy-regex = "0.13.0"
+# The structural reading of a regex literal compared against a one-object map's keys is taken from the
+# parsed syntax tree, so an anchor, a Unicode class and a POSIX class are read as what they are.
+regex-syntax = "0.8.5"
 indoc = "1.0.8"
 thiserror = "1.0.38"
 quick-xml = "0.30.0"
@@ -49,9 +51,14 @@ chrono = "0.4.38"
 
 [dev-dependencies]
 pretty_assertions = "1.4.0"
+# The prefix scan in the evaluator's tests reads the crate's own sources as Rust, not as text.
+syn = { version = "2.0.98", features = ["full", "visit"] }
+proc-macro2 = { version = "1.0.93", features = ["span-locations"] }
 
 [dependencies.serde_json]
 version = "1.0.85"
-features = ["preserve_order"]
+# `unbounded_depth` lets the JSON shape check in `rules::values` run without serde_json's own
+# recursion limit of 128, which sat below the loader's nesting bound; the loader enforces depth.
+features = ["preserve_order", "unbounded_depth"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html

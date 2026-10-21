@@ -1,0 +1,7 @@
+# One bucket with a Properties map and no Tags under it: the shape an absence check on tags selects, and
+# the shape whose lost selection through a single-map binding has to be announced.
+Resources:
+  Bucket:
+    Type: "AWS::S3::Bucket"
+    Properties:
+      BucketName: "example-bucket"

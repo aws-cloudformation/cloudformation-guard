@@ -1,0 +1,4 @@
+A: !!python/str Foo
+B:
+  !!python/list
+  - !!python/str a

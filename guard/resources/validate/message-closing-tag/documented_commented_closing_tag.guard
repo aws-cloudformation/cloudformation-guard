@@ -1,0 +1,30 @@
+#
+# The rule as written in docs/CONTEXTAWARE_EVALUATIONS_AND_LOOPS.md: the first message closes with
+# `>> # yes this YAML formatted output messaging`, and a second clause with its own message follows.
+#
+rule ensure_container_limits_are_enforced
+    when apiVersion == 'v1'
+        kind == 'Pod'
+{
+    spec.containers[*] {
+        resources.limits {
+            #
+            # Ensure that cpu attribute is set
+            #
+            cpu exists
+            <<
+                Id: K8S_REC_18
+                Description: CPU limit must be set for the container
+            >> # yes this YAML formatted output messaging
+
+            #
+            # Ensure that memory attribute is set
+            #
+            memory exists
+            <<
+                Id: K8S_REC_22
+                Description: Memory limit must be set for the container
+            >>
+        }
+    }
+}

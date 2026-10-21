@@ -1,0 +1,21 @@
+#
+# A regex_replace pattern read from the template.
+#
+# The template decides whether the pattern compiles and whether it can be evaluated within the regex
+# engine's budget. Either failure is a property of the data, so it fails USES_DATA_PATTERN and names the
+# property; REAL_VIOLATION's finding and the run's exit code are not affected by it.
+#
+let t = Resources.*[ Type == 'AWS::New::Service' ]
+let buckets = Resources.*[ Type == 'AWS::S3::Bucket' ]
+
+rule REAL_VIOLATION when %buckets !empty {
+    %buckets.Properties.BucketName != "open-bucket"
+    << Violation: bucket name is the forbidden one >>
+}
+
+rule USES_DATA_PATTERN when %t !empty {
+    let p = %t.Properties.Pattern
+    let r = regex_replace(%t.Properties.Name, %p, "db")
+    %r == "prod-db-01"
+    << Violation: replaced name did not match >>
+}

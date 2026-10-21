@@ -1,0 +1,20 @@
+# The file-level projection reaches the filter through an alias bound in the type block's body, and
+# through a parameterized rule's parameter: `b` binds the logical id `A` in both, because the
+# container is found by the same walk that found the binding, in the scope that wrote it.
+let buckets = Resources.*[ Type == 'AWS::S3::Bucket' ]
+rule alias_in_type_block {
+  AWS::IAM::Role {
+    let bs = %buckets
+    %bs[ b | Properties exists ] !empty
+    %b == 'A'
+  }
+}
+rule check(bs) {
+  %bs[ b | Properties exists ] !empty
+  %b == 'A'
+}
+rule parameter_in_type_block {
+  AWS::IAM::Role {
+    check(%buckets)
+  }
+}

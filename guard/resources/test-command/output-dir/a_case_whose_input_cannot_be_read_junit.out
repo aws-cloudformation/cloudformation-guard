@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="cfn-guard test report" tests="8" failures="0" errors="6" time="0">
+    <testsuite name="resources/test-command/rule-dir/a_case_whose_input_cannot_be_read.guard" errors="6" failures="0" time="0">
+        <testcase id="a bucket named something other than expected" name="bucket_is_named_expected" time="0" status="pass"/>
+        <testcase id="an input whose merge key is given a scalar" name="an input whose merge key is given a scalar" time="0" status="error">
+            <error>Parser Error when parsing `the merge key `&lt;&lt;` at L:24,C:9 must be given a mapping, or a sequence of mappings, because its value&apos;s keys become keys of the mapping that carries it (https://yaml.org/type/merge.html)`</error>
+        </testcase>
+        <testcase id="an input whose merge key is given a sequence holding a scalar" name="an input whose merge key is given a sequence holding a scalar" time="0" status="error">
+            <error>Parser Error when parsing `the merge key `&lt;&lt;` at L:37,C:25 must be given a mapping, or a sequence of mappings, because its value&apos;s keys become keys of the mapping that carries it (https://yaml.org/type/merge.html)`</error>
+        </testcase>
+        <testcase id="an input whose quoted merge key is given a scalar" name="bucket_is_named_expected" time="0" status="pass"/>
+        <testcase id="an input with a null key" name="an input with a null key" time="0" status="error">
+            <error>Parser Error when parsing `non string type detected for key in a map at L:64,C:5, where the key is null. Quote it to make it a string, cfn-guard only supports keys that are string types`</error>
+        </testcase>
+        <testcase id="an input with a sequence key" name="an input with a sequence key" time="0" status="error">
+            <error>Parser Error when parsing `non string type detected for key in a map at L:77,C:7, where the key is a sequence. Quote it to make it a string, cfn-guard only supports keys that are string types`</error>
+        </testcase>
+        <testcase id="an input holding a tagged integer that is not one" name="an input holding a tagged integer that is not one" time="0" status="error">
+            <error>Parser Error when parsing `Bad Value encountered parsing incoming file Value = !!int not-a-number, Loc = L:92,C:12`</error>
+        </testcase>
+        <testcase id="an input holding a sequence tagged with an intrinsic under two bangs" name="an input holding a sequence tagged with an intrinsic under two bangs" time="0" status="error">
+            <error>Parser Error when parsing `cfn-guard does not read the tag `!!If` at L:107,C:11. An intrinsic function is written with one `!`, as `!If`.`</error>
+        </testcase>
+    </testsuite>
+</testsuites>

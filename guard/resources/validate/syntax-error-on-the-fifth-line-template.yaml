@@ -1,0 +1,5 @@
+# A template whose fifth line holds a YAML syntax error: a second mapping value on a line that
+# already has one, which the scanner refuses at the second colon. The first hundred bytes of the
+# file are this comment, which no excerpt should show in place of the position.
+Resources:
+  MyBucket: Type: AWS::S3::Bucket

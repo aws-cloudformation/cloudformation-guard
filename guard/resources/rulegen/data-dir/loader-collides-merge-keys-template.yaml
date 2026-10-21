@@ -1,0 +1,12 @@
+# A merge key whose source holds the integer key `1` and the string key `"1"`. The loader resolves the
+# merge and reads both as the one key `1`, keeping the later value, so rulegen writes one clause,
+# `Properties."1" == "b"`. The round-trip test reads the template with the same loader and expects
+# exactly that one property; a reader that kept `<<` as a property name, or kept two keys, would
+# disagree with rulegen about what the template holds.
+Resources:
+  B:
+    Type: AWS::S3::Bucket
+    Properties:
+      <<:
+        1: a
+        "1": b

@@ -1,0 +1,9 @@
+rule r {
+    Resources.A.Type == "x" <<
+    Fix: add a rule such as
+    rule encrypted {
+        Resources.B.Properties.Encrypted == true
+    }
+    >>
+    Resources.B.Properties.Encrypted == true
+}

@@ -1,0 +1,13 @@
+Resources:
+  A:
+    Type: Y
+    Properties:
+      M:
+        PROD: 1
+        Tags: [ { Key: Env, Value: prod } ]
+  C:
+    Type: X
+    Properties:
+      M:
+        PROD: 1
+        Tags: x

@@ -1,0 +1,29 @@
+###
+# Three cases over the same clause, all passing. The rules file is
+# `resources/validate/incomparable_membership_clause.guard`, shared with the validate-side notice
+# test so one fixture describes the hazard.
+#
+# Three rather than one on purpose: a rule file is evaluated once per case, so a reporter that wrote
+# each notice as it was produced would print the same notice three times. The test asserts one.
+###
+---
+- name: A string against an integer list, first case
+  input:
+    Name: "50"
+  expectations:
+    rules:
+      incomparable_membership: PASS
+
+- name: A string against an integer list, second case
+  input:
+    Name: "50"
+  expectations:
+    rules:
+      incomparable_membership: PASS
+
+- name: A different string against the same list, third case
+  input:
+    Name: "not-a-number"
+  expectations:
+    rules:
+      incomparable_membership: PASS

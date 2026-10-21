@@ -1,0 +1,5 @@
+Resources:
+  Role:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !!Ref Foo

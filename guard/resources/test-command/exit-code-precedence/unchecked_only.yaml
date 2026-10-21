@@ -1,0 +1,19 @@
+###
+# An unchecked expectation and nothing else: FAIL = 0, unchecked = 1, so the run owes 1.
+#
+# `R_TYPO` is not declared in `precedence.guard`, so nothing ever answered this expectation. Nothing
+# here was evaluated and not met, which is what isolates the error code from the failure code.
+#
+# `R_ONE` is left unmentioned on purpose. Giving it an expectation would add a verdict to the case, and
+# this file is meant to carry exactly one signal.
+###
+---
+- name: an expectation naming a rule that does not exist
+  input:
+    Resources:
+      Thing:
+        Properties:
+          Encrypted: true
+  expectations:
+    rules:
+      R_TYPO: PASS

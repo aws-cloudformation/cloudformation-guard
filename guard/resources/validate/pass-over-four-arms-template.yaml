@@ -1,0 +1,20 @@
+Resources:
+  WebServer:
+    Type: AWS::EC2::Instance
+    Properties:
+      Configuration:
+        Settings:
+          Mode: fast
+          Level: 3
+        Config:
+          Mode: fast
+          Inner:
+            Name: x
+        Nulls:
+          Mode: fast
+          B:
+        Mixed:
+          Mode: fast
+          Inner:
+            ServerSideEncryptionConfiguration:
+              Rules: []

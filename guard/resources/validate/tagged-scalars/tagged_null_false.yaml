@@ -1,0 +1,5 @@
+Resources:
+  Trail:
+    Type: AWS::CloudTrail::Trail
+    Properties:
+      IsLogging: !!null false
