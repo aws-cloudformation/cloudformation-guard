@@ -7499,11 +7499,16 @@ fn rule_status_in(rules: &str, input: &str, rule_name: &str) -> Result<Status> {
     let mut root = root_scope(&rules_file, Rc::new(value));
     eval_rules_file(&rules_file, &mut root, None)?;
     let top = root.reset_recorder().extract();
+    Ok(rule_status_recorded(&top, rule_name))
+}
 
+/// The status a named rule reached, read off an already extracted record tree: `rule_status_in`'s read,
+/// for a test that evaluates once and reads the status and other records from the same tree.
+fn rule_status_recorded(top: &EventRecord<'_>, rule_name: &str) -> Status {
     for child in &top.children {
         if let Some(RecordType::RuleCheck(NamedStatus { name, status, .. })) = &child.container {
             if *name == rule_name {
-                return Ok(*status);
+                return *status;
             }
         }
     }
@@ -33572,14 +33577,9 @@ fn a_filter_after_a_bracket_wildcard_over_one_object_tests_the_object(
 ) -> Result<()> {
     let rules = "rule checked { CLAUSE }".replace("CLAUSE", clause);
 
-    assert_eq!(
-        expected,
-        rule_status_in(&rules, input, "checked")?,
-        "clause: {} over {}",
-        clause,
-        input
-    );
-
+    // One evaluation per case: the record tree is extracted once, the rule's own status (`checked`'s
+    // `RuleCheck`, the per-rule read `rule_status_in` defends) is read from it, and the needles are read
+    // from the same tree.
     // Every case reads the record. A refused case is REFUSED, not decided: a FAIL alone would also be
     // read for a decided failure that had lost the refusal and its remedy, so the record is read for one
     // message flagged a refusal that carries every needle the case names (the arm's opener, the key named,
@@ -33593,9 +33593,17 @@ fn a_filter_after_a_bracket_wildcard_over_one_object_tests_the_object(
     // counterpart follow the builders' arms.
     let rules_file = RulesFile::try_from(rules.as_str())?;
     let mut root = root_scope(&rules_file, Rc::new(PathAwareValue::try_from(input)?));
-    let _ = eval_rules_file(&rules_file, &mut root, None)?;
+    eval_rules_file(&rules_file, &mut root, None)?;
+    let top = root.reset_recorder().extract();
+    assert_eq!(
+        expected,
+        rule_status_recorded(&top, "checked"),
+        "clause: {} over {}",
+        clause,
+        input
+    );
     let mut messages = Vec::new();
-    recorded_messages_with_kind(&root.reset_recorder().extract(), &mut messages);
+    recorded_messages_with_kind(&top, &mut messages);
     match expect {
         Expect::Decided => assert!(
             !messages.iter().any(|(refusal, _)| *refusal),
@@ -77484,8 +77492,10 @@ fn an_empty_collection_in_a_when_condition_leaves_the_rule_not_applicable(
 /// holds the other list (the two-query `==` records the pair as an `InComparison` with no message, the
 /// literal arm as a `Comparison`), and no recorded message names an empty collection, which `Ports == 80`
 /// over the same `Ports` does (the control, in both roles). The not-applicable REASON of such a gate is
-/// not read: `find_skip_reason` renders a `Comparison` record's message, and the two-query pair carries
-/// none, so a gate decided as a two-list mismatch has no reason text (its record is the finding).
+/// read for what it is: `find_skip_reason` renders a `Comparison` record's message, and neither the
+/// two-query arm's `InComparison` nor the literal arm's `Comparison` carries one, so a gate decided as a
+/// two-list mismatch has no reason text (its record is the finding), where the control's gate, whose
+/// record carries the empty-collection message, has one.
 #[test]
 fn a_two_list_comparison_fails_on_the_list_mismatch_and_names_no_empty_collection() -> Result<()> {
     const INPUT: &str = r#"{ Ports: [], SecurityGroupIds: [], Populated: [8080], Num: 5 }"#;
@@ -77529,16 +77539,31 @@ fn a_two_list_comparison_fails_on_the_list_mismatch_and_names_no_empty_collectio
         }
     }
     let mut cells = CellFailures::default();
-    // Per row: the clause, the rule's status in the clause role and under `when`, the needle the `to`
-    // side must carry (the other list's path for a document list, its element for a literal), and
-    // whether a recorded message names an empty collection.
-    for (label, clause, asserted, gated, to_needle, names_the_empty_collection) in [
+    // Per row: the clause, the rule's status in the clause role and under `when`, the kind of record the
+    // arm writes (`InComparison` from the two-query arm, `Comparison` from the literal arm and from the
+    // empty-collection route), the needle the `to` side must carry (the other list's path for a
+    // document list; for a literal, the element in the value's own `Debug` shape, `..), 22)`, so a
+    // location's numbers cannot match), whether the `when` gate has a not-applicable reason at all (a
+    // deliberate pin per row: the two-list arms record no message, so the walk renders nothing), and
+    // whether a recorded message, and so the reason where there is one, names an empty collection.
+    for (
+        label,
+        clause,
+        asserted,
+        gated,
+        kind,
+        to_needle,
+        has_skip_reason,
+        names_the_empty_collection,
+    ) in [
         (
             "a populated document list under `==`",
             "Ports == Populated",
             Status::FAIL,
             Status::SKIP,
+            "InComparison",
             "\"/Populated\"",
+            false,
             false,
         ),
         (
@@ -77546,7 +77571,9 @@ fn a_two_list_comparison_fails_on_the_list_mismatch_and_names_no_empty_collectio
             "Ports == [22]",
             Status::FAIL,
             Status::SKIP,
-            "22",
+            "Comparison",
+            "), 22)",
+            false,
             false,
         ),
         (
@@ -77554,7 +77581,9 @@ fn a_two_list_comparison_fails_on_the_list_mismatch_and_names_no_empty_collectio
             "Ports != SecurityGroupIds",
             Status::FAIL,
             Status::SKIP,
+            "InComparison",
             "\"/SecurityGroupIds\"",
+            false,
             false,
         ),
         (
@@ -77562,14 +77591,22 @@ fn a_two_list_comparison_fails_on_the_list_mismatch_and_names_no_empty_collectio
             "Ports == 80",
             Status::FAIL,
             Status::SKIP,
-            "80",
+            "Comparison",
+            "), 80)",
+            true,
             true,
         ),
     ] {
-        for (role, rules, expected) in [
-            ("asserted", format!("rule r {{ {clause} }}"), asserted),
+        for (role, is_gate, rules, expected) in [
+            (
+                "asserted",
+                false,
+                format!("rule r {{ {clause} }}"),
+                asserted,
+            ),
             (
                 "under `when`",
+                true,
                 format!("rule r when {clause} {{ Num == 5 }}"),
                 gated,
             ),
@@ -77582,10 +77619,12 @@ fn a_two_list_comparison_fails_on_the_list_mismatch_and_names_no_empty_collectio
             let mut failing = Vec::new();
             failing_comparisons(&top, &mut failing);
             cells.check(
-                &format!("{label}, {role}: one failing comparison record pairs the document's `Ports` with the other list: {failing:?}"),
+                &format!("{label}, {role}: one failing `{kind}` record pairs the document's `Ports` with the other list: {failing:?}"),
                 true,
-                failing.iter().any(|(_, from_path, to, _)| {
-                    from_path.contains("\"/Ports\"") && to.contains(to_needle)
+                failing.iter().any(|(recorded_kind, from_path, to, _)| {
+                    *recorded_kind == kind
+                        && from_path.contains("\"/Ports\"")
+                        && to.contains(to_needle)
                 }),
             );
             let mut messages = Vec::new();
@@ -77595,6 +77634,25 @@ fn a_two_list_comparison_fails_on_the_list_mismatch_and_names_no_empty_collectio
                 names_the_empty_collection,
                 messages.iter().any(|m| m.contains("empty collection")),
             );
+            // The gate's not-applicable reason exists where the comparison record carries a message:
+            // the two-list arms record none, so `find_skip_reason` has nothing to render and `-o json`'s
+            // `not_applicable_reasons` carries nothing for such a gate, which the row pins on purpose;
+            // the empty-collection route's record carries its sentence, and the reason renders it. The
+            // two facts are two fields, so a row can say "a reason, naming no empty collection" if an
+            // arm ever writes one.
+            if is_gate {
+                let reason = crate::rules::eval_context::find_skip_reason(&top);
+                cells.check(
+                    &format!("{label}, {role}: (a not-applicable reason is rendered, it names an empty collection): {reason:?}"),
+                    (has_skip_reason, names_the_empty_collection),
+                    (
+                        reason.is_some(),
+                        reason
+                            .as_deref()
+                            .is_some_and(|reason| reason.contains("empty collection")),
+                    ),
+                );
+            }
         }
     }
     cells.assert_all_agreed();

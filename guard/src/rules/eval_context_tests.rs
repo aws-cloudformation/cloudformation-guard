@@ -5204,11 +5204,18 @@ fn two_markers_of_one_refusal_read_alike_whatever_their_tokens_count() {
     assert_ne!(first.reading(), UnResolvedKind::Absent.reading());
     // `Debug` is written through `reading`, so the whole dump of a kind is a rendering of its reading
     // and nothing else: the kind's name alone for the two decided kinds, the name with the refusal flag
-    // for a marker. Pinned on every variant, so a `Debug` that grew a field the reading does not hold
-    // (the token's count, say) goes red here.
+    // for a marker. Pinned on every variant, a plain marker carrying a token for an enclosing run
+    // among them (`carried` is transport, not a fact about the entry, and renders as a plain marker), so
+    // a `Debug` that grew a field the reading does not hold (a token's count, say) goes red here.
+    let carrying = UnResolvedKind::Undecidable {
+        refusal: None,
+        carried: Some(mint_refusal_token()),
+    };
+    assert_eq!(("Undecidable", false), carrying.reading());
     for kind in [
         first,
         plain,
+        carrying,
         UnResolvedKind::Absent,
         UnResolvedKind::EmptyEnumeration,
     ] {
