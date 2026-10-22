@@ -37,13 +37,17 @@
 //!
 //! Labels are resolved against the sources in every document. The three tables of `docs/KNOWN_ISSUES.md`
 //! were written with prose labels before this check existed, and the labels that name no case, body
-//! string or row of their test are listed by document, line and label in `KNOWN_UNRESOLVED_LABELS`: the
-//! row that carries a listed label is still parsed (its shape, the test it names and the fixture files
-//! it names are checked, so a renamed test or a malformed cell fails here), every other label of it must
-//! resolve, and the listed label must stay unresolved, so a label that is re-pinned comes off the list in
-//! the same change and a listed label the row no longer carries at that line is reported by name; a row
-//! whose labels are all unlisted fails here as a `docs/CLAUSES.md` row does. The list's length is the
-//! count of such labels.
+//! string or row of their test are listed by document, label and the row's clause cell (the text of the
+//! row's first column, as written) in `KNOWN_UNRESOLVED_LABELS`: the row that carries a listed label is
+//! still parsed (its shape, the test it names and the fixture files it names are checked, so a renamed
+//! test or a malformed cell fails here), every other label of it must resolve, and the listed label must
+//! stay unresolved, so a label that is re-pinned comes off the list in the same change and a listed
+//! label no row of its clause carries is reported by name; a row whose labels are all unlisted fails
+//! here as a `docs/CLAUSES.md` row does. A row that moves leaves the list as it is; a row whose clause
+//! cell is reworded is re-listed with the new text; two rows of one document that write the same clause
+//! and the same label share one entry, whose row count `SHARED_UNRESOLVED_ENTRIES` states, and an entry
+//! met on another number of rows is reported, so a row copied with a listed clause cell and label is
+//! not exempt until it is counted. The list's length is the count of distinct such entries.
 //!
 //! The sources are parsed once with `syn` and read at run time from the crate directory, and the
 //! documents from the repository beside it; a crate packaged without `docs/` fails this test unless
@@ -71,684 +75,718 @@ const CITED_TEST_SOURCES: [(&str, &str); 4] = [
 /// The fixture directories whose README tables a cited test reads row by row.
 const CITED_FIXTURE_DIRS: [&str; 1] = ["wildcard-filter-release-verdicts"];
 
-/// The labels known not to resolve, by document, line and label as the cell writes it: the prose labels
-/// of the `docs/KNOWN_ISSUES.md` tables, written before this check existed (the module doc). A row that
-/// carries a listed label is still parsed and its test and fixture names checked, every OTHER label of
-/// it must resolve, and the listed label must FAIL to resolve, so a label that is re-pinned comes off the
-/// list in the same change; a listed label that is not met (its row moved, or no longer carries it) is
-/// reported by name. The list is keyed by line, so an insertion above a listed row renumbers the entries
-/// below it; the report then names the entries to remove and the rows to add. Regenerate it from the
-/// test's own report, or from a reading of every row's labels against the sources.
-const KNOWN_UNRESOLVED_LABELS: [(&str, usize, &str); 136] = [
+/// The labels known not to resolve, by document, label as the cell writes it, and the row's clause cell
+/// (its first column, as written): the prose labels of the `docs/KNOWN_ISSUES.md` tables, written before
+/// this check existed (the module doc). A row that carries a listed label is still parsed and its test
+/// and fixture names checked, every OTHER label of it must resolve, and the listed label must FAIL to
+/// resolve, so a label that is re-pinned comes off the list in the same change; a listed label no row
+/// carries (its clause cell reworded, or the label dropped) is reported by name, with the rows to add,
+/// each named with its clause cell. The key does not move when rows are inserted above a listed one.
+/// Two rows of one document that write the same clause and the same label share one entry, listed with
+/// its row count in `SHARED_UNRESOLVED_ENTRIES` (two pairs do today: a row repeated, in a later table or
+/// the same one, with another verdict or notice); an entry met on another number of rows than its count
+/// is reported, so no copied row inherits an exemption unlisted. Regenerate it from the test's own
+/// report, or from a reading of every row's labels against the sources.
+const KNOWN_UNRESOLVED_LABELS: [(&str, &str, &str); 134] = [
     (
         "KNOWN_ISSUES.md",
-        321,
         r#"alias gate over a spec lacking securityContext"#,
+        r#"`%s[ securityContext !exists ] !empty`"#,
     ),
     (
         "KNOWN_ISSUES.md",
-        321,
         r#"alias gate over a spec with securityContext"#,
+        r#"`%s[ securityContext !exists ] !empty`"#,
     ),
     (
         "KNOWN_ISSUES.md",
-        322,
         r#"literal gate over the same spec: refused, fail closed"#,
+        r#"`spec[ securityContext !exists ] !empty`"#,
     ),
     (
         "KNOWN_ISSUES.md",
-        323,
         r#"literal gate over the same spec: refused, fail closed"#,
+        r#"`spec[ securityContext !exists ]`"#,
     ),
     (
         "KNOWN_ISSUES.md",
-        324,
         r#"the compliant mixed map, one member carrying the key"#,
+        r#"`Cfg[ Owner !exists ]`"#,
     ),
     (
         "KNOWN_ISSUES.md",
-        326,
         r#"the author's [*] over the spec lacking securityContext"#,
+        r#"`spec[*][ securityContext !exists ]`"#,
     ),
     (
         "KNOWN_ISSUES.md",
-        334,
         r#"the population alias over a section written as a lone transform, under an absence check"#,
+        r#"`%r[ Properties !exists ]`"#,
     ),
-    ("KNOWN_ISSUES.md", 336, r#"control: `this !empty` alone"#),
     (
         "KNOWN_ISSUES.md",
-        338,
+        r#"control: `this !empty` alone"#,
+        r#"`labels[ this !empty ] empty`"#,
+    ),
+    (
+        "KNOWN_ISSUES.md",
         r#"control: `labels.*[ env exists ] empty` over the all-scalar map"#,
+        r#"`labels.*[ env exists ] empty`"#,
     ),
     (
         "KNOWN_ISSUES.md",
-        339,
         r#"control: `labels.*[ this !empty ] empty`"#,
+        r#"`labels.*[ this !empty ] empty`"#,
     ),
     (
         "KNOWN_ISSUES.md",
-        341,
         r#"the literal spelling over all-scalar Properties under a key the map lacks"#,
+        r#"`Properties[ Foo !exists ] !empty`"#,
     ),
-    ("KNOWN_ISSUES.md", 350, r#"the example"#),
     (
         "KNOWN_ISSUES.md",
-        351,
+        r#"the example"#,
+        r#"`%p[ TagSpecifications !exists ]`"#,
+    ),
+    (
+        "KNOWN_ISSUES.md",
         r#"a one-key miss at the properties map's own first key"#,
+        r#"`%p[ Tags !exists ] !empty`"#,
     ),
     (
         "KNOWN_ISSUES.md",
-        352,
         r#"the common absence check over a nested collection one resource of which carries the key"#,
+        r#"`%r[ DeletionPolicy !exists ]`"#,
     ),
     (
         "KNOWN_ISSUES.md",
-        353,
         r#"a named map whose sub-maps share no key name is an object"#,
+        r#"`%d[ MetadataOptions !exists ]`"#,
     ),
     (
         "KNOWN_ISSUES.md",
-        354,
         r#"a Deployment `spec` of `selector` and `template`"#,
+        r#"`%s[ securityContext !exists ]`"#,
     ),
     (
         "KNOWN_ISSUES.md",
-        354,
         r#"the same `spec` as a `when` gate"#,
+        r#"`%s[ securityContext !exists ]`"#,
     ),
     (
         "KNOWN_ISSUES.md",
-        357,
         r#"a map of scalars: the predicate resolved no key on any entry"#,
+        r#"`%md[ labels !exists ]`"#,
     ),
     (
         "KNOWN_ISSUES.md",
-        932,
         r#"bracket wildcard, a member key beside the map's own key"#,
+        r#"`Resources[*][ Type == 'AWS::S3::Bucket' or BucketA exists ]`"#,
     ),
     (
         "KNOWN_ISSUES.md",
-        933,
         r#"a disjunct that never holds beside the negated own key"#,
+        r#"`Rules[*][ R1 !exists or Action == 'deny' ]`"#,
     ),
     (
         "KNOWN_ISSUES.md",
-        948,
         r#"some after [*]: the undecided entry's marker alone answers"#,
+        r#"`some Cfg[*][ Mode exists or M[ keys == to_upper(Tags[ Key == 'Env' ].Value) ] !empty or Ref !exists ].Kind == 'k'`"#,
     ),
     (
         "KNOWN_ISSUES.md",
-        950,
         r#"inside a predicate: the refused enumeration's capture holds the refusal's marker alone"#,
+        r#"`Resources.*[ Properties.Cfg[*][ x \| R1 !exists ] !empty ]`"#,
     ),
     (
         "KNOWN_ISSUES.md",
-        952,
         r#"`Cfg[ y ][ Kind == 'k' ]`, no own key named"#,
+        r#"`let sel = Cfg[ y ][ Kind == 'k' ]` and `let sel = Cfg[ y ][ x \| Mode exists or Kind == 'k' ]`, read by `%sel !empty`"#,
     ),
     (
         "KNOWN_ISSUES.md",
-        952,
         r#"`Cfg[ y ][ x \| Mode exists or Kind == 'k' ]`"#,
+        r#"`let sel = Cfg[ y ][ Kind == 'k' ]` and `let sel = Cfg[ y ][ x \| Mode exists or Kind == 'k' ]`, read by `%sel !empty`"#,
     ),
     (
         "KNOWN_ISSUES.md",
-        954,
         r#"a later part of the same query reads the scope's root"#,
+        r#"`.M[ keys == to_upper(Env) ]`"#,
     ),
     (
         "KNOWN_ISSUES.md",
-        955,
         r#"the own-key spelling: `%x` is bound to each held key just before that entry is walked"#,
+        r#"`Cfg[*][ x \| Mode exists or Kind == 'k' ].Peers[ this IN %x ]`"#,
     ),
     (
         "KNOWN_ISSUES.md",
-        956,
         r#"the own-key spelling, the wildcard's own capture read mid-query"#,
+        r#"`Cfg[ y ][ x \| Mode exists or Kind == 'k' ].Peers[ this IN %y ]`"#,
     ),
     (
         "KNOWN_ISSUES.md",
-        959,
         r#"the own-key spelling over the entries in the other order"#,
+        r#"`let sel = Cfg[*][ x \| Mode exists or Kind == 'k' ].Peers[ this IN %x ]` and `let sel = Cfg[*][ x \| Kind == 'k' ].Peers[ this IN %x ]`, read by `%sel !empty`"#,
     ),
     (
         "KNOWN_ISSUES.md",
-        959,
         r#"the regular spelling over the entries in the other order"#,
+        r#"`let sel = Cfg[*][ x \| Mode exists or Kind == 'k' ].Peers[ this IN %x ]` and `let sel = Cfg[*][ x \| Kind == 'k' ].Peers[ this IN %x ]`, read by `%sel !empty`"#,
     ),
     (
         "KNOWN_ISSUES.md",
-        961,
         r#"an enumeration the continuation refuses"#,
+        r#"`.Sub[*][ s \| R1 !exists ]`"#,
     ),
     (
         "KNOWN_ISSUES.md",
-        962,
         r#"the regular spelling (`Cfg[*][ x \| Kind == 'k' ]`, no own key named)"#,
+        r#"`Cfg[*][ x \| Kind == 'k' ].Sub[*][ s \| R1 !exists ]`"#,
     ),
     (
         "KNOWN_ISSUES.md",
-        963,
         r#"a same-name capture another clause of the block filed before the refused walk"#,
+        r#"`Cfg[ x \| Kind == 'k' ] !empty`"#,
     ),
     (
         "KNOWN_ISSUES.md",
-        964,
         r#"an undecidable the walk meets for another reason"#,
+        r#"`.M[ keys == Names[*].Name ]`"#,
     ),
     (
         "KNOWN_ISSUES.md",
-        966,
         r#"a member named like the key alone under empty"#,
+        r#"`Resources[*][ BucketA exists ] empty`"#,
     ),
     (
         "KNOWN_ISSUES.md",
-        973,
         r#"tagging idiom over a transform beside two tagged buckets"#,
+        r#"`%r[ Properties.Tags empty ] !empty`"#,
     ),
     (
         "KNOWN_ISSUES.md",
-        975,
         r#"tags written as a loop under `Tags[*][ Key !exists ] empty`"#,
+        r#"`Tags[*][ Key !exists ] empty`"#,
     ),
     (
         "KNOWN_ISSUES.md",
-        976,
         r#"states written as a loop under the [*] spelling of `[ Type !exists ] empty`"#,
+        r#"`States[*][ Type !exists ] empty`"#,
     ),
     (
         "KNOWN_ISSUES.md",
-        978,
         r#"a resource's `Metadata` attribute holding only a transform"#,
+        r#"`Resources.*.Metadata[ Comment !exists ] empty`"#,
     ),
     (
         "KNOWN_ISSUES.md",
-        979,
         r#"a `Parameters` holding only a transform under `Parameters[ Value !exists ] empty`"#,
+        r#"`Parameters[ Value !exists ] empty`"#,
     ),
     (
         "KNOWN_ISSUES.md",
-        980,
         r#"a `Parameters` holding only a loop under `Parameters[ Type !exists ] empty`"#,
+        r#"`Parameters[ Type !exists ] empty`"#,
     ),
     (
         "KNOWN_ISSUES.md",
-        982,
         r#"the include alone as `Properties` under `Properties.*[ Tags !exists ] empty`"#,
+        r#"`[ Tags !exists ] empty`"#,
     ),
     (
         "KNOWN_ISSUES.md",
-        983,
         r#"a lone directive under `[*]`: the directive sentence"#,
+        r#"`SecurityGroupIngress[*][ Description !exists ] empty`"#,
     ),
     (
         "KNOWN_ISSUES.md",
-        984,
         r#"tags written as a transform under the [*] spelling of `[ Value !exists ] empty`"#,
+        r#"`Tags[*][ Value !exists ] empty`"#,
     ),
     (
         "KNOWN_ISSUES.md",
-        985,
         r#"a ForEach list beside two members, .*: `[ this IS_LIST ] empty` selects the list"#,
+        r#"`Resources.*[ this IS_LIST ] empty`"#,
     ),
     (
         "KNOWN_ISSUES.md",
-        986,
         r#"a one-key `Fn::If` tag list, .*: `Tags.*[ Key !exists ] empty`"#,
+        r#"`Tags.*[ Key !exists ] empty`"#,
     ),
     (
         "KNOWN_ISSUES.md",
-        987,
         r#"a one-key `Fn::FindInMap` scalar list, [*]: `Target[*][ Name !exists ] empty`"#,
+        r#"`Target[*][ Name !exists ] empty`"#,
     ),
     (
         "KNOWN_ISSUES.md",
-        991,
         r#"a transform beside the region entries of `Mappings.RegionMap`"#,
+        r#"`Mappings.RegionMap.*[ AMI !exists ] empty`"#,
     ),
     (
         "KNOWN_ISSUES.md",
-        992,
         r#"a parameter named like the key, `Default !exists ] !empty`"#,
+        r#"`Parameters.*[ Default !exists ] !empty`"#,
     ),
     (
         "KNOWN_ISSUES.md",
-        993,
         r#"a parameter named like the key, `Default exists ] empty`: no parameter declares one"#,
+        r#"`Parameters.*[ Default exists ] empty`"#,
     ),
     (
         "KNOWN_ISSUES.md",
-        994,
         r#"bracket wildcard, a member named like the key negated: every resource is kept"#,
+        r#"`Resources[*][ BucketA !exists ] !empty`"#,
     ),
     (
         "KNOWN_ISSUES.md",
-        997,
         r#"control: a site whose probe read a hold (`%r[*]`: the bound map itself)"#,
+        r#"`%r[*]`"#,
     ),
     (
         "KNOWN_ISSUES.md",
-        998,
         r#"a key the document holds and no member holds (`AWSTemplateFormatVersion exists`)"#,
+        r#"`Resources[*][ AWSTemplateFormatVersion exists ] !empty`"#,
     ),
     (
         "KNOWN_ISSUES.md",
-        1000,
         r#"a member key conjoined with a key the map lacks under `empty`"#,
+        r#"`Resources[*][ BucketA exists Type == 'AWS::S3::Bucket' ] empty`"#,
     ),
     (
         "KNOWN_ISSUES.md",
-        1001,
         r#"the same hold under `!empty`: the verdict agrees"#,
+        r#"`Resources[*][ Tags !exists ]`"#,
     ),
     (
         "KNOWN_ISSUES.md",
-        1002,
         r#"a hold by the absence of a key the document lacks (`Tags !exists`)"#,
+        r#"`Resources[*][ Tags !exists ].Type == 'AWS::S3::Bucket'`"#,
     ),
     (
         "KNOWN_ISSUES.md",
-        1003,
         r#"an undecidable member under `empty`: fails closed"#,
+        r#"`Resources[*][ BucketA !exists M[ keys == Tags[ Key == 'Env' ].Value ] !empty ] empty`"#,
     ),
     (
         "KNOWN_ISSUES.md",
-        1004,
         r#"the Init shape under `exists ] empty`: nothing selected"#,
+        r#"`Resources.*.Metadata[*][ "AWS::CloudFormation::Init" exists ] empty`"#,
     ),
     (
         "KNOWN_ISSUES.md",
-        1005,
         r#"a container's resources of limits beside requests under `exists ] empty`"#,
+        r#"`resources[*][ limits exists ] empty`"#,
     ),
     (
         "KNOWN_ISSUES.md",
-        1006,
         r#"the Init shape under `.*` and `exists ] empty`"#,
+        r#"`Resources.*.Metadata.*[ "AWS::CloudFormation::Init" exists ] empty`"#,
     ),
     (
         "KNOWN_ISSUES.md",
-        1007,
         r#"the resource's own key `Type` asked of its Metadata members under `[*]` and `!empty`"#,
+        r#"`Resources.*.Metadata[*][ Type exists ] !empty`"#,
     ),
     (
         "KNOWN_ISSUES.md",
-        1011,
         r#"the projecting binding over all-structure Properties, gate polarity"#,
+        r#"`%p[*][ BucketEncryption exists ] !empty`"#,
     ),
     (
         "KNOWN_ISSUES.md",
-        1013,
         r#"the block after the bracket wildcard reads the map itself"#,
+        r#"`Parameters[*] { Default !exists }`"#,
     ),
     (
         "KNOWN_ISSUES.md",
-        1015,
         r#"`BucketA exists`, !empty: the selection keeps nothing"#,
+        r#"`Resources[*][ BucketA exists ]`"#,
     ),
     (
         "KNOWN_ISSUES.md",
-        1015,
         r#"a member named like the key alone under empty"#,
+        r#"`Resources[*][ BucketA exists ]`"#,
     ),
     (
         "KNOWN_ISSUES.md",
-        1028,
         r#"a `Resources` holding only a loop, in a `Templates` list"#,
+        r#"`Templates[*].Resources`"#,
     ),
     (
         "KNOWN_ISSUES.md",
-        1030,
         r#"an include beside `BucketName` under `Properties.*[ Name == 'AWS::Include' ] empty`"#,
+        r#"`Resources.*.Properties.*[ Name == 'AWS::Include' ] empty`"#,
     ),
     (
         "KNOWN_ISSUES.md",
-        1031,
         r#"must-flag: over `Env: prod` the fallback read holds the key filter on `PROD`"#,
+        r#"`Cfg[ Owner !exists this[ keys == to_upper(Env) ] !empty ] empty`"#,
     ),
     (
         "KNOWN_ISSUES.md",
-        1032,
         r#"must-flag: a refusal raised inside the predicate is carried out of the probe"#,
+        r#"`Cfg[ Owner !exists this[ Owner !exists ] !empty ] empty`"#,
     ),
     (
         "KNOWN_ISSUES.md",
-        1033,
         r#"dot wildcard over the spec with replicas beside the sub-maps"#,
+        r#"`spec.*[ securityContext !exists ] !empty`"#,
     ),
     (
         "KNOWN_ISSUES.md",
-        1034,
-        r#"literal gate over the same spec: refused, fail closed"#,
-    ),
-    (
-        "KNOWN_ISSUES.md",
-        1358,
         r#"map tags `dev` under `== 'prod'`"#,
+        r#"`Properties.Tags[*][ Key == 'Env' ].Value == 'prod'`"#,
     ),
     (
         "KNOWN_ISSUES.md",
-        1359,
         r#"the same identity-policy statement with a part after the filter that reads `Effect`"#,
+        r#"`Statement[*][ Principal == '*' ].Effect == 'Deny'`"#,
     ),
     (
         "KNOWN_ISSUES.md",
-        1360,
         r#"a `NotAction` statement under `[ Action == '*' ].Condition exists`"#,
+        r#"`[ Action == '*' ].Condition exists`"#,
     ),
     (
         "KNOWN_ISSUES.md",
-        1361,
         r#"a chained filter whose predicate names `Effect`, a key the object holds"#,
+        r#"`Statement[*][ Principal == '*' ][ Effect == 'Allow' ] empty`"#,
     ),
     (
         "KNOWN_ISSUES.md",
-        1362,
         r#"a chained filter whose predicate names `Sid`, a key the object also lacks"#,
+        r#"`[ Principal == '*' ][ Sid == 'x' ]`"#,
     ),
     (
         "KNOWN_ISSUES.md",
-        1363,
         r#"inside a predicate, `[ Principal.AWS == '*' ].Effect == 'Allow'`"#,
+        r#"`Resources.*[ Properties.PolicyDocument.Statement[*][ Principal.AWS == '*' ].Effect == 'Allow' ] empty`"#,
     ),
     (
         "KNOWN_ISSUES.md",
-        1364,
         r#"inside a predicate, a chained filter `[ Principal.AWS == '*' ][ Effect == 'Allow' ] !empty`"#,
+        r#"`[ Principal.AWS == '*' ][ Effect == 'Allow' ] !empty`"#,
     ),
     (
         "KNOWN_ISSUES.md",
-        1365,
-        r#"a `NotAction` statement under `[ Action == '*' ].Condition exists`"#,
-    ),
-    (
-        "KNOWN_ISSUES.md",
-        1373,
         r#"map tags `dev` under a binding to `[ Key IN ['Env', 'Environment'] ]`"#,
+        r#"`[ Key IN ['Env', 'Environment'] ]`"#,
     ),
     (
         "KNOWN_ISSUES.md",
-        1374,
         r#"two tags under `[ Key != 'Env' ]`"#,
+        r#"`[ Key != 'Env' ]`"#,
     ),
     (
         "KNOWN_ISSUES.md",
-        1376,
         r#"list tags `dev` under `[ Key == 'Env' Value == 'prod' ] empty`"#,
+        r#"`[ Key == 'Env' Value == 'prod' ]`"#,
     ),
     (
         "KNOWN_ISSUES.md",
-        1379,
         r#"map tags `dev` under a bare `[ Key == 'Env' ] exists`"#,
+        r#"`Tags[*][ Key == 'Env' ] exists`"#,
     ),
     (
         "KNOWN_ISSUES.md",
-        1380,
         r#"list tags `dev` under `[ Key == 'Env' Value == 'prod' ] empty`"#,
+        r#"`[ Key == 'Env' Value == 'prod' ] empty`"#,
     ),
     (
         "KNOWN_ISSUES.md",
-        1381,
         r#"map tags with no compared entry under `[ Key == 'Owner'  Value == 'Team' ] empty`"#,
+        r#"`[ Key == 'Owner' Value == 'Team' ] empty`"#,
     ),
     (
         "KNOWN_ISSUES.md",
-        1382,
         r#"map tags with no compared entry under `[ Key NOT IN ['Env', 'Environment'] ] empty`"#,
+        r#"`[ Key NOT IN ['Env', 'Environment'] ]`"#,
     ),
     (
         "KNOWN_ISSUES.md",
-        1383,
         r#"map tags with no compared entry under a NEGATED bare `[ Key != 'Env' ] empty`"#,
+        r#"`[ Key != 'Env' ] empty`"#,
     ),
     (
         "KNOWN_ISSUES.md",
-        1384,
         r#"map tags `prod` under `[ Key != 'Env' or Value != 'prod' ] empty`"#,
+        r#"`[ Key != 'Env' or Value != 'prod' ] empty`"#,
     ),
     (
         "KNOWN_ISSUES.md",
-        1385,
         r#"map tags `prod` under `[ Value == 'prod'  Key != 'Env' ] empty`"#,
+        r#"`[ Value == 'prod' Key != 'Env' ] empty`"#,
     ),
     (
         "KNOWN_ISSUES.md",
-        1386,
         r#"map tags with no compared entry under `[ Key != 'Env' or Action != '*' ] empty`"#,
+        r#"`[ Key != 'Env' or Action != '*' ] empty`"#,
     ),
     (
         "KNOWN_ISSUES.md",
-        1387,
         r#"an env-var map keyed by name under `Env[*][ Name != 'x' ] empty`"#,
+        r#"`Env[*][ Name != 'x' ] empty`"#,
     ),
     (
         "KNOWN_ISSUES.md",
-        1388,
         r#"an env-var map keyed by name under `Env[*][ Values != 'x' ] empty`"#,
+        r#"`[ Values != 'x' ] empty`"#,
     ),
     (
         "KNOWN_ISSUES.md",
-        1389,
         r#"a one-object `NotAction` statement under `[ Action != '*' ] empty`"#,
+        r#"`[ Action != '*' ]`"#,
     ),
     (
         "KNOWN_ISSUES.md",
-        1390,
         r#"map tags with no compared entry under a negation on the value"#,
+        r#"`[ Value != 'platform' ]`"#,
     ),
     (
         "KNOWN_ISSUES.md",
-        1391,
         r#"map tags `dev` under `[ Value != 'platform' ] empty`"#,
+        r#"`[ Value != 'platform' ]`"#,
     ),
     (
         "KNOWN_ISSUES.md",
-        1392,
         r#"a one-object `NotAction` statement under `[ Action != '*' ] empty`"#,
+        r#"`Statement[*][ Action != '*' ] empty`"#,
     ),
     (
         "KNOWN_ISSUES.md",
-        1393,
         r#"map tags with no compared entry under `[ Key == 'Env'  Value != 'prod' ] empty`"#,
+        r#"`[ Key == 'Env' Value != 'prod' ]`"#,
     ),
     (
         "KNOWN_ISSUES.md",
-        1394,
         r#"an identity-policy statement under `[ Principal == '*' ] empty`"#,
+        r#"`Statement[*][ Principal == '*' ] empty`"#,
     ),
     (
         "KNOWN_ISSUES.md",
-        1395,
         r#"a `NotAction` statement under `[ Action == '*' ] empty`"#,
+        r#"`[ Action == '*' ] empty`"#,
     ),
     (
         "KNOWN_ISSUES.md",
-        1396,
         r#"a trust-policy statement under `[ Resource == '*' ] empty`"#,
+        r#"`[ Resource == '*' ] empty`"#,
     ),
     (
         "KNOWN_ISSUES.md",
-        1397,
         r#"the same statement under `[ Principal.AWS == '*' ] empty`"#,
+        r#"`[ Principal.AWS == '*' ] empty`"#,
     ),
     (
         "KNOWN_ISSUES.md",
-        1398,
         r#"select the violators, assert none"#,
+        r#"`Resources.*[ Properties.Tags[*][ Key == 'Env' ].Value != 'prod' ] empty`"#,
     ),
     (
         "KNOWN_ISSUES.md",
-        1399,
         r#"`[ Key exists ] !empty` over map tags"#,
+        r#"`Tags[*][ Key exists ] !empty`"#,
     ),
     (
         "KNOWN_ISSUES.md",
-        1400,
         r#"map tags `dev` under `== 'prod'`"#,
+        r#"`Tags[*][ Key == 'Env' ].Value == 'prod'`"#,
     ),
     (
         "KNOWN_ISSUES.md",
-        1402,
         r#"map tags `dev` under `[ Key == %w ] !empty`"#,
+        r#"`[ Key == %w ] !empty` where `%w` is the capture of an earlier clause"#,
     ),
     (
         "KNOWN_ISSUES.md",
-        1404,
         r#"map tags `dev` under a filter capture read later"#,
+        r#"`let env = Resources.*.Properties.Tags[*][ t \| Key == 'Env' ]`"#,
     ),
     (
         "KNOWN_ISSUES.md",
-        1405,
         r#"map tags `dev` under a filter capture and a bare `exists` in the filter's own clause"#,
+        r#"`Tags[*][ t \| Key == 'Env' ] exists` (the first clause of a rule whose second clause is `%t.Value == 'prod'`)"#,
     ),
     (
         "KNOWN_ISSUES.md",
-        1407,
         r#"map tags `dev` under the block form `{ check(this) }`"#,
+        r#"`Tags[*][ Key == 'Env' ] { check(this) }`"#,
     ),
     (
         "KNOWN_ISSUES.md",
-        1409,
         r#"a one-object statement under `[ Principal == '*' ] { Effect == 'Allow'  Condition exists }`"#,
+        r#"`Statement[*][ Principal == '*' ] { Effect == 'Allow' Condition exists }`"#,
     ),
     (
         "KNOWN_ISSUES.md",
-        1414,
         r#"the inline chained `[ Sid == 'x' or %flag == true ] empty`"#,
+        r#"`[ Sid == 'x' or %flag == true ]`"#,
     ),
     (
         "KNOWN_ISSUES.md",
-        1415,
         r#"two functions, one map-shaped and one list-shaped, both `prod`, under `some` and the block form"#,
+        r#"`some Resources.*.Properties.Tags[*][ Key == 'Env' ] { Value == 'prod' }`"#,
     ),
-    ("KNOWN_ISSUES.md", 1416, r#"the control"#),
     (
         "KNOWN_ISSUES.md",
-        1418,
+        r#"the control"#,
+        r#"`Statement[*][ Principal == '*' ].Condition exists`"#,
+    ),
+    (
+        "KNOWN_ISSUES.md",
         r#"map tags `dev` under a binding to `[ Key == /^(?!aws:)/ ]`"#,
+        r#"`[ Key == /^(?!aws:)/ ]`"#,
     ),
     (
         "KNOWN_ISSUES.md",
-        1420,
         r#"map tags `{ Env1: dev }` under a bare `[ Key == /^[A-Za-z]+[0-9]$/ ] empty`"#,
+        r#"`Tags[*][ Key == /^[A-Za-z]+[0-9]$/ ] empty`"#,
     ),
     (
         "KNOWN_ISSUES.md",
-        1423,
         r#"a one-object statement under `[ Principal == '*' or Sid == /^\w+$/ ] empty`"#,
+        r#"`[ Principal == '*' or Sid == /^\w+$/ ]`"#,
     ),
     (
         "KNOWN_ISSUES.md",
-        1424,
         r#"a one-object statement under a bare `[ Sid == /^\w+$/ ] empty`"#,
+        r#"`[ Sid == /^\w+$/ ] empty`"#,
     ),
     (
         "KNOWN_ISSUES.md",
-        1426,
         r#"a one-object statement under a bare `[ Sid == /^\w+$/ ] !exists`"#,
+        r#"`[ Sid == /^\w+$/ ] !exists`"#,
     ),
     (
         "KNOWN_ISSUES.md",
-        1427,
         r#"a one-object statement without `Sid`"#,
+        r#"`Resources.*[ Properties.PolicyDocument.Statement[*][ Sid == /^\w+$/ ] is_struct ] empty`"#,
     ),
     (
         "KNOWN_ISSUES.md",
-        1433,
         r#"a one-object statement under `[ Sid == /.+/ ].Effect == 'Deny'`"#,
+        r#"`Statement[*][ Sid == /.+/ ].Effect == 'Deny'`"#,
     ),
     (
         "KNOWN_ISSUES.md",
-        1434,
         r#"a one-object statement under `[ Sid == /^[A-Za-z0-9]+$/ ].Effect == 'Deny'`"#,
+        r#"`Statement[*][ Sid == /^[A-Za-z0-9]+$/ ].Effect == 'Deny'`"#,
     ),
     (
         "KNOWN_ISSUES.md",
-        1435,
         r#"statement `{ Effect: Allow }` under a bare `[ Sid == /^[A-Za-z]+$/ ] exists`"#,
+        r#"`Statement[*][ Sid == /^[A-Za-z]+$/ ] exists`"#,
     ),
     (
         "KNOWN_ISSUES.md",
-        1436,
         r#"mixed map under a bare `[ Key == /^[A-Za-z]+$/ ] exists`"#,
+        r#"`Tags[*][ Key == /^[A-Za-z]+$/ ] exists`"#,
     ),
     (
         "KNOWN_ISSUES.md",
-        1437,
         r#"a one-object statement under a bare `[ Sid == /^\w+$/ ] empty`"#,
+        r#"`Statement[*][ Sid == /^\w+$/ ] empty`"#,
     ),
     (
         "KNOWN_ISSUES.md",
-        1438,
         r#"mixed map under a bare `[ Key == /^[A-Za-z]+$/ ] empty`"#,
+        r#"`[ Key == /^[A-Za-z]+$/ ] empty`"#,
     ),
     (
         "KNOWN_ISSUES.md",
-        1442,
         r#"mixed map `{ Env: { Ref }, Team: platform }` under a bare `[ Key == /^[Ee][Nn][Vv]$/ ] exists`"#,
+        r#"`Tags[*][ Key == /^[Ee][Nn][Vv]$/ ] exists`"#,
     ),
     (
         "KNOWN_ISSUES.md",
-        1443,
         r#"mixed map `{ Env: dev, ENV: { Ref } }` under a bare `[ Key == /^[[:alpha:]]+$/ ] exists`"#,
+        r#"`Tags[*][ Key == /^[[:alpha:]]+$/ ] exists`"#,
     ),
     (
         "KNOWN_ISSUES.md",
-        1444,
         r#"statement `{ Effect: Allow }` under a bare `[ Sid == /^[Ee][Ff][Ff][Ee][Cc][Tt]$/ ] exists`"#,
+        r#"`Statement[*][ Sid == /^[Ee][Ff][Ff][Ee][Cc][Tt]$/ ] exists`"#,
     ),
     (
         "KNOWN_ISSUES.md",
-        1445,
         r#"statement `{ Effect: Allow }` under a bare `[ Sid == /^\w+s?$/ ] exists`"#,
+        r#"`[ Sid == /^\w+s?$/ ] exists`"#,
     ),
     (
         "KNOWN_ISSUES.md",
-        1448,
         r#"a one-object statement holding `Effect`, `Env` and `Action` under `[ Sid == /^E/ ].Effect == 'Deny'`"#,
+        r#"`[ Sid == /^E/ ].Effect == 'Deny'`"#,
     ),
     (
         "KNOWN_ISSUES.md",
-        1449,
         r#"map tags `dev` under the block form `[ Key == 'Env' ] { Value == 'prod' }`"#,
+        r#"`Tags[*][ Key == 'Env' ] { Value == 'prod' }`"#,
     ),
     (
         "KNOWN_ISSUES.md",
-        1450,
         r#"map tags `Team` and `Value` under `%env[ Value == 'x' ] empty`"#,
+        r#"`%env[ Value == 'x' ]`"#,
     ),
     (
         "KNOWN_ISSUES.md",
-        1451,
         r#"two functions, one map-shaped and one list-shaped, both `prod`, under `some` and the inline spelling"#,
+        r#"`some Resources.*.Properties.Tags[*][ Key == 'Env' ].Value == 'prod'`"#,
     ),
     (
         "KNOWN_ISSUES.md",
-        1453,
         r#"the presence-guarded spelling is not applicable over the statement with no principal"#,
+        r#"`Statement[*] { when Principal exists { Principal.AWS != '*' } }`"#,
     ),
     (
         "KNOWN_ISSUES.md",
-        1455,
         r#"map tags `dev` under a bare `[ Key == 'Env' ] exists`"#,
+        r#"`[ Key == 'Env' ] exists`"#,
     ),
     (
         "KNOWN_ISSUES.md",
-        1456,
         r#"map tags `dev` under `[ Key != 'Env' ] empty`"#,
+        r#"`[ Key != 'Env' ] empty`"#,
     ),
     (
         "KNOWN_ISSUES.md",
-        1457,
         r#"map tags `{ Team: prod }` under `[ Value == 'prod' ] empty`"#,
+        r#"`[ Value == 'prod' ] empty`"#,
     ),
     (
         "KNOWN_ISSUES.md",
-        1460,
         r#"map tags `dev` under a filter capture read later"#,
+        r#"`[ t \| Key == 'Env' ]`"#,
     ),
 ];
+
+/// The entries of `KNOWN_UNRESOLVED_LABELS` that more than one row writes, with the number of rows: a
+/// row repeated, in a later table or the same one, with another verdict or notice. Every other entry is
+/// met on exactly one row. The test counts the rows each entry is met on and reports a count that
+/// differs, so a row copied with a listed clause cell and label does not inherit the exemption in
+/// silence (it is listed here by its count) and a twin row that is gone brings the count down.
+const SHARED_UNRESOLVED_ENTRIES: [(&str, &str, &str, usize); 2] = [
+    (
+        "KNOWN_ISSUES.md",
+        r#"literal gate over the same spec: refused, fail closed"#,
+        r#"`spec[ securityContext !exists ]`"#,
+        2,
+    ),
+    (
+        "KNOWN_ISSUES.md",
+        r#"a `NotAction` statement under `[ Action == '*' ].Condition exists`"#,
+        r#"`[ Action == '*' ].Condition exists`"#,
+        2,
+    ),
+];
+
+/// The number of rows a listed entry is met on: its `SHARED_UNRESOLVED_ENTRIES` count, else one.
+fn rows_listed_for(entry: &(&str, &str, &str)) -> usize {
+    SHARED_UNRESOLVED_ENTRIES
+        .iter()
+        .find(|(doc, label, clause, _)| (doc, label, clause) == (&entry.0, &entry.1, &entry.2))
+        .map_or(1, |(_, _, _, rows)| *rows)
+}
 
 /// The documents whose PROSE citations are read too (`prose_citations`): a backticked fn name after
 /// "pinned by" is defined in one of the cited test sources, and a backticked `.yaml` or `.guard` name is a
@@ -1392,16 +1430,26 @@ impl Index {
                     break;
                 }
                 if resolve_labels {
+                    // every label is read, so a listed one is recorded as met whether or not an
+                    // unlisted one failed before it; the first failure is the cell's
+                    let mut first_failure = None;
                     for label in labels {
                         // a label listed as known-unresolved must still fail, and is recorded as met;
                         // one that resolves after all is recorded so it comes off the list
                         let listed = exempt(label);
                         match (listed, self.unresolved_label(file, fn_name, label)) {
-                            (false, Some(why)) => return Some(why),
+                            (false, Some(why)) => {
+                                if first_failure.is_none() {
+                                    first_failure = Some(why);
+                                }
+                            }
                             (true, Some(_)) => exempt_hits.push((label.to_string(), true)),
                             (true, None) => exempt_hits.push((label.to_string(), false)),
                             (false, None) => {}
                         }
+                    }
+                    if first_failure.is_some() {
+                        return first_failure;
                     }
                 } else {
                     let Some(source) = self.sources.get(file) else {
@@ -1476,9 +1524,82 @@ fn crate_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
 }
 
-/// The clause-table rows of one document: `(line number, the pinned-by cell)` for every row under a
-/// clause-table header, or a reading of why a line under a header is not a six-cell row.
-fn clause_table_rows(text: &str) -> Vec<(usize, Result<String, String>)> {
+/// A clause-table row as read: its line number and, for a six-cell row, `(the clause cell, the
+/// pinned-by cell)`, else why the line under a header is not such a row. The clause cell is the row's
+/// first column as written, the text that keys the row in `KNOWN_UNRESOLVED_LABELS`.
+type ClauseRow = (usize, Result<(String, String), String>);
+
+/// A listed entry as a row names it: `(document, label, clause cell)`.
+type ListedEntry = (String, String, String);
+
+/// What reading one document's clause tables yields: the rows that fail (a line whose labels were read
+/// names the row's clause cell, the key an entry for it is written with), the listed entries met on a
+/// row with the label still failing and the entries whose label resolved on a row, each with the row's
+/// line, and the row counts.
+#[derive(Default)]
+struct RowsReading {
+    unresolved: Vec<String>,
+    met: Vec<(ListedEntry, usize)>,
+    resolved: Vec<(ListedEntry, usize)>,
+    rows: usize,
+    pinned: usize,
+}
+
+/// Reads one document's clause tables against the index and the known-unresolved labels (`list`, keyed
+/// by document, label and the row's clause cell): every row's shape, test and fixture names first, its
+/// labels second, with a listed label admitted when it fails, recorded when it resolves, and every other
+/// label required to resolve. Written as a fn of its inputs so a doctored document and list are read the
+/// same way as the real ones.
+fn read_rows(index: &Index, name: &str, text: &str, list: &[(&str, &str, &str)]) -> RowsReading {
+    let mut reading = RowsReading::default();
+    for (number, row) in clause_table_rows(text) {
+        reading.rows += 1;
+        match row {
+            Err(why) => reading
+                .unresolved
+                .push(format!("docs/{}:{}: {}", name, number, why)),
+            Ok((clause, cell)) => {
+                if cell != "none" {
+                    reading.pinned += 1;
+                }
+                // the shape, the fn and the fixture names first, for every row alike
+                if let Some(why) = index.unresolved_cell_in(&cell, false) {
+                    reading
+                        .unresolved
+                        .push(format!("docs/{}:{}: {}", name, number, why));
+                    continue;
+                }
+                // then the labels: a listed one (by document, label and the row's clause cell) must
+                // still fail, every other one must resolve
+                let listed_here = |label: &str| {
+                    list.iter()
+                        .any(|(doc, l, c)| *doc == name && *l == label && *c == clause)
+                };
+                let mut hits = Vec::new();
+                if let Some(why) = index.unresolved_cell_with(&cell, true, &listed_here, &mut hits)
+                {
+                    // the line names the clause cell, so the entry to add can be copied from it
+                    reading.unresolved.push(format!(
+                        "docs/{}:{}: {} (the row's clause cell is {})",
+                        name, number, why, clause
+                    ));
+                }
+                for (label, still_fails) in hits {
+                    let entry = (name.to_string(), label, clause.clone());
+                    if still_fails {
+                        reading.met.push((entry, number));
+                    } else {
+                        reading.resolved.push((entry, number));
+                    }
+                }
+            }
+        }
+    }
+    reading
+}
+
+/// The clause-table rows of one document, every line under a clause-table header read as a `ClauseRow`.
+fn clause_table_rows(text: &str) -> Vec<ClauseRow> {
     let mut rows = Vec::new();
     let mut in_table = false;
     for (number, line) in text.lines().enumerate().map(|(i, l)| (i + 1, l)) {
@@ -1508,7 +1629,7 @@ fn clause_table_rows(text: &str) -> Vec<(usize, Result<String, String>)> {
             ));
             continue;
         }
-        rows.push((number, Ok(cells[5].to_string())));
+        rows.push((number, Ok((cells[0].to_string(), cells[5].to_string()))));
     }
     rows
 }
@@ -1838,6 +1959,88 @@ fn every_pinned_by_cell_of_the_clause_tables_names_a_test_and_a_case_it_has() {
         "an unlisted failing label still fails the cell: {}",
         listed_fault
     );
+    // every label of the cell is read: a listed label after an unlisted failing one is still recorded
+    // as met, so the report never says to drop an exemption the row still needs
+    let listed_after_a_failure = format!(
+        "eval_tests.rs:{} (cases \"an unlisted label no case carries\", \"a label no case carries\")",
+        REMEDY_TEST
+    );
+    let mut hits = Vec::new();
+    assert!(
+        index
+            .unresolved_cell_with(
+                &listed_after_a_failure,
+                true,
+                &|label| label == "a label no case carries",
+                &mut hits
+            )
+            .is_some_and(|why| why.contains("an unlisted label no case carries")),
+        "the cell fails on its first unlisted failing label: {}",
+        listed_after_a_failure
+    );
+    assert_eq!(
+        vec![("a label no case carries".to_string(), true)],
+        hits,
+        "the listed label after the failure is still recorded as met"
+    );
+
+    // The row reader against a doctored table and list: an entry is met once per row that writes its
+    // clause cell and carries its label still failing, so a copied row shows as a second met line; a
+    // listed label the rows do not carry is met nowhere; an unlisted failing label fails its row with a
+    // line that names the row's clause cell.
+    let doctored_rows = format!(
+        "> {}\n> |---|---|---|---|---|---|\n> | `x` | one-object | == | PASS | none | eval_tests.rs:{} (case \"a label no case carries\") |\n> | `x` | one-object | == | FAIL | none | eval_tests.rs:{} (case \"a label no case carries\") |\n> | `y` | one-object | == | PASS | none | eval_tests.rs:{} (case \"a label no case carries\") |\n",
+        CLAUSE_TABLE_HEADER, REMEDY_TEST, REMEDY_TEST, REMEDY_TEST
+    );
+    let listed_x = ("KNOWN_ISSUES.md", "a label no case carries", "`x`");
+    let listed_elsewhere = ("KNOWN_ISSUES.md", "a label no case carries", "`z`");
+    let reading = read_rows(
+        &index,
+        "KNOWN_ISSUES.md",
+        &doctored_rows,
+        &[listed_x, listed_elsewhere],
+    );
+    assert_eq!(
+        (3, 3),
+        (reading.rows, reading.pinned),
+        "three pinned rows were read"
+    );
+    let key_x = (
+        listed_x.0.to_string(),
+        listed_x.1.to_string(),
+        listed_x.2.to_string(),
+    );
+    assert_eq!(
+        vec![(key_x.clone(), 3), (key_x, 4)],
+        reading.met,
+        "the entry for clause `x` is met on both rows that write it, by line"
+    );
+    assert!(
+        reading.resolved.is_empty(),
+        "no listed label resolved: {:?}",
+        reading.resolved
+    );
+    assert_eq!(
+        1,
+        reading.unresolved.len(),
+        "the row whose clause cell is listed nowhere fails on its label: {:?}",
+        reading.unresolved
+    );
+    assert!(
+        reading.unresolved[0].starts_with("docs/KNOWN_ISSUES.md:5: ")
+            && reading.unresolved[0].ends_with("(the row's clause cell is `y`)"),
+        "the failing row's line names its line number and its clause cell: {:?}",
+        reading.unresolved
+    );
+    let (shared_doc, shared_label, shared_clause, shared_rows) = SHARED_UNRESOLVED_ENTRIES[0];
+    assert_eq!(
+        (1, shared_rows),
+        (
+            rows_listed_for(&("KNOWN_ISSUES.md", "a label no case carries", "`x`")),
+            rows_listed_for(&(shared_doc, shared_label, shared_clause))
+        ),
+        "an entry is listed for one row unless SHARED_UNRESOLVED_ENTRIES counts it"
+    );
 
     // The prose reader: a fn name after "pinned by", a `<source>:<fn>` there, and a fixture named as one
     // are read; a sentence that ends in `.yaml`, a file named with no "fixture" before it, and the text
@@ -1931,8 +2134,23 @@ fn every_pinned_by_cell_of_the_clause_tables_names_a_test_and_a_case_it_has() {
     let mut unresolved = Vec::new();
     // listed labels that resolve after all (they come off `KNOWN_UNRESOLVED_LABELS`), and the listed
     // labels met on their rows and still failing (a listed label not met is reported by name)
-    let mut resolved_after_all = Vec::new();
-    let mut listed_met: HashSet<(&str, usize, &str)> = HashSet::new();
+    let mut met: Vec<(ListedEntry, usize)> = Vec::new();
+    let mut resolved: Vec<(ListedEntry, usize)> = Vec::new();
+    // the list is a set of (document, label, clause cell): an entry a regeneration wrote twice is
+    // reported, not met twice; and every shared entry is one of the list's
+    let distinct: HashSet<&(&str, &str, &str)> = KNOWN_UNRESOLVED_LABELS.iter().collect();
+    assert_eq!(
+        distinct.len(),
+        KNOWN_UNRESOLVED_LABELS.len(),
+        "KNOWN_UNRESOLVED_LABELS lists an entry twice"
+    );
+    for (doc, label, clause, rows) in SHARED_UNRESOLVED_ENTRIES {
+        assert!(
+            rows > 1 && distinct.contains(&(doc, label, clause)),
+            "a shared entry names more than one row and is in KNOWN_UNRESOLVED_LABELS: {:?}",
+            (doc, label, clause, rows)
+        );
+    }
     for document in &documents {
         let text = fs::read_to_string(document)
             .unwrap_or_else(|e| panic!("the document {} is readable: {}", document.display(), e));
@@ -1970,47 +2188,11 @@ fn every_pinned_by_cell_of_the_clause_tables_names_a_test_and_a_case_it_has() {
                 ));
             }
         }
-        let (rows, pinned) = counts.entry(name.to_string()).or_default();
-        for (number, row) in clause_table_rows(&text) {
-            *rows += 1;
-            match row {
-                Err(why) => unresolved.push(format!("docs/{}:{}: {}", name, number, why)),
-                Ok(cell) => {
-                    if cell != "none" {
-                        *pinned += 1;
-                    }
-                    // the shape, the fn and the fixture names first, for every row alike
-                    if let Some(why) = index.unresolved_cell_in(&cell, false) {
-                        unresolved.push(format!("docs/{}:{}: {}", name, number, why));
-                        continue;
-                    }
-                    // then the labels: a listed one must still fail, every other one must resolve
-                    let listed_here = |label: &str| {
-                        KNOWN_UNRESOLVED_LABELS
-                            .iter()
-                            .any(|(doc, line, l)| *doc == name && *line == number && *l == label)
-                    };
-                    let mut hits = Vec::new();
-                    if let Some(why) =
-                        index.unresolved_cell_with(&cell, true, &listed_here, &mut hits)
-                    {
-                        unresolved.push(format!("docs/{}:{}: {}", name, number, why));
-                    }
-                    for (label, still_fails) in hits {
-                        let listed = KNOWN_UNRESOLVED_LABELS
-                            .iter()
-                            .find(|(doc, line, l)| *doc == name && *line == number && *l == label)
-                            .expect("a hit is a listed label");
-                        if still_fails {
-                            listed_met.insert(*listed);
-                        } else {
-                            resolved_after_all
-                                .push(format!("docs/{}:{}: {:?}", name, number, label));
-                        }
-                    }
-                }
-            }
-        }
+        let reading = read_rows(&index, name, &text, &KNOWN_UNRESOLVED_LABELS);
+        counts.insert(name.to_string(), (reading.rows, reading.pinned));
+        unresolved.extend(reading.unresolved);
+        met.extend(reading.met);
+        resolved.extend(reading.resolved);
     }
     // each document's tables were read, not one document's standing in for the others'
     for (name, rows_floor, pinned_floor) in TABLE_FLOORS {
@@ -2025,29 +2207,83 @@ fn every_pinned_by_cell_of_the_clause_tables_names_a_test_and_a_case_it_has() {
             pinned_floor
         );
     }
-    // One report for the three ways the tables and KNOWN_UNRESOLVED_LABELS can disagree, so a change
-    // that moves a listed row reads what to remove and what to add in one message.
+    // Per listed entry, the rows it was met on (the label still failing) and the rows its label resolved
+    // on; then one report for the four ways the tables and KNOWN_UNRESOLVED_LABELS can disagree, so a
+    // change that moves, copies or re-pins a listed row reads what to remove and what to add in one
+    // message.
+    let mut met_on: HashMap<ListedEntry, Vec<usize>> = HashMap::new();
+    for (entry, line) in met {
+        met_on.entry(entry).or_default().push(line);
+    }
+    let mut resolved_on: HashMap<ListedEntry, Vec<usize>> = HashMap::new();
+    for (entry, line) in resolved {
+        resolved_on.entry(entry).or_default().push(line);
+    }
+    let lines = |numbers: &[usize]| {
+        numbers
+            .iter()
+            .map(usize::to_string)
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    let mut missing = Vec::new();
+    let mut miscounted = Vec::new();
+    let mut resolving = Vec::new();
+    for entry in &KNOWN_UNRESOLVED_LABELS {
+        let (doc, label, clause) = entry;
+        let key = (doc.to_string(), label.to_string(), clause.to_string());
+        let met_lines = met_on.get(&key).map_or(&[][..], Vec::as_slice);
+        let resolved_lines = resolved_on.get(&key).map_or(&[][..], Vec::as_slice);
+        let expected = rows_listed_for(entry);
+        let named = format!(
+            "docs/{}: {:?} on the row whose clause is {}",
+            doc, label, clause
+        );
+        match (met_lines.is_empty(), resolved_lines.is_empty()) {
+            (true, true) => missing.push(named),
+            (false, true) if met_lines.len() != expected => miscounted.push(format!(
+                "{}: met on {} row(s) (line(s) {}) where the list allows {}",
+                named,
+                met_lines.len(),
+                lines(met_lines),
+                expected
+            )),
+            (false, true) => {}
+            (true, false) => resolving.push(format!(
+                "{}: resolves on line(s) {} and comes off the list",
+                named,
+                lines(resolved_lines)
+            )),
+            (false, false) => resolving.push(format!(
+                "{}: resolves on line(s) {} and still fails on line(s) {}; re-pin the failing row(s) too, or keep the entry (with its row count in SHARED_UNRESOLVED_ENTRIES) while a row still carries the label unresolved",
+                named,
+                lines(resolved_lines),
+                lines(met_lines)
+            )),
+        }
+    }
     let mut report = Vec::new();
-    let missing: Vec<String> = KNOWN_UNRESOLVED_LABELS
-        .iter()
-        .filter(|entry| !listed_met.contains(entry))
-        .map(|(doc, line, label)| format!("docs/{}:{}: {:?}", doc, line, label))
-        .collect();
     if !missing.is_empty() {
         report.push(format!(
-            "these entries of KNOWN_UNRESOLVED_LABELS were not met as a failing label of a well-formed clause-table row at their line, and come off the list (a row that moved is re-listed at its new line, which is among the rows to add below when it still fails; a row that is malformed or resolves is listed below or above):\n{}",
+            "these entries of KNOWN_UNRESOLVED_LABELS were not met as a failing label of a well-formed clause-table row that writes their clause cell, and come off the list (a row whose clause cell was reworded is re-listed with the new text, which is among the rows to add below when its label still fails, each line naming the row's clause cell; a row that is malformed or resolves is listed below or above):\n{}",
             missing.join("\n")
         ));
     }
-    if !resolved_after_all.is_empty() {
+    if !miscounted.is_empty() {
         report.push(format!(
-            "these labels of KNOWN_UNRESOLVED_LABELS resolve now and come off the list:\n{}",
-            resolved_after_all.join("\n")
+            "these entries of KNOWN_UNRESOLVED_LABELS were met on a different number of rows than they are listed for (one row, or the count SHARED_UNRESOLVED_ENTRIES gives): a row copied or re-cited with a listed clause cell and label inherits no exemption until the entry's count says so, and a twin row that is gone brings the count down:\n{}",
+            miscounted.join("\n")
+        ));
+    }
+    if !resolving.is_empty() {
+        report.push(format!(
+            "these labels of KNOWN_UNRESOLVED_LABELS resolve now:\n{}",
+            resolving.join("\n")
         ));
     }
     if !unresolved.is_empty() {
         report.push(format!(
-            "every pinned-by cell names a test and a case it has, and every prose citation names one; these do not (a malformed cell or a wrong name is fixed in the document; a prose-labelled row of KNOWN_ISSUES.md that moved is re-listed in KNOWN_UNRESOLVED_LABELS at its new line):\n{}",
+            "every pinned-by cell names a test and a case it has, and every prose citation names one; these do not (a malformed cell or a wrong name is fixed in the document; a prose-labelled row of KNOWN_ISSUES.md whose clause cell was reworded is re-listed in KNOWN_UNRESOLVED_LABELS with the new text the line names):\n{}",
             unresolved.join("\n")
         ));
     }
