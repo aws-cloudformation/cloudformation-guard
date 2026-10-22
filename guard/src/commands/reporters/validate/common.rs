@@ -358,17 +358,17 @@ fn shortened(message: &str) -> String {
 /// The longest refusal explanation the console section prints, in characters. A refusal is the
 /// evaluator's own sentence about a read it would not make (`eval_context::refuse`): its definition of
 /// `X`, the remedy and the predicate, bounded by the author's query and predicate, and the parts it takes
-/// from the template (the path, an entry's or a key's name), each cut on its own at
-/// `eval_context::LONGEST_TEMPLATE_PART_IN_A_REFUSAL` characters with a marker, so no template decides
-/// its length and it is printed whole. This bound is only a backstop that keeps the line finite
-/// whatever a future refusal's sentence holds, and it is this reporter's own: every console line that
-/// prints a refusal's sentence goes through `bounded_for_the_console`, the unattributed section's
-/// explanation (`explanation_of`) and a retrieval error's `Error =` line under a resource
-/// (`refusal_sentence`) alike, so no line's length rests on the evaluator having bounded the text. The
-/// one exception is the verbose tree (`console_reporter.rs`, the `ClauseCheck::Comparison` arm), which
-/// writes each record's message as recorded, bounded by nothing: it is the tree a reader asks for to see
-/// the records whole, and it is left as it is. The longest refusal text in the fixtures and tests is under
-/// a third of it.
+/// from the template (the path, an entry's or a key's name), each bounded on its own by
+/// `eval_context::LONGEST_TEMPLATE_PART_IN_A_REFUSAL` (whose doc gives the effective ceiling of a part
+/// kept whole and the marker a longer one carries), so no template decides its length and it is printed
+/// whole. This bound is only a backstop that keeps the line finite whatever a future refusal's sentence
+/// holds, and it is this reporter's own: every console line that prints a refusal's sentence goes
+/// through `bounded_for_the_console`, the unattributed section's explanation (`explanation_of`) and a
+/// retrieval error's `Error =` line under a resource (`refusal_sentence`) alike, so no line's length
+/// rests on the evaluator having bounded the text. The one exception is the verbose tree
+/// (`console_reporter.rs`, the `ClauseCheck::Comparison` arm), which writes each record's message as
+/// recorded, bounded by nothing: it is the tree a reader asks for to see the records whole, and it is
+/// left as it is. The longest refusal text in the fixtures and tests is under a third of it.
 ///
 /// Which messages are refusals is the evaluator's to say, and it says so on the record
 /// (`Messages::refusal`, copied from `BlockCheck::refusal`, `ValueCheck::refusal`, `NamedStatus::refusal`
@@ -2262,7 +2262,14 @@ mod retrieval_error_tests {
             RHS_CONTEXT,
             &rhs_marker_sentence(refusal),
             true,
-            &unresolved(refusal, "", UnResolvedKind::Undecidable { refused: true }),
+            &unresolved(
+                refusal,
+                "",
+                UnResolvedKind::Undecidable {
+                    refusal: Some(crate::rules::errors::RefusalToken::minted(1)),
+                    carried: None,
+                },
+            ),
         )
     }
 
@@ -2388,7 +2395,14 @@ mod retrieval_error_tests {
     /// refusal word for word.
     #[test]
     fn a_right_hand_refused_markers_block_names_the_refusal_once() {
-        let vur = unresolved(REFUSAL, "", UnResolvedKind::Undecidable { refused: true });
+        let vur = unresolved(
+            REFUSAL,
+            "",
+            UnResolvedKind::Undecidable {
+                refusal: Some(crate::rules::errors::RefusalToken::minted(1)),
+                carried: None,
+            },
+        );
         let out = finding(RHS_CONTEXT, &rhs_marker_sentence(REFUSAL), true, &vur);
         assert_eq!(
             block(&[
@@ -2413,7 +2427,14 @@ mod retrieval_error_tests {
     /// here too, on the nested `Error = [...]` and on the `Reason =` line.
     #[test]
     fn a_left_hand_refused_markers_block_names_the_refusal_once() {
-        let vur = unresolved(REFUSAL, "", UnResolvedKind::Undecidable { refused: true });
+        let vur = unresolved(
+            REFUSAL,
+            "",
+            UnResolvedKind::Undecidable {
+                refusal: Some(crate::rules::errors::RefusalToken::minted(1)),
+                carried: None,
+            },
+        );
         let sentence = format!(
             "Check was not compliant as the value to compare from could not be read. Error = [{REFUSAL}]"
         );
@@ -2442,7 +2463,14 @@ mod retrieval_error_tests {
     /// refusal on the `Error =` line and no `Reason =` line.
     #[test]
     fn a_refusal_the_cut_dropped_from_the_error_line_is_printed_on_the_reason_line() {
-        let vur = unresolved(REFUSAL, "", UnResolvedKind::Undecidable { refused: true });
+        let vur = unresolved(
+            REFUSAL,
+            "",
+            UnResolvedKind::Undecidable {
+                refusal: Some(crate::rules::errors::RefusalToken::minted(1)),
+                carried: None,
+            },
+        );
         let lead = format!(
             "Check was not compliant as the value to compare from could not be read. Value traversed to \
              [{}].",

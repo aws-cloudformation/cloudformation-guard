@@ -2066,7 +2066,7 @@ fn a_map_key_filter_over_an_empty_right_hand_collection_selects_by_polarity() ->
     ] {
         let query = AccessQuery::try_from(query_text)?;
         match value.select(query.match_all, &query.query, &dummy) {
-            Err(Error::UndecidableComparison(reason)) => assert!(
+            Err(Error::UndecidableComparison(reason, _)) => assert!(
                 reason.contains("did not resolve") && reason.contains("Exempt.Missing[*]"),
                 "{}: the refusal names the query the retrieval could not walk, got {}",
                 query_text,
@@ -2196,7 +2196,7 @@ fn a_partially_empty_enumeration_is_refused_by_the_legacy_resolver() -> Result<(
     ] {
         let query = AccessQuery::try_from(query_text)?;
         match value.select(query.match_all, &query.query, &dummy) {
-            Err(Error::UndecidableComparison(reason)) => assert!(
+            Err(Error::UndecidableComparison(reason, _)) => assert!(
                 reason.contains("did not resolve") && reason.contains("Exempt.Groups.*.Inner[*].N"),
                 "{}: the refusal names the query the retrieval could not walk, got {}",
                 query_text,
@@ -2392,7 +2392,7 @@ fn a_map_key_filter_fails_closed_on_an_unreachable_right_hand_value() -> Result<
         match value.select(query.match_all, &query.query, &dummy) {
             // This resolver hands the whole right-hand query back as unresolved at the map it was
             // begun from, so the reason names `/Tags` and the query `Allowed[*].Key` it could not walk.
-            Err(Error::UndecidableComparison(reason)) => assert!(
+            Err(Error::UndecidableComparison(reason, _)) => assert!(
                 reason.contains("did not resolve")
                     && reason.contains("/Tags")
                     && reason.contains("Allowed[*].Key"),
@@ -2470,7 +2470,7 @@ fn a_map_key_filter_that_cannot_be_evaluated_fails_closed() -> Result<(), Error>
             // Arguments spelled out rather than captured inline: under edition 2018 a lone literal
             // handed to `panic!` becomes the payload verbatim.
             match value.select(all, &query.query, &dummy) {
-                Err(Error::UndecidableComparison(reason)) => assert!(
+                Err(Error::UndecidableComparison(reason, _)) => assert!(
                     reason.contains("could not be evaluated"),
                     "{}, all = {}: the reason must say the comparison was not finished, got {:?}",
                     spelling,

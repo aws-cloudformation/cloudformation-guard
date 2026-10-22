@@ -171,8 +171,9 @@ impl std::fmt::Display for EvaluationType {
 
 /// How a retrieval came to stop short of a value, read by the operators that have to tell the cases
 /// apart. Not part of the serialized record: the reports print `traversed_to`, `remaining_query` and
-/// `reason`, and this is what the engine does with the marker, not what the author sees.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+/// `reason`, and this is what the engine does with the marker, not what the author sees. Equality and
+/// `Debug` are written by hand below so that neither reads the refusal token's count.
+#[derive(Clone, Copy, Default)]
 pub(crate) enum UnResolvedKind {
     /// The document lacks the value: a key the map does not have, an index past the end, a function
     /// with no answer. The ordinary case, and the one every operator already reads as "absent".
@@ -196,20 +197,89 @@ pub(crate) enum UnResolvedKind {
     /// inside a predicate leaves this marker too (`eval_context::to_undecidable_result`), with the reason
     /// naming the capture, and is read the same way: the absent reading would have selected the entry
     /// under `!exists` and `empty` for the capture's sake. A wildcard filter's refusal met inside a
-    /// predicate's query leaves it with `refused` set (`eval_context::to_refusal_result`, through
+    /// predicate's query leaves it with its refusal token set (`eval_context::to_refusal_result`, through
     /// `deliver_wildcard_filter_refusal`): every operator reads the two alike (`is_undecidable`), and only
     /// the filter loop whose walk returned the marker tells them apart (`is_refusal`), cutting its
     /// captures back on a refusal of the rest of its query and not on a marker an inner filter left for
-    /// one value it could not decide, since the selection keeps that value's siblings. The flag is data
+    /// one value it could not decide, since the selection keeps that value's siblings. The token is data
     /// on the one variant rather than a sibling variant, so a site that matches `Undecidable` has to say
     /// which it reads: a sibling variant was opted out of silently by every existing pattern (one read a
     /// refused capture as a key the map lacks, and a `some` over it passed on a decided sibling).
     Undecidable {
-        /// Whether the marker is a refusal delivered inside a predicate, as against a value nobody could
-        /// decide.
-        refused: bool,
+        /// The refusal's token when the marker is a refusal delivered inside a predicate: the number
+        /// minted where the refusal was delivered (`eval_context::mint_refusal_token`, counted up on this
+        /// thread and never reused), which the error a clause raises over the marker copies
+        /// (`eval::undecidable_selection`), so the filter predicate run that error ends can tell a
+        /// refusal minted inside it from one minted before it began. `None` for a value nobody could
+        /// decide, and for an entry a run left plain because the refusal that ended it was minted
+        /// before the run began: that token rides in `carried` instead.
+        refusal: Option<errors::RefusalToken>,
+        /// A refusal's token the marker hands on without being that refusal's marker: the token of the
+        /// error that ended a filter predicate run when the refusal was minted BEFORE the run began (a
+        /// capture bound outside the predicate holding a refusal's marker, read inside it), kept here
+        /// so the error a clause raises over this marker (`refusal`) carries it to the run that
+        /// encloses the one that left the entry plain. Every run decides "a refusal of this run" by
+        /// reading the token against the count it opened at (`eval_context::RefusalFrame`), never by
+        /// dropping the token, so a refusal minted inside an outer run and read by an inner one marks
+        /// the OUTER entry whatever the inner run leaves (`eval_context::to_undecidable_result`). `None`
+        /// when `refusal` is set (the token is that one) and for a value nobody could decide.
+        carried: Option<errors::RefusalToken>,
     },
 }
+
+/// Printed as the two facts a reader of a record dump compares, the kind and whether it is a refusal
+/// (`Undecidable { refused: true }`), never the token: the token is a per-thread count that differs between
+/// two evaluations of one rules file, and the tests that compare two runs' record dumps record for record
+/// must read the same dump for the same verdicts. A token the marker carries for an enclosing run
+/// (`carried`) is transport, not a fact about the entry, and is not printed either.
+impl std::fmt::Debug for UnResolvedKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            UnResolvedKind::Absent => f.write_str("Absent"),
+            UnResolvedKind::EmptyEnumeration => f.write_str("EmptyEnumeration"),
+            UnResolvedKind::Undecidable { refusal, .. } => f
+                .debug_struct("Undecidable")
+                .field("refused", &refusal.is_some())
+                .finish(),
+        }
+    }
+}
+
+/// Equal when `Debug` prints the same: two `Undecidable` markers are equal when both are refusals or
+/// neither is, whatever count each token carries, so two markers of one refusal compare equal and a
+/// refused marker and a plain one do not. A derived equality read the counts, and two markers that
+/// printed alike then compared unequal: an `assert_eq!` over them failed with identical sides, and so
+/// would any `==` over the `QueryResult`s holding them. The other variants are equal to themselves alone.
+/// A carried token (`carried`) is not read either: a plain marker handing a token on is equal to a plain
+/// marker handing none, as the two print alike.
+///
+/// The token decides which marker a fold keeps and whether a run's entry is refused
+/// (`eval::would_replace`, `eval_context::RefusalFrame::minted_inside`), so an equality that ignores it
+/// must never stand in for those readers: a `contains` or a dedup over markers would keep the older-minted
+/// one with no test going red. Every production comparison over a `QueryResult`, an `UnResolved` or this
+/// kind was read for that (`eval.rs`, `eval_context.rs`, `eval/`, this file): `key_filter::stands_for_no_entry`
+/// compares a kind with `EmptyEnumeration`, a variant with no token; `FunctionEntries::contains` compares
+/// an entry's `remaining_query` and `reason` by field and never its kind; the key filter's rendering of its
+/// holders and the operators' membership compare `PathAwareValue`s. No site compares two `QueryResult`s or
+/// two markers whole, and no marker list is searched or deduplicated by equality. The token is read through
+/// `RefusalToken::later_than`, by `would_replace` alone, so the folds and the frames never go through this
+/// `eq`. A full equality was not taken: the record cells compare markers minted apart in one run and the
+/// pin above (`two_markers_of_one_refusal_are_equal_whatever_their_tokens_count`) states this reading.
+impl PartialEq for UnResolvedKind {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (UnResolvedKind::Absent, UnResolvedKind::Absent) => true,
+            (UnResolvedKind::EmptyEnumeration, UnResolvedKind::EmptyEnumeration) => true,
+            (
+                UnResolvedKind::Undecidable { refusal, .. },
+                UnResolvedKind::Undecidable { refusal: other, .. },
+            ) => refusal.is_some() == other.is_some(),
+            _ => false,
+        }
+    }
+}
+
+impl Eq for UnResolvedKind {}
 
 impl UnResolvedKind {
     /// Whether the selection for the value is unknown rather than absent: a clause over the marker fails
@@ -222,7 +292,28 @@ impl UnResolvedKind {
     /// Whether the marker is a refusal delivered inside a predicate: the one kind a filter loop cuts its
     /// captures back on (`eval_context::ShapeNotes::rebind_to_markers`).
     pub(crate) fn is_refusal(&self) -> bool {
-        matches!(self, UnResolvedKind::Undecidable { refused: true })
+        matches!(
+            self,
+            UnResolvedKind::Undecidable {
+                refusal: Some(_),
+                ..
+            }
+        )
+    }
+
+    /// The refusal's token the marker carries: its own when the marker is a refusal (`is_refusal`), else
+    /// the one it hands on for an enclosing filter predicate run (`carried`: a refusal minted before the
+    /// run that left this entry plain, or the refusal a key filter's right-hand side raised, whose marker
+    /// for the map is rebuilt plain because that arm has no run to read the token against), `None` for a
+    /// value nobody could decide and for every other kind.
+    /// What the error a clause raises over the marker carries in its second field
+    /// (`Error::UndecidableComparison`), copied from here so the filter predicate run it ends reads
+    /// where the refusal was minted against the count that run opened at, at any depth of nesting.
+    pub(crate) fn refusal(&self) -> Option<errors::RefusalToken> {
+        match self {
+            UnResolvedKind::Undecidable { refusal, carried } => refusal.or(*carried),
+            UnResolvedKind::Absent | UnResolvedKind::EmptyEnumeration => None,
+        }
     }
 }
 
@@ -270,13 +361,21 @@ pub(crate) struct ComparisonClauseCheck {
     /// decided beside a refused `%name` among the right-hand values carries the retrieval's own reason
     /// and the refusal's text beside it, the record of a refused `%name` on the left decided by a
     /// right-hand side the document lacks carries that absence's reason and the refusal's text after it,
-    /// and the record of a left-hand value paired with the refusal's
-    /// marker under a positive `IN` carries the refusal's text as its reason. Set where the record is
-    /// written, from the marker's kind (`eval::refused_read_reason`), as [`ValueCheck::refusal`] is set
-    /// from the error's; the reporters' `Messages::refusal` is copied from here, so the console prints
-    /// such a message whole where it cuts every other to `LONGEST_RECORDED_MESSAGE`, and a refusal's
-    /// remedy and path are not cut off its record. A key filter's reason is no refusal and reads
-    /// `false`. Not serialized: the record tree `--print-json` writes keeps its shape.
+    /// the record of a left-hand value paired with the refusal's marker under a positive `IN` carries the
+    /// refusal's text as its reason, and the record of a left-hand value that is itself a refusal's
+    /// marker (the `LhsUnresolved` arm of `eval::binary_operation`: the refused map's marker,
+    /// `UnResolvedKind::is_refusal`) carries the marker's reason, the refusal's own sentence. Set where
+    /// the record is written, by the ONE reading of a marker as a refused read (`eval::is_refused_read`,
+    /// `eval::refused_read_text`: a refusal's marker by kind, or a plain marker whose reason the registry
+    /// holds), on either side of the comparison alike, as [`ValueCheck::refusal`] is set from the error's;
+    /// the reporters' `Messages::refusal` is copied from here, so the console prints such a message whole
+    /// where it cuts every other to `LONGEST_RECORDED_MESSAGE`, and a refusal's remedy and path are not cut
+    /// off its record. A key filter's marker whose reason the registry does not hold (a spent regex budget,
+    /// a map nobody could decide) is no refusal and reads `false`; the key filter's marker for a map whose
+    /// right-hand query was refused carries the refusal's registered sentence and reads `true`, on the
+    /// left as on the right, so `some %s != Properties.Name` and `some Properties.Name != %s` over one
+    /// such marker in `%s` record one flag. Not serialized: the record tree `--print-json` writes keeps
+    /// its shape.
     #[serde(skip)]
     pub(crate) refusal: bool,
 }
@@ -1114,12 +1213,18 @@ pub(crate) trait EvalContext<'value, 'loc: 'value>: RecordTracer<'value> {
     /// spelled like a moved argument at the same position is its own line, and the count the commands
     /// append across the cases of one spec file speaks of cases that refuse the capture, not of maps
     /// that read a differing value.
+    ///
+    /// Returns whether a line now stands for this capture at this site: `true` from the root scope
+    /// evaluating (the first text, or the one already there), `false` under a measurement and from a
+    /// quiet probe, which record nothing. The caller that keys a refusal as announced
+    /// (`eval_context::refuse_unbound_capture`) reads it, so the announced set holds a reason only where
+    /// the warning channel names it.
     fn record_capture_warning(
         &mut self,
         site: &exprs::FileLocation<'_>,
         capture: &str,
         notice: String,
-    );
+    ) -> bool;
 
     /// Note that a comparison at `site` (written as `context`) was decided without raising the REFUSED
     /// reads among its values, on either side (`refusals`, one text each): the clause's verdict
@@ -1336,15 +1441,29 @@ pub(crate) trait EvalContext<'value, 'loc: 'value>: RecordTracer<'value> {
         &self,
     ) -> Option<Rc<std::cell::RefCell<eval_context::DocumentBindingMemo<'value>>>>;
 
-    /// The latest deep copy the member notice's probe made of a value found below the document root,
-    /// with the path of the value it copies (see [`eval_context::ValueBeforeClones`]): the probe reads
-    /// the value the released engines asked the predicate of, and under `Statement[*].Condition[*][ f ]`
-    /// that value is the resource above every statement's root, so a site whose verdict stays quiet
-    /// (recorded per map, not per site) asked for that copy once per statement, a copying cost that grew
-    /// with the square of the policy's size; the one copy now serves every statement and every site that
-    /// asks for the same value before the walk moves on. Owned by the root scope; every other scope
-    /// forwards; a scope with no root behind it answers `None` (the default) and the copy is made on every
-    /// ask.
+    /// The reason texts of the captures this evaluation refused inside filter predicates
+    /// (`eval_context::refuse_unbound_capture`) whose warning WAS recorded where they were refused
+    /// (`eval_context::announce_unbound_capture`, once per clause and input; `record_capture_warning`
+    /// says whether a line stands, and a refusal met under a measurement or a quiet probe, which record
+    /// no line, is not in the set): read by the comparison's refused-read line (`eval::binary_operation`)
+    /// to leave an announced refusal off it, so one refusal is not reported twice at one clause in two
+    /// wordings, and a refusal no line names is reported there. Owned by the root scope and gone with it;
+    /// every scope with a root behind it forwards; a scope with none answers `None` (the test doubles),
+    /// and the line then names every refused read it met.
+    fn announced_capture_refusals(&self) -> Option<Rc<std::cell::RefCell<HashSet<String>>>> {
+        None
+    }
+
+    /// The deep copies the member notice's probe made of values found below the document root during the
+    /// top-level clause being evaluated, keyed by the node each copies (see
+    /// [`eval_context::ValueBeforeClones`]): the probe reads the value the released engines asked the
+    /// predicate of, and under `Statement[*].Condition[*][ f ]` that value is the resource above every
+    /// statement's root, so a site whose verdict stays quiet (recorded per map, not per site) asked for
+    /// that copy once per statement, a copying cost that grew with the square of the policy's size; one
+    /// copy now serves every statement and every site that asks for the same value within the clause, and
+    /// the clause evaluator clears the table as the outermost clause ends
+    /// ([`eval_context::ClauseCopies`]). Owned by the root scope; every other scope forwards; a scope with
+    /// no root behind it answers `None` (the default) and the copy is made on every ask.
     fn value_before_the_wildcard_clones(
         &self,
     ) -> Option<Rc<std::cell::RefCell<eval_context::ValueBeforeClones>>> {
@@ -1394,6 +1513,31 @@ pub(crate) trait EvalContext<'value, 'loc: 'value>: RecordTracer<'value> {
     /// call's move lost. The call scope answers `true`, the root `false`, and every other scope
     /// forwards. No default, for the reason `record_deprecation` has none.
     fn within_parameterized_call(&self) -> bool;
+
+    /// The frames of the filter predicate runs open on this evaluation, outermost first
+    /// (`eval_context::RefusalFrames`, each frame the refusal token counter and the scope event as its run
+    /// opened), empty outside every run, as a copy. A run pushes its frame as its body starts and pops it
+    /// as the body ends (`eval_context::with_refusal_frame`, in `run_filter_predicate` and
+    /// `select_list_members`), and every fold that ranks refusal tokens reads the stack off the context it
+    /// runs under (`eval::ranking_under`): the conjunction fold, the block's value fold and its
+    /// refused-body fold, the comparison's evidence and its right-hand marker folds, the key filter's
+    /// per-key fold, the refused-read collection. So the ranking a run marks its entry by reaches a fold
+    /// through whatever scope stands between them, a block body or a comparison inside the predicate
+    /// included; handed into the top fold as an argument it reached the two folds someone remembered to
+    /// thread it through, and the resource-order swap it closes survived in a block shape and in a
+    /// comparison with the binding on the left. The whole stack, not the innermost frame alone: a fold
+    /// ranks a token by how many of the live runs can read it as their own (`RefusalFrames::rank`), so a
+    /// nested run's fold keeps, among tokens it cannot read as its own, the one the enclosing run can,
+    /// where the innermost frame alone kept the later-minted and carried up a token the enclosing run
+    /// could not read either. The root holds the stack; every other scope forwards both methods, so a
+    /// scope built inside a run reads the run's frames. Explicit state on the context a test builds,
+    /// which a test of a nested fold can set, where a thread-local would be an ambient dependency the test
+    /// did not plant. No default, for the reason `record_deprecation` has none.
+    fn refusal_frames(&self) -> eval_context::RefusalFrames;
+
+    /// The stack `refusal_frames` copies, for the run to push onto and pop from; see `refusal_frames`.
+    /// Every scope but the root forwards.
+    fn refusal_frames_mut(&mut self) -> &mut eval_context::RefusalFrames;
 
     /// The chain from `variable_name` to the function call it is rooted at, if any: `None` for a name on
     /// no such chain, else the name bound to the call (`root`), whether every hop was an exact alias

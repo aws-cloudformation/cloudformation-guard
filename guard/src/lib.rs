@@ -21,6 +21,7 @@ pub use crate::rules::errors::Error;
 /// was not nameable outside this crate, so a consumer could match the variant but could neither
 /// construct nor destructure what it carries. `cfn-guard-ffi` is one such consumer.
 pub use crate::rules::errors::InternalError;
+pub use crate::rules::errors::RefusalToken;
 
 use crate::commands::ERROR_STATUS_CODE;
 use crate::utils::reader::{ReadBuffer, Reader};

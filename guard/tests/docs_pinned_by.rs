@@ -1826,6 +1826,12 @@ struct RowsReading {
     unresolved: Vec<String>,
     met: Vec<(ListedEntry, usize)>,
     resolved: Vec<(ListedEntry, usize)>,
+    /// The listed entries whose cited test and label a row carries that failed the shape check (its fn,
+    /// fixture or citation grammar), by line: the row is reported in `unresolved` with its own fault and
+    /// its labels were never read, so the entry is neither met nor missing (`classify`). Counted as
+    /// missing, the report told the reader to drop an exemption the row still needs once its shape is
+    /// fixed.
+    shape_failed: Vec<(ListedEntry, usize)>,
     rows: usize,
     pinned: usize,
 }
@@ -1860,6 +1866,27 @@ fn read_rows(
                         "{}:{}: {} (the row's clause cell is {})",
                         shown, number, why, clause
                     ));
+                    // the row's listed labels were not read: recorded as carried by a shape-failed row,
+                    // so the report neither counts them met nor tells the reader to drop them (the cited
+                    // test and the label are looked for as the cell writes them, the label as the quoted
+                    // literal)
+                    for (doc, c, cited, label) in list {
+                        if *doc == name
+                            && *c == clause
+                            && cell.contains(cited)
+                            && cell.contains(&format!("\"{}\"", label))
+                        {
+                            reading.shape_failed.push((
+                                (
+                                    name.to_string(),
+                                    clause.clone(),
+                                    cited.to_string(),
+                                    label.to_string(),
+                                ),
+                                number,
+                            ));
+                        }
+                    }
                     continue;
                 }
                 // then the labels: a listed one (by document, the row's clause cell, the cited test and
@@ -1926,12 +1953,15 @@ fn lines(numbers: &[usize]) -> String {
 }
 
 /// Classifies the listed entries (`list`, with the shared ones and their row counts in `shared`) against
-/// the rows they were met on with the label still failing (`met`) and the rows their label resolved on
-/// (`resolved`), both as `(entry, line)`; a row counts once however many times its cell writes the
-/// label. Written as a fn of its inputs so a doctored reading is classified as the real one is.
+/// the rows they were met on with the label still failing (`met`), the rows their label resolved on
+/// (`resolved`), and the rows that carried them while failing the shape check (`shape_failed`), each as
+/// `(entry, line)`; a row counts once however many times its cell writes the label. An entry carried
+/// only by shape-failed rows is reported through those rows' own lines, never as missing. Written as a
+/// fn of its inputs so a doctored reading is classified as the real one is.
 fn classify(
     met: &[(ListedEntry, usize)],
     resolved: &[(ListedEntry, usize)],
+    shape_failed: &[(ListedEntry, usize)],
     list: &[ListedKey],
     shared: &[SharedKey],
 ) -> Classified {
@@ -1979,6 +2009,8 @@ fn classify(
     };
     let met_on = by_row(met);
     let resolved_on = by_row(resolved);
+    let shape_failed_on: HashSet<&ListedEntry> =
+        shape_failed.iter().map(|(entry, _)| entry).collect();
     for entry in list {
         let (doc, clause, cited, label) = entry;
         let key = (
@@ -2001,6 +2033,9 @@ fn classify(
             )
         };
         match (met_lines.is_empty(), resolved_lines.is_empty()) {
+            // carried by a row that failed the shape check: that row's own line says what to fix, and
+            // the entry stays until the row's labels can be read
+            (true, true) if shape_failed_on.contains(&key) => {}
             (true, true) => out.missing.push(named(entry)),
             (false, true) if !count_note.is_empty() => {
                 out.miscounted
@@ -2919,6 +2954,54 @@ fn every_pinned_by_cell_of_the_clause_tables_names_a_test_and_a_case_it_has() {
             twin
         );
     }
+    // a row that fails the shape check (a fn no source defines) carrying a listed cited test and label:
+    // the row is reported for its shape, its entry is recorded as carried by a shape-failed row, neither
+    // met nor missing, and the classifier does not say to drop the exemption
+    let shape_failed_row = format!(
+        "> {}\n> |---|---|---|---|---|---|\n> | `w` | one-object | == | PASS | none | eval_tests.rs:no_such_test_fn_anywhere (case \"a label no case carries\") |\n",
+        CLAUSE_TABLE_HEADER
+    );
+    let listed_w = (
+        "KNOWN_ISSUES.md",
+        "`w`",
+        "eval_tests.rs:no_such_test_fn_anywhere",
+        "a label no case carries",
+    );
+    let shape_reading = read_rows(
+        &index,
+        "KNOWN_ISSUES.md",
+        SHOWN_KI,
+        &shape_failed_row,
+        &[listed_w],
+    );
+    let key_w = (
+        listed_w.0.to_string(),
+        listed_w.1.to_string(),
+        listed_w.2.to_string(),
+        listed_w.3.to_string(),
+    );
+    assert_eq!(
+        (1, vec![(key_w, 3)], 0),
+        (
+            shape_reading.unresolved.len(),
+            shape_reading.shape_failed.clone(),
+            shape_reading.met.len()
+        ),
+        "the shape-failed row is reported once, its entry recorded as carried by it and not met: {:?}",
+        shape_reading.unresolved
+    );
+    let classified = classify(
+        &shape_reading.met,
+        &shape_reading.resolved,
+        &shape_reading.shape_failed,
+        &[listed_w],
+        &[],
+    );
+    assert!(
+        classified.missing.is_empty(),
+        "an entry carried only by a shape-failed row is not reported as missing: {:?}",
+        classified.missing
+    );
 
     // The classifier on the doctored reading: the entry met on two rows where the list allows one is
     // miscounted (a copied row inherits no exemption), the entry no row writes is missing; with the
@@ -2927,6 +3010,7 @@ fn every_pinned_by_cell_of_the_clause_tables_names_a_test_and_a_case_it_has() {
     let classified = classify(
         &reading.met,
         &reading.resolved,
+        &reading.shape_failed,
         &[listed_x, listed_elsewhere],
         &[],
     );
@@ -2955,7 +3039,13 @@ fn every_pinned_by_cell_of_the_clause_tables_names_a_test_and_a_case_it_has() {
         classified.missing
     );
     let shared_x = (listed_x.0, listed_x.1, listed_x.2, listed_x.3, 2usize);
-    let classified = classify(&reading.met, &reading.resolved, &[listed_x], &[shared_x]);
+    let classified = classify(
+        &reading.met,
+        &reading.resolved,
+        &reading.shape_failed,
+        &[listed_x],
+        &[shared_x],
+    );
     assert!(
         classified.miscounted.is_empty() && classified.missing.is_empty(),
         "the entry listed as shared for two rows is met as listed: {:?} {:?}",
@@ -2965,6 +3055,7 @@ fn every_pinned_by_cell_of_the_clause_tables_names_a_test_and_a_case_it_has() {
     let classified = classify(
         &reading.met,
         &reading.resolved,
+        &reading.shape_failed,
         &[listed_x, listed_x],
         &[
             (
@@ -3532,7 +3623,13 @@ fn every_pinned_by_cell_of_the_clause_tables_names_a_test_and_a_case_it_has() {
     );
     // and the classifier counts them as the one row the entry is listed for: nothing is miscounted,
     // missing or resolving
-    let classified = classify(&reading.met, &reading.resolved, &[carried], &[]);
+    let classified = classify(
+        &reading.met,
+        &reading.resolved,
+        &reading.shape_failed,
+        &[carried],
+        &[],
+    );
     assert_eq!(
         (0, 0, 0),
         (
@@ -3555,7 +3652,13 @@ fn every_pinned_by_cell_of_the_clause_tables_names_a_test_and_a_case_it_has() {
         &doctored_table,
         &[resolving],
     );
-    let classified = classify(&reading.met, &reading.resolved, &[resolving], &[]);
+    let classified = classify(
+        &reading.met,
+        &reading.resolved,
+        &reading.shape_failed,
+        &[resolving],
+        &[],
+    );
     assert_eq!(
         (1, 0, 0),
         (
@@ -3622,6 +3725,7 @@ fn every_pinned_by_cell_of_the_clause_tables_names_a_test_and_a_case_it_has() {
     // labels met on their rows and still failing (a listed label not met is reported by name)
     let mut met: Vec<(ListedEntry, usize)> = Vec::new();
     let mut resolved: Vec<(ListedEntry, usize)> = Vec::new();
+    let mut shape_failed: Vec<(ListedEntry, usize)> = Vec::new();
     // the README sits beside the repository root, not under docs/: its prose is read, it has no tables
     let mut read: Vec<(String, PathBuf)> = documents
         .iter()
@@ -3646,6 +3750,7 @@ fn every_pinned_by_cell_of_the_clause_tables_names_a_test_and_a_case_it_has() {
         unresolved.extend(reading.unresolved);
         met.extend(reading.met);
         resolved.extend(reading.resolved);
+        shape_failed.extend(reading.shape_failed);
     }
     // each document's tables were read, not one document's standing in for the others'
     for (name, rows_floor, pinned_floor) in TABLE_FLOORS {
@@ -3672,6 +3777,7 @@ fn every_pinned_by_cell_of_the_clause_tables_names_a_test_and_a_case_it_has() {
     } = classify(
         &met,
         &resolved,
+        &shape_failed,
         &KNOWN_UNRESOLVED_LABELS,
         &SHARED_UNRESOLVED_ENTRIES,
     );

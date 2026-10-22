@@ -42,6 +42,10 @@ fn extraction_test() -> Result<()> {
 pub(crate) struct BasicQueryTesting<'record, 'value> {
     pub(crate) root: Rc<PathAwareValue>,
     pub(crate) recorder: Option<&'record mut dyn RecordTracer<'value>>,
+    /// The frames of the runs open under this double (`EvalContext::refusal_frames`): kept as a root
+    /// scope keeps them, so a run under the double pushes and pops here and a fold under it ranks by the
+    /// frames a cell plants, where a double that dropped them ranked every token 0 whatever ran.
+    pub(crate) refusal_frames: RefusalFrames,
 }
 
 impl<'record, 'value, 'loc: 'value> EvalContext<'value, 'loc>
@@ -259,6 +263,16 @@ impl<'record, 'value, 'loc: 'value> EvalContext<'value, 'loc>
     fn within_parameterized_call(&self) -> bool {
         false
     }
+    /// The double's own stack (`refusal_frames`), kept as a root scope keeps its: a run under this
+    /// double pushes and pops here, so a fold under it ranks by the frames the run and a cell planted.
+    /// A double that answered an empty stack and dropped every push ranked every token 0 under a run,
+    /// the pair rule as released, whatever the run had opened.
+    fn refusal_frames(&self) -> RefusalFrames {
+        self.refusal_frames.clone()
+    }
+    fn refusal_frames_mut(&mut self) -> &mut RefusalFrames {
+        &mut self.refusal_frames
+    }
     /// Binds no variables, so nothing here is on a chain to a function's result.
     fn function_chain(&mut self, _: &str) -> Option<FunctionChain<'value>> {
         None
@@ -267,7 +281,9 @@ impl<'record, 'value, 'loc: 'value> EvalContext<'value, 'loc>
         None
     }
     fn record_warning(&mut self, _: &FileLocation<'_>, _: &str, _: &str, _: String) {}
-    fn record_capture_warning(&mut self, _: &FileLocation<'_>, _: &str, _: String) {}
+    fn record_capture_warning(&mut self, _: &FileLocation<'_>, _: &str, _: String) -> bool {
+        false
+    }
     fn record_unraised_refusal(
         &mut self,
         _: &FileLocation<'_>,
@@ -307,6 +323,7 @@ fn no_query_return_root() -> Result<()> {
     let mut eval = BasicQueryTesting {
         root: Rc::new(path_value.clone()),
         recorder: None,
+        refusal_frames: RefusalFrames::default(),
     };
     let query_results = eval.query(&[])?;
     assert!(!query_results.is_empty());
@@ -325,6 +342,7 @@ fn empty_value_return_unresolved() -> Result<()> {
     let mut eval = BasicQueryTesting {
         root: Rc::new(path_value.clone()),
         recorder: None,
+        refusal_frames: RefusalFrames::default(),
     };
     let query = AccessQuery::try_from("Resources.*")?.query;
     let query_results = eval.query(&query)?;
@@ -356,6 +374,7 @@ fn non_empty_value_return_results() -> Result<()> {
     let mut eval = BasicQueryTesting {
         root: Rc::new(path_value),
         recorder: None,
+        refusal_frames: RefusalFrames::default(),
     };
     let query = AccessQuery::try_from("Resources.*")?.query;
     let query_results = eval.query(&query)?;
@@ -409,6 +428,7 @@ fn non_empty_value_mixed_results() -> Result<()> {
     let mut eval = BasicQueryTesting {
         root: Rc::new(path_value),
         recorder: None,
+        refusal_frames: RefusalFrames::default(),
     };
     let query_results = eval.query(&query)?;
     assert!(!query_results.is_empty());
@@ -453,6 +473,7 @@ fn non_empty_value_with_missing_list_property() -> Result<()> {
     let mut eval = BasicQueryTesting {
         root: Rc::new(path_value),
         recorder: None,
+        refusal_frames: RefusalFrames::default(),
     };
     let query = AccessQuery::try_from("Resources.*.Properties.Tags[*].Value")?.query;
     let query_results = eval.query(&query)?;
@@ -502,6 +523,7 @@ fn non_empty_value_with_empty_list_property() -> Result<()> {
     let mut eval = BasicQueryTesting {
         root: Rc::new(path_value),
         recorder: None,
+        refusal_frames: RefusalFrames::default(),
     };
     let query = AccessQuery::try_from("Resources.*.Properties.Tags[*].Value")?.query;
     let query_results = eval.query(&query)?;
@@ -551,6 +573,7 @@ fn map_filter_keys() -> Result<()> {
     let mut eval = BasicQueryTesting {
         root: Rc::new(path_value),
         recorder: None,
+        refusal_frames: RefusalFrames::default(),
     };
     let query = AccessQuery::try_from("Resources[ keys == /s3/ ]")?.query;
     let query_results = eval.query(&query)?;
@@ -645,6 +668,7 @@ fn test_with_converter() -> Result<()> {
     let mut eval = BasicQueryTesting {
         root: Rc::new(path_value),
         recorder: None,
+        refusal_frames: RefusalFrames::default(),
     };
     let query = AccessQuery::try_from("resources.*.properties.tags[*].value")?.query;
     let query_results = eval.query(&query)?;
@@ -699,6 +723,7 @@ fn a_query_for_a_plural_property_does_not_resolve_to_a_singular_one() -> Result<
         let mut eval = BasicQueryTesting {
             root: Rc::clone(&root),
             recorder: None,
+            refusal_frames: RefusalFrames::default(),
         };
         let query_results = eval.query(&parsed)?;
         assert_eq!(query_results.len(), 1);
@@ -759,6 +784,7 @@ fn case_convention_leniency_still_resolves_the_same_property() -> Result<()> {
         let mut eval = BasicQueryTesting {
             root: Rc::clone(&root),
             recorder: None,
+            refusal_frames: RefusalFrames::default(),
         };
         let query_results = eval.query(&parsed)?;
         assert_eq!(query_results.len(), 1);
@@ -808,6 +834,7 @@ fn test_handle_function_call() -> Result<()> {
     let mut eval = BasicQueryTesting {
         root: Rc::new(path_value),
         recorder: None,
+        refusal_frames: RefusalFrames::default(),
     };
     // regex_replace
     let query = AccessQuery::try_from("resources.ec2.properties.Arn")?.query;
@@ -1914,6 +1941,12 @@ impl<'value, 'loc: 'value> EvalContext<'value, 'loc> for BindingsOnly<'value, 'l
     fn within_parameterized_call(&self) -> bool {
         todo!()
     }
+    fn refusal_frames(&self) -> RefusalFrames {
+        todo!()
+    }
+    fn refusal_frames_mut(&mut self) -> &mut RefusalFrames {
+        todo!()
+    }
     fn function_chain(&mut self, _: &str) -> Option<FunctionChain<'value>> {
         todo!()
     }
@@ -1923,7 +1956,7 @@ impl<'value, 'loc: 'value> EvalContext<'value, 'loc> for BindingsOnly<'value, 'l
     fn record_warning(&mut self, _: &FileLocation<'_>, _: &str, _: &str, _: String) {
         todo!()
     }
-    fn record_capture_warning(&mut self, _: &FileLocation<'_>, _: &str, _: String) {
+    fn record_capture_warning(&mut self, _: &FileLocation<'_>, _: &str, _: String) -> bool {
         todo!()
     }
     fn record_unraised_refusal(
@@ -2263,6 +2296,7 @@ fn quiet_record_key_falls_back_to_the_path_when_the_binding_chain_cannot_be_read
     let mut resolver = BasicQueryTesting {
         root: Rc::new(value),
         recorder: None,
+        refusal_frames: RefusalFrames::default(),
     };
     assert_eq!(
         QuietRecordKey::PathByFallback,
@@ -4153,6 +4187,7 @@ fn resolve_function_keeps_an_unresolved_result_for_every_input_it_cannot_handle(
     let mut eval = BasicQueryTesting {
         root: Rc::new(value),
         recorder: None,
+        refusal_frames: RefusalFrames::default(),
     };
     let parameters = vec![LetValue::AccessClause(AccessQuery::try_from(
         "Ingress[*].IpProtocol",
@@ -4264,6 +4299,7 @@ fn resolve_function_gives_the_real_reason_for_a_value_it_cannot_answer_for(
     let mut eval = BasicQueryTesting {
         root: Rc::new(value),
         recorder: None,
+        refusal_frames: RefusalFrames::default(),
     };
     let mut parameters = vec![LetValue::AccessClause(AccessQuery::try_from("V")?)];
     for n in extra_int_arguments {
@@ -4309,6 +4345,7 @@ fn exactly_one_names_what_the_argument_resolved_to() -> Result<()> {
     let mut eval = BasicQueryTesting {
         root: Rc::new(value),
         recorder: None,
+        refusal_frames: RefusalFrames::default(),
     };
     let first = AccessQuery::try_from("Items[0].Delim")?;
     let second = AccessQuery::try_from("Items[1].Delim")?;
@@ -4408,6 +4445,7 @@ fn resolve_function_tags_the_result_by_what_its_arguments_were() -> Result<()> {
     let mut eval = BasicQueryTesting {
         root: Rc::new(value),
         recorder: None,
+        refusal_frames: RefusalFrames::default(),
     };
 
     let literal = vec![LetValue::Value(PathAwareValue::try_from(r#""5""#)?)];
@@ -4440,6 +4478,7 @@ fn resolve_function_tags_the_result_by_what_its_arguments_were() -> Result<()> {
     let mut eval = BasicQueryTesting {
         root: Rc::new(PathAwareValue::try_from(r#"{ Items: [ { V: 1 } ] }"#)?),
         recorder: None,
+        refusal_frames: RefusalFrames::default(),
     };
     let empty = vec![LetValue::AccessClause(AccessQuery::try_from(
         "Items[ V == 2 ].V",
@@ -4498,6 +4537,7 @@ fn resolve_function_tags_the_result_by_what_its_arguments_were() -> Result<()> {
             r#"{ Resources: { A: { Type: "Y", Properties: { Tags: [] } }, B: { Type: "Y", Properties: { Tags: [] } } } }"#,
         )?),
         recorder: None,
+        refusal_frames: RefusalFrames::default(),
     };
     let none_selected = vec![LetValue::AccessClause(AccessQuery::try_from(
         "Resources.*[ Type == 'X' ]",
@@ -4535,6 +4575,7 @@ fn resolve_function_reads_a_list_valued_argument_as_its_elements() -> Result<()>
     let mut eval = BasicQueryTesting {
         root: Rc::new(value),
         recorder: None,
+        refusal_frames: RefusalFrames::default(),
     };
 
     let property = vec![LetValue::AccessClause(AccessQuery::try_from("L")?)];
@@ -5046,21 +5087,225 @@ fn let_value_without_positions<'loc>(value: &LetValue<'loc>) -> LetValue<'loc> {
 }
 
 /// A refusal's marker is an undecidable kind: a clause fails closed on it as on any other marker, and the
-/// capture cut (`ShapeNotes::rebind_to_markers`) reads the `refused` flag alone, never the other
+/// capture cut (`ShapeNotes::rebind_to_markers`) reads the `refusal` token alone, never the other
 /// undecidables.
 #[test]
 fn a_refusal_is_an_undecidable_kind_and_the_decided_kinds_are_not() {
-    assert!(UnResolvedKind::Undecidable { refused: true }.is_undecidable());
-    assert!(UnResolvedKind::Undecidable { refused: false }.is_undecidable());
+    assert!(UnResolvedKind::Undecidable {
+        refusal: Some(crate::rules::errors::RefusalToken::minted(7)),
+        carried: None,
+    }
+    .is_undecidable());
+    assert!(UnResolvedKind::Undecidable {
+        refusal: None,
+        carried: None
+    }
+    .is_undecidable());
     assert!(!UnResolvedKind::Absent.is_undecidable());
     assert!(!UnResolvedKind::EmptyEnumeration.is_undecidable());
-    assert!(UnResolvedKind::Undecidable { refused: true }.is_refusal());
-    assert!(!UnResolvedKind::Undecidable { refused: false }.is_refusal());
+    assert!(UnResolvedKind::Undecidable {
+        refusal: Some(crate::rules::errors::RefusalToken::minted(7)),
+        carried: None,
+    }
+    .is_refusal());
+    assert!(!UnResolvedKind::Undecidable {
+        refusal: None,
+        carried: None
+    }
+    .is_refusal());
     assert!(!UnResolvedKind::Absent.is_refusal());
     assert!(!UnResolvedKind::EmptyEnumeration.is_refusal());
 }
 
-/// The `refused` bit is set where a refusal is built and clear where a value nobody could decide is: the
+/// The refusal token is opaque: the marker's kind prints as its two facts and never the token's count, so
+/// two evaluations of one rules file dump the same record for the same verdicts, and an error rebuilt from
+/// its text (`Error::repeated`) carries no token, so a later read of a failed assignment flags no entry.
+/// The type's field is private and it has no public constructor (the crate-private `minted` is this
+/// crate's), so code outside the evaluator names it in a pattern and nothing else.
+#[test]
+fn the_refusal_token_is_opaque_in_the_dump_and_dropped_by_a_rebuilt_error() {
+    let token = crate::rules::errors::RefusalToken::minted(7);
+    assert_eq!(
+        "Undecidable { refused: true }",
+        format!(
+            "{:?}",
+            UnResolvedKind::Undecidable {
+                refusal: Some(token),
+                carried: None,
+            }
+        )
+    );
+    assert_eq!(
+        "Undecidable { refused: false }",
+        format!(
+            "{:?}",
+            UnResolvedKind::Undecidable {
+                refusal: None,
+                carried: None
+            }
+        )
+    );
+    let rebuilt =
+        crate::rules::errors::Error::UndecidableComparison("why".to_string(), Some(token))
+            .repeated();
+    assert!(
+        matches!(&rebuilt, crate::rules::errors::Error::UndecidableComparison(reason, None) if reason == "why"),
+        "a rebuilt error keeps the text and drops the token: {:?}",
+        rebuilt
+    );
+}
+
+/// Two markers of one refusal are equal though their tokens were minted apart, and a refused marker is not
+/// equal to a plain one: equality reads what `Debug` prints, the kind and whether it is a refusal, never
+/// the count. Pinned with `assert_eq!` on two tokens minted in one run, the comparison a derived equality
+/// failed with identical prints on both sides (which is why the record cells read `matches!` instead).
+#[test]
+fn two_markers_of_one_refusal_are_equal_whatever_their_tokens_count() {
+    let first = UnResolvedKind::Undecidable {
+        refusal: Some(mint_refusal_token()),
+        carried: None,
+    };
+    let second = UnResolvedKind::Undecidable {
+        refusal: Some(mint_refusal_token()),
+        carried: None,
+    };
+    assert_eq!(first, second);
+    assert_eq!(
+        UnResolvedKind::Undecidable {
+            refusal: None,
+            carried: None
+        },
+        UnResolvedKind::Undecidable {
+            refusal: None,
+            carried: None
+        }
+    );
+    assert_ne!(
+        first,
+        UnResolvedKind::Undecidable {
+            refusal: None,
+            carried: None
+        }
+    );
+    assert_ne!(first, UnResolvedKind::Absent);
+    assert_ne!(first, UnResolvedKind::EmptyEnumeration);
+    assert_ne!(UnResolvedKind::Absent, UnResolvedKind::EmptyEnumeration);
+    assert_eq!(UnResolvedKind::Absent, UnResolvedKind::Absent);
+    assert_eq!(
+        UnResolvedKind::EmptyEnumeration,
+        UnResolvedKind::EmptyEnumeration
+    );
+}
+
+/// The token's `Debug` form names the type and no count, on the token itself and through an
+/// `Error::UndecidableComparison` that carries it: a consumer that prints an error with `{:?}` reads nothing
+/// the private field withholds.
+#[test]
+fn the_refusal_tokens_debug_form_holds_no_count() {
+    let token = crate::rules::errors::RefusalToken::minted(7);
+    assert_eq!("RefusalToken(..)", format!("{:?}", token));
+    let error = crate::rules::errors::Error::UndecidableComparison("why".to_string(), Some(token));
+    let printed = format!("{:?}", error);
+    assert!(
+        printed.contains("RefusalToken(..)"),
+        "the error names the token's type: {}",
+        printed
+    );
+    assert!(
+        !printed.chars().any(|c| c.is_ascii_digit()),
+        "the error's debug form holds no count: {}",
+        printed
+    );
+}
+
+/// A plain marker that carries a token (`to_undecidable_result` with the token of the raise that ended a run
+/// the refusal was minted before) reads plain for its own entry and hands the token on: `is_refusal` is
+/// false, so the filter loop whose walk returned it cuts no captures on a token minted BEFORE the walk
+/// (`refusal_markers_in` leaves it out, read against a frame opened after the minting) and cuts them on
+/// one minted DURING the walk (the frame opened before it), while `refusal`, what the error a clause
+/// raises over the marker copies, is the carried token, so the run enclosing the one that built the
+/// marker reads it against its own start. The marker prints as a plain one (`refused: false`) and is equal
+/// to a plain marker carrying nothing: the token is transport, not a fact about the entry. A refused
+/// marker's `refusal` is its own token, never a carried one, and is read whenever it was minted.
+#[test]
+fn a_plain_marker_carrying_a_token_reads_plain_and_hands_the_token_on() -> Result<()> {
+    let cfg = cfg_of_a_one_resource_document()?;
+    let before_the_minting = RefusalFrame::open();
+    let token = mint_refusal_token();
+    let after_the_minting = RefusalFrame::open();
+    let carrying = to_undecidable_result(Rc::clone(&cfg), "why".to_string(), &[], Some(token))?;
+    let plain = to_undecidable_result(Rc::clone(&cfg), "why".to_string(), &[], None)?;
+    let refused = to_refusal_result(Rc::clone(&cfg), "why".to_string(), &[], token)?;
+    let kind_of = |results: &[QueryResult]| match results {
+        [QueryResult::UnResolved(unresolved)] => unresolved.kind,
+        other => panic!("one undecidable marker was expected, not {:?}", other),
+    };
+    let (carrying_kind, plain_kind, refused_kind) =
+        (kind_of(&carrying), kind_of(&plain), kind_of(&refused));
+    assert!(
+        !carrying_kind.is_refusal() && carrying_kind.is_undecidable(),
+        "a carrying marker is plain for its own entry: {:?}",
+        carrying_kind
+    );
+    assert_eq!(
+        Some(token),
+        carrying_kind.refusal(),
+        "a carrying marker hands the token on through `refusal`"
+    );
+    assert_eq!(
+        None,
+        plain_kind.refusal(),
+        "a plain marker hands no token on"
+    );
+    assert_eq!(
+        Some(token),
+        refused_kind.refusal(),
+        "a refused marker's token is its own"
+    );
+    assert_eq!(
+        "Undecidable { refused: false }",
+        format!("{carrying_kind:?}"),
+        "the carried token is not printed"
+    );
+    assert_eq!(
+        plain_kind, carrying_kind,
+        "a carrying marker is equal to a plain one"
+    );
+    assert_ne!(
+        refused_kind, carrying_kind,
+        "a carrying marker is not a refused one"
+    );
+    assert!(
+        refusal_markers_in(&carrying, &after_the_minting).is_empty(),
+        "the capture cut leaves a carrying marker alone where its token predates the walk: {:?}",
+        carrying
+    );
+    // The frame's eligibility bit is its whole test: a token minted before the frame opened cannot mark
+    // its entry and ranks below any in-run token in the folds (`eligible` reads `minted_inside`); one
+    // minted after it opened can. Read as the binding-range half alone, the older token ranked above a
+    // later in-run token a binding range excluded, and a nested run's marker carried it up.
+    assert_eq!(
+        (true, false),
+        (
+            before_the_minting.eligible(token),
+            after_the_minting.eligible(token)
+        ),
+        "a frame reads a token minted after it opened as eligible and one minted before it as not"
+    );
+    assert_eq!(
+        1,
+        refusal_markers_in(&carrying, &before_the_minting).len(),
+        "the capture cut reads a carrying marker whose token was minted during the walk: {carrying:?}"
+    );
+    assert_eq!(
+        1,
+        refusal_markers_in(&refused, &after_the_minting).len(),
+        "the capture cut reads a refused marker whenever its token was minted: {refused:?}"
+    );
+    Ok(())
+}
+
+/// The refusal token is set where a refusal is built and absent where a value nobody could decide is: the
 /// bit a filter loop cuts its captures on (`refusal_markers_in`) is checked here at its producers, not
 /// only end to end. `to_refusal_result` sets it; `to_undecidable_result` and the marker the key filter
 /// files for a map it could not decide clear it.
@@ -5076,24 +5321,33 @@ fn the_producers_of_an_undecidable_marker_set_the_refused_bit_as_documented() ->
     for (producer, results, refused) in [
         (
             "to_refusal_result",
-            to_refusal_result(Rc::clone(&cfg), "why".to_string(), &[])?,
+            to_refusal_result(
+                Rc::clone(&cfg),
+                "why".to_string(),
+                &[],
+                crate::rules::errors::RefusalToken::minted(7),
+            )?,
             true,
         ),
         (
             "to_undecidable_result",
-            to_undecidable_result(Rc::clone(&cfg), "why".to_string(), &[])?,
+            to_undecidable_result(Rc::clone(&cfg), "why".to_string(), &[], None)?,
             false,
         ),
     ] {
         assert_eq!(1, results.len(), "{producer} builds one marker");
         match &results[0] {
             QueryResult::UnResolved(unresolved) => {
-                assert_eq!(
-                    UnResolvedKind::Undecidable { refused },
-                    unresolved.kind,
-                    "{producer} sets `refused` to {refused}"
+                assert!(
+                    matches!(unresolved.kind, UnResolvedKind::Undecidable { .. }),
+                    "{producer} builds an undecidable marker, not {:?}",
+                    unresolved.kind
                 );
-                assert_eq!(refused, unresolved.kind.is_refusal(), "{producer}");
+                assert_eq!(
+                    refused,
+                    unresolved.kind.is_refusal(),
+                    "{producer} sets the refusal token to {refused}"
+                );
                 assert!(
                     unresolved.kind.is_undecidable(),
                     "{} is undecidable",
@@ -5116,6 +5370,7 @@ fn the_producers_of_an_undecidable_marker_set_the_refused_bit_as_documented() ->
     let mut eval = BasicQueryTesting {
         root: Rc::new(document),
         recorder: None,
+        refusal_frames: RefusalFrames::default(),
     };
     let query = AccessQuery::try_from("Cfg.M[ keys == Names[*].Name ]")?.query;
     let results = eval.query(&query)?;
@@ -5127,9 +5382,9 @@ fn the_producers_of_an_undecidable_marker_set_the_refused_bit_as_documented() ->
         })
         .collect();
     assert_eq!(
-        vec![UnResolvedKind::Undecidable { refused: false }],
+        vec![UnResolvedKind::Undecidable { refusal: None, carried: None }],
         kinds,
-        "the key filter files one undecidable marker for the map, with `refused` clear, among {results:?}"
+        "the key filter files one undecidable marker for the map, with `refusal` None, among {results:?}"
     );
     Ok(())
 }
@@ -5224,22 +5479,28 @@ fn cfg_of_a_one_resource_document() -> Result<Rc<PathAwareValue>> {
 #[case::absent_is_decided(UnResolvedKind::Absent, Some("why"), None)]
 #[case::empty_enumeration_is_decided(UnResolvedKind::EmptyEnumeration, Some("why"), None)]
 #[case::undecidable_with_a_reason(
-    UnResolvedKind::Undecidable { refused: false },
+    UnResolvedKind::Undecidable { refusal: None, carried: None },
     Some("why"),
     Some("why")
 )]
 #[case::refused_with_a_reason(
-    UnResolvedKind::Undecidable { refused: true },
+    UnResolvedKind::Undecidable {
+        refusal: Some(crate::rules::errors::RefusalToken::minted(7)),
+        carried: None,
+    },
     Some("why"),
     Some("why")
 )]
 #[case::undecidable_without_a_reason_names_the_path(
-    UnResolvedKind::Undecidable { refused: false },
+    UnResolvedKind::Undecidable { refusal: None, carried: None },
     None,
     Some("the selection at /Resources/Cfg[L:0,C:0] could not be decided")
 )]
 #[case::refused_without_a_reason_names_the_path(
-    UnResolvedKind::Undecidable { refused: true },
+    UnResolvedKind::Undecidable {
+        refusal: Some(crate::rules::errors::RefusalToken::minted(7)),
+        carried: None,
+    },
     None,
     Some("the selection at /Resources/Cfg[L:0,C:0] could not be decided")
 )]
@@ -5276,17 +5537,20 @@ fn undecidable_reason_reads_the_kind_alone(
 /// argument.
 #[rstest::rstest]
 #[case::without_a_reason_names_the_path(
-    UnResolvedKind::Undecidable { refused: false },
+    UnResolvedKind::Undecidable { refusal: None, carried: None },
     None,
     Some("the selection at /Resources/Cfg[L:0,C:0] could not be decided")
 )]
 #[case::with_a_reason_carries_it(
-    UnResolvedKind::Undecidable { refused: false },
+    UnResolvedKind::Undecidable { refusal: None, carried: None },
     Some("why"),
     Some("why")
 )]
 #[case::a_refusal_carries_it(
-    UnResolvedKind::Undecidable { refused: true },
+    UnResolvedKind::Undecidable {
+        refusal: Some(crate::rules::errors::RefusalToken::minted(7)),
+        carried: None,
+    },
     Some("why"),
     Some("why")
 )]
@@ -5323,6 +5587,69 @@ fn a_function_refuses_an_undecidable_argument_in_the_operators_words(
         None,
         undecidable_argument_reason(&[vec![]]),
         "no marker, no refusal"
+    );
+    Ok(())
+}
+
+/// `undecidable_argument` folds every entry of every argument by the pair rule
+/// (`eval::undecidable_pair_among`, `keep_latest_refusal_else_first`): a refusal's marker anywhere among
+/// the arguments gives the error its reason AND its token (the latest-minted refusal's where several
+/// stand among the arguments), in either argument order and beside a decided entry; two plain markers
+/// keep the first reason with no token; a decided entry alone refuses nothing.
+/// Before, the first marker of either kind was the error with its own token alone, so a plain marker in the
+/// first argument hid the refusal in the second: the error carried no token and the filter predicate run
+/// that ended on it left its entry plain, while the arguments reversed left it refused.
+#[test]
+fn a_function_refuses_the_refusals_pair_whichever_argument_holds_it() -> Result<()> {
+    use crate::rules::errors::RefusalToken;
+    let marker = |reason: &str, refusal: Option<RefusalToken>| -> Result<QueryResult> {
+        Ok(QueryResult::UnResolved(UnResolved {
+            traversed_to: cfg_of_a_one_resource_document()?,
+            remaining_query: String::new(),
+            reason: Some(reason.to_string()),
+            kind: UnResolvedKind::Undecidable {
+                refusal,
+                carried: None,
+            },
+        }))
+    };
+    let plain = marker("budget", None)?;
+    let refused = marker("refused", Some(RefusalToken::minted(7)))?;
+    let decided = QueryResult::Resolved(Rc::new(PathAwareValue::try_from(r#""a""#)?));
+    let pair = |args: &[Vec<QueryResult>]| -> Option<(String, Option<RefusalToken>)> {
+        match undecidable_argument(args, RefusalFrames::default()) {
+            Some(crate::rules::errors::Error::UndecidableComparison(reason, token)) => {
+                Some((reason, token))
+            }
+            Some(other) => panic!("the refusal is an UndecidableComparison, not {:?}", other),
+            None => None,
+        }
+    };
+    let the_refusal = Some(("refused".to_string(), Some(RefusalToken::minted(7))));
+    assert_eq!(
+        the_refusal,
+        pair(&[vec![plain.clone()], vec![refused.clone()]]),
+        "the plain marker in the first argument, the refusal in the second"
+    );
+    assert_eq!(
+        the_refusal,
+        pair(&[vec![refused.clone()], vec![plain.clone()]]),
+        "the refusal in the first argument, the plain marker in the second"
+    );
+    assert_eq!(
+        the_refusal,
+        pair(&[vec![decided.clone(), plain.clone(), refused.clone()]]),
+        "a decided entry, then the plain marker, then the refusal, in one argument"
+    );
+    assert_eq!(
+        Some(("budget".to_string(), None)),
+        pair(&[vec![plain.clone()], vec![plain]]),
+        "two plain markers keep the first reason with no token"
+    );
+    assert_eq!(
+        None,
+        pair(&[vec![decided]]),
+        "a decided entry alone refuses nothing"
     );
     Ok(())
 }
@@ -6364,6 +6691,12 @@ impl<'scope, 'value, 'loc: 'value> EvalContext<'value, 'loc>
     fn within_parameterized_call(&self) -> bool {
         self.inner.within_parameterized_call()
     }
+    fn refusal_frames(&self) -> RefusalFrames {
+        self.inner.refusal_frames()
+    }
+    fn refusal_frames_mut(&mut self) -> &mut RefusalFrames {
+        self.inner.refusal_frames_mut()
+    }
     fn function_chain(&mut self, name: &str) -> Option<FunctionChain<'value>> {
         self.inner.function_chain(name)
     }
@@ -6379,7 +6712,12 @@ impl<'scope, 'value, 'loc: 'value> EvalContext<'value, 'loc>
     ) {
         self.inner.record_warning(site, argument, map, notice)
     }
-    fn record_capture_warning(&mut self, site: &FileLocation<'_>, capture: &str, notice: String) {
+    fn record_capture_warning(
+        &mut self,
+        site: &FileLocation<'_>,
+        capture: &str,
+        notice: String,
+    ) -> bool {
         self.inner.record_capture_warning(site, capture, notice)
     }
     fn record_unraised_refusal(
@@ -6432,6 +6770,7 @@ fn the_entry_closure_ends_its_segment_on_the_exit_that_refuses_the_key_bind() ->
     let mut beneath = BasicQueryTesting {
         root: Rc::clone(&entry),
         recorder: None,
+        refusal_frames: RefusalFrames::default(),
     };
     let mut counted = SegmentsCounted {
         inner: &mut beneath,
@@ -6485,6 +6824,7 @@ fn the_member_loop_ends_its_segment_on_the_exit_that_refuses_the_key_bind() -> R
     let mut beneath = BasicQueryTesting {
         root: Rc::new(member.clone()),
         recorder: None,
+        refusal_frames: RefusalFrames::default(),
     };
     let mut counted = SegmentsCounted {
         inner: &mut beneath,
@@ -7060,9 +7400,8 @@ fn a_name_put_back_empty_at_the_close_moves_the_blocks_generation() -> Result<()
 /// frames' half of that hand-over.
 #[test]
 fn a_segment_ended_detaching_travels_to_another_frames_segment_and_reads_there_alone() {
-    // Every read of a total below is cross-checked against the frames (`ParkedTotalResum`).
-    #[cfg(debug_assertions)]
-    let _resum = ParkedTotalResum::on();
+    // Every read of a total below is cross-checked against the frames: the re-sum is on by default in a
+    // debug build (`PARKED_TOTAL_RESUM`), so no guard is held here.
     let mut frames = CaptureFrames::default();
     let mut store: CaptureStore<'static> = HashMap::new();
     let mut merged: CaptureStore<'static> = HashMap::new();
@@ -7225,9 +7564,8 @@ fn a_failing_let_runs_once_and_its_captures_are_appended_once_however_often_it_i
 /// back and the total falls to the outer frame's share; the outer frame's close leaves nothing parked.
 #[test]
 fn the_parked_total_of_a_home_falls_back_to_the_outer_frames_share_when_the_inner_one_closes() {
-    // Every read of a total below is cross-checked against the frames (`ParkedTotalResum`).
-    #[cfg(debug_assertions)]
-    let _resum = ParkedTotalResum::on();
+    // Every read of a total below is cross-checked against the frames: the re-sum is on by default in a
+    // debug build (`PARKED_TOTAL_RESUM`), so no guard is held here.
     let mut frames = CaptureFrames::default();
     let mut store: CaptureStore<'static> = HashMap::new();
     let mut merged: CaptureStore<'static> = HashMap::new();
@@ -7266,16 +7604,18 @@ fn the_parked_total_of_a_home_falls_back_to_the_outer_frames_share_when_the_inne
 
 /// The running parked total of a home stays in step with the frames through every way a slice moves: a
 /// park (up), a cut at or above the mark (down by what the cut took), a detaching end (down by what was
-/// handed out), a close (down by what was appended back), across two frames of one home. This test holds
-/// the debug build's read-time re-sum on (a `ParkedTotalResum` guard; the flag is off by default), so
-/// every read of the total here recomputes it from the frames (`CaptureFrames::debug_check_total`, run at
-/// each close too) and each step is both the expected value and that cross-check; the re-sum's visits are
-/// counted on the check's own counter (`PARKED_TOTAL_RESUM_VISITS`: two slices parked, two visited per
-/// read, and none on the production counter `CAPTURE_FRAME_SLICES_VISITED`), and a read with the guard
-/// dropped visits none.
+/// handed out), a close (down by what was appended back), across two frames of one home. The debug
+/// build's re-sum is on by default and this test holds it on through a `ParkedTotalResum` guard as well (a
+/// statement of what the cells rely on, not a change of setting), so every read of the total here
+/// recomputes it from the frames (`CaptureFrames::debug_check_total`, run at each close too) and each step
+/// is both the expected value and that cross-check; the re-sum's visits are counted on the check's own
+/// counter (`PARKED_TOTAL_RESUM_VISITS`: two slices parked, two visited per read, and none on the
+/// production counter `CAPTURE_FRAME_SLICES_VISITED`), and a read after the guard's drop, with the thread
+/// back at its default, re-sums the one parked slice.
 #[test]
 fn a_park_a_cut_a_detach_and_a_close_each_keep_the_parked_total_in_step_with_the_frames() {
-    // The dedicated cell for the read-time re-sum: on for this test's reads, off at the guard's drop.
+    // The dedicated cells for the read-time re-sum: held on for this test's reads (the default in a debug
+    // build); the guard's drop puts the default back, which the tail block reads.
     #[cfg(debug_assertions)]
     let resum = ParkedTotalResum::on();
     #[cfg(debug_assertions)]
@@ -7361,9 +7701,9 @@ fn a_park_a_cut_a_detach_and_a_close_each_keep_the_parked_total_in_step_with_the
         PARKED_TOTAL_RESUM_VISITS.with(|count| count.set(0));
         assert_eq!(1, frames.parked_len(CaptureHome::Captured, "t"));
         assert_eq!(
-            0,
+            1,
             visits(),
-            "with the guard dropped, a read visits no slice"
+            "with the guard dropped the thread is back at its default, on, so a read re-sums the one parked slice"
         );
         frames.close(&mut store, &mut merged);
     }
@@ -7371,10 +7711,11 @@ fn a_park_a_cut_a_detach_and_a_close_each_keep_the_parked_total_in_step_with_the
 
 /// A name a cut emptied out of the frames is listed by the home's running total alone if the cut's
 /// accounting left the total standing, and no per-name check at the close meets it (the popped frame holds
-/// no slice of it). The close re-checks every name the total still lists, and when it pops the home's
-/// LAST frame it asserts the total table empty: a total planted to stand after a cut took every slice
-/// (the shape of a cut under-counting what it took) trips the last-frame check. A debug assertion, so the
-/// test runs only in a build that has it.
+/// no slice of it: the per-name re-sum at a close, on by default in a debug build, covers the names the
+/// popped frame still holds, and the cut emptied `t` out of this one). What catches it is the O(1) check
+/// every debug build makes when the close pops the home's LAST frame, that the total table is empty: a
+/// total planted to stand after a cut took every slice (the shape of a cut under-counting what it took)
+/// trips it. A debug assertion, so the test runs only in a build that has it.
 #[cfg(debug_assertions)]
 #[test]
 #[should_panic(expected = "closed with a running parked total left for")]
@@ -7389,6 +7730,170 @@ fn a_total_left_standing_after_a_cut_emptied_the_name_trips_the_last_frames_clos
     // The plant: the total lists `t` though no frame holds a slice of it.
     frames.parked_lens[home_index(CaptureHome::Captured)].insert("t", 1);
     frames.close(&mut store, &mut merged);
+}
+
+/// A park with no frame open trips the debug check `park` keeps before its early return: the caller has
+/// already split the results off the live store, so with no frame to hold them they would be gone with no
+/// signal. No evaluator path reaches it (`end_segment` returns first with no frame); the check guards a
+/// caller that would. A debug assertion, so the test runs only in a build that has it.
+#[cfg(debug_assertions)]
+#[test]
+#[should_panic(expected = "parked with no frame open")]
+fn a_park_with_no_frame_open_trips_the_frame_check() {
+    let mut frames = CaptureFrames::default();
+    frames.park("t", 0, vec![a_capture_of("a")]);
+}
+
+/// A park with no frame open COUNTS nothing: the running total is read after the park and is still
+/// empty, since `park` returns before the increment when no frame holds the slice (a slice dropped but
+/// counted would leave a total the frames disagree with, the drift the re-sum exists to catch). In a
+/// debug build the check above fires first, so the park runs under `catch_unwind` and the cell reads the
+/// total afterwards, the same reading a release build gives with no panic.
+#[test]
+fn a_park_with_no_frame_open_counts_nothing_in_the_running_total() {
+    let mut frames = CaptureFrames::default();
+    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        frames.park("t", 0, vec![a_capture_of("a")]);
+    }));
+    assert_eq!(
+        cfg!(debug_assertions),
+        outcome.is_err(),
+        "a debug build trips the frame check, a release build parks nothing and goes on"
+    );
+    assert_eq!(
+        0,
+        frames.parked_len(CaptureHome::Captured, "t"),
+        "nothing was parked, so nothing is counted"
+    );
+}
+
+/// A `ParkedTotalResum` guard puts back the setting it found: the thread's default is ON; an `off()` guard
+/// (a measurement test's) holds it off, an `on()` guard nested inside it holds it on and at its drop puts
+/// back the outer scope's OFF, not the thread's default, and the outer guard's drop puts back the default.
+#[cfg(debug_assertions)]
+#[test]
+fn a_nested_resum_guard_restores_the_outer_scopes_setting_at_its_drop() {
+    let on = || PARKED_TOTAL_RESUM.with(|on| on.get());
+    assert!(on(), "on before any guard: the debug build's default");
+    let outer = ParkedTotalResum::off();
+    assert!(!on(), "off under the outer `off()` guard");
+    {
+        let _inner = ParkedTotalResum::on();
+        assert!(on(), "on under the inner `on()` guard");
+    }
+    assert!(
+        !on(),
+        "the inner guard's drop puts back the outer scope's OFF, not the thread's default"
+    );
+    drop(outer);
+    assert!(
+        on(),
+        "the outer guard's drop puts back the thread's default, on"
+    );
+}
+
+/// A stale total under a STILL-OPEN outer frame trips the per-name re-sum at the inner frame's close while
+/// a test holds the re-sum on: the inner frame holds one slice of `t`, the total is planted one higher, and
+/// the inner close's cross-check of `t` (not the last-frame check, since the outer frame of the home stays
+/// open) reports the disagreement. A debug assertion, so the test runs only in a build that has it.
+#[cfg(debug_assertions)]
+#[test]
+#[should_panic(expected = "the running parked total of `t` and the frames disagree")]
+fn a_stale_total_under_a_still_open_outer_frame_trips_the_inner_closes_re_sum() {
+    let _resum = ParkedTotalResum::on();
+    let mut frames = CaptureFrames::default();
+    let mut store: CaptureStore<'static> = HashMap::new();
+    let mut merged: CaptureStore<'static> = HashMap::new();
+    frames.open(CaptureHome::Captured, 0, &store, &merged, true);
+    frames.open(CaptureHome::Captured, 0, &store, &merged, true);
+    frames.park("t", 0, vec![a_capture_of("a")]);
+    *frames.parked_lens[home_index(CaptureHome::Captured)]
+        .get_mut("t")
+        .expect("the park listed `t`") += 1;
+    frames.close(&mut store, &mut merged);
+}
+
+/// A drift found at an inner frame's close panics ONCE: the outer frame's close runs during the unwind
+/// (a guard's drop closes frames on the way out of a panicking test), and its checks stand aside while the
+/// panic is in flight, so the process survives and the inner message is the one reported. Here the outer
+/// close runs from a drop, as `CaptureFrameGuard::drop` runs it, with a stale total that both the per-name
+/// re-sum (the guard is on) and the last-frame check would trip. A debug assertion, so the test runs only
+/// in a build that has it.
+#[cfg(debug_assertions)]
+#[test]
+#[should_panic(expected = "the running parked total of `t` and the frames disagree")]
+fn a_drift_found_at_an_inner_close_panics_once_though_the_outer_frame_closes_during_the_unwind() {
+    struct ClosesOnDrop<'a> {
+        frames: &'a mut CaptureFrames<'static>,
+        store: &'a mut CaptureStore<'static>,
+        merged: &'a mut CaptureStore<'static>,
+    }
+    impl Drop for ClosesOnDrop<'_> {
+        fn drop(&mut self) {
+            self.frames.close(self.store, self.merged);
+        }
+    }
+    let _resum = ParkedTotalResum::on();
+    let mut frames = CaptureFrames::default();
+    let mut store: CaptureStore<'static> = HashMap::new();
+    let mut merged: CaptureStore<'static> = HashMap::new();
+    frames.open(CaptureHome::Captured, 0, &store, &merged, true);
+    frames.open(CaptureHome::Captured, 0, &store, &merged, true);
+    frames.park("t", 0, vec![a_capture_of("a")]);
+    *frames.parked_lens[home_index(CaptureHome::Captured)]
+        .get_mut("t")
+        .expect("the park listed `t`") += 1;
+    let closer = ClosesOnDrop {
+        frames: &mut frames,
+        store: &mut store,
+        merged: &mut merged,
+    };
+    // The inner close panics on the drift; the drop of `closer` then closes the outer frame while the
+    // panic unwinds, and must not panic again.
+    closer.frames.close(closer.store, closer.merged);
+}
+
+/// The SHORT total: the outer frame holds a slice of two results of `t`, the inner frame one of one, and the
+/// total is planted at two, short by one. The inner close takes its one result off the total (two to one,
+/// a take the total covers) and then re-sums: the frames hold two, the total one, the disagreement is
+/// reported. The outer frame's close then runs during the unwind and takes its two results off a total of
+/// one, which reaches the "short of what is taken" check `unpark_len` keeps; it stands aside while the
+/// panic is in flight, so the test panics ONCE (a second panic would abort the whole test binary). The
+/// twin of the too-high plant above, for the check that plant never reaches. A debug assertion, so the
+/// test runs only in a build that has it.
+#[cfg(debug_assertions)]
+#[test]
+#[should_panic(expected = "the running parked total of `t` and the frames disagree")]
+fn a_short_total_found_at_an_inner_close_panics_once_though_the_outer_close_takes_from_it_during_the_unwind(
+) {
+    struct ClosesOnDrop<'a> {
+        frames: &'a mut CaptureFrames<'static>,
+        store: &'a mut CaptureStore<'static>,
+        merged: &'a mut CaptureStore<'static>,
+    }
+    impl Drop for ClosesOnDrop<'_> {
+        fn drop(&mut self) {
+            self.frames.close(self.store, self.merged);
+        }
+    }
+    let _resum = ParkedTotalResum::on();
+    let mut frames = CaptureFrames::default();
+    let mut store: CaptureStore<'static> = HashMap::new();
+    let mut merged: CaptureStore<'static> = HashMap::new();
+    frames.open(CaptureHome::Captured, 0, &store, &merged, true);
+    frames.park("t", 0, vec![a_capture_of("a"), a_capture_of("b")]);
+    frames.open(CaptureHome::Captured, 2, &store, &merged, true);
+    frames.park("t", 2, vec![a_capture_of("c")]);
+    // The plant: the total reads two for the three results the frames hold.
+    *frames.parked_lens[home_index(CaptureHome::Captured)]
+        .get_mut("t")
+        .expect("the parks listed `t`") = 2;
+    let closer = ClosesOnDrop {
+        frames: &mut frames,
+        store: &mut store,
+        merged: &mut merged,
+    };
+    closer.frames.close(closer.store, closer.merged);
 }
 
 /// A name a detaching end drained out of the frame is listed by the home's running total alone if the
@@ -7704,11 +8209,22 @@ fn a_unary_report_keeps_the_records_kind_and_bounds_what_it_quotes() -> Result<(
     )));
     let over_a_long_path = report_of(&[record(QueryResult::Resolved(under_a_long_key))]);
     let sentence = over_a_long_path.error_message.clone().unwrap_or_default();
+    // A path is cut in its MIDDLE (`template_path`: the head keeps the top of the document, the tail the
+    // leaf segment), so the kept `k`s stand in two runs around the marker, their count the bound less
+    // the `/Resources/` head; an end cut kept them in one run.
+    let kept_path = sentence
+        .split("/Resources/")
+        .nth(1)
+        .and_then(|rest| rest.split("[L:1,C:1]").next())
+        .unwrap_or_default();
     assert_eq!(
         (false, true, true, true, true),
         (
             sentence.contains(&long_key),
-            sentence.contains(&"k".repeat(LONGEST_TEMPLATE_PART_IN_A_REFUSAL - 11)),
+            kept_path.matches('k').count() == LONGEST_TEMPLATE_PART_IN_A_REFUSAL - 11
+                && kept_path.starts_with('k')
+                && kept_path.ends_with('k')
+                && kept_path.contains(CUT_MARKER),
             sentence.contains(CUT_MARKER),
             sentence.contains(&refusal_text),
             sentence.chars().count() < 4096,
@@ -7778,7 +8294,10 @@ fn a_comparison_report_names_a_refused_right_hand_read_as_unread() -> Result<()>
             traversed_to: Rc::clone(&properties),
             remaining_query: String::new(),
             reason: Some(refusal_text.clone()),
-            kind: UnResolvedKind::Undecidable { refused: true },
+            kind: UnResolvedKind::Undecidable {
+                refusal: Some(crate::rules::errors::RefusalToken::minted(1)),
+                carried: None,
+            },
         },
         Some(refusal_text.clone()),
         true,
@@ -7824,7 +8343,7 @@ fn a_comparison_report_names_a_refused_right_hand_read_as_unread() -> Result<()>
 }
 
 /// A refusal's report sentence ESCAPES what it quotes from the template and bounds the PRINTED form
-/// (`bounded_value_for_refusal` through `escaped_template_part`): the console writes the sentence as it
+/// (`bounded_value_for_refusal` through `template_part`): the console writes the sentence as it
 /// is, so a value of 256 bidi overrides, cut by source characters, printed every one of them raw at eight
 /// times the bound, and the four values a comparison's sentence can quote passed the whole-line bound
 /// again. Now each bidi override prints as its escape, each quoted value stops at the bound on an escape
@@ -8060,27 +8579,209 @@ fn a_refusal_text_holding_a_line_feed_and_an_escape_is_one_prefixed_line() -> Re
     Ok(())
 }
 
+/// The announced-capture set holds a reason only where its warning was recorded. `refuse_unbound_capture`
+/// keys the reason it refuses with into the root's set (`EvalContext::announced_capture_refusals`, read by
+/// the refused-read line in `eval::binary_operation`) only when `announce_unbound_capture` reached a scope
+/// that wrote the line (`record_capture_warning` says so), so the line leaves a refusal off exactly where
+/// the warning channel names it. Over `Rules[0][ r | Action == 'allow' ]` at a scalar: a root evaluating
+/// (measurement off) records one warning and the set holds the reason; the same shape under a `Quiet`
+/// measurement records nothing and the set stays empty; a `QuietScope` over a root, whose
+/// `record_capture_warning` drops the line, leaves the set empty too. Before, the set was filled whatever
+/// the scope did with the line, so a refusal first met under a probe or a measurement was keyed as
+/// announced with no line anywhere, and a decided clause that met its marker named it nowhere. No
+/// evaluation-level cell exists for that omission: every memo a quiet probe or a measured reading writes is
+/// taken back before the real run reads it (`ReadingUndo`, `DocumentBindingMemo`), so no rules file and
+/// template reach a decided clause holding a marker whose refusal was keyed under a probe alone, and this
+/// unit cell pins the invariant the refused-read line rests on instead.
+#[test]
+fn a_capture_refusal_is_in_the_announced_set_only_where_its_warning_was_recorded() -> Result<()> {
+    let rules_file = RulesFile::try_from("rule r { Rules[0][ r | Action == 'allow' ] !empty }")?;
+    let access = AccessQuery::try_from("Rules[0][ r | Action == 'allow' ]")?;
+    let query = access.query.as_slice();
+    // The filter is found by its kind, not by position: `Rules[0]` parses as a key and an index part
+    // before the filter, and the index was once folded into the key.
+    let conjunctions = query
+        .iter()
+        .find_map(|part| match part {
+            QueryPart::Filter(_, conjunctions) => Some(conjunctions),
+            _ => None,
+        })
+        .unwrap_or_else(|| panic!("the query holds a filter part, got {:?}", query));
+    let current = Rc::new(PathAwareValue::try_from("{ a: 1 }")?);
+    let reason = capture_not_bound_reason("r", CaptureSite::OneValue, 1, query, &current);
+    let announced_in = |root: &RootScope<'_, '_>| -> (bool, usize) {
+        let set = root
+            .announced_capture_refusals()
+            .expect("a root scope owns the announced set");
+        let keyed = set.borrow().contains(&reason);
+        (keyed, root.warnings().count())
+    };
+
+    // Evaluating: the line is recorded, the reason keyed as announced.
+    let mut evaluating = root_scope(&rules_file, Rc::clone(&current));
+    refuse_unbound_capture(
+        CaptureSite::OneValue,
+        "r",
+        conjunctions,
+        1,
+        query,
+        &current,
+        &mut evaluating,
+        true,
+    )?;
+    assert_eq!(
+        (true, 1),
+        announced_in(&evaluating),
+        "evaluating: the reason is keyed as announced and one warning stands"
+    );
+
+    // Under a measurement: nothing is recorded, so the reason is not keyed as announced.
+    let mut measured = root_scope(&rules_file, Rc::clone(&current));
+    measured.set_measurement(Measurement::Quiet);
+    refuse_unbound_capture(
+        CaptureSite::OneValue,
+        "r",
+        conjunctions,
+        1,
+        query,
+        &current,
+        &mut measured,
+        true,
+    )?;
+    assert_eq!(
+        (false, 0),
+        announced_in(&measured),
+        "under a measurement: no warning stands, so the reason is not keyed as announced"
+    );
+
+    // From a quiet probe: the scope drops the line, so the reason is not keyed as announced.
+    let mut probed = root_scope(&rules_file, Rc::clone(&current));
+    {
+        let mut quiet = QuietScope {
+            root: Rc::clone(&current),
+            parent: &mut probed,
+            grounded: false,
+            takes_the_fallback: false,
+            cache: None,
+        };
+        refuse_unbound_capture(
+            CaptureSite::OneValue,
+            "r",
+            conjunctions,
+            1,
+            query,
+            &current,
+            &mut quiet,
+            true,
+        )?;
+    }
+    assert_eq!(
+        (false, 0),
+        announced_in(&probed),
+        "from a quiet probe: no warning stands, so the reason is not keyed as announced"
+    );
+    Ok(())
+}
+
+/// The test that keeps a capture's refusal off the refused-read line (`is_capture_not_bound_reason`) reads
+/// the one builder's text (`capture_not_bound_reason`) round trip, and reads a text that holds one of its
+/// phrases alone, or the phrases out of order, as not that reason: the two are one text in two places.
+#[test]
+fn the_capture_reason_test_reads_the_builders_text_round_trip() -> Result<()> {
+    let query = AccessQuery::try_from("Rules[0][ r | Action == 'allow' ]")?.query;
+    let current = PathAwareValue::try_from("{ a: 1 }")?;
+    let reason = capture_not_bound_reason("r", CaptureSite::OneValue, 1, &query, &current);
+    assert!(
+        is_capture_not_bound_reason(&reason),
+        "the builder's own text is read as the capture's reason: {}",
+        reason
+    );
+    let this_site = capture_not_bound_reason("r", CaptureSite::This, 0, &query, &current);
+    assert!(
+        is_capture_not_bound_reason(&this_site),
+        "the `this` site's text too: {}",
+        this_site
+    );
+    for (label, text) in [
+        (
+            "the opening phrase alone",
+            "Query Rules[0] declares the capture `r` after this",
+        ),
+        (
+            "the closing phrase alone",
+            "a key named x; a capture is bound by a filter over a named collection, or over a list",
+        ),
+        (
+            "the phrases out of order",
+            "a capture is bound by a filter over a named collection, or over a list; Query Rules[0] declares the capture `r`",
+        ),
+        ("another refusal's sentence", "`[*]` handed the map at path /Resources on as one object"),
+    ] {
+        assert!(
+            !is_capture_not_bound_reason(text),
+            "{} is not the capture's reason: {}",
+            label,
+            text
+        );
+    }
+    Ok(())
+}
+
+/// The value a refusal's record quotes (`bounded_value_for_refusal`) renders its PATH as every refusal renders
+/// a path (`template_path`: a backslash as written, controls as their escapes, the location appended
+/// whole) and its VALUE as a quoted template part (`template_part`: the backslash doubled, as a quoted key
+/// is): a path segment `a\b` prints `a\b` here and in the refusal's own path sentence alike, where the
+/// part rule printed it `a\\b` in one place and `a\b` in the other, and a value holding a line feed and a
+/// backslash prints `x\ny\\z` once-escaped. The location rides on the path, as `Path`'s `Display` carries
+/// it.
+#[test]
+fn a_refusals_quoted_value_renders_its_path_as_a_path_and_its_value_as_a_part() {
+    let value = PathAwareValue::String((
+        Path::new("/Cfg/a\\b".to_string(), 3, 9),
+        "x\ny\\z".to_string(),
+    ));
+    let rendered = bounded_value_for_refusal(&value);
+    assert_eq!(
+        rendered, "Path=/Cfg/a\\b[L:3,C:9] Value=\"x\\ny\\\\z\"",
+        "the path keeps its one backslash and its location, the value is escaped once"
+    );
+    assert_eq!(
+        rendered.matches("Path=/Cfg/a\\b[").count(),
+        1,
+        "the path reads as `template_path` renders it: {}",
+        rendered
+    );
+    assert!(
+        !rendered.contains("a\\\\b"),
+        "the path's backslash is not doubled: {}",
+        rendered
+    );
+}
+
 /// The twin's undecidable-pair sentence escapes a long key and bounds it on an ESCAPE BOUNDARY
-/// (`escaped_template_part`): the bound holds on the printed text and no escape is cut in half. A key of
-/// 255 characters, an ESC and a tail prints the 255 and cuts at the ESC, whose six-character escape does
-/// not fit, counting the five source characters left out (nothing of the ESC is printed, raw or half
-/// escaped); a key of 256 bidi overrides, eight printed characters each, prints 32 of them and counts the
-/// 224 left out, where a cut by source characters before the escape printed all 256 at eight times the
-/// bound.
+/// (`template_part`): the bound holds on the printed text and no escape is cut in half. A key of
+/// 255 characters, an ESC and a forty-character tail prints the 255 and cuts at the ESC, whose
+/// six-character escape does not fit, counting the 41 source characters left out (nothing of the ESC is
+/// printed, raw or half escaped); a key of 256 bidi overrides, eight printed characters each, prints 32
+/// of them and counts the 224 left out, where a cut by source characters before the escape printed all
+/// 256 at eight times the bound. The tail is long so that the cut shortens the text: a cut that would
+/// print longer than the escaped text whole is not made (`whole_unless_the_cut_is_shorter`, the rule
+/// every template part is bounded under), so a four-character tail would print whole with its escape.
 #[test]
 fn the_twins_undecidable_sentence_cuts_a_key_on_an_escape_boundary() -> Result<()> {
     use crate::rules::eval_context::{undecidable_pair_text, LONGEST_TEMPLATE_PART_IN_A_REFUSAL};
-    let error = crate::rules::errors::Error::UndecidableComparison(String::from("undecidable"));
+    let error = crate::rules::errors::Error::undecidable(String::from("undecidable"));
     let key = format!(
-        "{}\u{1b}tail",
-        "k".repeat(LONGEST_TEMPLATE_PART_IN_A_REFUSAL - 1)
+        "{}\u{1b}{}",
+        "k".repeat(LONGEST_TEMPLATE_PART_IN_A_REFUSAL - 1),
+        "t".repeat(40)
     );
     let text = undecidable_pair_text(&key, &[], &error);
     assert_eq!(
         (true, false, false, false),
         (
             text.contains(&format!(
-                "{}...[5 more characters cut]",
+                "{}...[41 more characters cut]",
                 "k".repeat(LONGEST_TEMPLATE_PART_IN_A_REFUSAL - 1)
             )),
             text.contains('\u{1b}'),
@@ -8294,33 +8995,164 @@ fn a_paths_middle_cut_keeps_whole_characters_at_both_ends_and_a_long_leafs_end()
 #[test]
 fn a_paths_display_is_its_text_shown_with_its_location() {
     let path = Path("/Resources/B/Properties".to_string(), Location::new(4, 7));
-    assert_eq!(path.to_string(), path.shown_with_location(&path.0));
     assert_eq!(
         "/Resources/B/Properties[L:4,C:7]",
         path.to_string(),
         "the text, then the location in brackets"
     );
+    assert_eq!(
+        "/Resources/B/Pr...[cut]...erties[L:4,C:7]",
+        path.shown_with_location("/Resources/B/Pr...[cut]...erties"),
+        "a shown text takes the same location the same way"
+    );
+}
+
+/// The clause table's example of a cut path is read out of `docs/CLAUSES.md` itself and compared with what
+/// `template_path` renders for the documented input (a 300-character resource name under `/Resources/`,
+/// above `/Properties/Tags`, at line 3 column 9): the marker's count and the kept head and tail around
+/// it, so the document cannot say one count while the code cuts another. The document abbreviates the
+/// 128 kept characters at each end to `RRRR`, so the comparison reads the marker and the ends, not the
+/// abbreviated run. The callout's four boundary figures (a name whole through 283 and cut from 284, a
+/// path's text whole through 286 and cut from 287) are parsed out of the same sentence and compared with
+/// the boundaries computed off the markers, so a figure cannot drift from the code.
+#[test]
+fn the_clause_tables_example_of_a_cut_path_reads_what_template_path_renders() {
+    const CLAUSES: &str = include_str!("../../../docs/CLAUSES.md");
+    const LEAD_IN: &str = "a refusal path reads `";
+    let start = CLAUSES
+        .find(LEAD_IN)
+        .expect("the clause table carries the cut-path example")
+        + LEAD_IN.len();
+    let documented =
+        &CLAUSES[start..start + CLAUSES[start..].find('`').expect("the example is closed")];
+    let rendered = template_path(&Path(
+        format!("/Resources/{}/Properties/Tags", "R".repeat(300)),
+        Location::new(3, 9),
+    ));
+    let marker_of = |text: &str| -> String {
+        let open = text.find("...[").expect("a middle cut marker");
+        let close = text[open..].find("]...").expect("the marker closes") + open + "]...".len();
+        text[open..close].to_string()
+    };
+    assert_eq!(
+        marker_of(rendered.as_str()),
+        marker_of(documented),
+        "the document's marker names the count the code cuts: {documented} against {rendered}"
+    );
+    assert!(
+        documented.starts_with("/Resources/RRRR") && rendered.starts_with("/Resources/RRRR"),
+        "both keep the top of the document and the start of the name"
+    );
+    assert!(
+        documented.ends_with("RRRR/Properties/Tags[L:3,C:9]")
+            && rendered.ends_with("RRRR/Properties/Tags[L:3,C:9]"),
+        "both keep the name's last letters, the leaf segments and the location"
+    );
+    // The same callout states the boundary lengths; they are parsed out of the sentence and compared
+    // with the boundaries computed off the markers, as `the_cut_begins_at_the_first_length_where_it_shortens_the_part`
+    // computes them, so the sentence cannot say one figure while the markers decide another.
+    // Anchored by the one phrase that opens the figures sentence and sliced to its closing parenthesis,
+    // both found on character boundaries, so a multi-byte character anywhere in the paragraph cannot
+    // make the slice panic and a reworded neighbour cannot move the figures out of it.
+    const FIGURES_LEAD_IN: &str = "the figures are pinned at the boundary lengths, a name of ";
+    let figures_start = CLAUSES
+        .find(FIGURES_LEAD_IN)
+        .expect("the clause table states the boundary lengths")
+        + FIGURES_LEAD_IN.len();
+    let figures_end = figures_start
+        + CLAUSES[figures_start..]
+            .find(')')
+            .expect("the figures sentence closes its parenthesis");
+    let figures = &CLAUSES[figures_start..figures_end];
+    // The four figures are read in sequence from a cursor that moves past each one, since the lead-ins
+    // repeat (" whole and one of " follows the name's figure and the path's).
+    let mut cursor = 0usize;
+    let mut number_after = |lead_in: &str| -> usize {
+        let rest = &figures[cursor..];
+        let at = match lead_in.is_empty() {
+            true => 0,
+            false => {
+                rest.find(lead_in).unwrap_or_else(|| {
+                    panic!("the figures sentence carries `{}`: {}", lead_in, figures)
+                }) + lead_in.len()
+            }
+        };
+        let digits: String = rest[at..]
+            .chars()
+            .take_while(char::is_ascii_digit)
+            .collect();
+        cursor += at + digits.len();
+        digits
+            .parse()
+            .unwrap_or_else(|_| panic!("a number follows `{}`: {}", lead_in, figures))
+    };
+    let stated = (
+        number_after(""),
+        number_after(" characters left whole and one of "),
+        number_after(" cut, a path's text of "),
+        number_after(" whole and one of "),
+    );
+    let bound = LONGEST_TEMPLATE_PART_IN_A_REFUSAL;
+    let first_cut_part = (bound + 1..)
+        .find(|&total| bound + end_cut_marker(total - bound).chars().count() < total)
+        .expect("a part long enough is cut");
+    let first_cut_path = (bound + 1..)
+        .find(|&total| bound + middle_cut_marker(total - bound).chars().count() < total)
+        .expect("a path long enough is cut");
+    assert_eq!(
+        (
+            first_cut_part - 1,
+            first_cut_part,
+            first_cut_path - 1,
+            first_cut_path
+        ),
+        stated,
+        "the clause table's boundary figures (name whole, name cut, path whole, path cut) are the markers': {figures}"
+    );
 }
 
 /// The cut begins at the first length where it shortens the part, and that length is read off the
-/// marker's own text, so a change to the marker moves the boundary with it: an end cut keeps
-/// `LONGEST_TEMPLATE_PART_IN_A_REFUSAL` characters and writes `...[N more characters cut]`, a middle cut
-/// keeps as many and writes `...[N more characters cut]...` between its halves, and either is made only
-/// where the kept characters plus the marker are fewer than the whole. A part one character under that
-/// length renders whole, a part at it is cut and shorter; the same for a path, with its location kept out
-/// of the count; and a path of accented letters one character under the length renders whole though its
-/// BYTES are twice the bound, since characters decide.
+/// marker's own text through the helpers the cuts write with (`end_cut_marker`, `middle_cut_marker`), so a
+/// change to a marker moves the boundary with it: an end cut keeps `LONGEST_TEMPLATE_PART_IN_A_REFUSAL`
+/// characters and writes the end marker, a middle cut keeps as many and writes the middle marker between
+/// its halves, and either is made only where the kept characters plus the marker are fewer than the whole.
+/// A part one character under that length renders whole, a part at it is cut and shorter; the same for a
+/// path, with its location kept out of the count; and a path of accented letters one character under the
+/// length renders whole though its BYTES are twice the bound, since characters decide. The lengths the
+/// constant's doc states (whole through 283 and cut from 284 for a name, 286 and 287 for a path's text)
+/// are pinned here against the computed boundary, as is the clause table's example of a cut path (a
+/// 300-character resource name under `/Resources/` and above `/Properties/Tags`: 327 characters, 128 kept
+/// at each end, 71 cut), so the documents' figures cannot drift from the markers.
 #[test]
 fn the_cut_begins_at_the_first_length_where_it_shortens_the_part() {
     let bound = LONGEST_TEMPLATE_PART_IN_A_REFUSAL;
-    let end_marker = |cut: usize| format!("...[{cut} more characters cut]").chars().count();
-    let middle_marker = |cut: usize| format!("...[{cut} more characters cut]...").chars().count();
+    let end_marker = |cut: usize| end_cut_marker(cut).chars().count();
+    let middle_marker = |cut: usize| middle_cut_marker(cut).chars().count();
     let first_cut_part = (bound + 1..)
         .find(|&total| bound + end_marker(total - bound) < total)
         .expect("a part long enough is cut");
     let first_cut_path = (bound + 1..)
         .find(|&total| bound + middle_marker(total - bound) < total)
         .expect("a path long enough is cut");
+    assert_eq!(
+        (284, 287),
+        (first_cut_part, first_cut_path),
+        "the documented boundaries: a name is cut from 284 characters, a path's text from 287"
+    );
+    let documented = Path(
+        format!("/Resources/{}/Properties/Tags", "R".repeat(300)),
+        Location::new(3, 9),
+    );
+    assert_eq!(
+        format!(
+            "/Resources/{}{}{}/Properties/Tags[L:3,C:9]",
+            "R".repeat(bound / 2 - "/Resources/".len()),
+            middle_cut_marker(327 - bound),
+            "R".repeat(bound - bound / 2 - "/Properties/Tags".len())
+        ),
+        template_path(&documented),
+        "the clause table's example: 327 characters, 128 kept at each end, 71 cut"
+    );
     let whole_part = "p".repeat(first_cut_part - 1);
     assert_eq!(
         whole_part,

@@ -1,4 +1,4 @@
-use crate::rules::errors::{Error, InternalError};
+use crate::rules::errors::{Error, InternalError, RefusalToken};
 use crate::rules::eval::{
     function_call_document_level_bindings, inner_query_document_level_bindings,
     query_document_level_bindings,
@@ -373,12 +373,15 @@ pub(crate) fn unraised_refusal_notice(
             .collect::<Vec<_>>()
             .join(" and "),
     };
-    // The one place a refusal's text is written into the line, so each is escaped here and once: the
-    // texts quote template keys and paths, which the builders bound (`template_part`) but do not escape,
-    // and a key holding a line feed or an ESC would otherwise split the line or open a terminal sequence
-    // (`writer::warning` holds a debug build to that and escapes a release's body as a last resort; the
-    // point of writing is where the rule says it is done). Several texts are numbered, so a reader can
-    // tell where one sentence ends and the next begins whatever punctuation each carries.
+    // The one place a refusal's text is written into the line, so the text as a whole is passed through
+    // the control escape here. The template keys and paths a text quotes arrive bounded AND escaped
+    // (`template_part`, `template_path`: a control as its escape, a backslash doubled in a key and kept
+    // in a path), so this pass changes nothing in them and is for the rest of a sentence (an engine
+    // text never holds a control today; `writer::warning` holds a debug build to that and escapes a
+    // release's body as a last resort; the point of writing is where the rule says it is done). It
+    // escapes controls only, never a backslash, so a part is not escaped twice. Several texts are
+    // numbered, so a reader can tell where one sentence ends and the next begins whatever punctuation
+    // each carries.
     let one_unraised = || {
         String::from(
             "the refused read among its other values was not raised by it; the refusal is reported \
@@ -682,6 +685,14 @@ pub(crate) struct RootScope<'value, 'loc: 'value> {
     /// read behind too long a chain is announced once rather than silently read as the resource's: a rule
     /// that reads two such names gets a line for each, and a second read of a name adds none.
     binding_walk_limits: NoticeLines,
+    /// The frames of the filter predicate runs open on this evaluation, outermost first, empty outside
+    /// every run (`EvalContext::refusal_frames`, `refusal_frames_mut`): the one stack the runs push onto
+    /// and pop from in nesting order (`with_refusal_frame`), which every scope below the root forwards
+    /// to, so a fold anywhere under a run ranks the refusal tokens it meets by how many of the live runs
+    /// can read each as their own (`RefusalFrames::rank`). Held by the root alone: the scopes a body
+    /// builds are dropped before their run returns, and a nested run pops its frame before it returns,
+    /// so the stack reads the live runs, innermost last, at every moment.
+    refusal_frames: RefusalFrames,
     /// The `when`s settled in this evaluation by their line, as the file, line and column of each
     /// `when`'s first condition with the direction settled; see `settle_when` on `EvalContext`. Kept
     /// apart from `deprecations_once`: that map also holds the other kinds of notice, and a `when` is
@@ -698,10 +709,17 @@ pub(crate) struct RootScope<'value, 'loc: 'value> {
         BTreeMap<(&'loc str, u32, u32, MoveDirection), BTreeSet<BTreeSet<BindingId<'value>>>>,
     /// Whether this run is a measurement; see [`Measurement`]. Read by every store this scope writes.
     measurement: Measurement,
+    /// The scope event as this scope was built (`SCOPE_EVENTS`), carried on the ranges its file-level
+    /// `let`s record (`BindingResolution`): every filter predicate run opens after it, so those refusals
+    /// are no entry's own.
+    built_at: u64,
     /// What the quiet probes resolved for document-level bindings in this evaluation; see
     /// [`DocumentBindingMemo`] and `EvalContext::document_binding_memo`. Cleared by `set_measurement`
     /// around a `WithoutUnresolved` reading.
     document_binding_memo: Rc<RefCell<DocumentBindingMemo<'value>>>,
+    /// The reason texts of the captures this evaluation refused inside filter predicates whose warning was
+    /// recorded where they were refused; see `EvalContext::announced_capture_refusals`.
+    announced_capture_refusals: Rc<RefCell<HashSet<String>>>,
     /// Keys captured by a filter, held apart from `scope.resolved_variables` so they can be cleared
     /// without discarding resolved query results.
     ///
@@ -900,6 +918,7 @@ impl<'value, 'loc: 'value> RootScope<'value, 'loc> {
         if let Some(function) = self.scope.function_expressions.get(variable_name).copied() {
             // Marked as in progress for the whole resolution, so that a capture a parameter's query
             // makes is filed against this assignment rather than against the rule that read it.
+            let _minted = BindingResolution::open(self.built_at);
             self.resolving_assignments.insert(variable_name);
             count_assignment_resolution();
             let result = resolve_function_with_shape(function, self);
@@ -941,6 +960,7 @@ impl<'value, 'loc: 'value> RootScope<'value, 'loc> {
         let match_all = query.match_all;
 
         count_let_query_resolution();
+        let _minted = BindingResolution::open(self.built_at);
         self.resolving_assignments.insert(variable_name);
         count_assignment_resolution();
         let result =
@@ -1139,6 +1159,11 @@ pub(crate) struct BlockScope<'value, 'loc: 'value, 'eval> {
     /// holds the only copy of its captures and memos, so it writes them without an undo; see
     /// `writes_without_undo`.
     built_under_measurement: bool,
+    /// The scope event as this block was built (`SCOPE_EVENTS`), carried on the ranges its `let`s record
+    /// (`BindingResolution`): a filter predicate run that opened after it reads the refusals those `let`s
+    /// mint as no entry's own, and one that opened before it (the block is a clause of the predicate, or
+    /// a called rule's body) reads them as its own.
+    built_at: u64,
     /// What the current reading of a measurement wrote into this block's memo and captures while the
     /// block existed before the measurement started, rolled back by `set_measurement`; see
     /// [`ReadingUndo`]. A `let` of this block that the real reading never resolved (it passed on an
@@ -1374,6 +1399,7 @@ impl<'value, 'loc: 'value, 'eval> BlockScope<'value, 'loc, 'eval> {
         }
 
         if let Some(function) = self.scope.function_expressions.get(variable_name).copied() {
+            let _minted = BindingResolution::open(self.built_at);
             self.resolving_let += 1;
             count_assignment_resolution();
             let resolved = resolve_function_with_shape(function, self);
@@ -1438,6 +1464,7 @@ impl<'value, 'loc: 'value, 'eval> BlockScope<'value, 'loc, 'eval> {
         let start = self.start;
         let in_predicate = self.in_predicate;
         count_let_query_resolution();
+        let _minted = BindingResolution::open(self.built_at);
         self.resolving_let += 1;
         count_assignment_resolution();
         let resolved = query_retrieval_shaped(&query.query, self.root(), self, start, in_predicate);
@@ -2358,7 +2385,10 @@ impl RhsEnumeration {
 /// group whose `Names` is a list and another whose `Names` is a map reads the list's members and the
 /// map's keys. Empty for every query whose last part is not the author's `[*]` over a map, and for
 /// every literal and function call. `IN` never reads it: for `IN` the passed-on map is one entry of
-/// the set, as the author's `[*]` makes every value.
+/// the set, as the author's `[*]` makes every value. Its third reader is the key read after a binding
+/// (`%r.A.S` over `let r = Resources[*]`): the variable-root arm resumes at the reserved slot for a value
+/// this record names, so the `[*]` arm's own-key judgment runs over the handed-on map as it runs for the
+/// author's `[*]`, and leaves a list's elements, which are never recorded, to be read as written.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct PassedOn {
     /// A set, asked once per right-hand value by `normalize_rhs`: a list scanned per value cost
@@ -2415,7 +2445,7 @@ impl PassedOn {
     /// the values rather than the unary clause: an operand of a binary comparison (either side) or a
     /// function's argument. Each note's read is counted and judged by `LacksKeysNote::refuse_bare_read`;
     /// a refusal inside a filter predicate is the undecidable marker, pushed into `into` beside the values
-    /// for the reader to fail closed on (a function through `undecidable_argument_reason`, a comparison
+    /// for the reader to fail closed on (a function through `undecidable_argument`, a comparison
     /// through its right-hand marker read and its `LhsUnresolved` arm); outside a predicate the refusal is
     /// the held error, returned for the clause to fail on. The one loop for the three readers, so they
     /// cannot drift on how a refusal is handled.
@@ -2428,7 +2458,9 @@ impl PassedOn {
         Ok(())
     }
 
-    /// Whether the author's `[*]` handed the map at `path` on unchanged as the last part.
+    /// Whether the author's `[*]` handed the map at `path` on unchanged as the last part: the block arm's
+    /// provenance test (`block_arm_own_key_refusal`, which asks it first), asked by the arm's caller too,
+    /// before it resolves the remedy's `X` for a value the arm will judge, so the two cannot drift.
     pub(crate) fn names(&self, path: &Path) -> bool {
         self.maps.contains(path)
     }
@@ -2885,8 +2917,9 @@ fn operators_left_to_the_evaluator(
     operators
 }
 
-/// The twin's reason for a pair the evaluator could not decide: the entry's key (escaped for display),
-/// the operators the walk left to the evaluator, and the KIND of the error it raised. Never the entry's
+/// The twin's reason for a pair the evaluator could not decide: the entry's key (escaped for display
+/// once, by `template_part`), the operators the walk left to the evaluator, and the KIND of the error it
+/// raised. Never the entry's
 /// value, the clause's literal or the error's own text: those quote template data, and the refusal that
 /// carries this sentence prints it whole, so a 2 KB value would be printed whole with it.
 pub(in crate::rules) fn undecidable_pair_text(
@@ -2895,7 +2928,7 @@ pub(in crate::rules) fn undecidable_pair_text(
     error: &crate::rules::errors::Error,
 ) -> String {
     let kind = match error {
-        crate::rules::errors::Error::UndecidableComparison(_) => {
+        crate::rules::errors::Error::UndecidableComparison(..) => {
             "the comparison is undecidable over the pair"
         }
         _ => "the comparison could not be evaluated over the pair",
@@ -2912,11 +2945,11 @@ pub(in crate::rules) fn undecidable_pair_text(
                 .join(", ")
         )
     };
-    // Escaped and bounded on an escape boundary (`escaped_template_part`): the bound holds on what is
-    // printed, a key of bidi controls included, and no escape is cut in half.
+    // Escaped once and bounded on what is printed (`template_part`): a key of bidi controls included,
+    // and no escape is cut in half.
     format!(
         "the pair of the entry `{}` could not be read as the predicate asks{under} ({kind})",
-        escaped_template_part(name)
+        template_part(name)
     )
 }
 
@@ -3411,7 +3444,7 @@ fn resolve_quietly<'value, 'loc: 'value>(
 /// text, which quotes the values the query read (the refusal prints the reason whole).
 fn binding_error_text(error: &crate::rules::errors::Error) -> String {
     match error {
-        crate::rules::errors::Error::UndecidableComparison(_) => {
+        crate::rules::errors::Error::UndecidableComparison(_, _) => {
             "its resolution is undecidable over this template".to_string()
         }
         error if super::eval::is_unevaluatable(error) => {
@@ -3922,8 +3955,8 @@ impl PredicateKeys {
 // every live set, and a `refuse` with no scope alive registers nothing. An evaluation runs on the
 // thread that built its root.
 //
-// Why a registry and not a variant or a payload: `Error` is a public enum without `#[non_exhaustive]`
-// and `Unevaluatable(String)` is its released shape, so neither a new variant nor a new payload type can
+// Why a registry for the KIND: `Error` is a public enum without `#[non_exhaustive]` and
+// `Unevaluatable(String)` is its released shape, so neither a new variant nor a new payload on it can
 // carry the kind without breaking a downstream `match`; and the refusal producers live in the query
 // layer, five of them in free functions with no scope in reach, so the kind travels out of band rather
 // than through the resolver. Membership is exact: the set holds the texts the engine itself wrote, so an
@@ -3931,41 +3964,394 @@ impl PredicateKeys {
 // refusal's words (a sentence that wraps another error, a converter's message). Two limits: an
 // `Unevaluatable` of another origin whose whole text equals a registered refusal's reads as a refusal;
 // and a NUMBERED composition of registered texts, `(1) <a> (2) <b>` with every part registered, reads as
-// one too whatever wrote it (`is_refusal` through `numbered_parts_all`: the shape a comparison raised
-// beside several refused reads writes and no one registers), so the exact membership is of the parts.
+// one too whatever wrote it (`is_refusal_text` through `numbered_refusal_parts`: the shape a comparison
+// raised beside several refused reads writes and no one registers), so the exact membership is of the
+// parts. The TOKEN rides as a payload instead: `UndecidableComparison(String, Option<RefusalToken>)` is
+// the one variant that carries one, a variant this release adds, so the payload breaks no released
+// `match` (a consumer that names it writes `UndecidableComparison(reason, _)` or `(..)`), and a token is
+// a fact about ONE raise (when its refusal was minted, read by the run the raise ends) that no registry
+// keyed by text can hold: two raises of one text at two counts are two tokens. So the kind is answered
+// by the registry and the time by the payload; the README's library notes name both.
 thread_local! {
     static REFUSALS: RefCell<Vec<(u64, HashSet<String>)>> = const { RefCell::new(Vec::new()) };
     static NEXT_REGISTRY: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    /// The next refusal token (`mint_refusal_token`): counted up on this thread at every registration or
+    /// marker delivery of a refusal and never reused, so a token says WHEN its refusal was minted relative
+    /// to any other on the thread. A
+    /// filter predicate run reads the counter as it opens (`RefusalFrame`) and, once its body has raised,
+    /// compares it with the token the ending error carries: a token at or past the run's start was
+    /// minted inside the run, at any depth (the body's own key spelling, a block's fold, a `when`
+    /// condition of a rule called from the body, a nested predicate's refusal re-raised by its `!empty`),
+    /// and marks the entry the run was deciding a refusal; a token below it was minted before the run
+    /// began (a capture bound outside the predicate holding a refusal's marker, read inside it), and no
+    /// token at all is a comparison abandoned for another reason (a regular expression out of budget, a
+    /// key filter's undecided map) or an error rebuilt from its text, so those leave the entry a plain
+    /// undecided marker. The token rides in the marker and in the error itself: a dropped error takes
+    /// its token with it, a rebuilt error has none, and no address or text of a dropped error is ever
+    /// compared, so a deciding `or` that drops one refusal and a later clause's raise that ends the run
+    /// are read by what the ending error carries and nothing else. A token minted while a binding was
+    /// lazily resolved (`BINDING_MINTED`) is read by no run as its own, since the binding's query ran
+    /// inside the first reader's run only by accident of order.
+    static NEXT_REFUSAL_TOKEN: std::cell::Cell<u64> = const { std::cell::Cell::new(1) };
+    /// The token ranges `[start, end)` minted while a binding was lazily resolved (`BindingResolution`):
+    /// a `let`'s or a function assignment's query runs once, on its first read, inside whichever filter
+    /// predicate run read it first, so a refusal it mints carries a token at or past that run's start
+    /// although the run's own body raised nothing. `RefusalFrame::minted_inside` reads a token inside one
+    /// of these ranges as minted by the binding, not by the run, so the first reader's entry and every
+    /// later reader's entry read the memoized marker alike. One range per outermost resolution (a nested
+    /// `let` resolved while an outer one runs is inside the outer range); a resolution that minted nothing
+    /// records no range. A range carries the token count at which the scope that OWNS the binding was
+    /// built (`BindingRange::owner_built`), and a run excludes a range only when that scope predates the
+    /// run (`RefusalFrame::minted_inside`): a file-level `let`, or a block's `let` whose block encloses the
+    /// run, was bound before the run opened and its refusal is no entry's own; a `let` of a block built
+    /// INSIDE the run (a block clause in the predicate, a called rule's body) is the run's own reading and
+    /// its refusal marks the entry as the inline spelling would. Nested resolutions record one range each
+    /// (a stack of opens, `BINDING_RESOLUTION`), so a binding resolved inside another binding's resolution
+    /// is covered the moment it closes and both entries of the outer binding read one kind. The ranges are
+    /// kept per live root scope, as the registry is (`REFUSALS`, keyed by the same number): a resolution
+    /// records its range under the newest live scope, the scope's guard takes its ranges with it
+    /// (`RefusalRegistryGuard`), and a resolution with no root scope alive records nothing, since no run
+    /// reads a token against it; so a thread that evaluates many files (a warm container, a host embedding
+    /// the library, a run over many templates) holds the ranges of the evaluations alive on it and no more.
+    /// A measurement's undo does not take a range back: a range matches only the tokens minted inside it,
+    /// which no other resolution's raise carries.
+    static BINDING_MINTED: RefCell<Vec<ScopeRanges>> = const { RefCell::new(Vec::new()) };
+    /// The binding resolutions open on this thread, innermost last (`BindingResolution`): each the counter
+    /// as it opened and the scope event its owning scope was built at.
+    static BINDING_RESOLUTION: RefCell<Vec<(u64, u64)>> = const { RefCell::new(Vec::new()) };
+    /// The scope-event sequence on this thread (`next_scope_event`): advanced once by every root or block
+    /// scope build (`RootScope::built_at`, `BlockScope::built_at`) and once by every filter predicate
+    /// run's open (`RefusalFrame::opened`), so a build and an open never share a number and `<` between
+    /// two of them is program order. The refusal token counter does not serve for that: only a mint
+    /// advances it, so a block built just before a run opened and a block built just after it read one
+    /// count, and a `let` of the enclosing block resolved inside the run was the run's own by a tie.
+    static SCOPE_EVENTS: Cell<u64> = const { Cell::new(1) };
 }
 
-/// The refusal producers' one way to raise: registers `text` as a refusal of the newest evaluation alive
-/// on this thread and returns the `Unevaluatable` that carries it, so the sites that write an error into
-/// a record can tell it from every other unevaluatable sentence (`is_refusal`) while the error's shape
-/// stays as released. With no root scope alive the text is not registered: there is no evaluation for it
-/// to belong to, and a set that outlived every scope would answer for the next one.
-pub(crate) fn refuse(text: String) -> Error {
-    register_refusal(&text);
-    Error::Unevaluatable(text)
+/// The next scope event on this thread (`SCOPE_EVENTS`): a root or block scope build, or a filter
+/// predicate run's open, each reading its own number.
+fn next_scope_event() -> u64 {
+    SCOPE_EVENTS.with(|events| {
+        let event = events.get();
+        events.set(event + 1);
+        event
+    })
 }
 
-/// Registers `text` as a refusal of the newest evaluation alive on this thread without raising it, for
-/// the one place the evaluator meets a refusal it may not raise: a refused read among a comparison's
-/// values, on EITHER side (`eval::binary_operation`, before its outcome is read, for every refusal text
-/// the right-hand side holds and every one a left-hand marker carries, WHATEVER the clause's verdict: a
-/// value the document lacks or a value that holds may decide the clause and leave the read unraised, a
-/// failure or a raise on the marker's pair carries it; the run's once-per-site `Warning:` line,
-/// `unraised_refusal_notice` through `record_unraised_refusal`, alone waits on the verdict). A refusal
-/// raised inside a quiet probe
-/// leaves no registration behind it (the probe writes nothing), so the text joins the set here, whatever
-/// the clause's verdict, and a later error carrying it prints whole (`is_refusal`). The set is keyed by
-/// text, so a text `refuse` already registered is registered once. `refuse` goes through here. With no
-/// root scope alive nothing is registered, for the reason `refuse` registers nothing then.
-pub(crate) fn register_refusal(text: &str) {
+/// One token range a binding's lazy resolution minted (`BINDING_MINTED`): the tokens `[start, end)` and
+/// the scope event at which the scope that owns the binding was built (`owner_built`, `SCOPE_EVENTS`).
+#[derive(Clone, Copy)]
+struct BindingRange {
+    start: u64,
+    end: u64,
+    owner_built: u64,
+}
+
+/// One live root scope's binding-resolution ranges (`BINDING_MINTED`): the scope's registry number
+/// (`RefusalRegistryGuard`) and the ranges recorded under it, in the order their resolutions closed.
+type ScopeRanges = (u64, Vec<BindingRange>);
+
+/// A filter predicate run's frame: the refusal token counter as the run opened (`NEXT_REFUSAL_TOKEN`) and
+/// the run's own scope event (`SCOPE_EVENTS`), read once the body has raised (`minted_inside`). Each run
+/// holds its own start, so a nested run reads its own count and an outer run reads the earlier one it
+/// opened with; no store is shared between runs. A filter loop opens one for each walk under a held entry
+/// as well (`check_and_delegate_noting`), read by the cut-back after the walk (`refusal_markers_in`) with
+/// the same predicate: a plain marker carrying a token minted during the walk is the walk's own refusal.
+///
+/// Two counters, so a frame is a value every scope can hold a copy of: a predicate run pushes its frame
+/// onto the stack of the evaluation context it runs under (`with_refusal_frame`, `RefusalFrames`) for the
+/// body's duration, and every fold that ranks refusal tokens inside that body reads the stack off the
+/// context (`EvalContext::refusal_frames`, `eval::ranking_under`), so a fold reached through a block body,
+/// a comparison's evidence or a key filter ranks by the same reading the run marks its entry by.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct RefusalFrame {
+    opened_at: u64,
+    opened: u64,
+}
+
+impl RefusalFrame {
+    /// The frame of a run opening now: the token counter and a fresh scope event. Crate-visible so a cell
+    /// can open frames around the tokens it mints and plant them on a context (`RefusalFrames::push`).
+    pub(crate) fn open() -> Self {
+        RefusalFrame {
+            opened_at: NEXT_REFUSAL_TOKEN.with(std::cell::Cell::get),
+            opened: next_scope_event(),
+        }
+    }
+
+    /// The token the error that ended this run carries, when it names a refusal minted inside the run
+    /// (`register_refusal` counted it at or after the run opened): `None` for an error with no token (a
+    /// raise that is no refusal, a re-raise rebuilt from a text), for a refusal minted before the run
+    /// began (a capture's marker bound outside the predicate and read inside it), and for a refusal
+    /// minted while a binding of a scope built before this run was lazily resolved inside it
+    /// (`BINDING_MINTED`), which the first reader's run met only by resolving the binding and every later
+    /// reader meets as a memoized marker.
+    fn minted_inside(&self, refusal: Option<RefusalToken>) -> Option<RefusalToken> {
+        refusal.filter(|token| {
+            token.minted_at_or_after(self.opened_at)
+                && !minted_during_binding_resolution(*token, self.opened)
+        })
+    }
+
+    /// Whether `token` can mark this run's entry: the frame's one test, `minted_inside`, read as a bit.
+    /// The folds that run under this frame rank the tokens they meet by how many of the live frames,
+    /// this one and the ones enclosing it, read them so (`RefusalFrames::rank`, through
+    /// `eval::would_replace_ranking` and `eval::ranking_under`): under one live frame, a token that can
+    /// mark the entry outranks one that cannot whatever their counts, and two of one class are ranked by
+    /// minting. Two readings fall out. A token a
+    /// binding of an older scope minted inside the run (`minted_during_binding_resolution`) never
+    /// outranks the entry's own refusal, however much later it was minted: ranked by minting alone, an
+    /// entry whose own refusal came BEFORE such a binding resolved lost the fold to the binding's later,
+    /// excluded token and read PLAIN while the same entry with the binding already memoized read REFUSED,
+    /// so the kinds swapped with resource order and with conjunct order
+    /// (`an_entry_whose_run_minted_its_own_refusal_is_refused_beside_a_binding_resolved_inside_it`). And
+    /// a token minted BEFORE the run opened (a capture's marker bound outside the predicate and read
+    /// inside it) ranks below any in-run token too, so a nested run's plain marker carries the token the
+    /// enclosing run can read as its own: with the exclusion half of this test alone as the ranking, an
+    /// older capture token outranked a later in-run token the binding half excluded, the inner run's
+    /// plain marker carried the older token up, and the outer entry read PLAIN where that later token
+    /// was the outer run's own (`a_nested_runs_marker_carries_the_later_token_up_past_an_older_capture`).
+    /// Among tokens that cannot mark the entry the later still wins, as before: the entry reads PLAIN
+    /// either way and the raise names the later one. One test serves the marking and the folds, held
+    /// here and read off the context, never through a thread-local a test of a fold could not see.
+    pub(crate) fn eligible(&self, token: RefusalToken) -> bool {
+        self.minted_inside(Some(token)).is_some()
+    }
+}
+
+/// The frames of the filter predicate runs live on an evaluation, outermost first: the stack the root
+/// scope holds (`EvalContext::refusal_frames`, `refusal_frames_mut`), empty outside every run, that a run
+/// pushes its frame onto for its body and pops after it (`with_refusal_frame`). Read whole by every fold
+/// that ranks refusal tokens (`eval::ranking_under`), as a copy, so a run nested inside the fold, which
+/// pushes and pops while the fold runs, changes nothing the fold holds.
+///
+/// One frame's bit cannot say how far in a token's ownership reaches: a run nested in another reads a
+/// token minted by the outer run's own body as not its own, and so does the enclosing run read one minted
+/// while a root binding resolved inside both. With the innermost frame alone as the ranking, a nested
+/// run's fold kept the later of two tokens it could read as neither its own nor anyone's, and its plain
+/// marker carried up the one the enclosing run could not read either, past the one it could, so the outer
+/// entry read PLAIN for a refusal its own body had minted in one resource order and REFUSED in the other.
+/// The stack lets a fold rank by OWNERSHIP DEPTH instead (`rank`).
+#[derive(Clone, Debug, Default)]
+pub(crate) struct RefusalFrames(Vec<RefusalFrame>);
+
+impl RefusalFrames {
+    /// How many of the live frames, counted from the outermost, read `token` as minted inside their run
+    /// (`RefusalFrame::eligible`): the depth of the innermost run that can mark its entry by the token, 0
+    /// when none can, the whole stack's length when the innermost can. The frames a token is eligible
+    /// under always form a PREFIX from the outermost inward: a frame nested in another opened no earlier
+    /// and at a later scope event, so a token minted at or after the inner open was minted at or after
+    /// the outer one, and a binding range whose owner predates the outer run predates the inner run too.
+    /// So the count is the one number the lexicographic order over the frames' bits, innermost out, can
+    /// use: comparing two tokens, the first frame where their bits differ is the one at the greater
+    /// rank, and the token eligible there is the deeper-ranked one. The assertion pins the prefix
+    /// property where it is used; a token eligible under an inner frame and not under an enclosing one
+    /// would mean the two tests of `minted_inside` had drifted apart.
+    pub(crate) fn rank(&self, token: RefusalToken) -> usize {
+        let rank = self
+            .0
+            .iter()
+            .take_while(|frame| frame.eligible(token))
+            .count();
+        debug_assert!(
+            self.0[rank..].iter().all(|frame| !frame.eligible(token)),
+            "a token eligible under a nested run's frame is eligible under every frame enclosing it"
+        );
+        rank
+    }
+
+    /// Pushes the frame of a run that is opening, for `with_refusal_frame`; a cell plants frames by it.
+    pub(crate) fn push(&mut self, frame: RefusalFrame) {
+        self.0.push(frame);
+    }
+
+    fn pop(&mut self) -> Option<RefusalFrame> {
+        self.0.pop()
+    }
+}
+
+/// Runs `body` with `frame` pushed onto the context's stack of live frames (`EvalContext::refusal_frames_mut`)
+/// and pops it after, on every return path: the one way a filter predicate run (`run_filter_predicate`,
+/// `select_list_members`) puts its frame where the folds inside its body read it (`eval::ranking_under`),
+/// so no early return out of a body can leave a frame on the stack for the folds of the runs after it.
+/// The body is handed the same context, so a scope built inside it forwards to the same stack.
+pub(crate) fn with_refusal_frame<'value, 'loc: 'value, T>(
+    eval_context: &mut dyn EvalContext<'value, 'loc>,
+    frame: RefusalFrame,
+    body: impl FnOnce(&mut dyn EvalContext<'value, 'loc>) -> T,
+) -> T {
+    eval_context.refusal_frames_mut().push(frame);
+    let out = body(eval_context);
+    let popped = eval_context.refusal_frames_mut().pop();
+    debug_assert!(
+        popped.is_some(),
+        "the frame pushed for a run's body is still on the stack when the body returns"
+    );
+    out
+}
+
+/// The span of a binding's lazy resolution on this thread (`BINDING_RESOLUTION`): opened where a root
+/// scope's or a block's resolve path is about to run the binding's query or call (the four sites that
+/// reach `memoize` or `memoize_failure`), with the scope event the owning scope was built at
+/// (`RootScope::built_at`, `BlockScope::built_at`), closed when the guard drops, right after the result
+/// or the failure is stored, with no token minted between the store and the drop. A stack: every open
+/// reads its own start and every close records its own range, so a `let` resolved inside another `let`'s
+/// query is covered the moment it closes (the outer range, closed later, covers the inner tokens too;
+/// overlapping ranges are read by `any`). Before the stack only the outermost close recorded a range, so
+/// an inner binding's tokens had no range while the outer query still ran, and the first entry to read
+/// the inner binding read REFUSED where every later one read PLAIN. An empty range (nothing minted) is
+/// not recorded.
+struct BindingResolution;
+
+impl BindingResolution {
+    fn open(owner_built: u64) -> Self {
+        let start = NEXT_REFUSAL_TOKEN.with(std::cell::Cell::get);
+        BINDING_RESOLUTION.with(|stack| stack.borrow_mut().push((start, owner_built)));
+        BindingResolution
+    }
+}
+
+impl Drop for BindingResolution {
+    fn drop(&mut self) {
+        let Some((start, owner_built)) = BINDING_RESOLUTION.with(|stack| stack.borrow_mut().pop())
+        else {
+            return;
+        };
+        let end = NEXT_REFUSAL_TOKEN.with(std::cell::Cell::get);
+        if end > start {
+            // Under the newest live root scope's entry; none alive, nothing recorded.
+            BINDING_MINTED.with(|scopes| {
+                if let Some((_, ranges)) = scopes.borrow_mut().last_mut() {
+                    ranges.push(BindingRange {
+                        start,
+                        end,
+                        owner_built,
+                    });
+                }
+            });
+        }
+    }
+}
+
+/// Whether `token` was minted while a binding was lazily resolved by a scope built BEFORE the filter
+/// predicate run whose scope event is `opened` (`BINDING_MINTED`, `SCOPE_EVENTS`): inside some recorded
+/// `[start, end)` whose owner's build event is below `opened`. A range whose owner was built inside the
+/// run (a block clause's `let`, a called rule's body `let`) does not exclude the token: that reading is
+/// the run's own. Both sides are scope events, which every build and every open advance, so the
+/// comparison is program order; the token count would tie a block built just before the run opened with
+/// the run itself (nothing minted between) and read the enclosing block's `let` as the run's own. Read
+/// newest range first and stopped at the first range that ends at or before the token: ranges are
+/// recorded as their resolutions close, so their ends never decrease, and every earlier range ends no
+/// later.
+fn minted_during_binding_resolution(token: RefusalToken, opened: u64) -> bool {
+    BINDING_MINTED.with(|scopes| {
+        scopes.borrow().iter().any(|(_, ranges)| {
+            for range in ranges.iter().rev() {
+                if !token.minted_at_or_after(range.end) {
+                    if token.minted_at_or_after(range.start) && range.owner_built < opened {
+                        return true;
+                    }
+                } else {
+                    return false;
+                }
+            }
+            false
+        })
+    })
+}
+
+/// How many binding-resolution ranges the live root scopes hold between them (`BINDING_MINTED`), for the
+/// cell that pins the ranges leaving with the scope that recorded them.
+#[cfg(test)]
+pub(crate) fn binding_minted_ranges() -> usize {
+    BINDING_MINTED.with(|scopes| scopes.borrow().iter().map(|(_, ranges)| ranges.len()).sum())
+}
+
+/// Mints the next refusal token (`NEXT_REFUSAL_TOKEN`): the one counter every refusal's token comes from.
+/// Every producer that builds a refusal's sentence registers it and takes the token the registration
+/// mints (`register_refusal`, whether the sentence is raised as an error or delivered as a marker inside a
+/// filter predicate); the one caller that mints without registering is `refusal_marker`, for a refusal
+/// raised as `Unevaluatable` whose text `refuse` registered at the clause already. The registry's
+/// invariant is that every registered text is a refusal's own sentence, raised or delivered, so a record
+/// that fails on such a text reads it as the refusal it is (`is_refusal`) whichever way it travelled. A
+/// filter predicate run reads the token against the count it opened at (`RefusalFrame`), so a token minted
+/// here says when the refusal was delivered relative to every other on the thread. A token minted while a
+/// binding is lazily resolved falls inside a recorded range (`BindingResolution`) and is read by no run as
+/// its own.
+pub(crate) fn mint_refusal_token() -> RefusalToken {
+    NEXT_REFUSAL_TOKEN.with(|next| {
+        let token = next.get();
+        next.set(token.wrapping_add(1).max(1));
+        RefusalToken::minted(token)
+    })
+}
+
+/// Registers `text` as a refusal of the newest evaluation alive on this thread and mints its token
+/// (`mint_refusal_token`): the one way a refusal is registered, called by `refuse` for a refusal raised as
+/// an error, by the key arm over a map handed on whole (whose marker carries the token returned here), by
+/// the block arm whose refusal a block folds (`block_arm_own_key_refusal`, the token carried by
+/// `fold_refused_body`), and by every producer that delivers a refusal as a marker inside a filter
+/// predicate (`LacksKeysNote::marker_with`, `deliver_wildcard_filter_refusal`, `refuse_unbound_capture`,
+/// the own-key enumeration's one-object refusal, the one-object refusal a block folds), so one sentence
+/// is registered whichever way it travels. The record and the reporters read the text as the refusal it is
+/// (`is_refusal`); a filter predicate run reads the token (`RefusalFrame`). Also the one place the evaluator registers a
+/// refusal it may not raise: a refused read among a comparison's values, on EITHER side
+/// (`eval::binary_operation`, before its outcome is read, for every refused read it collected whose marker
+/// says the text is one to register, `eval::refused_read_registers`: a refusal's own marker's sentence,
+/// or a text this set holds already; never a text a plain marker carries by its token alone, the wrap of
+/// a numbered text of refusals, which is collected, raised and named by the line and stays out of the set;
+/// WHATEVER the clause's verdict: a value the document lacks or a value that holds may decide the clause
+/// and leave the read unraised, a failure or a raise on the marker's pair carries it; the run's
+/// once-per-site `Warning:` line, `unraised_refusal_notice` through `record_unraised_refusal`, alone waits
+/// on the verdict). A refusal raised inside a quiet probe leaves no registration behind it (the probe
+/// writes nothing), so its own marker's text joins the set here, whatever the clause's verdict, and a
+/// later error carrying it prints whole (`is_refusal`). The set is keyed by text,
+/// so a text already registered is registered once. With no root scope alive the text is not registered
+/// (there is no evaluation for it to belong to, and a set that outlived every scope would answer for the
+/// next one), and the token is minted all the same, since the count is the thread's.
+pub(crate) fn register_refusal(text: &str) -> RefusalToken {
     REFUSALS.with(|refusals| {
         if let Some((_, set)) = refusals.borrow_mut().last_mut() {
             set.insert(text.to_string());
         }
     });
+    mint_refusal_token()
+}
+
+/// The query a bare binding or parameter root was bound to, followed through bare aliases (`let r2 = %r`
+/// reads `r`'s query), for the remedy's `X`: `let r = Resources[*]` gives `Resources[*]`, whose text before
+/// its `[*]` is the source the author wrote. Bounded at sixteen hops; a name no scope binds, or a chain
+/// longer than that, gives `None`, and the sentence then names `X` in words. The head is a clause's or a
+/// query part's, never a value's, so the readers call this once per block clause (`eval`'s block arm,
+/// beside `body_keys`) and once per map a retrieval part REFUSES (`query_retrieval_with_converter`, on
+/// the own-key refusal path, which returns the refusal at once), never per value judged, and only once a
+/// map has passed the arm's provenance test, so a clause whose values the arm leaves alone never walks
+/// the scopes. (A memo of this answer per retrieval part was written and never read a second time, since
+/// the one path that filled it returned on the spot; it is gone, and so is the saving it claimed.)
+pub(crate) fn binding_source_query<'value, 'loc: 'value>(
+    resolver: &mut dyn EvalContext<'value, 'loc>,
+    name: &str,
+) -> Option<&'value AccessQuery<'loc>> {
+    let mut name = name.to_string();
+    for _ in 0..16 {
+        let query = resolver.variable_binding_query(&name, crate::rules::MergedKeys::Visible)?;
+        match query.query.as_slice() {
+            [QueryPart::Variable(alias)] => name = alias.to_string(),
+            _ => return Some(query),
+        }
+    }
+    None
+}
+
+/// The refusal producers' one way to raise: registers `text` as a refusal of the newest evaluation alive
+/// on this thread (`register_refusal`) and returns the `Unevaluatable` that carries it, so the sites that
+/// write an error into a record can tell it from every other unevaluatable sentence (`is_refusal`) while
+/// the error's shape stays as released. The token the registration mints is not carried by this error,
+/// which is held at a clause outside every predicate; the producers inside a predicate deliver a marker
+/// and carry it there.
+pub(crate) fn refuse(text: String) -> Error {
+    register_refusal(&text);
+    Error::Unevaluatable(text)
 }
 
 /// The most characters a part a refusal's text takes from the TEMPLATE keeps when it is cut: the path of
@@ -3975,33 +4361,135 @@ pub(crate) fn register_refusal(text: &str) {
 /// on its own, so a template with a 2 KB key or a path of a hundred levels still prints a refusal whose
 /// key, condition and remedy are whole and whose template parts are cut and marked (a key or a name at
 /// its end through `template_part`; a path in its middle through `template_path`, which keeps the
-/// location after it whole and uncounted), never a line the template decides the length of. A part a
-/// little over the bound is kept whole, since the marker would make it longer than it is; so a cut part
-/// renders in at most this many characters plus the marker, and a whole one in fewer. The bound is wide
-/// enough for every key and path the fixtures hold and well under the whole-line bound with the sentence
-/// around it.
+/// location after it whole and uncounted), never a line the template decides the length of. A part is
+/// kept whole up to the length where a cut would be shorter than it: a cut keeps this many characters and
+/// adds a marker, `end_cut_marker(n)` for a name (25 characters plus the digits of `n`, the count cut) and
+/// `middle_cut_marker(n)` for a path's text (28 plus the digits), so a name is whole through 283 characters
+/// and cut from 284 (where 256 kept plus the 27-character marker is shorter than the whole), and a path's
+/// text is whole through 286 and cut from 287: the effective ceiling of a part rendered whole, read off the
+/// markers by `the_cut_begins_at_the_first_length_where_it_shortens_the_part`, so a change to a marker
+/// moves it. A longer part renders in this many characters plus the marker (and, for a path, the
+/// location). The bound is wide enough for every key and path the fixtures hold and well under the
+/// whole-line bound with the sentence around it.
 pub(crate) const LONGEST_TEMPLATE_PART_IN_A_REFUSAL: usize = 256;
 
-/// `text`, a part of a refusal taken from the template, cut at its END to `LONGEST_TEMPLATE_PART_IN_A_REFUSAL`
-/// characters with a marker naming how much was cut, or whole when it fits, or whole when the cut would
-/// not shorten it (the marker costs about thirty characters, so a text a few characters over the bound
-/// is longer cut than whole); by character, so a multi-byte character straddling the cut cannot panic.
-/// Every refusal text interpolates its template-derived parts through this and its rules-file parts
-/// (the key the predicate compares, the query as written, a literal) as they are: the rules file is the
-/// author's and bounds its own text. A PATH goes through `template_path` instead: the end of a path is
+/// The marker an end cut (`template_part`) writes after the kept characters, naming how many it cut.
+pub(crate) fn end_cut_marker(cut: usize) -> String {
+    format!("...[{cut} more characters cut]")
+}
+
+/// The marker a middle cut (`template_path`) writes between the kept head and tail, naming how many it cut.
+pub(crate) fn middle_cut_marker(cut: usize) -> String {
+    format!("...[{cut} more characters cut]...")
+}
+
+/// One character of a template part as the console prints it: a control, bidirectional or zero-width
+/// character as its Rust escape (`\n`, `\u{1b}`, `\u{202e}`), the set the writers escape, and, with
+/// `backslash_too`, a backslash as `\\` (`crate::utils::writer::escaped_for_display`, the console's rule for
+/// a quoted key: two names that would print alike print apart, so a key holding an ESC and a key holding
+/// the six characters `\u{1b}` are told apart); without it a backslash as written
+/// (`escaped_controls_for_display`, the console's rule for a path, which reads as it does on stdout). The
+/// parts are escaped where they are bounded so the bound counts what is printed: a key of three hundred
+/// bidirectional overrides prints as 2,400 characters of escapes, and a bound on its source characters
+/// would let one quoted part carry the sentence past the console's whole-line bound.
+fn escaped_part_char(c: char, backslash_too: bool) -> String {
+    match backslash_too {
+        true => crate::utils::writer::escaped_for_display(&c.to_string()),
+        false => crate::utils::writer::escaped_controls_for_display(&c.to_string()),
+    }
+}
+
+/// The longest prefix of `text` whose printed rendering (`escaped_part_char`) fits `budget` characters, and
+/// how many of `text`'s characters it takes; a character whose escape would cross the budget is left out
+/// whole, so a cut never splits an escape.
+fn escaped_head(text: &str, budget: usize, backslash_too: bool) -> (String, usize) {
+    let mut kept = String::new();
+    let mut printed = 0;
+    let mut taken = 0;
+    for c in text.chars() {
+        let piece = escaped_part_char(c, backslash_too);
+        let width = piece.chars().count();
+        if printed + width > budget {
+            break;
+        }
+        kept.push_str(&piece);
+        printed += width;
+        taken += 1;
+    }
+    (kept, taken)
+}
+
+/// The longest suffix of `text` whose printed rendering fits `budget` characters, and how many of `text`'s
+/// characters it takes, read from the end as `escaped_head` reads from the start.
+fn escaped_tail(text: &str, budget: usize, backslash_too: bool) -> (String, usize) {
+    let mut pieces = Vec::new();
+    let mut printed = 0;
+    for c in text.chars().rev() {
+        let piece = escaped_part_char(c, backslash_too);
+        let width = piece.chars().count();
+        if printed + width > budget {
+            break;
+        }
+        pieces.push(piece);
+        printed += width;
+    }
+    pieces.reverse();
+    let taken = pieces.len();
+    (pieces.concat(), taken)
+}
+
+/// `text`, a part of a refusal taken from the template, as the console prints a quoted key
+/// (`escaped_part_char` with the backslash rule: a control or bidirectional character as its escape, a
+/// backslash as `\\`, so a key holding an ESC and a key holding the six characters `\u{1b}` print apart)
+/// and cut at its END to
+/// `LONGEST_TEMPLATE_PART_IN_A_REFUSAL` PRINTED characters on a character boundary of the source, with a
+/// marker naming how many source characters were cut, or whole when it fits, or whole when the cut would
+/// not shorten it (the marker costs about thirty characters, so a text a few PRINTED characters over the
+/// bound is longer cut than whole; the ceiling of a part kept whole is read off the markers in
+/// `LONGEST_TEMPLATE_PART_IN_A_REFUSAL`'s doc); by character, so a multi-byte character straddling the
+/// cut cannot panic.
+/// Every refusal text interpolates its template-derived parts through this; the own-key texts
+/// (`own_key_handed_on_whole_refusal_text` and the hints) quote their rules-file parts (the key a block's
+/// clause head or a query's key part names, the query as written) as written, since the rules file is
+/// the author's and bounds its own text. A PATH goes through `template_path` instead: the end of a path is
 /// the part a reader needs (the leaf segment the refusal is about, and the `[L:x,C:y]` location after
 /// it), so a path is cut in its middle and keeps both ends, where this end cut would keep the document's
 /// top alone.
 pub(crate) fn template_part(text: &str) -> String {
-    let Some((at, _)) = text.char_indices().nth(LONGEST_TEMPLATE_PART_IN_A_REFUSAL) else {
-        return text.to_string();
-    };
-    let cut = format!(
-        "{}...[{} more characters cut]",
-        &text[..at],
-        text[at..].chars().count()
-    );
-    whole_unless_the_cut_is_shorter(text, cut)
+    let whole = crate::utils::writer::escaped_for_display(text);
+    let (kept, taken) = escaped_head(text, LONGEST_TEMPLATE_PART_IN_A_REFUSAL, true);
+    let left_out = text.chars().count() - taken;
+    if left_out == 0 {
+        return whole;
+    }
+    let cut = format!("{kept}{}", end_cut_marker(left_out));
+    whole_unless_the_cut_is_shorter(&whole, cut)
+}
+
+/// `text`, a template-derived part of an UNREGISTERED sentence, the renderer of the source bound: a
+/// MARKER's sentence (the retrieval's own reason a key filter's sentence embeds when its right-hand query
+/// stopped at a value that is not a map, or a function's reason for a value it had no answer for, the
+/// whole value in that text) and the absence's reason that leads a record beside a marker
+/// (`eval::Lead::Absence`), cut at its END to `LONGEST_TEMPLATE_PART_IN_A_REFUSAL` PRINTED characters with the count
+/// cut, as [`template_part`] cuts, with its line-breaking, control and bidirectional characters escaped
+/// (`escaped_part_char` without the backslash rule) and the BACKSLASH KEPT as written: a marker's sentence
+/// is built once, here, and written whole into every record that names the marker, on either side of a
+/// comparison and in `-o json`, and the records that name a marker beside a refusal are printed whole by
+/// the console under the refusal's bound. The backslash is kept because the text is read against the
+/// template's other renderings in the same report (the per-value records print the value as written), as
+/// a path is (`template_path`); a key quoted in a refusal's own sentence doubles it (`template_part`), the
+/// one-to-one mapping that sentence needs because it is registered and compared by text. Bounding the
+/// sentence at each record instead cut it a second time beside its first cut and doubled every backslash
+/// in a sentence its builder had already escaped (a budget marker's `\d`, a key rendered `\u{1b}`).
+pub(crate) fn marker_part(text: &str) -> String {
+    let whole = crate::utils::writer::escaped_controls_for_display(text);
+    let (kept, taken) = escaped_head(text, LONGEST_TEMPLATE_PART_IN_A_REFUSAL, false);
+    let left_out = text.chars().count() - taken;
+    if left_out == 0 {
+        return whole;
+    }
+    let cut = format!("{kept}{}", end_cut_marker(left_out));
+    whole_unless_the_cut_is_shorter(&whole, cut)
 }
 
 /// `path`, the path a refusal names, rendered as `Path`'s `Display` renders it (`{path}[L:x,C:y]`) when
@@ -4011,33 +4499,27 @@ pub(crate) fn template_part(text: &str) -> String {
 /// segments the refusal is about, so a path of a hundred levels still names the node refused at and its
 /// line. A leaf segment longer than the tail's half keeps its END (its last characters before the
 /// location) and loses its start to the marker, so a 300-character leaf is still named by the characters
-/// a reader finds beside the location. Cut by character, as `template_part` cuts, and only where the cut
-/// shortens the text: a path a few characters over the bound renders whole, since the marker would make
-/// it longer. The text shown and the location are joined by one rendering for both forms
-/// (`Path::shown_with_location`), so a short path and a cut one carry the location the same way.
+/// a reader finds beside the location. Printed as the console prints a path (`escaped_part_char` without
+/// the backslash rule: a control or bidirectional character as its escape, a backslash as written, so a
+/// Windows path reads as it does on stdout), the budget counted on the printed
+/// characters of each end and the marker counting the source characters cut between them; cut by
+/// character, and only where the cut shortens the text: a path a few characters over the bound renders
+/// whole, since the marker would make it longer. The text shown and the location are joined by one
+/// rendering for both forms (`Path::shown_with_location`), so a short path and a cut one carry the
+/// location the same way.
 pub(crate) fn template_path(path: &Path) -> String {
     let text = path.0.as_str();
-    let total = text.chars().count();
-    let shown = if total <= LONGEST_TEMPLATE_PART_IN_A_REFUSAL {
-        text.to_string()
+    let whole = crate::utils::writer::escaped_controls_for_display(text);
+    let shown = if whole.chars().count() <= LONGEST_TEMPLATE_PART_IN_A_REFUSAL {
+        whole
     } else {
         let head_len = LONGEST_TEMPLATE_PART_IN_A_REFUSAL / 2;
         let tail_len = LONGEST_TEMPLATE_PART_IN_A_REFUSAL - head_len;
-        let head_end = text
-            .char_indices()
-            .nth(head_len)
-            .map_or(text.len(), |(at, _)| at);
-        let tail_start = text
-            .char_indices()
-            .nth(total - tail_len)
-            .map_or(text.len(), |(at, _)| at);
-        let cut = format!(
-            "{}...[{} more characters cut]...{}",
-            &text[..head_end],
-            total - head_len - tail_len,
-            &text[tail_start..]
-        );
-        whole_unless_the_cut_is_shorter(text, cut)
+        let (head, head_taken) = escaped_head(text, head_len, false);
+        let (tail, tail_taken) = escaped_tail(text, tail_len, false);
+        let left_out = text.chars().count().saturating_sub(head_taken + tail_taken);
+        let cut = format!("{head}{}{tail}", middle_cut_marker(left_out));
+        whole_unless_the_cut_is_shorter(&whole, cut)
     };
     path.shown_with_location(&shown)
 }
@@ -4053,57 +4535,30 @@ fn whole_unless_the_cut_is_shorter(text: &str, cut: String) -> String {
     }
 }
 
-/// `text`, a part of a refusal taken from the template, ESCAPED for display (`escaped_for_display`: each
-/// character that breaks or hides a line, and the backslash, as its escape) and bounded on an ESCAPE
-/// BOUNDARY: each character's escaped form is appended while the escaped text stays within
-/// `LONGEST_TEMPLATE_PART_IN_A_REFUSAL` characters, and the marker counts the SOURCE characters left out.
-/// The bound is on what is printed, so a key of 256 bidi controls, which escape to eight characters each,
-/// prints 32 of them and the marker (escaped after a cut by source characters, it printed at eight times
-/// the bound), and no escape is cut in half (cut after escaping by printed characters, the bound could
-/// fall inside `\u{202e}`). For the builders whose sentence is printed whole by the reporters and the
-/// refused-read line (`undecidable_pair_text`, and the values a refusal's report sentence quotes,
-/// `bounded_value_for_refusal`); a builder that only bounds, for a caller that escapes where it writes,
-/// keeps `template_part`.
-pub(crate) fn escaped_template_part(text: &str) -> String {
-    let total = text.chars().count();
-    let mut out = String::new();
-    let mut printed = 0usize;
-    for (index, c) in text.chars().enumerate() {
-        let piece = crate::utils::writer::escaped_for_display(&c.to_string());
-        let width = piece.chars().count();
-        if printed + width > LONGEST_TEMPLATE_PART_IN_A_REFUSAL {
-            return format!("{out}...[{} more characters cut]", total - index);
-        }
-        printed += width;
-        out.push_str(&piece);
-    }
-    out
-}
-
 /// `value`, a value quoted from the template (the value a query traversed to, the two values a comparison
 /// decided, the value a unary check was asked of), rendered for the sentence of a record that carries a
 /// REFUSAL (`ComparisonClauseCheck::refusal`, `ValueCheck::refusal`): the `Path=<path> Value=<value>`
-/// shape its `Display` gives, written by the same formatter (`display::write_path_and_value`) with the
-/// path and the value each escaped and bounded as a template part of a refusal is
-/// (`escaped_template_part`: cut at `LONGEST_TEMPLATE_PART_IN_A_REFUSAL` printed characters with the
-/// marker, a control or bidi character as its escape). The console prints a refusal's sentence whole
-/// under `LONGEST_REFUSAL_MESSAGE` on the premise that the sentence is the evaluator's own and every part
-/// it takes from the template is bounded on its own; a quoted value is such a part (for a query that
-/// failed at a key of the root it is the whole document; beside an empty left-hand collection it is a
-/// whole right-hand value), so it takes the same bound, and the refusal's key sentence, remedy and path
-/// beside it stay whole while a 3 KB map prints as 256 characters and the count cut. The bound is on the
-/// printed form because the console writes the sentence as it is: a value of 256 bidi controls, cut by
-/// source characters, printed at eight times the bound, and four such parts in one sentence passed the
-/// whole-line bound again. A record that is no refusal keeps the unbounded `Display`: the console cuts
-/// its sentence at `LONGEST_RECORDED_MESSAGE` as released.
+/// shape its `Display` gives (`display::write_path_and_value` writes the unbounded form), with the path
+/// and the value each a template part cut at `LONGEST_TEMPLATE_PART_IN_A_REFUSAL` printed characters with
+/// the marker. The console prints a refusal's sentence whole under `LONGEST_REFUSAL_MESSAGE` on the
+/// premise that the sentence is the evaluator's own and every part it takes from the template is bounded
+/// on its own; a quoted value is such a part (for a query that failed at a key of the root it is the
+/// whole document; beside an empty left-hand collection it is a whole right-hand value), so it takes the
+/// same bound, and the refusal's key sentence, remedy and path beside it stay whole while a 3 KB map
+/// prints as 256 characters and the count cut. The bound is on the PRINTED form because the console
+/// writes the sentence as it is: a value of 256 bidi controls, cut by source characters, printed at eight
+/// times the bound, and four such parts in one sentence passed the whole-line bound again. A record that
+/// is no refusal keeps the unbounded `Display`: the console cuts its sentence at
+/// `LONGEST_RECORDED_MESSAGE` as released. The path is rendered as every refusal renders a path
+/// (`template_path`: controls as their escapes, a backslash as written, the location appended whole, a
+/// long path cut in its middle), so one path reads one way wherever a refusal names it; the value is a
+/// quoted template part (`template_part`: the backslash doubled, as a quoted key is, cut at its end).
 pub(crate) fn bounded_value_for_refusal(value: &PathAwareValue) -> String {
-    struct Bounded<'a>(&'a PathAwareValue);
-    impl std::fmt::Display for Bounded<'_> {
-        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-            crate::rules::display::write_path_and_value(f, self.0, Some(&escaped_template_part))
-        }
-    }
-    Bounded(value).to_string()
+    crate::rules::display::PathAndValue(
+        template_path(value.self_path()),
+        template_part(&crate::rules::display::ValueOnlyDisplay(Rc::new(value.clone())).to_string()),
+    )
+    .to_string()
 }
 
 /// Whether the record of an unresolved operand names a READ THE EVALUATOR REFUSED, so the report's
@@ -4130,17 +4585,37 @@ pub(crate) fn names_a_refused_read(unresolved: &UnResolved, message: Option<&Str
     message.is_some() && unresolved.kind.is_refusal()
 }
 
-/// Whether `e` is a refusal an evaluation alive on this thread raised (`refuse`): an `Unevaluatable`
-/// whose whole text is one the producers registered under a live root scope, or a NUMBERED text,
+/// Whether `e` is a refusal an evaluation alive on this thread raised or delivered: an `Unevaluatable`, or
+/// an `UndecidableComparison` a clause re-raised it as (a block's folded body, a gate's condition), whose
+/// whole text is one the producers registered under a live root scope, or a NUMBERED text,
 /// `(1) <part> (2) <part> ...`, whose every part is one (the text a comparison raised beside several
 /// refused reads, `eval::raised_refusal_text`, which no one registers: registered, it would be a third
-/// entry beside the two refusals met that is no refusal's own sentence; the registry is read for
-/// membership alone, never for its size). Read where an error is written into a record (`BlockCheck::refusal`,
-/// `ValueCheck::refusal`, `NamedStatus::refusal`), so the reporters can print a refusal whole where they
-/// cut a sentence that may carry a value.
+/// entry beside the two refusals met, and the registry's size is what the run's output counts as the
+/// refused reads; the text half is `is_refusal_text`), or an `UndecidableComparison` carrying a refusal
+/// token, the raise over a refusal's
+/// marker delivered inside a filter predicate (the key spelling's, a one-object filter's read after it, a
+/// capture the evaluator cannot bind). The two tests are one rule read two ways, token first and text
+/// second: every producer registers the sentence it delivers (`register_refusal`), so a raise carrying
+/// the text with no token (the error a later read of a failed assignment rebuilds, `Error::repeated`) is
+/// still the refusal in its record. Read where an error is written into a RECORD (`BlockCheck::refusal`,
+/// `ValueCheck::refusal`, `ComparisonClauseCheck::refusal`, `NamedStatus::refusal`), so the reporters
+/// can print a refusal whole where they cut a sentence that may carry a value; never read to decide a
+/// MARKER's kind, which the producers set where the refusal is delivered (`to_refusal_result`,
+/// `LacksKeysNote::marker_with`, each carrying the refusal's token), nor to decide whether a filter
+/// predicate's entry is a refusal, which its run reads off the token the ending error carries
+/// (`RefusalFrame`), never off a text.
 pub(crate) fn is_refusal(e: &Error) -> bool {
+    // A raise carrying a refusal token is a refusal, and so is a raise whose TEXT is registered, whichever
+    // variant carries it: the block arm's own-key refusal travels as the block's undecided reason
+    // (`UndecidableComparison`) through a filter predicate or a `when` gate, and the gate's record and the
+    // reporters read it as the refusal it is, printed whole, as they read the key spelling's; a marker's
+    // refusal re-raised by `exists` or a comparison inside a predicate carries the marker's token and no
+    // registered text, and its records read the token.
     match e {
-        Error::Unevaluatable(text) => is_refusal_text(text),
+        Error::UndecidableComparison(_, Some(_)) => true,
+        Error::Unevaluatable(text) | Error::UndecidableComparison(text, None) => {
+            is_refusal_text(text)
+        }
         _ => false,
     }
 }
@@ -4152,41 +4627,72 @@ pub(crate) fn is_refusal(e: &Error) -> bool {
 /// the `MapKeyFilter` arm), and `eval::binary_operation`'s empty-selection arm reads the marker's reason
 /// here to tell that marker from the one a spent regex budget leaves, which no one registers.
 pub(crate) fn is_refusal_text(text: &str) -> bool {
-    REFUSALS.with(|refusals| {
-        let refusals = refusals.borrow();
-        let registered = |candidate: &str| refusals.iter().any(|(_, set)| set.contains(candidate));
-        registered(text) || numbered_parts_all(text, &registered)
-    })
+    is_registered_refusal(text) || numbered_refusal_parts(text).is_some()
 }
 
-/// Whether `text` is `(1) <part> (2) <part> ...` with at least one part and `registered` true of every
-/// part: the shape `eval::raised_refusal_text` writes, read back by its own markers in sequence (` (2) `
-/// after `(1) `, ` (3) ` after that), so a marker inside a part splits nothing unless it is the next one
-/// in order, in which case the split parts are not registered and the text is not accepted (never a
-/// false acceptance). An empty part, a text that does not open with `(1) `, or a part the registry does
-/// not hold is not accepted.
-fn numbered_parts_all(text: &str, registered: &dyn Fn(&str) -> bool) -> bool {
-    let Some(mut rest) = text.strip_prefix("(1) ") else {
-        return false;
-    };
-    let mut next = 2usize;
-    loop {
-        let marker = format!(" ({next}) ");
-        let (part, after) = match rest.find(&marker) {
-            Some(at) => (&rest[..at], Some(&rest[at + marker.len()..])),
-            None => (rest, None),
-        };
-        if part.is_empty() || !registered(part) {
-            return false;
-        }
-        match after {
-            Some(after) => {
-                rest = after;
-                next += 1;
+/// The parts of `text` when it is `(1) <part> (2) <part> ...` with at least one part and every part a
+/// registered refusal's sentence (`is_registered_refusal`), in order; `None` for every other text. The
+/// shape is the one `eval::raised_refusal_text` writes, read back by its own markers in sequence (` (2) `
+/// after `(1) `, ` (3) ` after that). A marker INSIDE a part (a registered sentence quoting a template key
+/// ` (2) x`, or a registered wrap holding a numbered text of refusals, which the key-filter arm registers
+/// where no token carries the refusal) splits nothing: the parser BACKTRACKS, trying every occurrence of
+/// the next marker in order and taking the first split whose first part is registered and whose remainder
+/// parses to the end, so a part is found whatever markers its own text holds, and a text is rejected only
+/// when no split parses (never a false acceptance, since every part accepted is registered; and no longer
+/// a false rejection on a marker inside a part, which the first-occurrence split made). An empty part, a
+/// text that does not open with `(1) `, or a part the registry does not hold is not accepted. The ONE
+/// parser of the numbered grammar: `is_refusal_text` reads whether it parses, and the comparison's
+/// refused-read collection (`eval::collect_refused_read`) reads the parts, so a plain marker whose reason
+/// is such a text (the entry a predicate run leaves after a gate raised over two refusals,
+/// `to_undecidable_result`, `undecided_map`) is collected as the refused reads it names and never as one
+/// read: collected whole, the joined text was registered (the one text the registry never holds),
+/// numbered again inside the next raise (`(1) Re (2) (1) Rd (2) Rc`) and kept twice beside its own part
+/// met as a marker. The backtracking is bounded by the occurrences of each marker; a text with many
+/// repeated markers costs their product, which no evaluator-written text approaches.
+pub(crate) fn numbered_refusal_parts(text: &str) -> Option<Vec<&str>> {
+    let rest = text.strip_prefix("(1) ")?;
+    let mut parts = Vec::new();
+    numbered_refusal_parts_from(rest, 2, &mut parts).then_some(parts)
+}
+
+/// The backtracking step of [`numbered_refusal_parts`]: whether `rest` parses as part `next - 1` and the
+/// parts after it, pushing the parts it accepts onto `parts` (and taking them back off a split that fails
+/// further on). Each occurrence of ` (next) ` in order is tried as the end of this part; with none left,
+/// the whole remainder is the last part. Also the second half of the record text's parse
+/// (`eval::numbered_display_parts`), which lets the first part be a text the registry does not hold (a
+/// raise's lead, a budget marker's sentence) and requires the parts after it to be registered reads.
+pub(crate) fn numbered_refusal_parts_from<'a>(
+    rest: &'a str,
+    next: usize,
+    parts: &mut Vec<&'a str>,
+) -> bool {
+    let marker = format!(" ({next}) ");
+    let mut from = 0;
+    while let Some(found) = rest[from..].find(&marker) {
+        let at = from + found;
+        let part = &rest[..at];
+        if !part.is_empty() && is_registered_refusal(part) {
+            parts.push(part);
+            if numbered_refusal_parts_from(&rest[at + marker.len()..], next + 1, parts) {
+                return true;
             }
-            None => return true,
+            parts.pop();
         }
+        from = at + 1;
     }
+    if !rest.is_empty() && is_registered_refusal(rest) {
+        parts.push(rest);
+        return true;
+    }
+    false
+}
+
+/// Whether `text`, whole, is a refusal an evaluation alive on this thread registered (`register_refusal`):
+/// the test `is_refusal` makes on a raised error's text. A MARKER's kind is never decided by it: a refusal
+/// delivered as a marker carries its token (`UnResolvedKind::refusal`), and the record a comparison files
+/// on such a marker reads that kind.
+pub(crate) fn is_registered_refusal(text: &str) -> bool {
+    REFUSALS.with(|refusals| refusals.borrow().iter().any(|(_, set)| set.contains(text)))
 }
 
 /// Bounds a registry set to its evaluation: a `RootScope` holds one, opened when the scope is built
@@ -4208,6 +4714,8 @@ impl RefusalRegistryGuard {
             number
         });
         REFUSALS.with(|refusals| refusals.borrow_mut().push((number, HashSet::new())));
+        // The scope's binding-resolution ranges live and die with its registry entry (`BINDING_MINTED`).
+        BINDING_MINTED.with(|scopes| scopes.borrow_mut().push((number, Vec::new())));
         RefusalRegistryGuard(number)
     }
 }
@@ -4219,6 +4727,7 @@ impl Drop for RefusalRegistryGuard {
                 .borrow_mut()
                 .retain(|(number, _)| *number != self.0)
         });
+        BINDING_MINTED.with(|scopes| scopes.borrow_mut().retain(|(number, _)| *number != self.0));
     }
 }
 
@@ -4694,15 +5203,23 @@ impl LacksKeysNote {
     /// this marker's text as its reason, and the comparing clause's own record of this marker under the
     /// object's path (an access clause's unresolved value, a block clause's missing block value). Outside
     /// a predicate no marker is built: the refusal is held at the clause (`refuse_read`, and the body's
-    /// reads through `read_from_the_empty_selection` and `held_only_refusal`). It is a refusal's marker
-    /// (`refused` set, as `deliver_wildcard_filter_refusal` delivers one), so a filter loop whose walk met
-    /// it cuts its captures back on it.
+    /// reads through `read_from_the_empty_selection` and `held_only_refusal`). It is a refusal's marker,
+    /// its text registered and carrying the token that registration mints (`register_refusal`, as
+    /// `refuse` registers the same text outside a predicate), as `deliver_wildcard_filter_refusal` delivers
+    /// one, so a filter loop whose walk met it cuts its captures back on it, the predicate run the clause
+    /// raises in reads the refusal as minted inside it, and an error carrying the text with no token (the one
+    /// a later read of a failed assignment rebuilds, `Error::repeated`) is still read as the refusal where
+    /// it is written into a record (`is_refusal`).
     fn marker_with(&self, text: String, remaining: &[QueryPart<'_>]) -> QueryResult {
+        let refusal = Some(register_refusal(&text));
         QueryResult::UnResolved(UnResolved {
             traversed_to: Rc::clone(&self.object),
             reason: Some(text),
             remaining_query: format!("{}", SliceDisplay(remaining)),
-            kind: UnResolvedKind::Undecidable { refused: true },
+            kind: UnResolvedKind::Undecidable {
+                refusal,
+                carried: None,
+            },
         })
     }
 }
@@ -9296,6 +9813,11 @@ impl<'value, 'loc: 'value, 'eval> EvalContext<'value, 'loc> for QuietScope<'valu
         self.parent.document_binding_memo()
     }
 
+    /// Forwarded: the set is the root's.
+    fn announced_capture_refusals(&self) -> Option<Rc<RefCell<HashSet<String>>>> {
+        self.parent.announced_capture_refusals()
+    }
+
     fn binding_owners_memo(&self) -> Option<Rc<RefCell<BindingOwnersMemo<'value>>>> {
         self.parent.binding_owners_memo()
     }
@@ -9313,6 +9835,15 @@ impl<'value, 'loc: 'value, 'eval> EvalContext<'value, 'loc> for QuietScope<'valu
         self.parent.within_parameterized_call()
     }
 
+    /// Forwarded: the stack is the root's, and a run that opens under this scope pushes onto it there.
+    fn refusal_frames(&self) -> RefusalFrames {
+        self.parent.refusal_frames()
+    }
+
+    fn refusal_frames_mut(&mut self) -> &mut RefusalFrames {
+        self.parent.refusal_frames_mut()
+    }
+
     /// A record, dropped as the deprecation records are: the clause the probe re-runs recorded its own
     /// warnings when it ran for real.
     fn record_warning(
@@ -9325,13 +9856,15 @@ impl<'value, 'loc: 'value, 'eval> EvalContext<'value, 'loc> for QuietScope<'valu
     }
 
     /// Dropped, as `record_warning` is: the clause the probe re-runs announced its own capture when it
-    /// ran for real.
+    /// ran for real. `false`: no line stands for this call, so the refusal it answers for is not keyed as
+    /// announced (`refuse_unbound_capture`).
     fn record_capture_warning(
         &mut self,
         _site: &FileLocation<'_>,
         _capture: &str,
         _notice: String,
-    ) {
+    ) -> bool {
+        false
     }
 
     /// Dropped, as `record_warning` is: the probe's run is an observation about the evaluation, and the
@@ -10012,20 +10545,26 @@ impl<'value> EntryVerdict<'value> {
     }
 }
 
-/// The marker a wildcard filter's refusal leaves inside a filter predicate's query
-/// (`deliver_wildcard_filter_refusal`): `to_undecidable_result`'s marker with `refused` set, read as
-/// undecidable by every operator and told apart by the filter loop whose walk returned it
-/// (`captures_after_a_refused_walk`, through `UnResolvedKind::is_refusal`).
+/// The marker a refusal leaves inside a filter predicate's query (`deliver_wildcard_filter_refusal`, the
+/// key arm over a map handed on whole, and the predicate arm for an entry whose run a refusal ended):
+/// `to_undecidable_result`'s marker carrying the refusal's token (`refusal`, minted where the refusal was
+/// registered, or the token of the error that ended the run), read as undecidable by every operator and
+/// told apart by the filter loop whose walk returned it (`captures_after_a_refused_walk`, through
+/// `UnResolvedKind::is_refusal`).
 fn to_refusal_result(
     current: Rc<PathAwareValue>,
     reason: String,
     query: &[QueryPart<'_>],
+    refusal: RefusalToken,
 ) -> Result<Vec<QueryResult>> {
     Ok(vec![QueryResult::UnResolved(UnResolved {
         traversed_to: current,
         reason: Some(reason),
         remaining_query: format!("{}", SliceDisplay(query)),
-        kind: UnResolvedKind::Undecidable { refused: true },
+        kind: UnResolvedKind::Undecidable {
+            refusal: Some(refusal),
+            carried: None,
+        },
     })])
 }
 
@@ -10044,22 +10583,53 @@ fn refusal_marker(
         Error::Unevaluatable(message) | Error::IncompatibleError(message) => message.clone(),
         other => format!("{other}"),
     };
-    Ok(to_refusal_result(refused_at, sentence, query)?.remove(0))
+    // The marker carries the refusal's own token where the error brought one (a raise over a marker,
+    // a block's fold); a refusal raised as `Unevaluatable` left its token behind at the clause (its text
+    // is already registered there), so the marker carries a token minted here, where the walk met it.
+    let token = match refusal {
+        Error::UndecidableComparison(_, Some(token)) => *token,
+        _ => mint_refusal_token(),
+    };
+    Ok(to_refusal_result(refused_at, sentence, query, token)?.remove(0))
 }
 
 /// The refusals' markers among a walk's results: inside a predicate a wildcard filter's refusal met by
-/// the rest of the query is handed back as a marker with `refused` set rather than raised
-/// (`deliver_wildcard_filter_refusal`). A marker an inner filter left for one value it could not decide
-/// (`refused` clear) is not among them: the selection keeps that value's siblings, and so do the
-/// captures.
-fn refusal_markers_in(found: &[QueryResult]) -> Vec<QueryResult> {
+/// the rest of the query is handed back as a marker with `refusal` set rather than raised
+/// (`deliver_wildcard_filter_refusal`), and a PLAIN marker whose carried token the walk's own frame
+/// reads as minted inside the walk (`RefusalFrame::minted_inside`, the one predicate a predicate run
+/// reads its ending error's token with) is a refusal of this walk's own too: the marker a key filter
+/// rebuilt from its refused right-hand side (`rhs_undecided`, plain whatever it carries because that arm
+/// has no frame of its own), `M[ keys IN Allowed[*].Type ]` refused over the `Allowed` under this very
+/// entry. Read by kind alone, that marker left the captures standing where the same refusal delivered as
+/// a refusal marker cut them, so `Sub[ s | Name exists ].M[ keys IN Allowed[*].Type ] !empty or %s.Name
+/// == 'n'` passed on `%s` holding the entry whose walk had just been refused. Such a marker is handed back
+/// REBUILT as a refusal's (`refusal` set to the token the frame proved, `carried` none): the captures then
+/// hold what a delivered refusal leaves, and every reader that asks the marker's KIND (`refused_read_reason`,
+/// the records' `refusal` flag, the left-hand refused reads, `a_refusal_beside`) reads it as the readers
+/// that ask its token do; rebound plain, `%s.Name == 'n'` over the cut capture recorded `refusal: false`
+/// with the missing-property wording where a refused read is promised `refusal: true`. A marker an inner
+/// filter left for one value it could not decide (`refusal` None, no token) is not among them, and neither
+/// is a plain marker carrying a token minted BEFORE the walk (a capture bound outside it, read by the key
+/// filter through `%c`): the selection keeps that value's siblings, and so do the captures.
+fn refusal_markers_in(found: &[QueryResult], walk: &RefusalFrame) -> Vec<QueryResult> {
     found
         .iter()
-        .filter(|result| match result {
-            QueryResult::UnResolved(unresolved) => unresolved.kind.is_refusal(),
-            QueryResult::Resolved(_) | QueryResult::Literal(_) => false,
+        .filter_map(|result| match result {
+            QueryResult::UnResolved(unresolved) if unresolved.kind.is_refusal() => {
+                Some(result.clone())
+            }
+            QueryResult::UnResolved(unresolved) => {
+                walk.minted_inside(unresolved.kind.refusal()).map(|token| {
+                    let mut rebuilt = unresolved.clone();
+                    rebuilt.kind = UnResolvedKind::Undecidable {
+                        refusal: Some(token),
+                        carried: None,
+                    };
+                    QueryResult::UnResolved(rebuilt)
+                })
+            }
+            QueryResult::Resolved(_) | QueryResult::Literal(_) => None,
         })
-        .cloned()
         .collect()
 }
 
@@ -10075,7 +10645,9 @@ fn refusal_markers_in(found: &[QueryResult]) -> Vec<QueryResult> {
 /// the same way and gives them those markers, and the clause binds no further key. A result carrying
 /// none, or only the markers an inner filter left for values it could not decide, leaves the captures as
 /// the loop bound them. Every capture the rest of the query declares is cut with them, a name no entry
-/// has reached included (`ShapeNotes::rebind_to_markers`).
+/// has reached included (`ShapeNotes::rebind_to_markers`). Which plain markers count as the walk's own
+/// refusals is read against `walk`, the frame opened right before the walk began (`refusal_markers_in`):
+/// a token minted during the walk is this walk's, one bound before it is not.
 ///
 /// One rule places the marker a refusal leaves in the captures. A wildcard-filter refusal (the three a
 /// filter after `[*]` or `.*` raises, all delivered by `deliver_wildcard_filter_refusal`) stands at the
@@ -10096,12 +10668,13 @@ fn captures_after_a_refused_walk<'value, 'loc: 'value>(
     entry: &Rc<PathAwareValue>,
     query: &'value [QueryPart<'loc>],
     in_predicate: bool,
+    walk: &RefusalFrame,
     walked: Result<Vec<QueryResult>>,
 ) -> Result<Vec<QueryResult>> {
     match walked {
         Ok(found) => {
             if in_predicate {
-                let markers = refusal_markers_in(&found);
+                let markers = refusal_markers_in(&found, walk);
                 if !markers.is_empty() {
                     shape.rebind_to_markers(resolver, &markers, query)?;
                 }
@@ -10226,28 +10799,46 @@ fn with_own_key_hint(markers: Vec<QueryResult>, hint: &str) -> Vec<QueryResult> 
 /// The hint `filter_over_a_named_map` appends when no entry was kept and some could not be decided: the
 /// key of the map the predicate named and the spellings that read one map and a list of such maps alike,
 /// the second half of `filter_over_a_member_map_refusal`'s sentence.
-fn own_key_hint_after_a_key(named_by: &MapNamedBy<'_, '_>, key: &str) -> String {
+fn own_key_hint_after_a_key(
+    named_by: &MapNamedBy<'_, '_>,
+    key: &str,
+    current: &PathAwareValue,
+) -> String {
     match named_by.as_written() {
         None => format!(
             "The predicate also names `{key}`, a key of the member itself, and kept no entry: a member \
-             meant as one object is read with `{{ Key == value }}` in the block, or `X[*] {{ Key == \
-             value }}` with `X` the member's query."
+             meant as one object is read with {} with `X` the member's query.",
+            own_key_spelling_pair(current, key).in_block_hint
         ),
         Some(written) => format!(
             "The predicate also names `{key}`, a key of `{written}` itself, and kept no entry: a map \
-             meant as one object is read with `X[*] {{ Key == value }}` or `X[*].Key == value`, where \
-             `X` is `{written}`."
+             meant as one object is read with {}, where `X` is `{written}`.",
+            own_key_hint_spellings(current, key)
         ),
     }
 }
 
+/// The spellings the two own-key hints name after "a map meant as one object is read with": the
+/// refusal's own, read from the one pair `own_key_spelling_pair` decides for both (so the hint never
+/// offers one the block arm refuses, by construction), in the grammar of that sentence: where the block
+/// arm would refuse `X[*] { Key == value }` over this map, the direct path reads the map as one object
+/// and the member spellings read each member's own `Key`.
+fn own_key_hint_spellings(current: &PathAwareValue, key: &str) -> &'static str {
+    own_key_spelling_pair(current, key).hint
+}
+
 /// The hint `enumerate_under_an_own_key_filter` appends in the same case, the second half of the own-key
-/// arm of `refuse_a_filter_over_a_one_object_shaped_map`.
-fn own_key_hint_after_a_wildcard(wildcard: &str, own_key: &str) -> String {
+/// arm of `refuse_a_filter_over_a_one_object_shaped_map`; its spellings are the refusal's
+/// (`own_key_remedy_spellings`), so the hint never offers one the block arm refuses.
+fn own_key_hint_after_a_wildcard(
+    wildcard: &str,
+    own_key: &str,
+    current: &PathAwareValue,
+) -> String {
     format!(
         "`{wildcard}` then the filter also names `{own_key}`, a key of the map itself, and kept no entry \
-         that holds a key it names: a map meant as one object is read with `X[*] {{ Key == value }}` or \
-         `X[*].Key == value`."
+         that holds a key it names: a map meant as one object is read with {}.",
+        own_key_hint_spellings(current, own_key)
     )
 }
 
@@ -10448,7 +11039,18 @@ fn run_filter_predicate<'value, 'loc: 'value>(
         }
         status
     };
-    match super::eval::eval_conjunction_clauses(conjunctions, eval_context, eval_filter_clause) {
+    // This run's frame (`RefusalFrame`): the refusal token counter as the body starts, so a refusal
+    // minted inside this body is told from one minted before it. Pushed onto the context's stack of live
+    // frames for the body's duration and popped after it (`with_refusal_frame`, over the enclosing runs'
+    // frames), so every fold the body reaches ranks the tokens it meets by how many of the live runs can
+    // read each as their own (`RefusalFrames::rank`, read off the context by `eval::ranking_under`): a
+    // token a binding resolved inside this run minted never outranks the entry's own refusal, and a
+    // token this run cannot read as its own but the enclosing run can outranks one neither can.
+    let frame = RefusalFrame::open();
+    let evaluated = with_refusal_frame(eval_context, frame, |eval_context| {
+        super::eval::eval_conjunction_clauses(conjunctions, eval_context, eval_filter_clause)
+    });
+    match evaluated {
         Ok(status) => {
             eval_context.end_record(&context, RecordType::Filter(status))?;
             Ok(match status {
@@ -10458,13 +11060,42 @@ fn run_filter_predicate<'value, 'loc: 'value>(
                 }
             })
         }
-        Err(Error::UndecidableComparison(reason)) => {
+        // A body raise that carries a refusal token MINTED INSIDE THIS RUN (the frame holds the token
+        // counter as the body started, and the error that ends the run carries the token of the refusal it
+        // copies, registered at or after that count, at any depth: the body's own key spelling, a block's
+        // fold of its own-key refusal or of another producer's, a `when` condition of a rule called from
+        // the body meeting a refusal, a nested predicate's refusal re-raised by its `!empty`, two block
+        // folds in one body whichever the conjunction returns) is the entry's REFUSAL marker, the token
+        // carried on: the arm below binds it into the clause's capture (`add_variable_capture`, with the
+        // held siblings' keys), a later held entry's walk that carries it cuts the captures back
+        // (`captures_after_a_refused_walk`, the `Held` arm), and the clause fails closed on it; the key
+        // spelling's own marker stands at the refused map one level down as well (`to_refusal_result` at
+        // the retrieval). Any other undecided raise leaves the entry a PLAIN marker: a raise that is no
+        // refusal (a regular expression out of budget, a key filter's undecided map folded by the generic
+        // arm or ending the run after a passing sibling settled a fold), a refusal minted before this run
+        // began (a capture bound outside the predicate holding a refusal's marker, read inside it), and a
+        // raise rebuilt from a text with no token. The rule: the flag follows the TOKEN the ending error
+        // carries, read against the run's start, never the text of what arrives here (which would flag a
+        // later rule's re-raise of a text an earlier rule registered) and never a flag set where a fold
+        // is made (which would mark the entry for a later raise that is no refusal, after a deciding `or`
+        // dropped the fold or a passing sibling settled it). The plain marker still CARRIES the token
+        // the raise brought (`UnResolvedKind::Undecidable::carried`): a refusal minted before this run
+        // began may have been minted inside the run that encloses it, and that run reads the token
+        // against its own start when a clause re-raises this marker (`UnResolvedKind::refusal`), so an
+        // outer run's entry is marked whatever an inner run left (a run that dropped the token here
+        // left the outer entry plain when the refusal's own raise had been settled by an `or` and a
+        // capture holding its marker was read in a nested predicate).
+        Err(Error::UndecidableComparison(reason, refusal)) => {
             eval_context.end_record(&context, RecordType::Filter(Status::FAIL))?;
-            Ok(FilterVerdict::Undecided(to_undecidable_result(
-                Rc::clone(value),
-                reason,
-                &query[index - 1..],
-            )?))
+            let marker = match frame.minted_inside(refusal) {
+                Some(refusal) => {
+                    to_refusal_result(Rc::clone(value), reason, &query[index - 1..], refusal)?
+                }
+                None => {
+                    to_undecidable_result(Rc::clone(value), reason, &query[index - 1..], refusal)?
+                }
+            };
+            Ok(FilterVerdict::Undecided(marker))
         }
         Err(e) => {
             eval_context.end_record(&context, RecordType::Filter(Status::FAIL))?;
@@ -10602,6 +11233,10 @@ fn check_and_delegate_noting<'value, 'loc: 'value>(
                         }
                     }
                 }
+                // The walk's own frame (`RefusalFrame`): the token counter as the walk begins, so the
+                // cut-back after it tells a refusal minted during the walk (its own, whatever marker
+                // carries it) from a token bound before it.
+                let walk = RefusalFrame::open();
                 let walked = query_retrieval_with_converter(
                     index,
                     query,
@@ -10619,6 +11254,7 @@ fn check_and_delegate_noting<'value, 'loc: 'value>(
                     &value,
                     &query[index - 1..],
                     in_predicate,
+                    &walk,
                     walked,
                 )
             }
@@ -10752,41 +11388,54 @@ fn count_assignment_resolution() {
     ASSIGNMENT_RESOLUTIONS.with(|count| count.set(count.get() + 1));
 }
 
-// Whether a read of a running parked total (`CaptureFrames::parked_len`) re-sums the frames to check it,
-// in a debug build. OFF by default: every entry's end reads the total once per name, so a loop of N
-// entries would re-sum N times, the work the running total exists to avoid, in every debug test run; the
-// frame tests that step a store by hand hold a `ParkedTotalResum` guard, which turns it on for the guard's
-// life and off at its drop. The re-sum at a frame's close runs whatever this holds. The slices a re-sum
-// visits are counted apart from the production work (`PARKED_TOTAL_RESUM_VISITS`), so the test that
-// measures a loop's per-entry work never reads a debug check's walk as the evaluator's. Absent from a
-// release build, where nothing re-sums.
+// Whether a read of a running parked total (`CaptureFrames::parked_len`) and a frame's close re-sum the
+// frames to check the total, in a debug build. ON by default, so every debug evaluator test cross-checks
+// the running total against the frames at every close and every read, and a drift is reported where it
+// happens (at the `base` an `end_segment` computes or the `remaining` a `cut` leaves), not at the home's
+// last close. The re-sum walks every frame of the home for each name, the outer frames' growing slices
+// included, so under a nested loop of N entries the re-sums at the closes and at the reads together walk
+// about 2N^2 slices per debug test run (112 visits over 8 resources and 1984 over 32 on the nested-capture
+// shape as measured; `the_parked_total_cross_check_holds_on_evaluator_traffic` pins the walk between
+// N(N - 1) and 2N(N - 1)); that is a debug-build cost only, and the few
+// tests that MEASURE a loop's per-entry work at large N switch it off for their run with
+// `ParkedTotalResum::off()`, since a re-sum per read is the work the running total exists to avoid. The
+// slices a re-sum visits are counted apart from the production work (`PARKED_TOTAL_RESUM_VISITS`), so a
+// measurement never reads a debug check's walk as the evaluator's. `ParkedTotalResum::on()` holds it on
+// (for a test run under an outer `off()`) and `off()` holds it off; each puts back at its drop the setting
+// it found. Absent from a release build, where nothing re-sums.
 #[cfg(debug_assertions)]
 thread_local! {
     pub(in crate::rules) static PARKED_TOTAL_RESUM: std::cell::Cell<bool> =
-        const { std::cell::Cell::new(false) };
+        const { std::cell::Cell::new(true) };
     pub(in crate::rules) static PARKED_TOTAL_RESUM_VISITS: std::cell::Cell<usize> =
         const { std::cell::Cell::new(0) };
 }
 
-/// Holds `PARKED_TOTAL_RESUM` on for its life and turns it off at its drop, so a test that steps a store
-/// by hand reads every total cross-checked against the frames and leaves the thread as it found it,
-/// whether it returns or panics. A test-build item: the flag exists in every debug build, the guard only
-/// where a test can hold it.
+/// Holds `PARKED_TOTAL_RESUM` on (`on()`) or off (`off()`) for its life and puts back at its drop the
+/// setting it found, so a test leaves the thread as it found it, whether it returns or panics, and a guard
+/// nested in another's scope puts back the outer one's setting, not the thread's default. `off()` is for
+/// the tests that measure a loop's per-entry work at large N, where the re-sum's walk is the cost under
+/// test's own shadow; `on()` for a test that must cross-check under an outer `off()`, and as a statement
+/// of intent in the hand-stepping frame tests. A test-build item: the flag exists in every debug build,
+/// the guard only where a test can hold it.
 #[cfg(all(debug_assertions, test))]
-pub(in crate::rules) struct ParkedTotalResum;
+pub(in crate::rules) struct ParkedTotalResum(bool);
 
 #[cfg(all(debug_assertions, test))]
 impl ParkedTotalResum {
     pub(in crate::rules) fn on() -> Self {
-        PARKED_TOTAL_RESUM.with(|on| on.set(true));
-        ParkedTotalResum
+        ParkedTotalResum(PARKED_TOTAL_RESUM.with(|on| on.replace(true)))
+    }
+
+    pub(in crate::rules) fn off() -> Self {
+        ParkedTotalResum(PARKED_TOTAL_RESUM.with(|on| on.replace(false)))
     }
 }
 
 #[cfg(all(debug_assertions, test))]
 impl Drop for ParkedTotalResum {
     fn drop(&mut self) {
-        PARKED_TOTAL_RESUM.with(|on| on.set(false));
+        PARKED_TOTAL_RESUM.with(|on| on.set(self.0));
     }
 }
 
@@ -11078,9 +11727,10 @@ impl<'value> CaptureFrames<'value> {
     /// The length of every slice of `name` parked in the frames of `home`: what the live store lacks of
     /// the name against the scale the marks are taken on.
     pub(crate) fn parked_len(&self, home: CaptureHome, name: &str) -> usize {
-        // A read re-sums the frames only when a test has turned the re-sum on (`PARKED_TOTAL_RESUM`, off
-        // by default): every entry's end reads the total once per name, so a loop of N entries would
-        // re-sum N times, the cost the running total exists to avoid.
+        // A read re-sums the frames in a debug build unless a measurement test switched the re-sum off
+        // (`PARKED_TOTAL_RESUM`, on by default): every entry's end reads the total once per name, so a
+        // loop of N entries re-sums N times there, the cost the running total exists to avoid in a
+        // release build and the one the measurement tests keep out of their counts.
         #[cfg(debug_assertions)]
         if PARKED_TOTAL_RESUM.with(|on| on.get()) {
             self.debug_check_total(home, name);
@@ -11092,54 +11742,68 @@ impl<'value> CaptureFrames<'value> {
     }
 
     /// In a debug build, the running total of `name` in `home` checked against the frames it stands for:
-    /// the sum of the lengths of every slice of the name parked in the home's frames. A full re-sum, so it
-    /// runs where the frames change shape, at a frame's `close` (for the names the popped frame held and
-    /// for every name the home's total still lists), and at a read of the total (`parked_len`) only while
-    /// `PARKED_TOTAL_RESUM` is on; the moves inside a frame check themselves in O(1) instead: `unpark_len`
-    /// that the name is in the total and holds what is taken, `cut` that what stays parked ends at or
-    /// below the mark. Every slice the re-sum visits counts in `PARKED_TOTAL_RESUM_VISITS`, the check's
-    /// own counter, never in the production counters the per-entry work test reads. Nothing in a release
-    /// build: the body is compiled out, so no release build walks the frames here.
-    #[allow(unused_variables)]
+    /// the sum of the lengths of every slice of the name parked in the home's frames. A full re-sum over
+    /// every frame of the home, run at a frame's `close` for the names the popped frame held and at a read
+    /// of the total (`parked_len`) unless a measurement test holds `PARKED_TOTAL_RESUM` off; the checks
+    /// that run whatever the setting are O(1): `unpark_len` that the name is in the total and holds what
+    /// is taken, `cut` that what stays parked ends at or below the mark, `close` that nothing of a home
+    /// stays listed once its last frame is gone. Every slice the re-sum visits counts in
+    /// `PARKED_TOTAL_RESUM_VISITS`, the check's own counter, never in the production counters the
+    /// per-entry work test reads. Nothing in a release build: the method and its two calls are compiled
+    /// out together, so no release build walks the frames here.
+    #[cfg(debug_assertions)]
     fn debug_check_total(&self, home: CaptureHome, name: &str) {
-        #[cfg(debug_assertions)]
-        {
-            let mut visited = 0usize;
-            let summed = self
-                .frames
-                .iter()
-                .filter(|frame| frame.home == home)
-                .flat_map(|frame| frame.parked.get(name))
-                .flat_map(|slices| slices.iter())
-                .map(|(_, slice)| {
-                    visited += 1;
-                    slice.len()
-                })
-                .sum::<usize>();
-            PARKED_TOTAL_RESUM_VISITS.with(|count| count.set(count.get() + visited));
-            assert_eq!(
-                self.parked_lens[home_index(home)]
-                    .get(name)
-                    .copied()
-                    .unwrap_or(0),
-                summed,
-                "the running parked total of `{}` and the frames disagree",
-                name
-            );
+        // A close runs from a guard's drop, so this check can run while a panic unwinds (an inner close
+        // that failed its own check); a second panic there aborts the process and loses every other
+        // test's result, so the check stands aside while a panic is in flight.
+        if std::thread::panicking() {
+            return;
         }
+        let mut visited = 0usize;
+        let summed = self
+            .frames
+            .iter()
+            .filter(|frame| frame.home == home)
+            .flat_map(|frame| frame.parked.get(name))
+            .flat_map(|slices| slices.iter())
+            .map(|(_, slice)| {
+                visited += 1;
+                slice.len()
+            })
+            .sum::<usize>();
+        PARKED_TOTAL_RESUM_VISITS.with(|count| count.set(count.get() + visited));
+        assert_eq!(
+            self.parked_lens[home_index(home)]
+                .get(name)
+                .copied()
+                .unwrap_or(0),
+            summed,
+            "the running parked total of `{}` and the frames disagree",
+            name
+        );
     }
 
     /// Park `slice` of `name`, which began at `start` on the absolute scale, in the innermost frame, and
-    /// count it in the running total of that frame's home. With no frame open there is nothing to park
-    /// in and nothing is counted: the one evaluator caller, `end_segment`, parks only under the frame
-    /// whose segment it ends, so the total and the frames rise together or not at all. The frame's slices
-    /// of one name are kept in increasing start order, each beginning at or after the previous one's end:
-    /// `cut` takes them off the back of the list and stops at the first slice below the mark, which is
-    /// right only under that order, so a debug build checks it at every park.
+    /// count it in the running total of that frame's home. With no frame open a debug build panics (the
+    /// results were split off the live store by the caller and would be gone with no signal) and a
+    /// release build parks nothing and counts nothing, so the total and the frames rise together or not
+    /// at all; no evaluator path reaches that case, since the one evaluator caller, `end_segment`, parks
+    /// only under the frame whose segment it ends. The frame's slices of one name are kept in increasing
+    /// start order, each beginning at or after the previous one's end: `cut` takes them off the back of
+    /// the list and stops at the first slice below the mark, which is right only under that order, so a
+    /// debug build checks it at every park (`a_slice_parked_before_the_previous_ones_end_trips_the_order_check`).
     fn park(&mut self, name: &'value str, start: usize, slice: Vec<QueryResult>) {
         if slice.is_empty() {
             return;
         }
+        // The results were already split off the live store by the caller, so with no frame to hold
+        // them they would be gone with no signal; no evaluator path reaches this (`end_segment` returns
+        // before it with no frame), and a debug build says so for any caller that would.
+        debug_assert!(
+            !self.frames.is_empty() || std::thread::panicking(),
+            "a slice of `{}` parked with no frame open",
+            name
+        );
         let Some(frame) = self.frames.last_mut() else {
             return;
         };
@@ -11147,8 +11811,9 @@ impl<'value> CaptureFrames<'value> {
         let len = slice.len();
         let slices = frame.parked.entry(name).or_default();
         if let Some((previous_start, previous)) = slices.last() {
+            // Stands aside while a panic unwinds, as every check on the close path does.
             debug_assert!(
-                start >= previous_start + previous.len(),
+                start >= previous_start + previous.len() || std::thread::panicking(),
                 "a slice of `{}` parked at {} begins before the previous one ends at {}",
                 name,
                 start,
@@ -11166,16 +11831,18 @@ impl<'value> CaptureFrames<'value> {
             return;
         }
         let table = &mut self.parked_lens[home_index(home)];
+        // Both checks stand aside while a panic unwinds: a close runs from `CaptureFrameGuard::drop` on
+        // the way out of a failed check, and a second panic there aborts the process.
         let Some(parked) = table.get_mut(name) else {
             debug_assert!(
-                false,
+                std::thread::panicking(),
                 "`{}` is not in the running parked total it is taken from",
                 name
             );
             return;
         };
         debug_assert!(
-            *parked >= len,
+            *parked >= len || std::thread::panicking(),
             "the running parked total of `{}` ({}) is short of the {} taken from it",
             name,
             parked,
@@ -11489,7 +12156,12 @@ impl<'value> CaptureFrames<'value> {
     /// that began below `len` and runs past it keeps what lies below (`len - start` results) and loses
     /// the rest; a running segment's start whose absolute position is above `len` comes down to it. Then
     /// the live entry is cut to what `len` leaves below the slices still parked (`len - parked_len`).
-    /// `true` when the live entry shrank, for an owner that counts generations.
+    /// `true` when the live entry shrank, for an owner that counts generations. The walk over a frame's
+    /// slices of the name goes from the BACK of the list and stops at the first slice that begins below
+    /// the mark, which relies on the invariant `park` keeps: a frame's slices of one name are in
+    /// increasing start order, each beginning at or after the previous one's end (a debug build asserts
+    /// it at every park). A slice parked out of that order would sit behind one below the mark and be kept
+    /// though bound after it, the cross-entry leak the frames exist to remove.
     ///
     /// The owners cut through this one method (`truncate_variable_capture` of the root, a block and a
     /// called rule's scope), so the sequence is written once. A cut that kept a crossing slice WHOLE
@@ -11534,9 +12206,10 @@ impl<'value> CaptureFrames<'value> {
         self.unpark_len(home, name, cut_away);
         let remaining = self.parked_len(home, name);
         // The cut's own O(1) check: what the home still holds parked of the name ends at or below the
-        // mark, since every slice at or above it went and the one crossing it was truncated.
+        // mark, since every slice at or above it went and the one crossing it was truncated. It stands
+        // aside while a panic unwinds, as every check on the close path does.
         debug_assert!(
-            remaining <= len,
+            remaining <= len || std::thread::panicking(),
             "a cut of `{}` to {} left {} parked, more than the mark holds",
             name,
             len,
@@ -11601,17 +12274,26 @@ impl<'value> CaptureFrames<'value> {
                 self.unpark_len(frame.home, name, slice.len());
                 store.entry(name).or_default().extend(slice);
             }
-            self.debug_check_total(frame.home, name);
+            // The re-sum walks every frame of the home for the name, the outer frames' growing slices
+            // included (a nested capture's name is parked again by the outer entry's end after each inner
+            // close), so a close under a loop of N entries walks about N^2/2 slices in a debug build; a
+            // measurement test switches it off for its run, as it does the read's.
+            #[cfg(debug_assertions)]
+            if PARKED_TOTAL_RESUM.with(|on| on.get()) {
+                self.debug_check_total(frame.home, name);
+            }
             changed.push(name);
         }
-        // The home's total re-checked for every name it still lists, not only the names this frame
-        // held: a name a cut emptied out of the frames, or a detach drained, is listed by its total alone
-        // if the accounting let it stand, and the per-name check above never meets it. When this was the
-        // home's LAST frame nothing of the home can stay parked, so its table has to be empty, checked
-        // first and in O(1); otherwise every listed name is re-summed, once per close (O(names)), not
-        // per read.
+        // A name a cut emptied out of the frames, or a detach drained, is listed by the home's total alone
+        // if the accounting let it stand, and the per-name check above never meets it (the popped frame
+        // holds no slice of it). When this was the home's LAST frame nothing of the home can stay parked,
+        // so its table has to be empty, checked in O(1): every such name has a total above zero against
+        // frames that hold nothing. A re-sum of every listed name at every close would walk every slice
+        // the home holds (about N^2/2 slice visits over a nested loop of N entries), so none is made.
+        // The check stands aside while a panic unwinds (`CaptureFrameGuard::drop` closes frames on the
+        // way out of a panicking test): a second panic would abort the process.
         #[cfg(debug_assertions)]
-        {
+        if !std::thread::panicking() {
             let home = frame.home;
             if !self.frames.iter().any(|open| open.home == home) {
                 assert!(
@@ -11622,11 +12304,6 @@ impl<'value> CaptureFrames<'value> {
                         .keys()
                         .collect::<Vec<_>>()
                 );
-            }
-            let listed: Vec<&'value str> =
-                self.parked_lens[home_index(home)].keys().copied().collect();
-            for name in listed {
-                self.debug_check_total(home, name);
             }
         }
         for (name, slice) in frame.merged_parked {
@@ -11750,7 +12427,14 @@ impl<'scope, 'value, 'loc: 'value> std::ops::DerefMut for CaptureSegment<'scope,
 /// opened and closed it by hand, the variable arm at three exits of its own, as the entry loops once
 /// ended their segments by hand before `CaptureSegment`; a frame left open past its loop keeps the
 /// entries' slices parked, so a later reader of the capture reads it short while
-/// `variable_capture_len` still counts the parked slices.
+/// `variable_capture_len` still counts the parked slices. The drop also runs while a panic unwinds (an
+/// inner frame's close that failed a debug check), so every debug check a close can reach stands aside
+/// while `std::thread::panicking()`: a second panic there aborts the process and takes every other test's
+/// result with it; the first panic's message is the one reported. The guarded sites: `debug_check_total`
+/// (the re-sum, returns before its walk), `close`'s last-frame emptiness check, `unpark_len`'s two
+/// checks (the name is in the total; the total holds what is taken), `park`'s two checks (a frame is open;
+/// the start order), and `cut`'s remaining-length check. Two cells pin the shape, one planting a total
+/// too HIGH and one too SHORT, each panicking once though the outer frame closes during the unwind.
 struct CaptureFrameGuard<'scope, 'value, 'loc: 'value> {
     scope: &'scope mut (dyn EvalContext<'value, 'loc> + 'scope),
 }
@@ -12404,6 +13088,7 @@ fn apply_filter_noting<'value, 'loc: 'value>(
                             Rc::clone(&current),
                             reason,
                             &query[query_index..],
+                            None,
                         ),
                         None => {
                             to_unresolved_result(Rc::clone(&current), reason, &query[query_index..])
@@ -12735,7 +13420,7 @@ fn filter_over_a_named_map<'value, 'loc: 'value>(
             if !verdicts.undecided.get() {
                 return Err(filter_over_a_member_map_refusal(named_by, key, &current));
             }
-            let hint = own_key_hint_after_a_key(&named_by, key);
+            let hint = own_key_hint_after_a_key(&named_by, key, &current);
             return Ok(with_own_key_hint(verdicts.undecided_markers(), &hint));
         }
         // No key of the map is named, nothing was kept and nothing was undecided, but a scalar
@@ -13180,19 +13865,15 @@ fn filter_passing_over_scalars_refusal(
     // scalar the walk KEPT (`PredicateVerdicts::first_scalar_kept_by_absence`), which is the map's first
     // scalar entry only when every scalar was kept: `Foo !exists  this == 'b' or Bar exists` over `{
     // Region: us-east-1, BucketName: b }` rejects `Region`, and a sentence that read the map named it as
-    // kept. Its key is escaped here, once, at the data point, as the other notices escape the keys they
-    // quote (`escaped_for_display`: a line feed or a backslash in a key would otherwise break the sentence
-    // or make two keys print alike), and cut as every template-derived part of a refusal is
-    // (`template_part`), so the remedy and the path after it stay inside the console's refusal bound
-    // whatever the length of the entry's name.
+    // kept. Its key goes through `template_part`, which escapes it once, as the other notices escape the
+    // keys they quote (a line feed or a backslash in a key would otherwise break the sentence or make two
+    // keys print alike), and cuts it as every template-derived part of a refusal is cut, so the remedy and
+    // the path after it stay inside the console's refusal bound whatever the length of the entry's name.
+    // Nothing escapes the key before that call: a part escaped twice prints a backslash as four and a
+    // line feed as `\\n`, and the bound would count the doubled text.
     let first_scalar_entry_named = || match current {
         PathAwareValue::Map((_, map)) => first_scalar_entry(map)
-            .map(|(key, entry)| {
-                (
-                    template_part(&crate::utils::writer::escaped_for_display(key)),
-                    entry.type_info().to_string(),
-                )
-            })
+            .map(|(key, entry)| (template_part(key), entry.type_info().to_string()))
             .unwrap_or_else(|| ("?".to_string(), "scalar".to_string())),
         _ => ("?".to_string(), "scalar".to_string()),
     };
@@ -13204,7 +13885,7 @@ fn filter_passing_over_scalars_refusal(
     // that `this !is_list` let through). Where the walk recorded no conjunct, the predicate is named.
     let scalar_named = |rejected: &Option<KeptScalar>| match rejected {
         Some(scalar) => (
-            template_part(&crate::utils::writer::escaped_for_display(&scalar.key)),
+            template_part(&scalar.key),
             scalar.type_name.clone(),
             scalar.rejected_by.clone(),
         ),
@@ -13222,7 +13903,7 @@ fn filter_passing_over_scalars_refusal(
     let kept_scalar_named = |kept: &Option<KeptScalar>| match kept {
         Some(kept) => format!(
             "kept `{}`, {}",
-            template_part(&crate::utils::writer::escaped_for_display(&kept.key)),
+            template_part(&kept.key),
             with_article(&kept.type_name)
         ),
         None => "kept a scalar entry the walk did not record by key".to_string(),
@@ -13485,7 +14166,13 @@ fn own_key_is_a_member(map: &PathAwareValue, key: &str) -> bool {
 /// report. The path comes last because it is the part whose length the template decides.
 fn own_key_refusal_ending(current: &PathAwareValue, key: &str) -> String {
     let path = template_path(current.self_path());
-    if own_key_is_a_member(current, key) {
+    // Where the block arm would refuse the block spelling, the sentence before this ending already
+    // named the member spellings (`own_key_remedy_spellings`), so they are not named twice.
+    let members_named_already = matches!(
+        current,
+        PathAwareValue::Map((_, entries)) if own_key_names_a_member(entries, key)
+    );
+    if own_key_is_a_member(current, key) && !members_named_already {
         format!(". {THE_MEMBER_SPELLINGS} At path {path}.")
     } else {
         format!(", at path {path}.")
@@ -13554,18 +14241,21 @@ fn filter_over_a_member_map_refusal(
     let text = match named_by.as_written() {
         // The key's sentence right after the opener, as the key branch orders it: the key is read
         // before the spellings that stand for it.
+        // The in-block spellings come from the one pair fn (`own_key_spelling_pair`), so over a member
+        // whose own key names a sub-member another sub-member lacks the text never offers `{ Key ==
+        // value }` in the block, which the block arm would refuse in turn.
         None => format!(
             "`this[ ... ]` selected nothing among the member's own entries. `Key` is `{}`, a key of the \
-             member. Write `{{ Key == value }}` in the block, or `X[*] {{ Key == value }}` or `X[*].Key \
-             == value` with `X` the member's query, at path {}",
+             member. Write {} with `X` the member's query, at path {}",
             template_part(key),
+            own_key_spelling_pair(current, key).in_block_remedy,
             template_path(current.self_path())
         ),
         Some(written) => format!(
             "The filter selected nothing among the map's own entries. `Key` is `{}`, a key of \
-             the map itself. Write `X[*] {{ Key == value }}` or `X[*].Key == value`, where `X` is \
-             `{written}`{}",
+             the map itself. Write {}, where `X` is `{written}`{}",
             template_part(key),
+            own_key_remedy_spellings(current, key),
             own_key_refusal_ending(current, key)
         ),
     };
@@ -13672,31 +14362,36 @@ impl std::fmt::Display for CaptureSite {
 /// filter's position and the capture: the text names no value, so every entry a block evaluates the
 /// clause over is the same line, and a block over many resources writes one line and no count. The
 /// input it names is the data file under `validate` and the case and its spec file under `test`, as the
-/// moved-reading warning names its positions.
+/// moved-reading warning names its positions. Returns whether a line stands for the capture afterwards
+/// (`EvalContext::record_capture_warning`'s answer): `false` where the predicate has no position to key
+/// the line by (an empty conjunction), under a measurement and from a quiet probe, so the caller that
+/// keys the refusal as announced (`refuse_unbound_capture`) does so only where the warning channel names
+/// it.
 fn announce_unbound_capture<'value, 'loc: 'value>(
     capture: &str,
     site: CaptureSite,
     conjunctions: &'value Conjunctions<GuardClause<'loc>>,
     in_predicate: bool,
     resolver: &mut dyn EvalContext<'value, 'loc>,
-) {
-    if let Some(location) = predicate_location(conjunctions) {
-        let text = unsupported_capture_warning(
-            capture,
-            site,
-            conjunctions,
-            location,
-            in_predicate,
-            resolver.data_file_name(),
-            resolver.case_label(),
-        );
-        resolver.record_capture_warning(location, capture, text);
-    }
+) -> bool {
+    let Some(location) = predicate_location(conjunctions) else {
+        return false;
+    };
+    let text = unsupported_capture_warning(
+        capture,
+        site,
+        conjunctions,
+        location,
+        in_predicate,
+        resolver.data_file_name(),
+        resolver.case_label(),
+    );
+    resolver.record_capture_warning(location, capture, text)
 }
 
 /// Announce a capture nothing can bind at `site` and answer for it: the warning is recorded first
 /// (`announce_unbound_capture`), then, inside a filter predicate's query, the entry under test is an
-/// undecidable result with `refused` set (`to_refusal_result`: the predicate's clause raises on it and
+/// undecidable result with `refusal` set (`to_refusal_result`: the predicate's clause raises on it and
 /// the clause that uses the filter fails closed whatever the operator, or is decided past by a sibling
 /// that settles the clause, and the filter loop whose walk returned it cuts its captures back, as it
 /// does on the error outside a predicate); outside one, the refusal is the clause's
@@ -13717,16 +14412,29 @@ fn refuse_unbound_capture<'value, 'loc: 'value>(
     resolver: &mut dyn EvalContext<'value, 'loc>,
     in_predicate: bool,
 ) -> Result<Vec<QueryResult>> {
-    announce_unbound_capture(capture, site, conjunctions, in_predicate, resolver);
+    let announced = announce_unbound_capture(capture, site, conjunctions, in_predicate, resolver);
     if in_predicate {
         // A refusal of the continuation, as outside a predicate: the filter loop whose walk met it cuts
         // its captures back on it (`captures_after_a_refused_walk`), where a plain undecidable marker
         // left them as the loop bound them.
-        return to_refusal_result(
-            Rc::clone(current),
-            capture_not_bound_reason(capture, site, query_index, query, current),
-            &query[query_index..],
-        );
+        let reason = capture_not_bound_reason(capture, site, query_index, query, current);
+        // Where a warning line now stands for it (`announced`), the refused-read line a decided clause
+        // writes leaves this reason out (`EvalContext::announced_capture_refusals`, read in
+        // `eval::binary_operation`): one refusal, one report. Where none does (a measurement, a quiet
+        // probe, a predicate with no position), the reason is not keyed as announced, so a later decided
+        // clause that meets the marker names the refusal on its line: keyed as announced whatever the
+        // scope did with the line, a refusal first met under a probe was reported nowhere. The marker is
+        // delivered either way.
+        if announced {
+            if let Some(set) = resolver.announced_capture_refusals() {
+                set.borrow_mut().insert(reason.clone());
+            }
+        }
+        // Registered as the clause outside a predicate registers it (`capture_not_bound_here` through
+        // `refuse`), so an error carrying the text with no token is read as the refusal where it is
+        // written into a record (`is_refusal`).
+        let refusal = register_refusal(&reason);
+        return to_refusal_result(Rc::clone(current), reason, &query[query_index..], refusal);
     }
     Err(capture_not_bound_here(
         capture,
@@ -13738,7 +14446,7 @@ fn refuse_unbound_capture<'value, 'loc: 'value>(
 }
 
 /// The undecidable result for a value nobody could decide inside a filter predicate's query: `current`
-/// is the entry under test, and the marker (`UnResolvedKind::Undecidable`, `refused` clear) is the one a
+/// is the entry under test, and the marker (`UnResolvedKind::Undecidable`, `refusal` None) is the one a
 /// key filter nobody can decide leaves there, read the same way: the predicate's clause raises on it
 /// (`eval::undecidable_selection`), no entry is selected or deselected, and the clause that uses the
 /// filter fails closed whatever the operator, with this reason. The ordinary unresolved result
@@ -13749,18 +14457,27 @@ fn refuse_unbound_capture<'value, 'loc: 'value>(
 /// raised `UndecidableComparison` (`check_and_delegate_noting`, `filter_list_members`), so that entry is
 /// answered alone and its siblings are tested and reported. A refusal met inside the predicate's query
 /// (a capture the evaluator cannot bind, `capture_not_bound_reason`, included) takes the same shape with
-/// `refused` set (`to_refusal_result`), which the filter loop whose walk returned it cuts its captures
-/// back on; this marker it leaves alone, as the selection keeps the value's siblings.
+/// the refusal's token set (`to_refusal_result`), which the filter loop whose walk returned it cuts its
+/// captures back on; this marker it leaves alone, as the selection keeps the value's siblings. `carried`
+/// is the token of the raise that ended the run when that raise named a refusal minted BEFORE the run
+/// began (`RefusalFrame::minted_inside` read it as not this run's): the marker is plain for THIS entry and
+/// hands the token on (`UnResolvedKind::Undecidable::carried`), so the run enclosing this one, which the
+/// refusal may have been minted inside, reads it against its own start when a clause re-raises the marker.
+/// `None` where no run ended on the marker (the key filter's, an empty selection's under a capture).
 fn to_undecidable_result(
     current: Rc<PathAwareValue>,
     reason: String,
     query: &[QueryPart<'_>],
+    carried: Option<RefusalToken>,
 ) -> Result<Vec<QueryResult>> {
     Ok(vec![QueryResult::UnResolved(UnResolved {
         traversed_to: current,
         reason: Some(reason),
         remaining_query: format!("{}", SliceDisplay(query)),
-        kind: UnResolvedKind::Undecidable { refused: false },
+        kind: UnResolvedKind::Undecidable {
+            refusal: None,
+            carried,
+        },
     })])
 }
 
@@ -13944,6 +14661,480 @@ fn predicate_keys<'value, 'loc: 'value>(
         .flat_map(clause_keys)
 }
 
+/// The parameterized rules a block's body may call, by name, for `block_body_keys`: the evaluator's
+/// lookup (`EvalContext::find_parameterized_rule`), handed in by the block arm's caller.
+pub(crate) type RuleLookup<'a, 'value, 'loc> =
+    &'a mut dyn FnMut(&str) -> Option<&'value ParameterizedRule<'loc>>;
+
+/// The keys a BLOCK's body reads over the value in hand, for the block arm's own-key check alone
+/// (`block_arm_own_key_refusal`; the filter arm's readers, `own_property_key`, `predicate_names_a_key`,
+/// the member deprecation lookups and `predicate_key_the_value_before_lacks`, read a predicate through
+/// `predicate_keys` as released and are not touched by this walk). The walk collects: the heads of the
+/// block's own `let` bindings' queries (`Resources[*] { let t = Type  %t exists }` reads `Type` through
+/// `t`); the heads its clauses open with (`clause_keys`), where a head that is an ALIAS of `this` followed
+/// by a key reads as that key (`%v.Type exists` over `let v = this`, `%p.Type exists` in a rule called
+/// with `this`); and, DESCENDING, the keys of every body that runs over the same value: a nested block
+/// over the bare `this` or over an alias of it (`Resources[*] { this { Type exists } }`, `let v = this`
+/// then `%v { Type exists }`), a `when` block's BODY beside its condition heads (`when this exists { Type
+/// exists }`), read only where the condition CAN hold on the map under some reading, as one object or
+/// member by member (`BodyKeys`, `when_can_hold`: a `when Mode exists { Limits exists }` over a map where
+/// neither the map nor a member has a `Mode` never runs its body, so `Limits` is no key the block reads
+/// of that map; where a member holds `Mode` the member-wise reading runs the body, so `Limits` is read
+/// and judged), and the body of a parameterized rule the block calls (`called_rule_body_keys`:
+/// its parameters bound to `this` or an alias become aliases inside that body, and the body is read by
+/// this same walk, its own `let`s, `when` conditions, nested `this { .. }` blocks and forwarding calls
+/// included, the rule's own `when` guarding its body as an in-body `when` does; a body's plain key clauses
+/// read the value in hand whatever the arguments, so `check('x')` with `rule check(n) { Type exists }`
+/// reads `Type` too). Without the descent each of those answered from the map's own entry where the flat
+/// `Type exists` is refused. A binding to a value or a function call names no key; a block over a key or
+/// over another binding is read by its head alone, since it runs over another value. `on_the_walk` holds
+/// the names of the rules whose bodies are being read, so a rule that calls itself (`rule check(p) { %p {
+/// when Type exists { check(this) } } }`) is read once and the walk ends with the keys collected so far,
+/// where an unbounded walk would run the stack out before any body ran.
+fn block_body_keys<'value, 'loc: 'value>(
+    block: &'value Block<'loc, GuardClause<'loc>>,
+    this_aliases: &[&'value str],
+    rules: RuleLookup<'_, 'value, 'loc>,
+    walk: &mut KeyWalk<'value>,
+) -> BodyKeys<'value> {
+    let mut aliases: Vec<&'value str> = this_aliases.to_vec();
+    let mut keys = BodyKeys::default();
+    binding_aliases_and_keys(&block.assignments, &mut aliases, &mut keys);
+    for clause in block.conjunctions.iter().flatten() {
+        guard_clause_body_keys(clause, &aliases, rules, walk, &mut keys);
+    }
+    keys
+}
+
+/// The keys a body reads over the value in hand, as `block_body_keys` collects them, one entry per key
+/// in the order the body reads them (`BodyKey`): a key read whatever the map holds, or the keys of a
+/// `when` block's BODY (and of a called rule's body under the rule's own `when`) paired with what its
+/// conditions need of the map (`WhenNeeds`), sitting where the `when` is written. A `when` body runs only
+/// where its condition holds, so its keys answer from the map's own entry only on a map the condition
+/// can hold on (`when_can_hold`): `Cfg[*] { when Mode exists { Limits exists } }` over `Cfg: { Limits:
+/// {..}, Other: {..} }` never runs its body (neither the map nor a member has a `Mode`), so `Limits` is no
+/// key the block reads of it and the clause is not applicable as written, where a walk that took every
+/// `when` body's keys refused it on `Limits`, a member `Other` lacks. The condition's own keys are read
+/// whatever the map holds, so they sit as plain entries before the guarded body. The order is kept because
+/// the refusal names the FIRST qualifying key (`block_arm_own_key_refusal`): `Resources[*] { when this
+/// exists { B exists }  Type exists }` is refused on `B`, the key written first, where a walk that put
+/// every unguarded key before the guarded ones named `Type`. The tree is built once per block clause and
+/// resolved per value by `over`, so the walk's cost stays per clause.
+#[derive(Clone, Default, Debug)]
+pub(crate) struct BodyKeys<'value> {
+    entries: Vec<BodyKey<'value>>,
+}
+
+/// One entry of `BodyKeys`: a key read whatever the map holds, or a `when` body's keys under what its
+/// conditions need of the map.
+#[derive(Clone, Debug)]
+enum BodyKey<'value> {
+    Key(&'value str),
+    Guarded(WhenNeeds<'value>, BodyKeys<'value>),
+}
+
+impl<'value> BodyKeys<'value> {
+    /// The keys the body reads over `map`, in the order written: each plain key where it sits, and, for
+    /// each `when` whose conditions can hold on the map (`when_can_hold`), the keys its body reads over
+    /// it, where the `when` sits.
+    fn over(&self, map: &MapValue) -> Vec<&'value str> {
+        let mut keys = Vec::new();
+        for entry in &self.entries {
+            match entry {
+                BodyKey::Key(key) => keys.push(*key),
+                BodyKey::Guarded(needs, body) => {
+                    if when_can_hold(needs, map) {
+                        keys.extend(body.over(map));
+                    }
+                }
+            }
+        }
+        keys
+    }
+
+    /// Keys read whatever the map holds, appended in the order given.
+    fn read(&mut self, keys: impl IntoIterator<Item = &'value str>) {
+        self.entries.extend(keys.into_iter().map(BodyKey::Key));
+    }
+
+    /// A `when` body's keys, read only where its conditions can hold, appended where the `when` sits.
+    fn guard(&mut self, needs: WhenNeeds<'value>, body: BodyKeys<'value>) {
+        self.entries.push(BodyKey::Guarded(needs, body));
+    }
+
+    /// Take another body's keys in, the plain and the guarded alike and in their order (a nested block
+    /// over `this`, a called rule's body read on this walk).
+    fn absorb(&mut self, other: BodyKeys<'value>) {
+        self.entries.extend(other.entries);
+    }
+}
+
+/// What one `when` condition needs of the map for the condition to hold on it under SOME reading, by the
+/// head's polarity as the evaluator applies it (the operator's own polarity XOR a clause-level `not`,
+/// `eval.rs`). A head that holds BY ABSENCE (`!exists`, `empty`, and a negated type test such as
+/// `!is_null`, each true of a key the map lacks, `docs/CLAUSES.md`) may hold whatever the map holds. Every
+/// other head (`exists`, `!empty`, a positive type test, and every binary operator in BOTH polarities, `==`
+/// and `!=`, `IN` and `NOT IN`, the orderings: a missing key is a retrieval error that fails each,
+/// `docs/CLAUSES.md`) holds only where every key it reads, its head key, an alias-headed key and the keys
+/// of its right-hand side alike, is a key the map holds ITSELF or a key some MEMBER of it holds
+/// (`when_can_hold`): read as one object the map's own key answers the condition, and read member by
+/// member (`Cfg.* { when Mode exists { .. } }`) a member's key does, so a key held either way may run the
+/// body, and the body's keys are then judged on the map (a key the body reads of the map as one object
+/// while a member lacks it is refused rather than passed over: `Cfg[*] { when Mode exists { Limits exists
+/// } }` over `Cfg: { Limits: {..}, Other: { Mode: fast, .. } }` is refused on `Limits`, where a test of
+/// the map's own keys alone read the body as dead and let the clause SKIP while `Other` holds no `Limits`).
+/// A key neither the map nor any member holds makes the condition false or undecidable under every
+/// reading, and the body dead. A parameterized call may hold whatever the map holds: its body is a rule
+/// of its own, which may hold by absence (`rule unset(m) { %m !exists }`), and the call may be negated
+/// (`when not has_mode(Mode)` holds where `has_mode` fails on the missing key), so its arguments' heads
+/// say nothing of the body's reach, and the conservative side is to read the guarded body. A bare rule
+/// reference reads nothing of the map and may hold. The test is on the map's entries and its members'
+/// keys alone: a full evaluation of the condition at walk time would need the resolver and would re-run
+/// registrations.
+#[derive(Clone, Debug)]
+enum WhenNeed<'value> {
+    HoldsByAbsence,
+    Keys(Vec<&'value str>),
+}
+
+/// The conditions of one `when`, a conjunction of disjunctions, each condition read to its `WhenNeed`.
+type WhenNeeds<'value> = Vec<Vec<WhenNeed<'value>>>;
+
+/// Whether the conditions can hold on `map` under some reading, as one object or member by member: every
+/// conjunction has a disjunct that can (`WhenNeed`), a key it needs being a key of the map itself or a
+/// key some map-valued entry of it holds (`a_map_entry_holds`). No conditions at all hold.
+fn when_can_hold(needs: &WhenNeeds<'_>, map: &MapValue) -> bool {
+    needs.iter().all(|disjunction| {
+        disjunction.iter().any(|need| match need {
+            WhenNeed::HoldsByAbsence => true,
+            WhenNeed::Keys(keys) => keys
+                .iter()
+                .all(|key| map.values.contains_key(*key) || a_map_entry_holds(map, key)),
+        })
+    })
+}
+
+/// The `WhenNeeds` of a `when`'s conditions, for `BodyKeys::guarded`.
+fn when_needs<'value, 'loc: 'value>(
+    conditions: &'value super::exprs::WhenConditions<'loc>,
+    aliases: &[&'value str],
+) -> WhenNeeds<'value> {
+    conditions
+        .iter()
+        .map(|disjunction| {
+            disjunction
+                .iter()
+                .map(|condition| when_need(condition, aliases))
+                .collect()
+        })
+        .collect()
+}
+
+/// One condition's `WhenNeed`: a clause by its effective polarity (`holds_by_absence` of the operator's
+/// own polarity XOR the clause-level `not`, the composition the evaluator applies, so `when not Mode
+/// exists` reads as `when Mode !exists` and `when not Mode !exists` as `when Mode exists`), the keys it
+/// reads over the value in hand being the ones the walk collects for it (its head key through
+/// `leading_key`, an alias-headed key, its right-hand side's keys); a parameterized call always as one
+/// that may hold (`WhenNeed`); a bare rule reference as one that reads nothing.
+fn when_need<'value, 'loc: 'value>(
+    condition: &'value super::exprs::WhenGuardClause<'loc>,
+    aliases: &[&'value str],
+) -> WhenNeed<'value> {
+    match condition {
+        super::exprs::WhenGuardClause::Clause(clause) => {
+            let access = &clause.access_clause;
+            let effective = (access.comparator.0, access.comparator.1 ^ clause.negation);
+            if holds_by_absence(effective) {
+                return WhenNeed::HoldsByAbsence;
+            }
+            let mut keys: Vec<&'value str> = leading_key(&access.query.query)
+                .into_iter()
+                .chain(alias_key_head(&access.query.query, aliases))
+                .collect();
+            if let Some(right) = &access.compare_with {
+                keys.extend(let_value_keys(right, aliases));
+            }
+            WhenNeed::Keys(keys)
+        }
+        super::exprs::WhenGuardClause::ParameterizedNamedRule(_) => WhenNeed::HoldsByAbsence,
+        super::exprs::WhenGuardClause::NamedRule(_) => WhenNeed::Keys(Vec::new()),
+    }
+}
+
+/// Whether a comparison is true of a key the map lacks: `!exists` and `empty` (a missing key is absent and
+/// empty), and a NEGATED type test, `!is_null`, `!is_string`, `!is_list`, `!is_struct`, `!is_bool`,
+/// `!is_int`, `!is_float` (the type test reads an unresolved value as not of the type, `eval.rs`, and its
+/// negation then holds). Every other comparison fails on a missing key: `exists`, `!empty`, a positive type test, and
+/// every binary operator in BOTH polarities, `==` and `!=`, `IN` and `NOT IN`, the orderings, because a
+/// missing key is a retrieval error and not a value that is equal to nothing or in no set
+/// (`docs/CLAUSES.md`, the clause table); a `when` on such a comparison is not satisfied, and its body
+/// never runs. The polarity handed in is the effective one (`when_need`).
+fn holds_by_absence(comparator: (CmpOperator, bool)) -> bool {
+    matches!(
+        comparator,
+        (CmpOperator::Exists, true)
+            | (CmpOperator::Empty, false)
+            | (
+                CmpOperator::IsString
+                    | CmpOperator::IsList
+                    | CmpOperator::IsMap
+                    | CmpOperator::IsBool
+                    | CmpOperator::IsInt
+                    | CmpOperator::IsFloat
+                    | CmpOperator::IsNull,
+                true
+            )
+    )
+}
+
+/// The state of one body-key walk (`block_body_keys`): the rules on the walk, the cycle guard that ends a
+/// walk through a rule that calls itself directly or through another rule (the parser refuses such a file;
+/// this is the defensive line), and the key sets of the rules already read, by name and by the aliases of
+/// `this` their parameters were bound to, so a rule a body calls twice, directly or through two callers
+/// (the diamond), is read once and its keys are reused.
+#[derive(Default)]
+struct KeyWalk<'value> {
+    on_the_walk: Vec<&'value str>,
+    read: HashMap<(&'value str, Vec<&'value str>), BodyKeys<'value>>,
+}
+
+/// The `let` bindings of a block or a rule, read for `block_body_keys`: a binding to the bare `this` (or
+/// to an alias of it) is one more alias of `this`; a binding to a query names its head key; a binding to
+/// a value or a function call names nothing.
+fn binding_aliases_and_keys<'value, 'loc: 'value>(
+    bindings: &'value [LetExpr<'loc>],
+    aliases: &mut Vec<&'value str>,
+    keys: &mut BodyKeys<'value>,
+) {
+    for binding in bindings {
+        match &binding.value {
+            LetValue::AccessClause(query) if over_this_or_an_alias(&query.query, aliases) => {
+                aliases.push(binding.var.as_str());
+            }
+            value => keys.read(let_value_keys(value, aliases)),
+        }
+    }
+}
+
+/// The keys a `let` value or a clause's right-hand side reads over the value in hand: a query's head key
+/// (`Type.Name` reads `Type`; `%p.Type` reads `Type` through an alias of `this`), and, for a function call,
+/// the same of each argument (`count(Type)` reads `Type`; `to_upper(%p.Name)` reads `Name`), recursively; a
+/// literal reads nothing. Read for `block_body_keys` beside the clause heads `clause_keys` reads, so a key
+/// a body reads on the RIGHT of a comparison (`'x' == Type.Name`), inside a call, or in a `when` condition's
+/// right-hand side answers from the map's own entry no more than a head does.
+fn let_value_keys<'a>(value: &'a LetValue<'_>, aliases: &[&str]) -> Vec<&'a str> {
+    match value {
+        LetValue::AccessClause(query) => leading_key(&query.query)
+            .into_iter()
+            .chain(alias_key_head(&query.query, aliases))
+            .collect(),
+        LetValue::FunctionCall(call) => call
+            .parameters
+            .iter()
+            .flat_map(|parameter| let_value_keys(parameter, aliases))
+            .collect(),
+        LetValue::Value(_) => Vec::new(),
+    }
+}
+
+/// Whether `query` is the bare `this` or a bare alias of it (`%v` over `let v = this`, `%p` for a
+/// parameter bound to `this`): the value in hand, so a block over it runs over the same value.
+fn over_this_or_an_alias(query: &[QueryPart<'_>], aliases: &[&str]) -> bool {
+    match query {
+        [QueryPart::This] => true,
+        [QueryPart::Variable(name)] => aliases.iter().any(|alias| alias == name),
+        _ => false,
+    }
+}
+
+/// The key a query whose head is an alias of `this` reads first (`%v.Type exists` and `%v[*].Type exists`
+/// read `Type`), for `block_body_keys`; `None` for every other head (`leading_key` reads those, a leading
+/// `this.` included). The parser reserves the slot after a variable root with a remainder (an
+/// `AllIndices(None)` it inserts, or the author's own `[*]`, `AuthoredIndices`), so the key is the THIRD
+/// part of such a query, never the second.
+fn alias_key_head<'a>(query: &'a [QueryPart<'_>], aliases: &[&str]) -> Option<&'a str> {
+    match query {
+        [QueryPart::Variable(name), QueryPart::AllIndices(None) | QueryPart::AuthoredIndices, QueryPart::Key(key), ..]
+            if aliases.iter().any(|alias| alias == name) =>
+        {
+            Some(key.as_str())
+        }
+        [QueryPart::Variable(name), QueryPart::Key(key), ..]
+            if aliases.iter().any(|alias| alias == name) =>
+        {
+            Some(key.as_str())
+        }
+        _ => None,
+    }
+}
+
+/// One clause's contribution to `block_body_keys`: its heads as released (`clause_keys`), an alias-headed
+/// key, and the descent into the bodies that run over the same value. A `when` block's conditions are
+/// read whatever the map holds; its BODY is read under the conditions (`BodyKeys::guarded`, resolved per
+/// map by `when_can_hold`), since the body runs only where they hold.
+fn guard_clause_body_keys<'value, 'loc: 'value>(
+    clause: &'value GuardClause<'loc>,
+    aliases: &[&'value str],
+    rules: RuleLookup<'_, 'value, 'loc>,
+    walk: &mut KeyWalk<'value>,
+    keys: &mut BodyKeys<'value>,
+) {
+    keys.read(clause_keys(clause));
+    match clause {
+        GuardClause::Clause(access) => {
+            keys.read(alias_key_head(&access.access_clause.query.query, aliases));
+            if let Some(right) = &access.access_clause.compare_with {
+                keys.read(let_value_keys(right, aliases));
+            }
+        }
+        GuardClause::BlockClause(nested) => {
+            if over_this_or_an_alias(&nested.query.query, aliases) {
+                keys.absorb(block_body_keys(&nested.block, aliases, rules, walk));
+            } else {
+                keys.read(alias_key_head(&nested.query.query, aliases));
+            }
+        }
+        GuardClause::WhenBlock(conditions, body) => {
+            for condition in conditions.iter().flatten() {
+                when_clause_body_keys(condition, aliases, rules, walk, keys);
+            }
+            keys.guard(
+                when_needs(conditions, aliases),
+                block_body_keys(body, aliases, rules, walk),
+            );
+        }
+        GuardClause::ParameterizedNamedRule(call) => {
+            called_rule_body_keys(call, aliases, rules, walk, keys);
+        }
+        GuardClause::NamedRule(_) => {}
+    }
+}
+
+/// A `when` condition's contribution to `block_body_keys` beyond its head key: an alias-headed key
+/// (`%p.Type`), and a parameterized call's body. The plain head key (`Type`) is read beside this: at a
+/// block body's `when` arm by `clause_keys` (the released reading of the heads), and at a called rule's
+/// own conditions and the `when` blocks of its body by `when_condition_head`. A condition is read
+/// whatever the map holds (it runs over the value); only the `when`'s BODY is guarded by it.
+fn when_clause_body_keys<'value, 'loc: 'value>(
+    condition: &'value super::exprs::WhenGuardClause<'loc>,
+    aliases: &[&'value str],
+    rules: RuleLookup<'_, 'value, 'loc>,
+    walk: &mut KeyWalk<'value>,
+    keys: &mut BodyKeys<'value>,
+) {
+    match condition {
+        super::exprs::WhenGuardClause::Clause(clause) => {
+            keys.read(alias_key_head(&clause.access_clause.query.query, aliases));
+            if let Some(right) = &clause.access_clause.compare_with {
+                keys.read(let_value_keys(right, aliases));
+            }
+        }
+        super::exprs::WhenGuardClause::ParameterizedNamedRule(call) => {
+            called_rule_body_keys(call, aliases, rules, walk, keys);
+        }
+        super::exprs::WhenGuardClause::NamedRule(_) => {}
+    }
+}
+
+/// The keys a parameterized rule's body reads over the value in hand when the block calls it
+/// (`block_body_keys`): the parameters bound to `this` or an alias of it are aliases of `this` inside the
+/// body, and the body is read by the same walk, its `let`s, its `when` conditions, each clause with the
+/// descent, whatever the arguments (a plain key clause in the body reads the value in hand); a type block
+/// runs over another population and is left out. The rule's own `when` conditions are read whatever the
+/// map holds, and they guard the body as an in-body `when` guards its block (`BodyKeys::guarded`): `rule
+/// check(p) when Mode exists { Limits exists }` reads `Limits` of a map only where `Mode` is its own key.
+/// A rule the file lacks names no key. A rule already on the walk (a call of itself, directly or through
+/// another rule) is not read again, so the walk ends.
+fn called_rule_body_keys<'value, 'loc: 'value>(
+    call: &'value super::exprs::ParameterizedNamedRuleClause<'loc>,
+    aliases: &[&'value str],
+    rules: RuleLookup<'_, 'value, 'loc>,
+    walk: &mut KeyWalk<'value>,
+    keys: &mut BodyKeys<'value>,
+) {
+    let name = call.named_rule.dependent_rule.as_str();
+    if walk.on_the_walk.contains(&name) {
+        return;
+    }
+    let Some(rule) = rules(name) else {
+        return;
+    };
+    let mut inner_aliases: Vec<&'value str> = rule
+        .parameter_names
+        .iter()
+        .zip(&call.parameters)
+        .filter(|(_, argument)| {
+            matches!(argument, LetValue::AccessClause(query) if over_this_or_an_alias(&query.query, aliases))
+        })
+        .map(|(parameter, _)| parameter.as_str())
+        .collect();
+    // A rule already read on this walk with the same parameters bound to `this` (a second call, or the
+    // diamond through two callers) contributes the keys it was read to, read once.
+    let read_as = (name, inner_aliases.clone());
+    if let Some(read) = walk.read.get(&read_as) {
+        keys.absorb(read.clone());
+        return;
+    }
+    walk.on_the_walk.push(name);
+    let mut read = BodyKeys::default();
+    // The body: the rule's `let`s and clauses, guarded below by the rule's own `when` where it has one.
+    let mut body = BodyKeys::default();
+    binding_aliases_and_keys(&rule.rule.block.assignments, &mut inner_aliases, &mut body);
+    // The rule's own `when` conditions read the value in hand as the body does: their head keys (`rule
+    // check(p) when Type == 'AWS::S3::Bucket' { .. }` reads `Type`) join the set, as the in-body `when`
+    // arm's do below.
+    for condition in rule.rule.conditions.iter().flatten().flatten() {
+        read.read(when_condition_head(condition));
+        when_clause_body_keys(condition, &inner_aliases, rules, walk, &mut read);
+    }
+    for clause in rule.rule.block.conjunctions.iter().flatten() {
+        match clause {
+            super::exprs::RuleClause::Clause(guard) => {
+                guard_clause_body_keys(guard, &inner_aliases, rules, walk, &mut body);
+            }
+            super::exprs::RuleClause::WhenBlock(conditions, inner) => {
+                for condition in conditions.iter().flatten() {
+                    body.read(when_condition_head(condition));
+                    when_clause_body_keys(condition, &inner_aliases, rules, walk, &mut body);
+                }
+                body.guard(
+                    when_needs(conditions, &inner_aliases),
+                    block_body_keys(inner, &inner_aliases, rules, walk),
+                );
+            }
+            super::exprs::RuleClause::TypeBlock(_) => {}
+        }
+    }
+    match &rule.rule.conditions {
+        Some(conditions) => read.guard(when_needs(conditions, &inner_aliases), body),
+        None => read.absorb(body),
+    }
+    walk.on_the_walk.pop();
+    keys.absorb(read.clone());
+    walk.read.insert(read_as, read);
+}
+
+/// The head key a `when` condition names as released (`clause_keys`' `WhenBlock` arm reads the same), for
+/// the in-body `when` blocks and the rule-level conditions read by `called_rule_body_keys`.
+fn when_condition_head<'a>(condition: &'a super::exprs::WhenGuardClause<'_>) -> Vec<&'a str> {
+    match condition {
+        super::exprs::WhenGuardClause::Clause(clause) => {
+            leading_key(&clause.access_clause.query.query)
+                .into_iter()
+                .collect()
+        }
+        super::exprs::WhenGuardClause::ParameterizedNamedRule(call) => call
+            .parameters
+            .iter()
+            .filter_map(|parameter| match parameter {
+                LetValue::AccessClause(query) => leading_key(&query.query),
+                LetValue::Value(_) | LetValue::FunctionCall(_) => None,
+            })
+            .collect(),
+        super::exprs::WhenGuardClause::NamedRule(_) => Vec::new(),
+    }
+}
+
 /// The leading keys one clause of a predicate names (`predicate_keys` reads every clause through this):
 /// the head of the clause's own query, the heads of a parameterized rule call's query arguments, a
 /// block clause's query head, and the heads a `when` block's conditions name; a bare rule reference
@@ -13963,6 +15154,9 @@ fn clause_keys<'value, 'loc: 'value>(clause: &'value GuardClause<'loc>) -> Vec<&
             .into_iter()
             .collect(),
         GuardClause::ParameterizedNamedRule(call) => argument_keys(&call.parameters),
+        // A nested block over a bare `this` (`Resources[*] { this { Type exists } }`) names no key of its
+        // own; the descent into its body is the BLOCK ARM's alone (`block_body_keys`), so a filter
+        // predicate holding `this { Type == 'X' }` reads here as released: by its head, no key.
         GuardClause::BlockClause(block) => leading_key(&block.query.query).into_iter().collect(),
         GuardClause::WhenBlock(conditions, _) => conditions
             .iter()
@@ -13994,16 +15188,71 @@ fn a_map_entry_holds(map: &MapValue, key: &str) -> bool {
     )
 }
 
+/// Whether `inner` is an intrinsic call written as a map: one entry, under `Ref` or an `Fn::` name. The
+/// loader spells a short-form tag as that map (`!Sub x` is `{ 'Fn::Sub': x }`, `!If [..]` is `{ 'Fn::If':
+/// [..] }`, `!Ref x` is `{ Ref: x }`; `long_form_of` names the key), so the long and the short spelling
+/// read alike here, with one exception: `!Condition x` is `{ Condition: x }` (`SHORT_FORM_TO_LONG_MAPPING`
+/// maps `Condition` to itself, as it maps `Ref`), and `Condition` is not read here, so a one-entry `{
+/// Condition: x }` is a plain member map to this test and to every shape test built on it
+/// (`one_object_by_a_field`, `a_candidate_collection`, `plain_member_map`). The spelling is a condition
+/// reference inside `Fn::If`/`Fn::And`/`Fn::Or`/`Fn::Not` arguments and a resource's `Condition`
+/// attribute is a bare string, so the exception reaches no shape test over a template section. Such a map
+/// is a VALUE: a field of the object that holds it, never a member a filter selects among, and so it
+/// counts as a scalar in the shape test below.
+fn intrinsic_call_map(inner: &MapValue) -> bool {
+    inner.values.len() == 1
+        && inner
+            .values
+            .keys()
+            .any(|name| name == "Ref" || name.starts_with("Fn::"))
+}
+
+/// How a refusal names the entry that made a map one object: `a String`, `an int`, `a bool` for a scalar
+/// (its type name), `an intrinsic call (`Fn::Sub`)` for an intrinsic written as a map, which the type name
+/// `map` would misdescribe as a member.
+fn scalar_entry_kind(entry: &PathAwareValue) -> String {
+    match entry {
+        PathAwareValue::Map((_, inner)) if intrinsic_call_map(inner) => format!(
+            "an intrinsic call (`{}`)",
+            inner.values.keys().next().map_or("", String::as_str)
+        ),
+        PathAwareValue::Int(_) => "an int".to_string(),
+        other => format!("a {}", other.type_info()),
+    }
+}
+
 /// Whether an entry can be a member a filter over properties selects among: a map, a list (of such
 /// maps) or a null, which is a bare key handed to the predicate as the filter after a key hands it
 /// (held by an absence check, failed and dropped by a value check) rather than making its map an object.
-/// The one shape test the wildcard arms share, so a change to it (reading an intrinsic map such as `{
-/// Ref: .. }` as a scalar, say) is made once.
+/// The one shape test the wildcard FILTER arms share (`first_scalar_entry`, `a_scalar_entry`, the `.*`
+/// pass-over), so a change to it is made once. An intrinsic call written as a map (`{ Ref: x }`) is
+/// member-shaped HERE: the own-key enumeration runs over a map holding one beside its members and tests
+/// the members, with the intrinsic entry handed on as the value it is. The two arms that read a map
+/// handed on WHOLE, the block spelling and the key spelling after `[*]`, read such an entry as the string
+/// it stands for instead (`one_object_by_a_field`), so the remedy spellings the filter arm's refusals
+/// offer are never refused in turn.
 fn member_shaped(entry: &PathAwareValue) -> bool {
     matches!(
         entry,
         PathAwareValue::Map(_) | PathAwareValue::List(_) | PathAwareValue::Null(_)
     )
+}
+
+/// Whether `map` is one object by one of its FIELDS, for the arms that read a map handed on whole (the
+/// block spelling `X[*] { .. }` and the key spelling `X[*].Key`, through `a_member_lacking_the_own_key`):
+/// an entry that is a non-null scalar (`first_scalar_entry`, the filter arm's own test) or an intrinsic
+/// call written as a map (`intrinsic_call_map`: `BucketName: !Sub ..`, `Effect: !If [..]`), a value as the
+/// string it stands for is. A bucket's `Properties` with a `!Sub` beside its sub-maps and a statement whose
+/// `Effect` is an `Fn::If` are one object here, so `Properties[*] { VersioningConfiguration.Status ==
+/// 'Enabled' }`, the remedy the own-key refusal offers, reads the object's field and is never refused in
+/// turn. The filter arm straight after `[*]` keeps its own reading of such a map (a collection whose own
+/// key the predicate may name, `map_under_a_wildcard_filter`): the own-key enumeration and its probes are
+/// written over maps holding `{ Ref: .. }` entries beside their members, and read those as members.
+fn one_object_by_a_field(map: &MapValue) -> bool {
+    first_scalar_entry(map).is_some()
+        || map.values.values().any(
+            |entry| matches!(entry, PathAwareValue::Map((_, inner)) if intrinsic_call_map(inner)),
+        )
 }
 
 /// Whether an entry is a member a filter over properties selects among in the plain sense: a map that is
@@ -14015,14 +15264,7 @@ fn member_shaped(entry: &PathAwareValue) -> bool {
 fn plain_member_map(entry: &PathAwareValue) -> bool {
     match entry {
         PathAwareValue::Map((_, inner)) if inner.values.is_empty() => false,
-        PathAwareValue::Map((_, inner)) => {
-            let intrinsic_call = inner.values.len() == 1
-                && inner
-                    .values
-                    .keys()
-                    .any(|name| name == "Ref" || name.starts_with("Fn::"));
-            !intrinsic_call
-        }
+        PathAwareValue::Map((_, inner)) => !intrinsic_call_map(inner),
         _ => false,
     }
 }
@@ -14244,14 +15486,24 @@ thread_local! {
     /// cannot tell one copy of a whole document from one copy of a leaf.
     pub(in crate::rules) static BEFORE_THE_WILDCARD_CLONED_NODES: std::cell::Cell<usize> =
         const { std::cell::Cell::new(0) };
+    /// The most copies the table (`ValueBeforeClones`) held at once since the counter was reset: the
+    /// bound a test reads against the values one clause asks, since the table is cleared when the
+    /// outermost clause ends.
+    pub(in crate::rules) static BEFORE_THE_WILDCARD_MAX_HELD: std::cell::Cell<usize> =
+        const { std::cell::Cell::new(0) };
 }
 
-/// The number of values a deep clone of `value` copies: the value and every value under it, for the
-/// test counter `BEFORE_THE_WILDCARD_CLONED_NODES`.
+/// The number of values a deep clone of `value` copies: the value, every value under it, and a map's
+/// key values (`MapValue::keys`, one scalar per entry, cloned with the map), for the test counter
+/// `BEFORE_THE_WILDCARD_CLONED_NODES`. A test that pins exact counts reads a fixture's sizes through this
+/// same function, so the two agree by construction.
 #[cfg(test)]
-fn values_under(value: &PathAwareValue) -> usize {
+pub(in crate::rules) fn values_under(value: &PathAwareValue) -> usize {
     match value {
-        PathAwareValue::Map((_, map)) => 1 + map.values.values().map(values_under).sum::<usize>(),
+        PathAwareValue::Map((_, map)) => {
+            1 + map.keys.iter().map(values_under).sum::<usize>()
+                + map.values.values().map(values_under).sum::<usize>()
+        }
         PathAwareValue::List((_, elements)) => 1 + elements.iter().map(values_under).sum::<usize>(),
         _ => 1,
     }
@@ -14311,7 +15563,7 @@ pub(in crate::rules) enum BeforeTheWildcard<'r> {
 /// filter, a `%variable` mid-query), a key that is not the component it should have produced, a path that
 /// does not extend the document's on a component boundary (`/Resources/A` is not a prefix of
 /// `/Resources/AB/...`), and a path that does not read that way at all (a map a rules-file literal built,
-/// which carries the root path; a key holding `/`; a `%variable` whose value sits outside the document
+/// which carries the root path; a `%variable` whose value sits outside the document
 /// with keys walked below it) are `Unknown`, and the member notice announces nothing for them: the
 /// released engines (3.1.12, 3.2.0 and 3.2.1 agree on 60 rules measured on the release binaries) asked
 /// the `.*` member for `Statement[*].Condition[*]` and for `Cfg[ keys == 'x' ].Sub[*]`, and asked no
@@ -14441,14 +15693,15 @@ fn root_value<'r>(
 /// root at the root path, else the document); the map itself for `TheMap`; for a value below the document
 /// (`Node`), the asking scope's own root when the value IS that root (the `.*` member whose scope the walk
 /// runs in: the common case, which pays no clone), and a deep clone when it sits above that root (a list
-/// element's or a filter entry's scope). Equal paths mean the same value for a value below the document
-/// because every scope answers `document_root` with the one document the walk started from, every
-/// `PathAwareValue` of that document carries its path from it, and a scope's root below the document is a
-/// value of the document reached by its path, so two such values at one path are one value; at the root
-/// path itself a rules-file literal shares the document's path without being it, which is why `Root` asks
-/// `root_value` rather than the path. `None` for `Unknown`: nothing is probed, recorded or cloned. The
-/// deep clones are counted in test builds (`BEFORE_THE_WILDCARD_CLONES`). Read by the collection branch
-/// and the one-object branch of the `[*]` arm, which once carried this match each.
+/// element's or a filter entry's scope). The scope's root is told from the value by PATH, since a scope's
+/// root below the document is a copy of the document value reached by that path (not the node itself), so
+/// the two carry one path text; at the root path itself a rules-file literal shares the document's path
+/// without being it, which is why `Root` asks `root_value` rather than the path. The copies, by contrast,
+/// are kept by the NODE's identity, never its path text (`ValueBeforeClones`): two nodes can share a path
+/// text when a key holds a `/` (`"a/b"` beside `a: { b }`), and the copy of one must not answer for the
+/// other. `None` for `Unknown`: nothing is probed, recorded or cloned. The deep clones are counted in test
+/// builds (`BEFORE_THE_WILDCARD_CLONES`). Read by the collection branch and the one-object branch of the
+/// `[*]` arm, which once carried this match each.
 fn value_before_for_the_probe<'value, 'loc: 'value>(
     located: BeforeTheWildcard<'_>,
     root: &Rc<PathAwareValue>,
@@ -14463,22 +15716,19 @@ fn value_before_for_the_probe<'value, 'loc: 'value>(
             Some(Rc::clone(scope_root))
         }
         BeforeTheWildcard::Node(node) => {
-            // The latest copy serves every ask for the same value (`ValueBeforeClones`): under
+            // One copy per distinct value serves every ask for it (`ValueBeforeClones`): under
             // `Statement[*].Condition[*][ f ]` the value is the resource above every statement's root,
             // and a site whose verdict stays quiet asks for it once per statement, since the quiet record
             // is keyed by the map (each statement's `Condition` is another map) while the announcing stop
             // is keyed by the site; without the table each statement paid a deep copy of the whole
-            // resource, a cost that grew with the square of the policy's size. The path alone names the
-            // value, so a second site over the same resource reads the copy the first made, and a hit
-            // compares the path and allocates nothing. A document value is the value, so the copy is
-            // never stale; with no table behind the scope (the test doubles) the copy is made on every
-            // ask.
-            let path = &node.self_path().0;
+            // resource, a cost that grew with the square of the policy's size. The node's address names
+            // the value, so a second site over the same resource within the clause reads the copy the
+            // first made, and a hit hashes the address and allocates nothing. A document value is the
+            // value, so the copy is never stale; with no table behind the scope (the test doubles) the
+            // copy is made on every ask.
             if let Some(table) = resolver.value_before_the_wildcard_clones() {
-                if let Some((kept_path, copy)) = table.borrow().latest.as_ref() {
-                    if kept_path == path {
-                        return Some(Rc::clone(copy));
-                    }
+                if let Some(copy) = table.borrow_mut().find(node, root) {
+                    return Some(copy);
                 }
             }
             #[cfg(test)]
@@ -14489,7 +15739,10 @@ fn value_before_for_the_probe<'value, 'loc: 'value>(
             }
             let copy = Rc::new(node.clone());
             if let Some(table) = resolver.value_before_the_wildcard_clones() {
-                table.borrow_mut().latest = Some((path.clone(), Rc::clone(&copy)));
+                table.borrow_mut().keep(node, Rc::clone(&copy), root);
+                #[cfg(test)]
+                BEFORE_THE_WILDCARD_MAX_HELD
+                    .with(|most| most.set(most.get().max(table.borrow().held())));
             }
             Some(copy)
         }
@@ -14497,36 +15750,207 @@ fn value_before_for_the_probe<'value, 'loc: 'value>(
     }
 }
 
-/// The latest deep copy `value_before_for_the_probe` made of a value below the document root, with the
-/// path of the value it copies; see `EvalContext::value_before_the_wildcard_clones`. One entry, replaced
-/// when a copy of another path is asked for: the path alone identifies the value (equal paths below the
-/// document root are one value, as the helper's doc says), and one resource's statements are visited one
-/// after another, so the copy a site asks for next is the one just made, by this site or by the one
-/// beside it, until the walk moves to the next resource. A table that kept one copy per filter site and
-/// path held every resource once per site at the end of an evaluation (sites times resources deep copies
-/// of the data file), and rendered the site and copied the path on every lookup, hits included. Owned by
-/// the root scope; the copy of a document value is the value itself, and nothing writes to it.
+/// The deep copies `value_before_for_the_probe` made of values below the document root, one per DISTINCT
+/// value asked for under the top-level member the walk stands in, keyed by the value's NODE IDENTITY (its
+/// address inside the document, which outlives the root scope that owns this table); see
+/// `EvalContext::value_before_the_wildcard_clones`. The node, not its path text, identifies a value here:
+/// a path joins keys with `/` unescaped, so `{ "a/b": {..}, a: { b: {..} } }` gives two nodes one path
+/// text, and a table keyed by text would answer an ask for one with the other's copy. The lookup that
+/// FINDS the value (`value_before_the_wildcard`) walks the document by the path's `/`-split components, so
+/// for that shape it reaches `a`'s `b` for both asks and hands this table one node, which it copies once;
+/// the table is right for the node it is handed, and telling the two nodes apart there is a change to how
+/// paths spell a key holding `/`, outside this table (the clause table's cell pins the shape). A copy is
+/// shared by every site that asks for that node and is never stale (a
+/// document value is the value itself, and nothing writes to a copy).
 ///
-/// One slot is enough because no walk asks for two values in turn within one `.*` member: the value before
-/// the wildcard is the last `.*` member itself for every site under it, so sites under one member hit the
-/// slot one after another, and a miss is the walk's move to the next member, which a table keyed by site
-/// and path paid too. Measured over 1, 8 and 64 resources
-/// (`the_latest_copy_slot_against_the_table_keyed_by_site_and_path`): two quiet sites over two `.*`
-/// members make four copies per resource under either table (one per site and member); two sites nested
-/// in one predicate make none (the value is the statement scope's own root, a shared pointer); a
-/// parameterized rule's site called from two rules makes one copy per resource, because the second call
-/// reads the site's quiet record over each map (`member_notice_due`) before the value is looked up and
-/// never reaches the slot. No bounded cache of recent paths is owed.
+/// The table LIVES FOR ONE TOP-LEVEL CLAUSE. The clause evaluator (`eval_guard_clause`, the one place
+/// every clause of a rule body passes, and `eval_when_clause` for a rule's own gate) opens a
+/// `ClauseCopies` guard on entry, and the guard that closes the OUTERMOST clause clears the table
+/// (`depth` counts the clauses open; a clause nested in a block body, a `when` block or a called rule
+/// shares its enclosing clause's table and clears nothing). Within a clause a stored value is never
+/// dropped: a value among the first `VALUE_BEFORE_COPIES_MAX` (sixteen) the clause asks is copied once
+/// however many sites ask for it and in whatever order, so a block over the statements of a `%d` that
+/// holds two resources' documents, which asks P's document then Q's every statement, copies each once;
+/// and the table reads EMPTY once the clause is over, whatever the document's shape, so a plan whose every
+/// resource sits under one member (`/planned_values/root_module/resources/N`) holds the resources one
+/// clause asked and no more, and the next clause starts from nothing. So what the table holds is bounded
+/// by the values ONE CLAUSE asks, each copied once (a copied resource contains the `Docs.*` members copied
+/// again below it, so the levels add), never by the rules file, AND by the count: once sixteen copies
+/// are stored the table takes nothing more, and a later distinct value goes into the one LATEST slot
+/// beside it (`latest`, replaced by the next such value), so its back-to-back asks hit and it is copied
+/// again only when another value past the bound is asked in between (the overflow re-copies, the
+/// bound's cost, never a wrong value), and a clause that walks every resource of a plan holds at most
+/// seventeen resources at once. The first values stay in the table rather than the latest because
+/// evicting the one used longest ago made a clause that asks more values in turn than the bound miss on
+/// every ask, each ask evicting the value asked next (sixteen documents asked per statement cost 256
+/// document copies over sixteen statements where they now cost sixteen). A second clause that walks the
+/// same resources copies each again
+/// (`the_value_before_the_wildcard_table_holds_one_copy_per_value_asked` reads the most held, the copies
+/// made and the empty table after the run; `the_value_before_the_wildcard_table_lives_for_one_clause`
+/// reads the two-resource variable, the one-member plan and the bound's two sides). A clear keyed on the first two path
+/// components, the top-level member a value sits under, would read one member for every resource of such
+/// a plan and so never clear, and would clear on every flip of a `%d` spanning two resources and copy both
+/// again per statement. The table is dropped with the root scope that owns it (the root holds the only
+/// lasting reference). A copy is needed because the probe's consumers hold an owned `Rc<PathAwareValue>`:
+/// `the_whole_map_reading_selected` roots a scope on the value to run the predicate over it, and a
+/// `PendingMemberNotice` carries the value past the probe to where the notice is written; a value below
+/// the document root is a plain node inside the document's one `Rc`, with no `Rc` of its own to share. A
+/// document whose nodes each carried a shared pointer, or a probe scope that borrowed its root, would
+/// remove the copying altogether; that is a change to the value tree and the scope root type, outside
+/// this table.
+///
+/// Why this shape and not a smaller table. The value before the wildcard is the last `.*` member itself
+/// for every site under it, so the sites under one member ask for it one after another, and a site that
+/// was quiet over a map is neither probed nor copied for when the walk meets that map again (its quiet
+/// record, `member_notice_due`, is consulted before the value is looked up); so a slot holding one latest copy
+/// serves the common walks. It would not serve a per-statement clause headed by a `%variable` bound to the
+/// member (a variable head counts as the last `.*`) whose predicate reads the block's own `let`, so no
+/// quiet record stops it, beside a clause asking a value nested in the statement: with one kept copy each
+/// statement would evict the member and copy it again, K copies of the member over K statements. A table
+/// of two copies that kept the first two values asked would hold the two documents of a `%d` over
+/// `Docs: { D0, D1 }` and re-copy every nested value, and a third member asked in turn (`%e` bound to
+/// `Extra.*`) on every statement: any table holding fewer copies than the values a clause asks in turn
+/// re-copies the overflow on every iteration, whatever keys it (a table keyed by filter site, one copy
+/// per site, reads the same). A table keyed by site AND path would hold every resource once per site
+/// (sites times resources deep copies) and render the site key on every lookup; this table holds each
+/// value once for the clause that asks it, whatever the number of sites, and looks a node up by one
+/// hash of its address. The SIZE of what it copies, by exact counts of copies and of values
+/// (`BEFORE_THE_WILDCARD_CLONED_NODES`), is pinned by
+/// `the_value_before_the_wildcard_table_copies_each_value_once_over_two_value_paths_under_one_member` over
+/// its eleven rows, the two-document and the three-interleaved shapes among them (each value a row asks
+/// is asked within one clause, so the clear between clauses changes no count), each red under a table
+/// that stores nothing; the bound's own cost is pinned by
+/// `the_value_before_the_wildcard_table_lives_for_one_clause`, red under a planted
+/// two-copy table.
 #[derive(Default)]
 pub(crate) struct ValueBeforeClones {
-    latest: Option<(String, Rc<PathAwareValue>)>,
+    /// The copies, by the address of the node each copies: at most `VALUE_BEFORE_COPIES_MAX`, the first
+    /// values the clause asked; a keep at the bound goes to `latest`. Read by key alone (a lookup, the
+    /// count, the clear), so the table keeps no order.
+    copies: HashMap<usize, Rc<PathAwareValue>>,
+    /// The one LATEST slot beside the bounded table: the copy of the newest value asked once the table is
+    /// full, keyed by its node and replaced by the next such value. It keeps the single-slot guarantee for
+    /// back-to-back asks (a clause that asks the seventeenth value once per statement, the statements one
+    /// after another, copies it once) while the table keeps the guarantee for interleaved asks; without
+    /// it every value past the bound was copied again on every ask, once per statement under
+    /// `Statement[*].Condition[*][ f ]` for every policy from the seventeenth on.
+    latest: Option<(usize, Rc<PathAwareValue>)>,
+    /// The document root the held copies were made under, held from the first keep until the clause's
+    /// clear: the addresses the table is keyed by are nodes inside this one `Rc`, which cannot be freed
+    /// and reused while the table holds it, so an entry's key stays the node it was made for.
+    root: Option<Rc<PathAwareValue>>,
+    /// How many clauses are open above the table (`ClauseCopies`); the copies go when the last one ends.
+    depth: usize,
 }
 
 impl ValueBeforeClones {
-    /// How many deep copies the table holds right now: one, or none before the first.
+    /// The copy kept for `node` since the clause began, if one was made and stored (a value asked once
+    /// the table was full was copied and not stored). The address is the key, so a debug build checks
+    /// that the copy found is a copy of this node by its path (standing aside while a panic unwinds, as
+    /// every check that can run during a close does).
+    fn find(
+        &mut self,
+        node: &PathAwareValue,
+        root: &Rc<PathAwareValue>,
+    ) -> Option<Rc<PathAwareValue>> {
+        // The root the copies were made under is the one this node sits in: an address of another
+        // document could coincide with a held key, and a debug build refuses the ask rather than answer
+        // it (standing aside while a panic unwinds).
+        debug_assert!(
+            self.root.as_ref().map_or(true, |held| Rc::ptr_eq(held, root))
+                || std::thread::panicking(),
+            "the copy table was asked for a node of another document root than its copies were made under"
+        );
+        let key = node as *const PathAwareValue as usize;
+        let copy = match self.copies.get(&key) {
+            Some(copy) => Rc::clone(copy),
+            None => match &self.latest {
+                Some((latest_key, copy)) if *latest_key == key => Rc::clone(copy),
+                _ => return None,
+            },
+        };
+        debug_assert!(
+            copy.self_path() == node.self_path() || std::thread::panicking(),
+            "the copy table's address key found a copy of {} for the node at {}",
+            copy.self_path(),
+            node.self_path()
+        );
+        Some(copy)
+    }
+
+    /// Keep `copy` as the copy of `node` while the table is under its bound (`VALUE_BEFORE_COPIES_MAX`).
+    /// At the bound the table itself takes nothing more: the first values the clause asked stay, and a
+    /// later distinct value goes into the one LATEST slot (`latest`), replacing the value there, so its
+    /// back-to-back asks hit and it is copied again only when another value past the bound is asked in
+    /// between. Evicting the copy used longest ago from the table instead would make a clause that asks
+    /// more values in turn than the bound miss on EVERY ask (each ask would evict the next value asked),
+    /// where keeping the first ones re-copies only the overflow; a table that stored nothing past the
+    /// bound would copy a value asked once per statement once per statement.
+    fn keep(&mut self, node: &PathAwareValue, copy: Rc<PathAwareValue>, root: &Rc<PathAwareValue>) {
+        if self.root.is_none() {
+            self.root = Some(Rc::clone(root));
+        }
+        let key = node as *const PathAwareValue as usize;
+        if self.copies.len() >= VALUE_BEFORE_COPIES_MAX {
+            self.latest = Some((key, copy));
+            return;
+        }
+        self.copies.insert(key, copy);
+    }
+
+    /// How many deep copies the table holds right now: one per distinct value asked for since the
+    /// outermost open clause began, up to the bound, plus the latest slot once the bound is reached;
+    /// none once the clause has ended.
     #[cfg(test)]
     pub(crate) fn held(&self) -> usize {
-        usize::from(self.latest.is_some())
+        self.copies.len() + usize::from(self.latest.is_some())
+    }
+
+    /// Drop every copy, the latest slot and the hold on the document root with them: the outermost
+    /// clause has ended (`ClauseCopies`).
+    fn clear(&mut self) {
+        self.copies.clear();
+        self.latest = None;
+        self.root = None;
+    }
+}
+
+/// The most copies the bounded table (`ValueBeforeClones`) holds at once, within one clause: the first
+/// values the clause asks are stored up to this count, and a later distinct value goes into the one
+/// LATEST slot beside the table (`ValueBeforeClones::latest`), replacing the value there, so it is
+/// copied once for its back-to-back asks (a plan's seventeenth policy asked once per statement is copied
+/// once) and copied again only when another value past the bound is asked in between (never a wrong
+/// value, since a copy of a document value is the value); a clause that walks every resource of a plan
+/// holds at most sixteen of them plus the latest, and a clause that asks seventeen values in TURN per
+/// statement re-copies the seventeenth each statement and no other.
+/// Sixteen covers every shape the tests pin as linear (a member and its nested value, two or three members
+/// asked in turn, a statement's two documents) with room, and a plan of N resources asked once each copies
+/// N and holds sixteen plus the latest.
+pub(crate) const VALUE_BEFORE_COPIES_MAX: usize = 16;
+
+/// The clause boundary of the copy table (`ValueBeforeClones`): opened by the clause evaluator as it
+/// enters a clause and dropped as the clause ends, and the drop that closes the outermost clause clears
+/// the table. `None` where the resolver has no table (the test doubles), where nothing is kept and so
+/// nothing is cleared. A guard, so an error that leaves the clause early closes it too.
+pub(crate) struct ClauseCopies(Rc<RefCell<ValueBeforeClones>>);
+
+impl ClauseCopies {
+    pub(crate) fn open<'value, 'loc: 'value>(
+        resolver: &dyn EvalContext<'value, 'loc>,
+    ) -> Option<ClauseCopies> {
+        let table = resolver.value_before_the_wildcard_clones()?;
+        table.borrow_mut().depth += 1;
+        Some(ClauseCopies(table))
+    }
+}
+
+impl Drop for ClauseCopies {
+    fn drop(&mut self) {
+        let mut table = self.0.borrow_mut();
+        table.depth -= 1;
+        if table.depth == 0 {
+            table.clear();
+        }
     }
 }
 
@@ -15364,7 +16788,10 @@ fn first_scalar_entry(map: &MapValue) -> Option<(&str, &PathAwareValue)> {
 /// be enumerated, the filter would meet the intrinsic map and the lists, and `Statement[*][ Action == '*' ]
 /// empty` would pass the statement that allows everything where its one-element-list twin fails it (the
 /// shipped 3.2.1 handed the map on whole to the filter, by a static read of its release commit unmeasured against a
-/// built release). So
+/// built release). The block spelling and the key spelling after `[*]` read such a map as one object
+/// (`one_object_by_a_field`: an intrinsic entry is the string it stands for); the filter arm cannot,
+/// since the own-key enumeration below is written over maps that hold an intrinsic entry beside their
+/// members. So
 /// when the shape says collection the predicate is asked once more, the way `filter_over_a_named_map`
 /// asks it: a predicate naming a key the map holds itself while none of its map-valued entries holds it
 /// (`own_property_key`) is asking about the map, and a filter after a wildcard selects among members,
@@ -16867,10 +18294,10 @@ fn refuse_a_filter_over_one_object_lacking_the_predicates_keys(
 
 /// Deliver a wildcard-filter refusal once its text is built: the template's refusal (`Unevaluatable`),
 /// held at the clause, which fails in both polarities while the run goes on; inside a filter predicate's
-/// query the refusal's marker for the map under test (`to_refusal_result`: the undecidable marker with
-/// `refused` set), on which the predicate's clause raises and the enclosing clause fails closed rather
-/// than deselecting the entry as an absence would, and on which the filter loop whose walk returned it
-/// cuts its captures back (`captures_after_a_refused_walk`). The three refusals a filter after `[*]` or `.*` can raise
+/// query the refusal's marker for the map under test (`to_refusal_result`: the undecidable marker carrying
+/// the token its registration mints), on which the predicate's clause raises and the enclosing clause fails
+/// closed rather than deselecting the entry as an absence would, and on which the filter loop whose walk
+/// returned it cuts its captures back (`captures_after_a_refused_walk`). The three refusals a filter after `[*]` or `.*` can raise
 /// (`refuse_a_filter_over_one_object_lacking_the_predicates_keys`,
 /// `refuse_a_filter_over_a_one_object_shaped_map`, `refuse_a_filter_after_the_dot_wildcard`) build their
 /// own sentence and hand it here, so the two ways a refusal reaches the clause are written once; the
@@ -16887,7 +18314,11 @@ fn deliver_wildcard_filter_refusal(
     shape: &mut ShapeNotes<'_>,
 ) -> Result<Vec<QueryResult>> {
     if in_predicate {
-        return to_refusal_result(Rc::clone(current), text, &query[query_index..]);
+        // Registered and minted, as `refuse` registers the same text outside a predicate: the text
+        // travels as the marker's reason, and an error carrying it with no token is read as the refusal
+        // where it is written into a record (`is_refusal`).
+        let refusal = register_refusal(&text);
+        return to_refusal_result(Rc::clone(current), text, &query[query_index..], refusal);
     }
     shape.note_refused_at(Rc::clone(current));
     Err(refuse(text))
@@ -16898,9 +18329,9 @@ fn deliver_wildcard_filter_refusal(
 fn one_object_by_fragment(map: &MapValue) -> String {
     first_scalar_entry(map).map_or_else(String::new, |(scalar_key, scalar)| {
         format!(
-            ", the entry `{}` (a {}) made the map one object",
+            ", the entry `{}` ({}) made the map one object",
             template_part(scalar_key),
-            scalar.type_info()
+            scalar_entry_kind(scalar)
         )
     })
 }
@@ -16936,7 +18367,7 @@ fn read_the_object_fragment(map: &MapValue, compared: Option<&str>, written: &st
 /// (`Unevaluatable`): held at the clause,
 /// which fails in both polarities, while the run goes on. Inside a filter predicate's query it is the
 /// refusal's marker for the map under test (`to_refusal_result`: the undecidable marker a key filter
-/// nobody can decide leaves, with `refused` set so the filter loop whose walk met it cuts its captures
+/// nobody can decide leaves, with `refusal` set so the filter loop whose walk met it cuts its captures
 /// back): the predicate's clause raises on it, the entry is
 /// answered alone with the marker standing at its root while its siblings are decided and reported
 /// (`check_and_delegate_noting`'s undecidable arm), and the clause that uses the filter fails closed in
@@ -16977,14 +18408,14 @@ fn one_object_shaped_map_refusal_text(
             scalar,
             member_key,
         } => format!(
-            "`{}` then the filter met the map at {}, where the entry `{}` is a {} and cannot be a member a \
+            "`{}` then the filter met the map at {}, where the entry `{}` is {} and cannot be a member a \
              filter selects among, while the predicate names `{}`, which the map's map-valued entries \
              hold: the map is neither one object nor a collection of members, and the filter is refused \
              in both polarities. Fix or remove the entry `{}`.",
             wildcard,
             template_path(current.self_path()),
             template_part(scalar_key),
-            scalar.type_info(),
+            scalar_entry_kind(scalar),
             template_part(member_key),
             template_part(scalar_key)
         ),
@@ -17003,10 +18434,10 @@ fn one_object_shaped_map_refusal_text(
             // miss, where a filter after a key is refused having kept nothing.
             format!(
                 "`{}` then no kept entry holds a key the predicate names. `Key` is `{}`, \
-                 a key of the map itself. Write `X[*] {{ Key == value }}` or `X[*].Key == value`, where \
-                 `X` is `{}`{}",
+                 a key of the map itself. Write {}, where `X` is `{}`{}",
                 wildcard,
                 template_part(own_key),
+                own_key_remedy_spellings(current, own_key),
                 written,
                 own_key_refusal_ending(current, own_key)
             )
@@ -17014,6 +18445,352 @@ fn one_object_shaped_map_refusal_text(
         MapUnderAWildcardFilter::Collection { .. } => {
             unreachable!("a collection under a wildcard filter is enumerated, never refused")
         }
+    }
+}
+
+/// The own-key shape test for the BLOCK arm: `X[*] { Key ... }` whose `[*]` ends the query and hands a map
+/// on whole (the array-or-single reading), where a key the block's clauses read is a key of that map AND the
+/// name of one of its members (a plain member map, `Type: { .. }`) while another member holds no such key of
+/// its own. The block's `Key` would then be answered by the map's OWN entry named `Key`, not by each member,
+/// so `Resources[*] { Type exists }` over `Resources: { Type: { .. }, B: { Name: n } }` would PASS though `B`
+/// has no `Type`: a false pass. The clause is refused, in both polarities, with the member spellings as the
+/// remedy. Where EVERY member carries the key (`Resources: { Type: { Type: X }, B: { Type: Y } }`) the map is
+/// refused all the same (`own_key_names_a_member` is the one shape test of this arm and the key arm; the
+/// text then says every member holds the key, the member named like it among them), where the filter arm
+/// keeps its exemption for that shape and selects among the members; where the key's own
+/// value is a scalar (`B1: { Type: 'AWS::S3::Bucket', Properties: { .. } }`) the map is one object and the
+/// block reads its field, which is the array-or-single reading the `X[*]` remedy spellings rely on. Read in
+/// the block clause's evaluation PER VALUE, before that value's body runs: the refused map gets its own
+/// FAIL record carrying the refusal and the block's other values are evaluated and reported, so
+/// `match_all` fails on the refused map's record and `some` is settled by a passing sibling; a map that
+/// is one object by the filter arm's guards (`a_candidate_collection`: fewer than two members, or
+/// sub-maps sharing no key name) is never refused. The keys the body reads are the heads its clauses
+/// open with, read by `block_body_keys` (`leading_key` looks a leading `this.` through): an access
+/// clause's query head, a nested block's query head (`Resources[*] { Type { .. } }`), the heads a `when`
+/// block's conditions name (`{ when Type exists { .. } }`) and the query arguments of a call (`{
+/// check(Type) }`); the heads of the block's own `let` bindings; a head that is an alias of `this`
+/// followed by a key (`%v.Type` over `let v = this`); and, descending, the keys of every body that runs
+/// over the same value: a nested block over `this` or an alias of it, a `when` block's body where its
+/// condition can hold on the map under some reading (`BodyKeys`: a condition that holds by absence, or
+/// whose every key is a key of the map itself or of one of its members; `when Mode exists { Limits exists
+/// }` over a map where neither the map nor a member has a `Mode` never runs its body, so `Limits` is not
+/// read of it, and over a map whose member holds `Mode` the member-wise reading runs it, so `Limits` is
+/// read and refused where another member lacks it), and the body of a parameterized rule the block
+/// calls, read with its parameters as aliases and whatever its arguments, each rule's body once on a
+/// walk, its own `when` guarding its body the same way; each of those would be answered by the map's own
+/// entry as plainly as `Type exists` is. A nested block over a KEY runs over another value and is that
+/// block's own to judge, by this same test over the map its query hands on. Only the maps an author's
+/// `[*]` HANDED ON WHOLE are judged (`passed_on`, the retrieval's record of them, carried through a bare
+/// binding or parameter: `%r { .. }` over `let r = Resources[*]` and `%p { .. }` over `check(Resources[*])`
+/// are judged as `Resources[*] { .. }` is): a `[*]` over a list
+/// enumerates its elements, and an element that is a map of members (a statement holding `Condition`
+/// and `Nested` maps) is the author's member, not a map read as one object, so the body's keys are read
+/// of it as written; and a map one of whose entries is a non-null scalar is one object by the clause
+/// table's shape rule, so it is left alone too (the remedy spelling `Resources.B1[*] { Properties.Public
+/// == false }` reads a resource's fields and is never refused in turn).
+pub(crate) fn block_arm_own_key_refusal<'value, 'loc: 'value>(
+    query: &[QueryPart<'loc>],
+    map: &Rc<PathAwareValue>,
+    passed_on: &PassedOn,
+    block: &'value Block<'loc, GuardClause<'loc>>,
+    rules: RuleLookup<'_, 'value, 'loc>,
+    source: Option<&[QueryPart<'loc>]>,
+    body_keys: &mut Option<BodyKeys<'value>>,
+) -> Option<(String, RefusalToken)> {
+    let PathAwareValue::Map((_, entries)) = &**map else {
+        return None;
+    };
+    // The provenance test, and the only one: the map was HANDED ON WHOLE by an author's `[*]`, directly
+    // (`Resources[*] { .. }`, the query's last part) or through a bare binding or parameter that carries
+    // the retrieval's record (`let r = Resources[*]` then `%r { .. }`; `rule check(p) { %p { .. } }` called
+    // as `check(Resources[*])`, whose shapes `absorb` the binding's). A `.*`, a filter or a key after the
+    // binding (`%r.X`) passes nothing on, so the arm judges nothing there.
+    if !passed_on.maps.contains(map.self_path()) {
+        return None;
+    }
+    // `X` in the remedy, by the derivation both arms share (`own_key_remedy_x`): for a head that is a
+    // bare binding or parameter (`%r[*] { .. }`, `%r { .. }`, `%p { .. }`) the SOURCE query the name was
+    // bound to (`source`, resolved by the caller from the scope), before ITS `[*]` where it has one
+    // (`Resources` for `let r = Resources[*]`) and as written where it has none (`Resources` for `let r =
+    // Resources`); for any other head the query before its trailing `[*]`. Never the bare `%r`, since
+    // `%r.Key == value` is the key read after a binding and is refused by this same judgment.
+    let written = own_key_remedy_x(query_head_before_a_trailing_wildcard(query), source);
+    // The shape test is the one the key-spelling arm and the remedy texts read
+    // (`a_member_lacking_the_own_key`): a map one of whose entries is a non-null scalar or an intrinsic
+    // call is one object (a resource with its `Type` string, a statement with its `Effect`, a bucket's
+    // `Properties` with a `BucketName: !Sub ..`), and so is a map that is no candidate collection by
+    // the filter arm's guards (`a_candidate_collection`), so the block reads their fields as written and
+    // `Resources.B1[*] { Properties.Public == false }`, the remedy spelling the own-key refusal itself
+    // offers, is never refused in turn.
+    // The body's key tree is read ONCE per block clause (`body_keys`, the caller's slot), on the first map
+    // that passes the provenance test, and reused for every other value the clause runs over; the keys
+    // under a `when` join the set for THIS map only where the condition can hold on it under some reading
+    // (`BodyKeys::over`), in the order written, since the first qualifying key is the one the text names.
+    let keys = body_keys
+        .get_or_insert_with(|| block_body_keys(block, &[], rules, &mut KeyWalk::default()));
+    let text = keys.over(entries).into_iter().find_map(|key| {
+        own_key_names_a_member(entries, key).then(|| {
+            own_key_handed_on_whole_refusal_text(
+                map,
+                key,
+                a_member_lacking_the_own_key(entries, key),
+                "a key the block reads",
+                written.as_deref(),
+            )
+        })
+    })?;
+    // Registered as the refusal it is (`register_refusal`), in every role, so the record that carries the
+    // text is read as a refusal by the reporters and by `registered_refusals`, and the token minted here is
+    // returned with the text; the block clause writes that record for this one value in a strict role, and
+    // in a filter predicate or a gate folds the text as the block's undecided reason carrying this token
+    // (`fold_refused_body`), and goes on to the next value either way (eval.rs), so the refusal is per
+    // value and a refusal in every role.
+    let refusal = register_refusal(&text);
+    Some((text, refusal))
+}
+
+/// The refusal text the two arms over a map handed on whole write, the block arm
+/// (`block_over_a_map_handed_on_whole_reads_a_member_named_key`) and the key spelling's arm in the
+/// retrieval: one sentence, so `X[*] { Key .. }` and `X[*].Key` are refused in the same words, `reader`
+/// naming what read the key ("a key the block reads", "the key read after `[*]`") and the remedies coming
+/// from `own_key_remedy_spellings`, which never offers a spelling either arm refuses.
+fn own_key_handed_on_whole_refusal_text(
+    map: &PathAwareValue,
+    key: &str,
+    lacking: Option<&str>,
+    reader: &str,
+    written: Option<&str>,
+) -> String {
+    // `X` in the remedy is the SOURCE query the map was read by, before its `[*]` (`Resources` for
+    // `Resources[*]`, for `let r = Resources[*]` then `%r`, and for `check(Resources[*])` then `%p`),
+    // never the bare binding or parameter name: `%r.Key == value` is the key read after a binding, which
+    // this same judgment refuses, so a remedy naming `%r` would send the author back here. Where the
+    // source is not known (a binding the scope cannot resolve to a query) the sentence says so in words.
+    let x_is = match written {
+        Some(written) => format!("`{written}`"),
+        None => "the query the binding read the map by, before its `[*]`".to_string(),
+    };
+    // What the sentence says about the members is read off the map (`some_member_holds_the_own_key`),
+    // not assumed from which member was found lacking: where no member holds the key it says so, naming
+    // the lacking member among them; where one does, the member found lacking is named as the one
+    // without, and when that member is the one named like the key itself it is not "another member" of
+    // itself, so the sentence says which member lacks the key and that another carries it (by
+    // `a_member_lacking_the_own_key`'s preference the key-named member is named only then).
+    let another_holds = match map {
+        PathAwareValue::Map((_, entries)) => some_member_holds_the_own_key(entries, key),
+        _ => false,
+    };
+    // Where every member holds the key the sentence says so (`lacking` is `None`): the own entry named like
+    // the key would still answer for every member, and the member it names is the one the author did not
+    // mean when writing `Key` for each member.
+    let lacking_clause = match (another_holds, lacking) {
+        (_, None) => format!(
+            "and every member holds a `{key}` of its own, the member `{key}` among them",
+            key = key
+        ),
+        (false, Some(lacking)) => format!(
+            "and no member holds a `{key}` of its own, `{}` among them",
+            template_part(lacking),
+            key = key
+        ),
+        (true, Some(lacking)) if lacking == key => format!(
+            "and the member `{key}` holds no `{key}` of its own while another member does",
+            key = key
+        ),
+        (true, Some(lacking)) => format!(
+            "while another member, `{}`, holds no `{key}` of its own",
+            template_part(lacking),
+            key = key
+        ),
+    };
+    format!(
+        "`[*]` handed the map at path {} on as one object, and `{key}`, {reader}, is a key of that map \
+         and the name of one of its members {lacking_clause}: `{key}` would be answered by the map's own \
+         entry named `{key}`, not by each member. Write {}, where `X` is {x_is}.",
+        template_path(map.self_path()),
+        own_key_remedy_spellings(map, key),
+        key = key,
+    )
+}
+
+/// The member of `map` that lacks `key` where `key` is the map's OWN key naming a plain member of a
+/// candidate collection (`own_key_names_a_member`, the shape the block and key arms refuse), for the
+/// refusal's TEXT (`own_key_handed_on_whole_refusal_text`): `None` where that shape test fails, and `None`
+/// where every plain member map carries the key, which the text then says in its own words (the shape is
+/// refused all the same, since the map's own entry would answer for every member). Within a candidate collection the member named like
+/// the key is judged like every other: it carries the key only if its own map has that key, so
+/// `Resources: { Type: { Name: x }, B: { Type: 'AWS::S3::Bucket', Name: y } }` (the members sharing
+/// `Name`) names `Type` as the member lacking `Type`, and `Resources[*] { Type exists }` over it is refused
+/// where the own entry would have answered it.
+///
+/// Which lacking member is named is independent of the map's key order: a lacking member NOT named like
+/// the key is preferred (the first such in map order), and the key-named member is named only where every
+/// other member holds the key, so `{ Limits: { cpu }, Other: { cpu } }` names `Other` whether `Limits` or
+/// `Other` is written first (the first lacking member in map order named `Limits` with `Limits` first and
+/// `Other` with `Other` first, and the refusal's text changed with the order).
+fn a_member_lacking_the_own_key<'m>(map: &'m MapValue, key: &str) -> Option<&'m str> {
+    if !own_key_names_a_member(map, key) {
+        return None;
+    }
+    let lacking = |(_, entry): &(&String, &PathAwareValue)| {
+        plain_member_map(entry)
+            && !matches!(entry, PathAwareValue::Map((_, inner)) if inner.values.contains_key(key))
+    };
+    let members = || {
+        map.values
+            .iter()
+            .filter(|(name, _)| !is_intrinsic_directive_key(name))
+    };
+    members()
+        .find(|member| member.0 != key && lacking(member))
+        .or_else(|| members().find(lacking))
+        .map(|(name, _)| name.as_str())
+}
+
+/// Whether `key` is `map`'s OWN key naming a plain member of a candidate collection: the one shape test the
+/// block arm (`block_arm_own_key_refusal`) and the key spelling's arm read, and the shape under which the
+/// filter arm's refusals stop offering the block spelling (`own_key_remedy_spellings`). `[*]` hands the map
+/// on whole, so `X[*] { Key .. }` and `X[*].Key` are answered by the map's own entry named `Key` for every
+/// member, whether or not each member carries the key: a member lacking it is a false pass, and a map
+/// whose every member carries it (`Resources: { Type: { Type: X }, B: { Type: Y } }`) reads the member
+/// named `Type` where the author meant each member's own `Type` (the called rule `when Type == 'T' { Name
+/// exists }` over such a map SKIPPED at exit 0 while `B` lacked `Name`), so both are refused and the text
+/// says which it met (`a_member_lacking_the_own_key`). `false` where an entry of the map is a non-null
+/// scalar or an intrinsic call (the map is one object and the block reads its fields,
+/// `one_object_by_a_field`), where the key's own entry is no plain member map (a string `Type`, a list, a
+/// null, an intrinsic, an empty map: a field, not a member), and where the map is no candidate collection
+/// by the filter arm's guards (`a_candidate_collection`: fewer than two plain member maps outside directive
+/// keys, or sub-maps sharing no key name, so `Resources: { Type: { Name: x }, B: { Type: .. } }` is one
+/// object and never refused). The filter spelling keeps its own exemption (`a_member_named_like_the_key`:
+/// it enumerates the members, so a member named like the key is a selection among them).
+fn own_key_names_a_member(map: &MapValue, key: &str) -> bool {
+    // The one lookup first: a key that names no plain member map is no own key, whatever the map's
+    // shape, and the two shape scans run only for a key that is.
+    map.values.get(key).is_some_and(plain_member_map)
+        && !one_object_by_a_field(map)
+        && a_candidate_collection(map)
+}
+
+/// Whether some plain member of `map` holds `key` in its own map: the fact the own-key refusal's text
+/// states or denies beside the member it names as lacking the key
+/// (`own_key_handed_on_whole_refusal_text`). Read off the map, never assumed from which member was
+/// named: `{ Limits: { cpu }, Other: { cpu } }` has no such member, and the text said "while another
+/// member does" whenever the lacking member happened to be the key-named one.
+fn some_member_holds_the_own_key(map: &MapValue, key: &str) -> bool {
+    map.values
+        .iter()
+        .filter(|(name, _)| !is_intrinsic_directive_key(name))
+        .any(|(_, entry)| {
+            plain_member_map(entry)
+                && matches!(entry, PathAwareValue::Map((_, inner)) if inner.values.contains_key(key))
+        })
+}
+
+/// Whether `map` can be a collection of members at all, by the filter arm's own guards
+/// (`a_member_named_like_the_key` reads the same three): at least two members, counted among the
+/// entries not under a directive key (`is_intrinsic_directive_key`) and each a plain member map, whose
+/// sub-maps share at least one key name (the walk of `map_entries_share_no_key_name`, over the plain
+/// members alone: an intrinsic-call entry is no member and is read by `one_object_by_a_field`). A one-entry map
+/// (`NetworkConfiguration: { AwsvpcConfiguration: {..} }`, `Environment: { Variables: {..} }`) and a map
+/// whose sub-maps share no key name (`Resources: { Type: { Name: x }, B: { Type: .. } }`, a bucket's
+/// `Properties` of `BucketEncryption` beside `VersioningConfiguration`) are ONE OBJECT: the block spelling
+/// and the key spelling read their fields and are never refused over them. Within a candidate collection
+/// every member is judged alike, the one named like the key included
+/// (`a_member_lacking_the_own_key`).
+fn a_candidate_collection(map: &MapValue) -> bool {
+    // The shared set is read over the PLAIN members alone (the same walk `map_entries_share_no_key_name`
+    // makes, with the entries that are no member left out): an intrinsic-call entry's keys are the call's
+    // name (`Fn::Sub`, `Ref`), which no member shares, so counted in the set it would read every map
+    // holding one as "no shared key name" and make `one_object_by_a_field`'s intrinsic clause
+    // unreachable; left out, that clause is what makes such a map one object, and this test judges the
+    // members by the members.
+    let mut members = 0usize;
+    let mut shared: Option<Vec<&str>> = None;
+    for (name, entry) in map.values.iter() {
+        if is_intrinsic_directive_key(name) || !plain_member_map(entry) {
+            continue;
+        }
+        members += 1;
+        let PathAwareValue::Map((_, inner)) = entry else {
+            continue;
+        };
+        match shared.as_mut() {
+            None => shared = Some(inner.values.keys().map(String::as_str).collect()),
+            Some(candidates) => {
+                candidates.retain(|key| inner.values.contains_key(*key));
+                if candidates.is_empty() {
+                    return false;
+                }
+            }
+        }
+    }
+    members >= 2
+}
+
+/// The spellings an own-key refusal offers in place of the refused clause, for `X`, the query the author
+/// wrote before the filter or the wildcard, and `Key`, the map's own key the predicate or the block
+/// names: one sentence for the filter arm's refusals and the block arm's, built here so the two cannot
+/// drift and neither offers a spelling the other refuses. Where the block arm would refuse `X[*] { Key ==
+/// value }` over this map (`a_member_lacking_the_own_key`: a map of nothing but plain member maps and
+/// lists, `Key` naming one of them while another lacks it) that spelling is not offered: the direct path
+/// `X.Key == value`, which reads the map as one object, and the member spellings, which read each
+/// member's own `Key`, are, and the author chooses the reading the map was written in. Otherwise the two
+/// spellings that read a map and a list of such maps alike, `X[*] { Key == value }` and `X[*].Key ==
+/// value`, since the map in hand may be either (an IAM `Statement` is written both ways).
+fn own_key_remedy_spellings(map: &PathAwareValue, key: &str) -> &'static str {
+    own_key_spelling_pair(map, key).remedy
+}
+
+/// The own-key spellings every own-key text names, in the grammar of each: `remedy` for a refusal's
+/// "Write ..." and `hint` for an undecided hint's "a map meant as one object is read with ..." over a map
+/// the query named by a key; `in_block_remedy` and `in_block_hint` for the same two sentences over a
+/// MEMBER the block already stands in (`this[ Key == value ]` inside `X[*] { .. }`), which lead with the
+/// in-block spelling `{ Key == value }` where it is not refused in turn.
+struct OwnKeySpellings {
+    remedy: &'static str,
+    hint: &'static str,
+    in_block_remedy: &'static str,
+    in_block_hint: &'static str,
+}
+
+/// The own-key spellings, decided ONCE for every own-key text: the refusal texts
+/// (`own_key_remedy_spellings`, `filter_over_a_member_map_refusal`'s in-block arm) and the undecided
+/// hints (`own_key_hint_spellings`, `own_key_hint_after_a_key`'s in-block arm) read one shape test,
+/// `own_key_names_a_member` (`a_member_lacking_the_own_key` serves the texts' member sentence alone, and
+/// reads `None` where every member carries the key), so no text can offer a spelling the block arm refuses while another
+/// does not, by construction. Where the block arm would refuse `X[*] { Key == value }` over this map, every
+/// grammar names the direct path (the map as one object) and the member spellings (each member's own
+/// `Key`), and the in-block grammars drop `{ Key == value }` in the block, which is that refused spelling
+/// written from inside (`Rules[*] { Action == 'allow' }` over a `Rules` whose own key `Action` names a
+/// member `Other` lacks); otherwise every grammar names the two spellings that read a map and a list of
+/// such maps alike, the in-block ones leading with `{ Key == value }` in the block.
+fn own_key_spelling_pair(map: &PathAwareValue, key: &str) -> OwnKeySpellings {
+    match map {
+        PathAwareValue::Map((_, entries)) if own_key_names_a_member(entries, key) => {
+            OwnKeySpellings {
+                remedy:
+                    "`X.Key == value` to read `X` as one object, or `X.*.Key` or `X.* { Key == \
+                         value }` to read each member's own `Key`",
+                hint:
+                    "`X.Key == value`, and each member's own `Key` with `X.*.Key` or `X.* { Key == \
+                       value }`",
+                in_block_remedy:
+                    "`X.Key == value` to read `X` as one object, or `X.*.Key` or `X.* { \
+                                  Key == value }` to read each member's own `Key`",
+                in_block_hint:
+                    "`X.Key == value`, and each member's own `Key` with `X.*.Key` or `X.* \
+                                { Key == value }`",
+            }
+        }
+        _ => OwnKeySpellings {
+            remedy: "`X[*] { Key == value }` or `X[*].Key == value`",
+            hint: "`X[*] { Key == value }` or `X[*].Key == value`",
+            in_block_remedy:
+                "`{ Key == value }` in the block, or `X[*] { Key == value }` or `X[*].Key \
+                              == value`",
+            in_block_hint: "`{ Key == value }` in the block, or with `X[*] { Key == value }` or \
+                            `X[*].Key == value`",
+        },
     }
 }
 
@@ -17029,6 +18806,48 @@ fn query_before_the_wildcard_as_written(query: &[QueryPart<'_>], query_index: us
     }
     .as_written()
     .unwrap_or_else(|| SliceDisplay(&query[..query_index]).to_string())
+}
+
+/// `X` in the own-key remedy over a map handed on whole, the ONE derivation both arms read (the block arm,
+/// `block_arm_own_key_refusal`, and the key spelling's arm in the retrieval), so `%r[*] { Key .. }` and
+/// `%r[*].Key` name the same `X`. `head` is the clause query before the wildcard that handed the map on:
+/// `%r` for `%r[*] { .. }` and for `%r[*].A.S`, `Resources` for `Resources[*] { .. }`, and the whole query
+/// `%r` for `%r { .. }`, whose `[*]` sits in the binding. A head that is a bare binding or parameter name
+/// takes the SOURCE query the name was bound to (`source`, the caller's `binding_source_query`): the source
+/// before ITS wildcard where it ends in one (`Resources` for `let r = Resources[*]`), else the source as
+/// written (`Resources` for `let r = Resources`, the author's `[*]` sitting after the binding); never the
+/// bare `%r`, since `%r.Key == value` is the key read after a binding, which this same judgment refuses, so
+/// a remedy naming `%r` would send the author back here, and never the words for a source with no
+/// wildcard, which has an `X` the author can write. Any other head is `X` as the author wrote it, the
+/// clause query before its own wildcard. `None` for a bare name the scope cannot resolve to a query; the
+/// sentence then names `X` in words (`own_key_handed_on_whole_refusal_text`).
+pub(crate) fn own_key_remedy_x(
+    head: &[QueryPart<'_>],
+    source: Option<&[QueryPart<'_>]>,
+) -> Option<String> {
+    match head {
+        [QueryPart::Variable(_)] => source.map(|source| match source.last() {
+            Some(QueryPart::AllIndices(..) | QueryPart::AuthoredIndices) => {
+                query_before_the_wildcard_as_written(source, source.len() - 1)
+            }
+            // The whole source: the index past its last part names no wildcard, so the slice is the
+            // source as written.
+            _ => query_before_the_wildcard_as_written(source, source.len()),
+        }),
+        _ => Some(query_before_the_wildcard_as_written(head, head.len())),
+    }
+}
+
+/// The head `own_key_remedy_x` reads for a BLOCK clause: its query before a trailing wildcard (`%r` for
+/// `%r[*]`, `Resources` for `Resources[*]`), or the whole query where it ends in a key or a bare name
+/// (`%r`, whose `[*]` the binding carries). The caller resolves a bare-name head to its source.
+pub(crate) fn query_head_before_a_trailing_wildcard<'q, 'loc>(
+    query: &'q [QueryPart<'loc>],
+) -> &'q [QueryPart<'loc>] {
+    match query.last() {
+        Some(QueryPart::AllIndices(..) | QueryPart::AuthoredIndices) => &query[..query.len() - 1],
+        _ => query,
+    }
 }
 
 /// A filter after the author's `[*]` or `.*` over a no-scalar map whose own key the predicate names
@@ -17200,7 +19019,7 @@ fn enumerate_under_an_own_key_filter<'value, 'loc: 'value>(
         match (grounded.kept.get(), grounded.undecided.get()) {
             (true, _) => (Vec::new(), None),
             (false, true) => {
-                let hint = own_key_hint_after_a_wildcard(wildcard, own_key);
+                let hint = own_key_hint_after_a_wildcard(wildcard, own_key, current);
                 let markers = entries
                     .iter()
                     .flat_map(|entry| match entry {
@@ -17219,8 +19038,16 @@ fn enumerate_under_an_own_key_filter<'value, 'loc: 'value>(
                     query,
                     query_index,
                 );
+                // Registered as `deliver_wildcard_filter_refusal` registers its text, so an error carrying
+                // it with no token is read as the refusal where it is written into a record.
+                let refusal = register_refusal(&text);
                 (
-                    to_refusal_result(Rc::clone(current), text.clone(), &query[query_index..])?,
+                    to_refusal_result(
+                        Rc::clone(current),
+                        text.clone(),
+                        &query[query_index..],
+                        refusal,
+                    )?,
                     Some(text),
                 )
             }
@@ -17342,7 +19169,7 @@ fn enumerate_under_an_own_key_filter<'value, 'loc: 'value>(
     match refusal {
         None => Ok(bound),
         // The refusal is delivered as every wildcard-filter refusal is: inside a predicate the
-        // refusal's marker for the map under test (`refused` set), the one the cut above gave the
+        // refusal's marker for the map under test (`refusal` set), the one the cut above gave the
         // captures, is the clause's answer; outside one the refusal is raised, held at this clause while
         // the rule goes on.
         Some(text) => {
@@ -17401,6 +19228,7 @@ fn walk_held_entries<'value, 'loc: 'value>(
                     root_from: RootProvenance::of(query),
                     empty_selection: None,
                 };
+                let walk = RefusalFrame::open();
                 let walked = query_retrieval_with_converter(
                     query_index + 2,
                     query,
@@ -17427,6 +19255,7 @@ fn walk_held_entries<'value, 'loc: 'value>(
                     &value,
                     &query[query_index..],
                     in_predicate,
+                    &walk,
                     walked,
                 );
                 match walked {
@@ -17745,6 +19574,7 @@ fn wildcard_entry_closure<'value, 'loc: 'value>(
         // query makes under this entry (`Resources.*.Properties.Cfg[*][ x | ... ].Peers[ this IN %x ]`) is
         // read under this entry alone, so a resource reads the same wherever it sits in the document.
         context.begin_capture_entry();
+        let walk = RefusalFrame::open();
         let walked = query_retrieval_with_converter(
             index,
             query,
@@ -17762,6 +19592,7 @@ fn wildcard_entry_closure<'value, 'loc: 'value>(
             &value,
             &query[index - 1..],
             in_predicate,
+            &walk,
             walked,
         )
     }
@@ -17893,26 +19724,26 @@ fn refuse_a_filter_after_the_dot_wildcard(
             scalar,
             predicate_names_a_key: true,
         } => format!(
-            "`.*` then the filter met the map at {}, whose entry `{}` is a {} and every entry is a \
+            "`.*` then the filter met the map at {}, whose entry `{}` is {} and every entry is a \
              scalar, so the map is one object rather than a collection of members; `.*` enumerates \
              entries and has no array-or-single reading, and the filter is refused in both polarities. \
              Write `[*]` before the filter to read one object and a list of them alike.",
             template_path(current.self_path()),
             template_part(scalar_key),
-            scalar.type_info()
+            scalar_entry_kind(scalar)
         ),
         DotWildcardFilterRefusal::AllScalars {
             scalar_key,
             scalar,
             predicate_names_a_key: false,
         } => format!(
-            "`.*` then the filter met the map at {}, whose entry `{}` is a {} and every entry is a \
+            "`.*` then the filter met the map at {}, whose entry `{}` is {} and every entry is a \
              scalar, so the map is one object rather than a collection of members; `.*` enumerates its \
              scalars, which a predicate over `this` cannot test as members, and the filter is refused \
              in both polarities. Read the entries by key, or write the predicate for the map itself.",
             template_path(current.self_path()),
             template_part(scalar_key),
-            scalar.type_info()
+            scalar_entry_kind(scalar)
         ),
         DotWildcardFilterRefusal::OwnKey { .. } => {
             unreachable!("the own-key case under `.*` runs enumerate_under_an_own_key_filter")
@@ -17971,6 +19802,22 @@ fn capture_not_bound_reason(
         current.type_info(),
         template_path(current.self_path())
     )
+}
+
+/// Whether `text` is a reason `capture_not_bound_reason` built: the one refusal whose warning is written
+/// where it is raised (`announce_unbound_capture`, once per clause and input, whatever answers for it
+/// afterwards, in words that name the capture, the filter and what becomes of the clause), so the
+/// refused-read line a decided clause writes for the refusals it never raised (`eval::binary_operation`
+/// through `EvalContext::record_unraised_refusal`) leaves it out: that line exists so a refusal a sibling
+/// decided past is not silent, and this one is announced already; written too, one refusal would be
+/// reported twice at one clause in two wordings. Read by the three fixed phrases the builder writes
+/// around its parts, in their order, so a template key or a query text that holds one of them cannot
+/// pass for it.
+pub(crate) fn is_capture_not_bound_reason(text: &str) -> bool {
+    text.starts_with("Query ")
+        && text.contains(" declares the capture `")
+        && text
+            .ends_with("; a capture is bound by a filter over a named collection, or over a list")
 }
 
 /// Select among a list's members with the filter at `query_index`, continuing past it with each
@@ -18046,15 +19893,25 @@ fn select_list_members<'value, 'loc: 'value>(
             root_from: RootProvenance::of(query),
             empty_selection: None,
         };
-        let evaluated = super::eval::eval_conjunction_clauses(
-            conjunctions,
-            &mut val_resolver,
-            // A filter predicate selects values; it is a test, not an
-            // assertion and not a gate. A value the predicate does not hold
-            // for -- an empty collection included -- is deselected; an
-            // unevaluatable clause leaves the filter as an error.
-            |gc, r| super::eval::eval_guard_clause(gc, r, super::eval::ClauseRole::Filter),
-        );
+        // This member's run has its own frame (`RefusalFrame`), as the map arm's run has
+        // (`run_filter_predicate`): a refusal minted inside this member's predicate marks the member's
+        // marker a refusal, one minted before it (a capture's marker read here) does not. Pushed onto
+        // the context's stack for the body and popped after it, as the map arm pushes its own
+        // (`with_refusal_frame`), so every fold the body reaches ranks by the live frames
+        // (`RefusalFrames::rank`). A sibling member's frame is popped before this one is pushed, so the
+        // stack holds one member's frame at a time, at the depth of the run enclosing the list.
+        let frame = RefusalFrame::open();
+        let evaluated = with_refusal_frame(&mut val_resolver, frame, |val_resolver| {
+            super::eval::eval_conjunction_clauses(
+                conjunctions,
+                val_resolver,
+                // A filter predicate selects values; it is a test, not an
+                // assertion and not a gate. A value the predicate does not hold
+                // for -- an empty collection included -- is deselected; an
+                // unevaluatable clause leaves the filter as an error.
+                |gc, r| super::eval::eval_guard_clause(gc, r, super::eval::ClauseRole::Filter),
+            )
+        });
         let result = match evaluated {
             Ok(Status::PASS) => {
                 segment.end_record(&context, RecordType::Filter(Status::PASS))?;
@@ -18070,6 +19927,7 @@ fn select_list_members<'value, 'loc: 'value>(
                         )?;
                     }
                 }
+                let walk = RefusalFrame::open();
                 let walked = query_retrieval_with_converter(
                     query_index + 1,
                     query,
@@ -18087,6 +19945,7 @@ fn select_list_members<'value, 'loc: 'value>(
                     &each,
                     &query[query_index..],
                     in_predicate,
+                    &walk,
                     walked,
                 )?
             }
@@ -18097,12 +19956,24 @@ fn select_list_members<'value, 'loc: 'value>(
             }
 
             // This member's answer, not the list's, and the capture's when the filter declares one; see
-            // the same arm in `check_and_delegate_noting`.
-            Err(Error::UndecidableComparison(reason)) => {
+            // the same arm in `check_and_delegate_noting`. A refusal minted inside this member's run
+            // (the ending error's token at or past the frame's start) is the member's REFUSAL marker, as
+            // the map arm's is (`run_filter_predicate`); any other undecided raise leaves it plain, the
+            // raise's token carried on the plain marker for the run enclosing this one, as there.
+            Err(Error::UndecidableComparison(reason, refusal)) => {
                 drop(segment);
                 resolver.end_record(&context, RecordType::Filter(Status::FAIL))?;
-                let marker =
-                    to_undecidable_result(Rc::clone(&each), reason, &query[query_index..])?;
+                let marker = match frame.minted_inside(refusal) {
+                    Some(refusal) => {
+                        to_refusal_result(Rc::clone(&each), reason, &query[query_index..], refusal)?
+                    }
+                    None => to_undecidable_result(
+                        Rc::clone(&each),
+                        reason,
+                        &query[query_index..],
+                        refusal,
+                    )?,
+                };
                 if let Some(capture) = name {
                     // The one mark point of the clause is the first bind of the name, held or
                     // undecided: an undecided member before the first held one is cut with the rest.
@@ -18299,7 +20170,6 @@ fn query_retrieval_with_converter<'value, 'loc: 'value>(
     if query_index >= query.len() {
         return Ok(vec![QueryResult::Resolved(Rc::clone(&current))]);
     }
-
     // A block body running over the EMPTY selection a one-object filter left
     // (`EvalContext::empty_selection`): its `this`- and key-rooted queries are answered from the
     // filter's note, read by read, before any value is reached, since there is no value; a
@@ -18344,10 +20214,13 @@ fn query_retrieval_with_converter<'value, 'loc: 'value>(
         };
         let retrieved = resolver.resolve_variable(variable_name)?;
         // Where the author's parts resume over what the binding handed back: at slot 1, or past it.
-        // Decided once, before the values are walked, because it reads the query's shape and the
-        // binding and never a value, and both arms below read it: the resolved arm walks the rest of
-        // the query from here, and the unresolved arm asks whether selection begins here. The note in
-        // the resolved arm is why the slot is consumed when it is.
+        // The default is decided here from the query's shape and the binding, before the values are
+        // walked, and both arms below read it: the unresolved arm asks whether selection begins here,
+        // and the resolved arm walks the rest of the query from here for every value but one kind. A
+        // value the binding's `PassedOn` record names (a map the author's `[*]` handed on whole) with a
+        // key written next resumes AT the slot instead (`key_read_of_a_map_handed_on`, per value in the
+        // resolved arm), so the key read after the binding is judged as the author's `[*]` would judge
+        // it. The note in the resolved arm is why the slot is consumed when it is.
         let slot_is_the_authors =
             matches!(query.get(query_index + 1), Some(QueryPart::AuthoredIndices));
         let enumerated_elsewhere = !slot_is_the_authors
@@ -18359,7 +20232,10 @@ fn query_retrieval_with_converter<'value, 'loc: 'value>(
         // Where the binding itself enumerated, as the retrieval that produced `retrieved` reported it,
         // folded into this query's record before its values are walked: `let allowed = Types[*]` read as
         // `%allowed` is the set `Types[*]` is, and read as `%allowed.X` that enumeration is an earlier
-        // part. A binding to a literal or a capture names its value and leaves no mark. Read after the
+        // part. A binding to a literal or a capture names its value and leaves no mark. A projecting
+        // binding whose `[*]` met a map and handed it on whole (`let r = Resources[*]` over the
+        // `Resources` map) carries that map in its `PassedOn` record, which the resolved arm below reads
+        // per value to judge a key read after the binding. Read after the
         // one resolution above and never by resolving again: `variable_shape` only reads the shape that
         // resolution recorded, under the same `Visible` reading the resolution used, so the values and
         // the shape come from one source and no filter record or capture is made twice.
@@ -18559,8 +20435,10 @@ fn query_retrieval_with_converter<'value, 'loc: 'value>(
                 }
                 QueryResult::Literal(value) | QueryResult::Resolved(value) => {
                     resolver.begin_capture_entry();
-                    // The `index` tested below is decided once, above the loop, and this note is why
-                    // it lands where it does.
+                    // The default `index` is decided above the loop and re-read per value just above
+                    // (`key_read_of_a_map_handed_on`: a map the binding's record names, with a key
+                    // written next, resumes at the slot); this note is why the default lands where it
+                    // does.
                     //
                     // Slot 1 of a variable-rooted query is the no-op `access_query` reserves; see the
                     // comment there for why the author's first written part cannot land in it. Consuming
@@ -18745,6 +20623,28 @@ fn query_retrieval_with_converter<'value, 'loc: 'value>(
                         }
                     }
 
+                    // The key read after a binding of the author's `[*]` (`let r = Resources[*]` then
+                    // `%r.A.S`; `check(Resources[*])` with `%p.A.S`) takes the key spelling's judgment
+                    // where the binding's `[*]` handed THIS map on whole, as the binding's record says
+                    // (`binding_passed_on.maps`, the provenance the block arm tests): that `[*]`
+                    // enumerated nothing for the map, so the enumeration the reserved slot stands for is
+                    // still owed, and the slot is walked for this value, where the `[*]` arm judges the
+                    // key after it (`handed_on_by_the_binding`) with the remedy's `X` resolved from the
+                    // binding's source query. The binding projected (`binding_enumerated`), so for every
+                    // other value the slot stays consumed as decided above: a list's elements are never
+                    // recorded (the record holds maps handed on whole), so `let r = X[*]` over a LIST then
+                    // `%r.Allow.Ports` reads each element's `Allow` as `X[*].Allow.Ports` does, whatever
+                    // the element's own keys name. A binding to the map itself (`let r = Resources`) hands
+                    // nothing on, so `%r.A.S` reads the member as written. A key next, and only a key: a
+                    // filter after the slot keeps the arm the consumed slot gives it.
+                    let key_read_of_a_map_handed_on = enumerated_elsewhere
+                        && reads_the_reader_slot(query, query_index + 1)
+                        && matches!(query.get(query_index + 2), Some(QueryPart::Key(_)))
+                        && binding_passed_on.maps().contains(value.self_path());
+                    let index = match key_read_of_a_map_handed_on {
+                        true => query_index + 1,
+                        false => index,
+                    };
                     if index < query.len() {
                         // The rest of the query runs over the bound value. Whether that value is
                         // the document's population is answered by the variable's binding, not by
@@ -18966,7 +20866,7 @@ fn query_retrieval_with_converter<'value, 'loc: 'value>(
                             match each_key {
                                 // The marker a filter loop left in the capture for an entry whose
                                 // predicate could not be decided, or for a walk whose continuation was
-                                // refused (`refused` set, the marker `rebind_to_markers` gives a cut
+                                // refused (`refusal` set, the marker `rebind_to_markers` gives a cut
                                 // capture), keeps its undecidable reading through the walk: the read of
                                 // `%b` is undecidable there and the clause fails closed on it, where the
                                 // ordinary unresolved result below reads as a key the map lacks, which a
@@ -19336,8 +21236,10 @@ fn query_retrieval_with_converter<'value, 'loc: 'value>(
                     // polarities unless it kept some entry through a clause that resolved a key of it
                     // (`enumerate_under_an_own_key_filter`; a predicate that also names a member key
                     // keeps the members it holds on, while `Action !exists` keeping every field value by
-                    // a miss is refused), naming the
-                    // key and the spellings that read the map itself and a list of such maps alike. It is not
+                    // a miss is refused), naming the key and the spellings that read the author's intent
+                    // (`own_key_remedy_spellings`; the block and key spellings read such a map as one
+                    // object, `one_object_by_a_field`, so the remedies offered are never refused in
+                    // turn). It is not
                     // read as one object: whether such a map is one object cannot be read off its shape,
                     // and reading it off the predicate's key would make `Resources[*][ BucketA exists ]`
                     // select the whole `Resources` map, the misreading refused for `Resources[ BucketA
@@ -20484,6 +22386,85 @@ fn query_retrieval_with_converter<'value, 'loc: 'value>(
                                 shape.passed_on(current.self_path());
                             }
                         }
+                        // The slot the reader inserts after a `%v` root marks no pass-through, but it
+                        // hands the map on whole all the same when the BINDING did (`let r =
+                        // Resources[*]` then `%r.A.S`; `check(Resources[*])` then `%p.A.S`): the
+                        // binding's `[*]` handed this map on unchanged, as its record says
+                        // (`PassedOn::maps`, the provenance the block arm tests), so the key after the
+                        // slot is the key spelling's read and is judged below as `%r[*].A.S` would be.
+                        // The record, never the source query's syntax: `let r = X[*]` over a LIST ends in
+                        // `[*]` too, but its values are the elements, none handed on whole, so
+                        // `%r.Allow.Ports` reads each element's `Allow` as `X[*].Allow.Ports` does. A
+                        // binding to the map itself (`let r = Resources`, no `[*]`) hands nothing on, and
+                        // `%r.A.S` reads the member `A` as written. A read of the shape the resolution
+                        // recorded (`variable_shape`), never a resolution again.
+                        let handed_on_by_the_binding = reader_slot
+                            && matches!(&query[..query_index], [QueryPart::Variable(name)]
+                            if resolver
+                                .variable_shape(name, MergedKeys::Visible)
+                                .1
+                                .maps()
+                                .contains(current.self_path()));
+                        if marks_pass_through || handed_on_by_the_binding {
+                            // The key spelling, `X[*].Key`, reads the map's own key as the block
+                            // spelling reads it, so it takes the block arm's classification
+                            // (`own_key_names_a_member`, the one test both read): where `Key` is the
+                            // map's own key and the name of a member of a candidate collection, the own
+                            // entry would answer for every member, whether or not each carries the key,
+                            // and the clause is refused with the remedies that work; a map holding a
+                            // scalar or an intrinsic is one object and its field is read.
+                            if let Some(QueryPart::Key(key)) = query.get(query_index + 1) {
+                                if own_key_names_a_member(map, key) {
+                                    let lacking = a_member_lacking_the_own_key(map, key);
+                                    // `X` in the remedy, by the derivation both arms share
+                                    // (`own_key_remedy_x`): for a head that is a bare binding or
+                                    // parameter (`%r.A.S` for `let r = Resources[*]`, whose `[*]` is the
+                                    // parser's reserved slot; `%r[*].A.S` for `let r = Resources`, whose
+                                    // `[*]` the author wrote; `%p.A.S` for `check(Resources[*])`) the
+                                    // binding's SOURCE query, before ITS `[*]` where it has one and as
+                                    // written where it has none (`Resources` either way): never the bare
+                                    // `%r`, since `%r.Key == value` is the spelling judged here. For any
+                                    // other head, the query before the `[*]` as written. A source the
+                                    // scope cannot resolve to a query leaves `X` named in words.
+                                    let head = &query[..query_index];
+                                    let (reader, source) = match head {
+                                        // Read here, on the refusal path alone, which returns at once:
+                                        // one walk per map refused, never per map judged.
+                                        [QueryPart::Variable(name)] => (
+                                            "the key read after a binding of `[*]`",
+                                            binding_source_query(resolver, name)
+                                                .map(|binding| binding.query.as_slice()),
+                                        ),
+                                        _ => ("the key read after `[*]`", None),
+                                    };
+                                    let written = own_key_remedy_x(head, source);
+                                    let text = own_key_handed_on_whole_refusal_text(
+                                        &current,
+                                        key,
+                                        lacking,
+                                        reader,
+                                        written.as_deref(),
+                                    );
+                                    // PER VALUE, as the block arm's refusal is: the refused map
+                                    // yields its refusal MARKER (the undecidable marker carrying the
+                                    // refusal's token) in every role and the retrieval goes on over the
+                                    // other maps the query reaches, so inside a predicate the marker
+                                    // stands at this map and outside one the clause reads an undecided
+                                    // value the gate raises unless a sibling decides, so every other
+                                    // map's verdict is reported, as under the block spelling. The text
+                                    // is registered as the refusal it is (`register_refusal`) in every
+                                    // role, and the token minted there rides on the marker.
+                                    let refusal = register_refusal(&text);
+                                    shape.note_refused_at(Rc::clone(&current));
+                                    return to_refusal_result(
+                                        Rc::clone(&current),
+                                        text,
+                                        &query[query_index..],
+                                        refusal,
+                                    );
+                                }
+                            }
+                        }
                         query_retrieval_with_converter(
                             query_index + 1,
                             query,
@@ -21116,42 +23097,114 @@ fn query_retrieval_with_converter<'value, 'loc: 'value>(
                 // hand the marker through `undecided_map_captured`, which files it under the capture
                 // the filter declares, as the PASS keys are filed below: a capture that held the
                 // decided keys alone let a clause reading it pass over the map nobody could decide.
-                let undecided_map = |reason: String| -> Vec<QueryResult> {
-                    vec![QueryResult::UnResolved(UnResolved {
-                        traversed_to: Rc::clone(&current),
-                        remaining_query: format!("{}", SliceDisplay(&query[query_index..])),
-                        reason: Some(reason),
-                        // A map the key filter could not decide: not a refusal's marker, so a filter
-                        // loop reading it through a capture keeps its other keys, whatever the reason
-                        // wraps (`rhs_undecided` below says how a wrapped refusal is still told apart).
-                        kind: UnResolvedKind::Undecidable { refused: false },
-                    })]
-                };
+                //
+                // `carried` is the token of the error the marker is rebuilt from: `None` for a map the
+                // filter could not decide (a regex out of budget, a right-hand value the document lacks),
+                // which a filter loop reading it through a capture keeps its other keys for; the error's
+                // own token when the right-hand side was refused (the key spelling over a candidate
+                // collection, `keys IN Allowed[*].Type`, registers its refusal and the comparison's raise
+                // carries the token). The marker is PLAIN whatever it carries (`refusal` None, the kind
+                // every key filter's marker has: no refusal, `mod.rs`): this arm has no frame, so it
+                // cannot tell a token minted inside the predicate run that encloses it from one bound
+                // outside that run and read here through `%c`, and a refusal marker here would cut a
+                // filter loop's captures back on a walk that refused nothing of its own
+                // (`captures_after_a_refused_walk`). The token rides in `carried` instead: the loop whose
+                // walk met the marker reads it against the walk's own start (`refusal_markers_in`) and
+                // cuts its captures back only where the refusal was minted during that walk; a clause that
+                // raises over the marker copies it (`UnResolvedKind::refusal`), the predicate run the
+                // raise ends reads it against its own start (`RefusalFrame::minted_inside`) and answers
+                // its entry with a REFUSAL marker where the token was minted inside, so `some X !=
+                // Resources.*[ M[ keys IN Allowed[*].Type ] !empty ].Name` fails closed on the pre-pass
+                // over that entry's marker. Rebuilt with no token at all, the entry was filed plain and
+                // that clause passed on a pair beside the map nobody could decide.
+                let undecided_map =
+                    |reason: String, carried: Option<RefusalToken>| -> Vec<QueryResult> {
+                        vec![QueryResult::UnResolved(UnResolved {
+                            traversed_to: Rc::clone(&current),
+                            remaining_query: format!("{}", SliceDisplay(&query[query_index..])),
+                            reason: Some(reason),
+                            kind: UnResolvedKind::Undecidable {
+                                refusal: None,
+                                carried,
+                            },
+                        })]
+                    };
                 // The marker for a right-hand query that had no answer on this data (the query arm and
-                // the function arm below): `reason` wrapped in a sentence naming this map. When the
-                // reason is a REFUSAL the right-hand query raised (`is_refusal_text`: `refuse`
-                // registered it when the query was refused on the data, `Tags[ Key == 'Env' ].Value`
-                // over a `Tags` that is a string; a comparison the query abandoned beside a refused read
-                // carries the refusal's text), the wrapped sentence is registered as that refusal's too,
-                // so a clause that meets this marker with nothing on its left to compare
-                // (`eval::binary_operation`, its empty-selection arm) tells it from the marker a spent
-                // regex budget leaves, which no one registers, and raises on it as it raises on every
-                // refusal's marker, instead of leaving the registered refusal silent inside a decided
-                // answer. The sentence is the one the marker carried before, the map's path included, so
-                // the records that quote it are unchanged. The marker's kind is the key filter's own
-                // either way, so the arms that read a marker's KIND (the pre-pass over a positive `==`, a
-                // filter loop's capture cut-back) are unchanged.
-                let rhs_undecided = |reason: String| -> Vec<QueryResult> {
+                // the function arm below): `reason` wrapped in a sentence naming this map, with the
+                // token of the error it is rebuilt from (`refusal`, above). When the reason is a REFUSAL
+                // the right-hand query raised (`is_refusal_text`: `refuse` registered it when the query
+                // was refused on the data, `Tags[ Key == 'Env' ].Value` over a `Tags` that is a string;
+                // a comparison the query abandoned beside a refused read carries the refusal's text), the
+                // wrapped sentence is registered as that refusal's too, so a clause that meets this
+                // marker with nothing on its left to compare (`eval::binary_operation`, its
+                // empty-selection arm) tells it from the marker a spent regex budget leaves, which no one
+                // registers, and raises on it as it raises on every refusal's marker, instead of leaving
+                // the registered refusal silent inside a decided answer. The sentence is the one the
+                // marker carried before, the map's path included, so the records that quote it are
+                // unchanged. The registration's own token is not the marker's: the marker carries the
+                // raise's, so the run that reads it reads the refusal's minting, not the wrapping. The
+                // map's path is a template part (`template_path`: a control or bidirectional character
+                // as its escape, the middle cut to the bound), as every refusal text's parts are, since
+                // this sentence is printed whole where the marker's reason is raised as a refusal.
+                //
+                // The REASON is embedded whole only when it is a refusal's (registered, so kept byte for
+                // byte for the registry's one-to-one mapping); every other reason is bounded here as a
+                // marker's sentence is (`marker_part`: cut at the bound on printed characters, controls
+                // escaped, the backslash kept), because the `Unevaluatable` texts that reach the two arms
+                // below can quote the template value whole. The constructors reachable from the
+                // right-hand QUERY arm: `refuse` (registered); `eval::raised_refusal`'s numbered text
+                // (registered parts; a part the registry does not hold makes the text unregistered and
+                // bounded); the retrieval's own refusal of a filter over a value with no entries ("Query
+                // .. filters the entries of a .. at path ..", type and path, no value); and a variable
+                // projection's "returning a non-string value for key .., {:?}", the whole value as
+                // `Debug` renders it. From the FUNCTION arm: the converters' "failed to convert a string:
+                // {val} into an integer at {path}" (`parse_int`, `parse_float`, `parse_boolean`,
+                // `parse_char`, `parse_epoch`: the value whole, since a function's own `Err` leaves the
+                // dispatch through `?` where its `None` would have gone through `no_answer_for` and the
+                // bounded "had no value" arm), `join`'s "Joining non string values {v}" and "Joining
+                // unresolved values .. {traversed_to}", `json_parse`'s and `regex_replace`'s wrapped
+                // engine messages. So `keys IN parse_int(Tags)` over a five-thousand-character `Tags`
+                // put the value whole into this marker's reason, every record that quotes it and the
+                // raise's text, past the console's cut. An unconditional bound was rejected: it would cut
+                // a registered refusal's text that arrives here and cut a second time a sentence its
+                // builder bounded already (the `template_part` doubling this release's `marker_part`
+                // exists to undo), where the registered test is the split the registration below makes
+                // anyway.
+                //
+                // A reason that is a NUMBERED text of refusals (`(1) ... (2) ...`, a raise over two
+                // refusals that reached this arm; `numbered_refusal_parts`, the one parser of that
+                // grammar, read by the registered test above as well) is a refusal's text to the test
+                // above, embedded whole and unbounded, but its wrap is NOT registered where a token
+                // carries the refusal: the joined text is the one text the registry never holds, and a
+                // wrap around it would hold it inside a registered sentence. The marker carries the
+                // raise's token instead (`carried`), and a tokened marker is a refused read by its token
+                // whatever its text (`eval::refused_read_text`), so nothing is lost to the readers; the
+                // key filter's pairing classifier keeps the same rule for a numbered marker among the
+                // right-hand VALUES (`key_filter::outcome_of`). A numbered text that arrives with NO
+                // token (the `Unevaluatable` arms below hand none; a raise over two token-less registered
+                // markers carries none) has nothing but the registry to say its marker is a refused
+                // read, so its wrap is registered as any other refusal's text's is: left unregistered,
+                // every reader took the marker for a budget marker and the two refusals were silent.
+                let rhs_undecided = |reason: String,
+                                     refusal: Option<RefusalToken>|
+                 -> Vec<QueryResult> {
+                    let refusals_text = is_refusal_text(&reason);
+                    let numbered = numbered_refusal_parts(&reason).is_some();
+                    let reason = if refusals_text {
+                        reason
+                    } else {
+                        marker_part(&reason)
+                    };
                     let wrapped = format!(
                         "the right-hand side of the key filter could not be evaluated at {}: {}, so \
                          the keys it selects cannot be decided",
-                        current.self_path(),
+                        template_path(current.self_path()),
                         reason
                     );
-                    if is_refusal_text(&reason) {
-                        register_refusal(&wrapped);
+                    if refusals_text && !(numbered && refusal.is_some()) {
+                        let _registered = register_refusal(&wrapped);
                     }
-                    undecided_map(wrapped)
+                    undecided_map(wrapped, refusal)
                 };
 
                 let rhs = match &map_key_filter.compare_with {
@@ -21182,9 +23235,19 @@ fn query_retrieval_with_converter<'value, 'loc: 'value>(
                         &mut rhs_shape,
                     ) {
                         Ok(rhs) => rhs,
-                        Err(Error::Unevaluatable(reason))
-                        | Err(Error::UndecidableComparison(reason)) => {
-                            return undecided_map_captured(resolver, name, rhs_undecided(reason));
+                        Err(Error::Unevaluatable(reason)) => {
+                            return undecided_map_captured(
+                                resolver,
+                                name,
+                                rhs_undecided(reason, None),
+                            );
+                        }
+                        Err(Error::UndecidableComparison(reason, refusal)) => {
+                            return undecided_map_captured(
+                                resolver,
+                                name,
+                                rhs_undecided(reason, refusal),
+                            );
                         }
                         Err(other) => return Err(other),
                     },
@@ -21234,18 +23297,18 @@ fn query_retrieval_with_converter<'value, 'loc: 'value>(
                         // refusal of a bare right-hand query.
                         match resolve_function(function, &mut arguments) {
                             Ok(rhs) => rhs,
-                            Err(Error::UndecidableComparison(reason)) => {
+                            Err(Error::UndecidableComparison(reason, refusal)) => {
                                 return undecided_map_captured(
                                     resolver,
                                     name,
-                                    undecided_map(reason),
+                                    undecided_map(reason, refusal),
                                 );
                             }
                             Err(Error::Unevaluatable(reason)) => {
                                 return undecided_map_captured(
                                     resolver,
                                     name,
-                                    rhs_undecided(reason),
+                                    rhs_undecided(reason, None),
                                 );
                             }
                             Err(other) => return Err(other),
@@ -21300,8 +23363,12 @@ fn query_retrieval_with_converter<'value, 'loc: 'value>(
                 ) {
                     Ok(super::eval::EvaluationResult::QueryValueResult(r)) => r,
                     Ok(_) => unreachable!(),
-                    Err(Error::UndecidableComparison(reason)) => {
-                        return undecided_map_captured(resolver, name, undecided_map(reason));
+                    Err(Error::UndecidableComparison(reason, refusal)) => {
+                        return undecided_map_captured(
+                            resolver,
+                            name,
+                            undecided_map(reason, refusal),
+                        );
                     }
                     Err(other) => return Err(other),
                 };
@@ -21534,10 +23601,13 @@ pub(crate) fn root_scope_with<'value, 'loc: 'value>(
         quiet_filter_sites: HashMap::new(),
         binding_owners_memo: Rc::new(RefCell::new(BindingOwnersMemo::default())),
         binding_walk_limits: NoticeLines::default(),
+        refusal_frames: RefusalFrames::default(),
         settled_whens: BTreeSet::new(),
         settled_measurements: BTreeMap::new(),
         measurement: Measurement::Off,
+        built_at: next_scope_event(),
         document_binding_memo: Rc::new(RefCell::new(DocumentBindingMemo::default())),
+        announced_capture_refusals: Rc::new(RefCell::new(HashSet::new())),
         captured: HashMap::new(),
         capture_frames: CaptureFrames::default(),
         merged: HashMap::new(),
@@ -21722,6 +23792,7 @@ where
     BlockScope {
         deferral: Deferral::AsNestedBlock,
         built_under_measurement,
+        built_at: next_scope_event(),
         reading_undo: ReadingUndo::default(),
         resolving_let: 0,
         capture_names: block_capture_names(block),
@@ -21775,6 +23846,7 @@ pub(crate) fn capture_scope<'value, 'loc: 'value, 'eval>(
     BlockScope {
         deferral: Deferral::AsReader,
         built_under_measurement,
+        built_at: next_scope_event(),
         reading_undo: ReadingUndo::default(),
         resolving_let: 0,
         capture_names: BTreeSet::new(),
@@ -22152,7 +24224,8 @@ impl<'value, 'loc: 'value> EvalContext<'value, 'loc> for RootScope<'value, 'loc>
         })
     }
 
-    /// Owned here: one table per evaluation, never cleared (a copy of a document value is the value).
+    /// Owned here: one table per evaluation, cleared as each top-level clause ends (`ClauseCopies`); a
+    /// copy of a document value is the value, so nothing else ever invalidates one.
     fn value_before_the_wildcard_clones(&self) -> Option<Rc<RefCell<ValueBeforeClones>>> {
         Some(Rc::clone(&self.value_before_clones))
     }
@@ -22162,6 +24235,11 @@ impl<'value, 'loc: 'value> EvalContext<'value, 'loc> for RootScope<'value, 'loc>
     /// values than the run as written.
     fn document_binding_memo(&self) -> Option<Rc<RefCell<DocumentBindingMemo<'value>>>> {
         Some(Rc::clone(&self.document_binding_memo))
+    }
+
+    /// Owned here: one set per evaluation, gone with the scope.
+    fn announced_capture_refusals(&self) -> Option<Rc<RefCell<HashSet<String>>>> {
+        Some(Rc::clone(&self.announced_capture_refusals))
     }
 
     /// Owned here: one memo per evaluation, never cleared (an owner set rests on the binding stores and
@@ -22186,6 +24264,15 @@ impl<'value, 'loc: 'value> EvalContext<'value, 'loc> for RootScope<'value, 'loc>
     fn within_parameterized_call(&self) -> bool {
         // The root is outside every call; the chain of scopes ends here.
         false
+    }
+
+    /// The end of the chain: the stack itself (`RootScope::refusal_frames`), as a copy.
+    fn refusal_frames(&self) -> RefusalFrames {
+        self.refusal_frames.clone()
+    }
+
+    fn refusal_frames_mut(&mut self) -> &mut RefusalFrames {
+        &mut self.refusal_frames
     }
 
     /// The end of every chain: a name this scope does not bind is on no chain. A name bound here by a
@@ -22307,14 +24394,20 @@ impl<'value, 'loc: 'value> EvalContext<'value, 'loc> for RootScope<'value, 'loc>
             .also(map, input);
     }
 
-    /// Nothing is recorded during a measurement, as for `record_warning`. One line per capture of a
-    /// clause: the first text stands, and the same capture announced again at the same position (the
-    /// next resource a block evaluates the clause over) adds nothing, neither a text nor a count, since
-    /// the text names no value and a capture has no maps to count. Its own key kind, so a function
-    /// argument spelled like the capture at the same position keeps its own line.
-    fn record_capture_warning(&mut self, site: &FileLocation<'_>, capture: &str, notice: String) {
+    /// Nothing is recorded during a measurement, as for `record_warning`, and the call says so (`false`).
+    /// One line per capture of a clause: the first text stands, and the same capture announced again at
+    /// the same position (the next resource a block evaluates the clause over) adds nothing, neither a
+    /// text nor a count, since the text names no value and a capture has no maps to count, and the call
+    /// says a line stands (`true`) either way. Its own key kind, so a function argument spelled like the
+    /// capture at the same position keeps its own line.
+    fn record_capture_warning(
+        &mut self,
+        site: &FileLocation<'_>,
+        capture: &str,
+        notice: String,
+    ) -> bool {
         if self.measurement != Measurement::Off {
-            return;
+            return false;
         }
         self.warnings
             .entry((
@@ -22323,6 +24416,7 @@ impl<'value, 'loc: 'value> EvalContext<'value, 'loc> for RootScope<'value, 'loc>
                 capture.to_string(),
             ))
             .or_insert_with(|| SiteWarning::first(WarningKind::UnboundCapture, "", notice));
+        true
     }
 
     /// Nothing is recorded during a measurement, as for `record_warning`. One line per clause site,
@@ -24534,7 +26628,12 @@ impl<'value, 'loc: 'value, 'eval> EvalContext<'value, 'loc>
         self.parent.record_warning(site, argument, map, notice)
     }
 
-    fn record_capture_warning(&mut self, site: &FileLocation<'_>, capture: &str, notice: String) {
+    fn record_capture_warning(
+        &mut self,
+        site: &FileLocation<'_>,
+        capture: &str,
+        notice: String,
+    ) -> bool {
         self.parent.record_capture_warning(site, capture, notice)
     }
 
@@ -24847,6 +26946,11 @@ impl<'value, 'loc: 'value, 'eval> EvalContext<'value, 'loc>
         self.parent.document_binding_memo()
     }
 
+    /// Forwarded: the set is the root's.
+    fn announced_capture_refusals(&self) -> Option<Rc<RefCell<HashSet<String>>>> {
+        self.parent.announced_capture_refusals()
+    }
+
     fn binding_owners_memo(&self) -> Option<Rc<RefCell<BindingOwnersMemo<'value>>>> {
         self.parent.binding_owners_memo()
     }
@@ -24861,6 +26965,15 @@ impl<'value, 'loc: 'value, 'eval> EvalContext<'value, 'loc>
 
     fn within_parameterized_call(&self) -> bool {
         self.parent.within_parameterized_call()
+    }
+
+    /// Forwarded: the stack is the root's, and a run that opens under this scope pushes onto it there.
+    fn refusal_frames(&self) -> RefusalFrames {
+        self.parent.refusal_frames()
+    }
+
+    fn refusal_frames_mut(&mut self) -> &mut RefusalFrames {
+        self.parent.refusal_frames_mut()
     }
 
     fn rule_status(
@@ -25010,7 +27123,12 @@ impl<'value, 'loc: 'value, 'eval> EvalContext<'value, 'loc> for ValueScope<'valu
         self.parent.record_warning(site, argument, map, notice)
     }
 
-    fn record_capture_warning(&mut self, site: &FileLocation<'_>, capture: &str, notice: String) {
+    fn record_capture_warning(
+        &mut self,
+        site: &FileLocation<'_>,
+        capture: &str,
+        notice: String,
+    ) -> bool {
         self.parent.record_capture_warning(site, capture, notice)
     }
 
@@ -25243,6 +27361,11 @@ impl<'value, 'loc: 'value, 'eval> EvalContext<'value, 'loc> for ValueScope<'valu
         self.parent.document_binding_memo()
     }
 
+    /// Forwarded: the set is the root's.
+    fn announced_capture_refusals(&self) -> Option<Rc<RefCell<HashSet<String>>>> {
+        self.parent.announced_capture_refusals()
+    }
+
     fn binding_owners_memo(&self) -> Option<Rc<RefCell<BindingOwnersMemo<'value>>>> {
         self.parent.binding_owners_memo()
     }
@@ -25257,6 +27380,15 @@ impl<'value, 'loc: 'value, 'eval> EvalContext<'value, 'loc> for ValueScope<'valu
 
     fn within_parameterized_call(&self) -> bool {
         self.parent.within_parameterized_call()
+    }
+
+    /// Forwarded: the stack is the root's, and a run that opens under this scope pushes onto it there.
+    fn refusal_frames(&self) -> RefusalFrames {
+        self.parent.refusal_frames()
+    }
+
+    fn refusal_frames_mut(&mut self) -> &mut RefusalFrames {
+        self.parent.refusal_frames_mut()
     }
 
     fn rule_status(
@@ -25454,7 +27586,12 @@ impl<'value, 'loc: 'value, 'eval> EvalContext<'value, 'loc> for BlockScope<'valu
         self.parent.record_warning(site, argument, map, notice)
     }
 
-    fn record_capture_warning(&mut self, site: &FileLocation<'_>, capture: &str, notice: String) {
+    fn record_capture_warning(
+        &mut self,
+        site: &FileLocation<'_>,
+        capture: &str,
+        notice: String,
+    ) -> bool {
         self.parent.record_capture_warning(site, capture, notice)
     }
 
@@ -25948,6 +28085,11 @@ impl<'value, 'loc: 'value, 'eval> EvalContext<'value, 'loc> for BlockScope<'valu
         self.parent.document_binding_memo()
     }
 
+    /// Forwarded: the set is the root's.
+    fn announced_capture_refusals(&self) -> Option<Rc<RefCell<HashSet<String>>>> {
+        self.parent.announced_capture_refusals()
+    }
+
     fn binding_owners_memo(&self) -> Option<Rc<RefCell<BindingOwnersMemo<'value>>>> {
         self.parent.binding_owners_memo()
     }
@@ -25969,6 +28111,15 @@ impl<'value, 'loc: 'value, 'eval> EvalContext<'value, 'loc> for BlockScope<'valu
 
     fn within_parameterized_call(&self) -> bool {
         self.parent.within_parameterized_call()
+    }
+
+    /// Forwarded: the stack is the root's, and a run that opens under this scope pushes onto it there.
+    fn refusal_frames(&self) -> RefusalFrames {
+        self.parent.refusal_frames()
+    }
+
+    fn refusal_frames_mut(&mut self) -> &mut RefusalFrames {
+        self.parent.refusal_frames_mut()
     }
 
     fn rule_status(
@@ -27499,14 +29650,28 @@ fn report_all_failed_clauses_for_rules<'value>(
                     // (`reporters::validate::common::bounded_for_the_console`), so in a refusal's
                     // sentence every part quoted from the template, the path of the value the check
                     // was asked of and the value the query traversed to, is escaped and bounded as a
-                    // refusal's template parts are (`bounded_value_for_refusal`,
-                    // `escaped_template_part`). The sentence over a traversed value used to be
-                    // written as no refusal whatever the record said, since the value it quoted had
-                    // no bound to clear; that cut the refusal's remedy off the sentence at
-                    // `LONGEST_RECORDED_MESSAGE`, and a resolved value's path was quoted unbounded.
+                    // refusal's template parts are (`bounded_value_for_refusal`: the path through
+                    // `template_path`, the value through `template_part`). A record that IS a refusal
+                    // over an UNDECIDED MARKER (the record's flag AND the marker's kind,
+                    // `UnResolvedKind::is_undecidable`: the key spelling's own-key refusal standing at
+                    // the refused map, `refusal` set, or the entry's own marker, carrying the token of a
+                    // refusal a predicate below it minted inside its run, as `Resources[ Cfg[*].Limits
+                    // exists ] !empty` marks `R1`) gets a sentence that interpolates nothing: the
+                    // refusal's own text, which names the map by its bounded path and ends with the
+                    // remedy, so the console prints it whole where a sentence with the entry's value in
+                    // it would carry the value beside the refusal. The scope is every refusal carrying a
+                    // token, or registered (`is_refusal` flags the record, the token read first), met
+                    // through any undecided marker: the own-key texts of both spellings, the one-object
+                    // filter refusal, any producer's, since the marker's kind says only that the
+                    // selection was undecided and the record's flag says the reason is a refusal. A
+                    // flagged record over any other unresolved value (an absent property) keeps the
+                    // sentence with the value traversed to, bounded. The sentence over a traversed
+                    // value used to be written as no refusal whatever the record said, since the value
+                    // it quoted had no bound to clear; that cut the refusal's remedy off the sentence
+                    // at `LONGEST_RECORDED_MESSAGE`, and a resolved value's path was quoted unbounded.
                     let refusal = *refusal;
                     let rendered_path = |value: &PathAwareValue| match refusal {
-                        true => escaped_template_part(&value.self_path().to_string()),
+                        true => template_path(value.self_path()),
                         false => value.self_path().to_string(),
                     };
                     let rendered = |value: &PathAwareValue| match refusal {
@@ -27514,6 +29679,13 @@ fn report_all_failed_clauses_for_rules<'value>(
                         false => value.to_string(),
                     };
                     let (message, check) = match from {
+                        QueryResult::UnResolved(unres) if refusal && unres.kind.is_undecidable() => (
+                            error_message.clone(),
+                            UnaryCheck::UnResolved(ValueUnResolved {
+                                value: unres.clone(),
+                                comparison: (*cmp, *not),
+                            }),
+                        ),
                             // A literal reaches here through `let x = 5` followed by a unary check
                             // such as `%x empty`: the operator has no answer for a number, the
                             // clause fails, and this is the message that failure carries. It was
@@ -27610,14 +29782,26 @@ fn report_all_failed_clauses_for_rules<'value>(
                     match from {
                         QueryResult::Literal(_) => unreachable!(),
                         QueryResult::UnResolved(to_unres) => {
-                            // A left-hand side the evaluator REFUSED to read, whose record carries the
-                            // refusal's text, is named as the refusal (the error the record carries,
-                            // printed whole by the console), not as a missing property spelled with
-                            // the marker's remaining query, as the right-hand arm below names its
-                            // refusal. An absent left-hand value keeps the missing-property sentence,
-                            // beside a refused read among the right-hand values too
-                            // (`names_a_refused_read` reads the operand, not the record's flag).
-                            let message = if names_a_refused_read(to_unres, message.as_ref()) {
+                            // A left-hand side the evaluator REFUSED to read (the record's own kind,
+                            // `ComparisonClauseCheck::refusal`, over an undecided marker: the refused
+                            // map's marker, or a plain marker carrying a registered refusal's text),
+                            // whose record carries the refusal's text, is named as the refusal (the
+                            // error the record carries, printed whole by the console), not as a missing
+                            // property spelled with the marker's remaining query, as the right-hand arm
+                            // below names its refusal, and the record keeps its kind. An absent
+                            // left-hand value keeps the missing-property sentence; its record is a
+                            // refusal's all the same where a refused marker stands among the right-hand
+                            // values (the sentence then carries that refusal after the retrieval's own
+                            // reason, `eval::marker_beside_an_absence`), and the kind the report carries
+                            // is the record's, so the console prints the sentence whole on the finding's
+                            // `Error =` line (`reporters::validate::common::refusal_sentence`). Only
+                            // the choice of sentence reads the marker's kind.
+                            // The right-hand arm and the console reporter read the operand's kind alone
+                            // (`names_a_refused_read`); this arm reads the record's kind over an undecided
+                            // marker, so a plain marker carrying a refusal's token is named as the refusal
+                            // its record is.
+                            let refused_from = refusal && to_unres.kind.is_undecidable();
+                            let message = if refused_from && message.is_some() {
                                 format!(
                                     "Check was not compliant as the value to compare from could not be read.{err}",
                                     err=error_message
@@ -27899,16 +30083,34 @@ pub(crate) fn resolve_function_with_shape<'value, 'eval, 'loc: 'value>(
     Ok((results, shape, PassedOn::computed_from(read_from)))
 }
 
-/// The reason a function call is refused for its arguments before any function runs: the first argument
-/// entry that is the marker a key filter leaves for a map it could not decide, read through
-/// `eval::undecidable_reason` (the reason the filter recorded, or the path when it recorded none), and
-/// `None` when no entry is that marker. One reader for the marker, so the dispatch and the operators
-/// report a marker recorded without a reason in the same words.
+/// The error a function call is refused with for its arguments before any function runs: the pair the
+/// undecidable markers among every argument's entries fold to (`eval::undecidable_pair_among`, the one
+/// rule `keep_latest_refusal_else_first` states): the latest REFUSAL's marker's reason and token when any
+/// entry carries one, else the first marker's reason (the reason the filter recorded, or the path when it
+/// recorded none) with no token, and `None` when no entry is such a marker (a key filter's for a map it
+/// could not decide, or a refusal's delivered inside a predicate). One reader for the marker, so the
+/// dispatch and the operators report a marker recorded without a reason in the same words and carry its
+/// token alike. Before, the FIRST marker of either kind was the error, with its own token alone, so a
+/// two-argument call whose first argument held a budget marker and whose second held a refusal's marker
+/// was refused with no token and the filter predicate's entry stayed PLAIN, while the arguments reversed
+/// left it REFUSED; now the refusal's pair is the error in either order.
+pub(crate) fn undecidable_argument(
+    args: &[Vec<QueryResult>],
+    frames: RefusalFrames,
+) -> Option<Error> {
+    // Ranked by the frames of the runs the call runs under (`eval::ranking_under`), as every fold under a
+    // run is; every token at rank 0 under none.
+    let (reason, token) = super::eval::undecidable_pair_among(
+        args.iter().flatten(),
+        &super::eval::ranking_under(frames),
+    );
+    reason.map(|reason| Error::UndecidableComparison(reason, token))
+}
+
+/// The reason of `undecidable_argument`'s error, the text alone, under no frame.
+#[cfg(test)]
 pub(crate) fn undecidable_argument_reason(args: &[Vec<QueryResult>]) -> Option<String> {
-    args.iter().flatten().find_map(|entry| match entry {
-        QueryResult::UnResolved(unresolved) => super::eval::undecidable_reason(unresolved),
-        QueryResult::Resolved(_) | QueryResult::Literal(_) => None,
-    })
+    undecidable_argument(args, RefusalFrames::default()).map(|error| error.to_string())
 }
 
 /// The one resolution behind `resolve_function` and `resolve_function_with_shape`: the call's results,
@@ -28002,7 +30204,7 @@ fn resolve_function_tagged<'value, 'eval, 'loc: 'value>(
                 // clause that reads the result has read the selection, so it is not judged as one that
                 // decided on nothing read (`EmptySelection::clause_decided`).
                 // Inside a predicate the refusal's marker joins the argument, which
-                // `undecidable_argument_reason` refuses below; outside one the refusal is the clause's.
+                // `undecidable_argument` refuses below; outside one the refusal is the clause's.
                 passed_on.read_bare(in_predicate, &mut produced)?;
                 read_from.extend(passed_on.lacks_keys().iter().cloned());
                 read_from.extend(passed_on.read_from().iter().cloned());
@@ -28104,9 +30306,9 @@ fn resolve_function_tagged<'value, 'eval, 'loc: 'value>(
     // raises: the enclosing clause fails closed rather than deselecting an entry nobody could decide.
     // The marker's kind, and the text for one recorded without a reason, are read by
     // `eval::undecidable_reason`, the one reader the operators use, so the same marker is reported one
-    // way wherever it is met (`undecidable_argument_reason`).
-    if let Some(reason) = undecidable_argument_reason(&args) {
-        return Err(Error::UndecidableComparison(reason));
+    // way wherever it is met (`undecidable_argument`), and a refusal's marker carries its token on.
+    if let Some(error) = undecidable_argument(&args, resolver.refusal_frames()) {
+        return Err(error);
     }
     let results = name.call(&args)?;
     let aligned = args.first().map_or(0, Vec::len) == results.len();

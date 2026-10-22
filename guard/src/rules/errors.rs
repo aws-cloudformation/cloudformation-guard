@@ -55,8 +55,22 @@ pub enum Error {
     ///
     /// Renders as the reason alone, with no framing of its own, because each of those two sites already
     /// supplies its own and a second one reads as two errors stacked.
+    ///
+    /// The second field is the refusal token (`RefusalToken`, opaque: a consumer names it in a pattern and
+    /// neither constructs nor reads it): a count minted where the evaluator registers a refusal or
+    /// delivers one as a marker (`eval_context::mint_refusal_token`, counted up per thread and never
+    /// reused), carried by the marker a refusal leaves inside a filter predicate
+    /// (`UnResolvedKind::Undecidable`) and by the error a clause
+    /// raises over that marker or over a refused body (`eval::undecidable_selection`,
+    /// `eval::fold_refused_body`), which copy it. A filter predicate run that ends on this error reads the
+    /// token against the count at its start: a refusal minted inside the run, at any depth, marks the
+    /// entry the run was deciding a refusal; a comparison abandoned for another reason (a regular
+    /// expression out of budget, a key filter's undecided map), a refusal minted before the run began (a
+    /// capture's marker bound outside it) and an error rebuilt from its text (`Error::repeated`) carry
+    /// `None` or an earlier number, so the entry stays a plain undecided marker. The token travels in the
+    /// marker and the error, not in any store, so no address or text of a dropped error is ever compared.
     #[error("{0}")]
-    UndecidableComparison(String),
+    UndecidableComparison(String, Option<RefusalToken>),
     #[error("Comparing incoming context with literals or dynamic results wasn't possible `{0}`")]
     NotComparable(String),
     /// A clause that has no answer on this data. Raised at these sites, each through
@@ -215,9 +229,11 @@ impl Error {
 
     /// The same error again: every variant rebuilt with its own payload, so the error a file-level
     /// assignment raised the first time it was forced is the error every later read of the name raises,
-    /// variant and text alike (`Scope::failed_assignments`). The payloads that are not `Clone` are
-    /// rebuilt from what they print: a JSON or YAML error as a custom error with the same message, an
-    /// I/O error with its kind and message.
+    /// variant and text alike (`Scope::failed_assignments`), with one field left behind: an
+    /// `UndecidableComparison` is rebuilt with its reason and `None` for the refusal token, because a
+    /// later read of a failed assignment is a later raise, minted in no predicate run, so it flags no
+    /// entry. The payloads that are not `Clone` are rebuilt from what they print: a JSON or YAML error
+    /// as a custom error with the same message, an I/O error with its kind and message.
     pub(crate) fn repeated(&self) -> Error {
         match self {
             Error::JsonError(e) => {
@@ -237,7 +253,9 @@ impl Error {
             Error::MultipleValues(s) => Error::MultipleValues(s.clone()),
             Error::IncompatibleRetrievalError(s) => Error::IncompatibleRetrievalError(s.clone()),
             Error::IncompatibleError(s) => Error::IncompatibleError(s.clone()),
-            Error::UndecidableComparison(s) => Error::UndecidableComparison(s.clone()),
+            // The text alone: a later read of a failed assignment is a later raise, not the refusal's own,
+            // so the rebuilt error carries no refusal token and flags no filter predicate entry.
+            Error::UndecidableComparison(s, _) => Error::UndecidableComparison(s.clone(), None),
             Error::NotComparable(s) => Error::NotComparable(s.clone()),
             Error::Unevaluatable(s) => Error::Unevaluatable(s.clone()),
             Error::ConversionError(never) => match *never {},
@@ -282,6 +300,69 @@ impl Error {
             true => Error::IncompatibleError(message),
             false => Error::Unevaluatable(message),
         }
+    }
+
+    /// A comparison the engine could not decide, raised with no refusal token: a raise that copies no
+    /// refusal's marker (see `UndecidableComparison`'s second field; the raises over a marker copy its
+    /// token through `UnResolvedKind::refusal` instead).
+    pub(crate) fn undecidable(reason: String) -> Error {
+        Error::UndecidableComparison(reason, None)
+    }
+}
+
+/// The refusal token `Error::UndecidableComparison` carries in its second field: a per-thread count minted
+/// where the evaluator registers a refusal or delivers one as a marker (`eval_context::mint_refusal_token`),
+/// which a filter predicate run compares with the count it opened at. Opaque outside the evaluator: the
+/// field is private and there is no public constructor, so code outside this crate can name the type in a
+/// pattern (`UndecidableComparison(_, Some(_))`) and can neither forge a token nor read its count: its
+/// `Debug` form is written by hand below and prints the type's name alone, so `{:?}` of an `Error` that
+/// carries one shows no count either.
+///
+/// The type is exported, so a consumer can name it:
+///
+/// ```
+/// let _: Option<cfn_guard::RefusalToken> = None;
+/// ```
+///
+/// and cannot build one:
+///
+/// ```compile_fail
+/// let forged = cfn_guard::RefusalToken(1);
+/// ```
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub struct RefusalToken(u64);
+
+/// Prints `RefusalToken(..)` and never the count: the count is a per-thread total that differs between two
+/// evaluations of one rules file, and a derived `Debug` put it into every `{:?}` of an
+/// `Error::UndecidableComparison`, where a consumer could read what the private field withholds.
+impl std::fmt::Debug for RefusalToken {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("RefusalToken(..)")
+    }
+}
+
+impl RefusalToken {
+    /// The token for the `count`-th mint on this thread.
+    pub(crate) fn minted(count: u64) -> RefusalToken {
+        RefusalToken(count)
+    }
+
+    /// Whether this token was minted at or after the count a filter predicate run opened at
+    /// (`eval_context::RefusalFrame`): inside that run.
+    pub(crate) fn minted_at_or_after(self, count: u64) -> bool {
+        self.0 >= count
+    }
+
+    /// Whether this token was minted after `other` on the thread: the counts are one monotonic
+    /// per-thread total (`eval_context::mint_refusal_token`), so the greater count is the later mint.
+    /// Read by the pair rule every fold of undecided values keeps its reason and token by
+    /// (`eval::keep_latest_refusal_else_first`), which replaces a kept refusal with a later one so the
+    /// raise that ends a filter predicate run carries the token the run's frame reads as its own whenever
+    /// any token of the fold would be. Crate-private, as the ordering is the evaluator's own; the type
+    /// stays opaque to consumers. The counter's wrap at `u64::MAX` (`wrapping_add`) is a named limit: a
+    /// token minted after the wrap reads as earlier than one minted before it.
+    pub(crate) fn later_than(self, other: RefusalToken) -> bool {
+        self.0 > other.0
     }
 }
 

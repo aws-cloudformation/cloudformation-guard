@@ -28,6 +28,7 @@ fn test_json_parse() -> crate::rules::Result<()> {
     let mut eval = BasicQueryTesting {
         root: Rc::new(value),
         recorder: None,
+        refusal_frames: crate::rules::eval_context::RefusalFrames::default(),
     };
     let query =
         AccessQuery::try_from(r#"Resources[ Type == 'AWS::New::Service' ].Properties.Policy"#)?;
@@ -72,6 +73,7 @@ fn test_regex_replace() -> crate::rules::Result<()> {
     let mut eval = BasicQueryTesting {
         root: Rc::new(value),
         recorder: None,
+        refusal_frames: crate::rules::eval_context::RefusalFrames::default(),
     };
     let query =
         AccessQuery::try_from(r#"Resources[ Type == 'AWS::New::Service' ].Properties.Arn"#)?;
@@ -182,6 +184,7 @@ fn test_substring() -> crate::rules::Result<()> {
     let mut eval = BasicQueryTesting {
         root: Rc::new(value),
         recorder: None,
+        refusal_frames: crate::rules::eval_context::RefusalFrames::default(),
     };
     let query =
         AccessQuery::try_from(r#"Resources[ Type == 'AWS::New::Service' ].Properties.Arn"#)?;
@@ -314,6 +317,7 @@ fn query_results(document: &str, query: &str) -> crate::rules::Result<Vec<QueryR
     let mut eval = BasicQueryTesting {
         root: Rc::new(value),
         recorder: None,
+        refusal_frames: crate::rules::eval_context::RefusalFrames::default(),
     };
     eval.query(&AccessQuery::try_from(query)?.query)
 }
@@ -542,6 +546,7 @@ fn json_parse_embedded(embedded: &str) -> crate::rules::Result<Vec<Option<PathAw
     let mut eval = BasicQueryTesting {
         root: Rc::new(value),
         recorder: None,
+        refusal_frames: crate::rules::eval_context::RefusalFrames::default(),
     };
     let results = eval.query(&AccessQuery::try_from("Doc")?.query)?;
 

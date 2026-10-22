@@ -149,6 +149,7 @@ fn test_operator_eq_literal() -> crate::rules::Result<()> {
     let mut evaluator = BasicQueryTesting {
         root: Rc::new(value),
         recorder: None,
+        refusal_frames: crate::rules::eval_context::RefusalFrames::default(),
     };
     let answers = evaluator.query(&query.query)?;
     assert_eq!(answers.len(), 2);
@@ -1247,6 +1248,7 @@ fn test_operator_eq_vs_in_from_queries() -> crate::rules::Result<()> {
     let mut evaluator = BasicQueryTesting {
         root: Rc::new(value),
         recorder: None,
+        refusal_frames: crate::rules::eval_context::RefusalFrames::default(),
     };
     let lhs_answers = evaluator.query(&custom)?;
     let custom_data =
@@ -1321,6 +1323,7 @@ fn test_operator_not_eq() -> crate::rules::Result<()> {
     let mut evaluator = BasicQueryTesting {
         root: Rc::new(value),
         recorder: None,
+        refusal_frames: crate::rules::eval_context::RefusalFrames::default(),
     };
 
     let resolved_to = evaluator.query(&to_port.query)?;
@@ -1367,6 +1370,7 @@ fn not_eq_passes_for_an_unreportable_left_operand() -> crate::rules::Result<()> 
     let mut evaluator = BasicQueryTesting {
         root: Rc::new(value),
         recorder: None,
+        refusal_frames: crate::rules::eval_context::RefusalFrames::default(),
     };
 
     // ToPort is 56, and it carries a document path.

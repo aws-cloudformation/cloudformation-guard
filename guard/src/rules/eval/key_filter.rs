@@ -62,11 +62,12 @@
 
 use std::rc::Rc;
 
-use super::operators::{compare_eq_for_membership, unanswerable_reason, Unanswerable};
+use super::operators::{compare_eq_for_membership, Unanswerable};
 use super::{
-    map_key_refusal, ComparisonResult, ComparisonWithRhs, LhsRhsPair, NotComparableWithRhs,
-    UnResolvedRhs,
+    keep_latest_refusal_else_registered_else_first_ranking, map_key_refusal, ComparisonResult,
+    ComparisonWithRhs, LhsRhsPair, NotComparableWithRhs, Ranking, UnResolvedRhs,
 };
+use crate::rules::errors::RefusalToken;
 use crate::rules::eval_context::{PassedOn, RhsEnumeration};
 use crate::rules::exprs::MapKeyComparator;
 use crate::rules::path_value::{compare_eq, PathAwareValue};
@@ -302,10 +303,38 @@ pub(crate) enum KeyPairOutcome {
     /// No answer: a kind mismatch. The key is selected under neither polarity on the strength of this
     /// pairing. A right-hand value the query could not reach is not this; it is `Unfinished`, below.
     NoAnswer,
-    /// The engine gave up part way -- a regex out of backtracking budget. Not "did not match": it fails
-    /// the whole selection closed unless another pairing matched the key, which settles it under every
-    /// comparator; the string is the reason to report.
-    Unfinished(String),
+    /// The engine gave up part way -- a regex out of backtracking budget -- or the right-hand value was
+    /// one nobody could decide. Not "did not match": it fails the whole selection closed unless another
+    /// pairing matched the key, which settles it under every comparator; `reason` is the text to
+    /// report.
+    Unfinished {
+        reason: String,
+        /// The refusal's token when the right-hand value was a marker carrying one
+        /// (`UnResolvedKind::refusal`: a refusal's own marker, or a plain marker handing a token on), so
+        /// the error the fold raises carries it and a filter predicate run that ends on that error marks
+        /// its entry a refusal; `None` for a regex out of budget and for a right-hand value the query
+        /// could not reach. Dropped here, the token of an own-key refusal on the filter's right-hand side
+        /// (`keys IN Allowed[*].Type`) never reached the map's marker, and `some X != Resources.*[ M[
+        /// keys IN Allowed[*].Type ] !empty ].Name` passed over the map nobody could decide where a
+        /// refusal fails it closed. Never filtered on the marker's text: a tokened marker is a refused
+        /// read by its token whatever its reason (`eval::refused_read_text`), and a filter that dropped
+        /// the token where the text was unregistered rebuilt the map's marker plain under a second key
+        /// filter, which passed over it.
+        token: Option<RefusalToken>,
+        /// Whether `reason`, when the filter's fold over its keys keeps THIS pairing, is a sentence to
+        /// register as a refused read's (`eval_context::register_refusal`): the pairing sentence built
+        /// over a marker that stands for a refused read (`eval::is_refused_read`: a token, or a reason
+        /// the registry holds), so the map's marker, which takes the kept sentence as its reason, is
+        /// read as a refused read by text where it carries no token. Never for the wrap of a TOKENED
+        /// marker whose reason is a NUMBERED text of registered sentences
+        /// (`eval_context::numbered_refusal_parts`: the joined text the registry never holds, not even
+        /// inside a wrap; the token carries the refusal for it), nor for a regex out of budget, nor for a
+        /// right-hand value the query could not reach; a numbered text on a marker with NO token has
+        /// nothing but the registry to say it is a refused read, so its wrap is registered. Decided here,
+        /// where the marker is read once, and acted on by `real_binary_operation` for the one pairing its
+        /// fold over every key kept; among token-less pairings the fold ranks a set bit over a clear one.
+        register: bool,
+    },
 }
 
 /// The outcome a piece of evidence stands for. The class comes from the cause `map_key_refusal` took
@@ -323,7 +352,11 @@ fn outcome_of(evidence: &ComparisonResult) -> KeyPairOutcome {
             cause: Unanswerable::EngineGaveUp,
             reason,
             ..
-        }) => KeyPairOutcome::Unfinished(reason.clone()),
+        }) => KeyPairOutcome::Unfinished {
+            reason: reason.clone(),
+            token: None,
+            register: false,
+        },
         // A right-hand value the query could not reach is not a value the key differs from or equals;
         // it is a name the set was meant to hold and nobody can read. Read as "no answer" it kept the
         // key out of the selection and said nothing: `keys NOT IN %exempt` over an exemption list the
@@ -332,7 +365,56 @@ fn outcome_of(evidence: &ComparisonResult) -> KeyPairOutcome {
         // an unfinished comparison does, with a reason naming the path the retrieval stopped at and
         // the query it still had to walk.
         ComparisonResult::UnResolvedRhs(unresolved) => match unresolved.did_not_resolve_reason() {
-            Some(reason) => KeyPairOutcome::Unfinished(reason),
+            // A marker among the right-hand values that carries a token (a refusal's own, or a plain
+            // marker handing one on) carries it on, whatever its text; a marker with none, and a value
+            // the query could not reach, carry none. Whether the marker stands for a REFUSED READ is
+            // decided once, by the one predicate every reader of a marker asks
+            // (`eval::is_refused_read`: a token, or a plain marker whose own reason the registry
+            // holds), and that answer decides `register`: whether the sentence built here, when the
+            // filter's fold over its keys keeps this pairing, enters the registry so the map's marker
+            // reads as a refused read by text where it has no token. The wrap of a TOKENED marker whose
+            // reason is a NUMBERED text of registered sentences is never registered (the joined text the
+            // registry never holds, not even inside a wrap; its token carries the refusal, as it does
+            // for the arm that wraps a refused right-hand QUERY, `rhs_undecided`). This is a
+            // classifier: it writes nothing to the registry, and it re-reads nothing after this. The
+            // registration is `real_binary_operation`'s, once, for the one pairing its fold over every
+            // key kept: registered per pairing here, the wraps of the pairings the fold did NOT keep
+            // entered the registry too, texts no marker ever carried; registered per key in
+            // `select_key`, one key's wrap entered the registry while another key's sentence became
+            // the map's marker.
+            Some(reason) => {
+                let (token, register) = match &unresolved.rhs {
+                    QueryResult::UnResolved(marker) => {
+                        let inner = crate::rules::eval::undecidable_reason(marker);
+                        let inner = inner.as_deref().unwrap_or_default();
+                        let refused = crate::rules::eval::is_refused_read(marker, inner);
+                        let token = marker.kind.refusal();
+                        // The predicate reads a tokened marker as a refused read, so this holds by its
+                        // definition; it is here so a change to the predicate that drops the token
+                        // arm shows in a debug build instead of leaving a tokened pairing the
+                        // registry does not know.
+                        debug_assert!(
+                            refused || token.is_none(),
+                            "a marker carrying a token is a refused read whatever its text: {}",
+                            inner
+                        );
+                        // The wrap of a NUMBERED text is left unregistered only where the token
+                        // carries the refusal for it; a numbered text met with no token (a raise over
+                        // two token-less registered markers, whose entry a predicate run left plain
+                        // with no token to hand on) has nothing else to say the marker is a refused
+                        // read, so its wrap is registered as any other registered reason's is.
+                        let numbered =
+                            crate::rules::eval_context::numbered_refusal_parts(inner).is_some();
+                        (token, refused && !(numbered && token.is_some()))
+                    }
+                    QueryResult::Resolved(_) | QueryResult::Literal(_) => (None, false),
+                };
+                KeyPairOutcome::Unfinished {
+                    reason,
+                    token,
+                    register,
+                }
+            }
             // Built from an `UnResolved` result alone by `select_key`; a resolved value held here would
             // be a pairing that was never compared, which is still a pairing nobody decided.
             None => KeyPairOutcome::NoAnswer,
@@ -352,19 +434,55 @@ pub(crate) fn empty_set_selects(cmp: MapKeyComparator) -> bool {
     matches!(cmp, MapKeyComparator::NotEq | MapKeyComparator::NotIn)
 }
 
+/// The pairing [`key_selected_from`] kept for a key it could not decide, handed back whole: the reason
+/// and the token the filter raises for the map (`Error::UndecidableComparison`, built by the caller that
+/// folds the keys), and whether the reason is a sentence to register when that fold keeps it
+/// (`KeyPairOutcome::Unfinished::register`, read where the pairing was classified). Carried as a value
+/// rather than found again: the pairing the fold kept was once re-found over the outcomes by equality,
+/// a `RefusalToken` comparison the token's own module reads only through `later_than`, and its marker's
+/// reason re-classified, two readers of one fact that could disagree on trailing whitespace.
+#[derive(Debug, Clone)]
+pub(crate) struct KeptPairing {
+    pub(crate) reason: String,
+    pub(crate) token: Option<RefusalToken>,
+    pub(crate) register: bool,
+}
+
 /// The verdict for one key from its classified comparisons, under a comparator [`key_comparator`] has
-/// already widened. The rules are in the module comment; over no comparisons at all the answer is
-/// [`empty_set_selects`]'s.
+/// already widened, with the unfinished pairings ranked by `ranking`, the ranking of the filter predicate
+/// runs the filter runs under (`eval::ranking_under`; `eval::no_frame_ranking` under none). The rules are
+/// in the module comment; over no comparisons at all the answer is [`empty_set_selects`]'s. The ranking
+/// is a parameter because this classifier holds no evaluation context: the comparison that calls
+/// [`select_key`] holds it and hands it one call down. A key nobody could decide is the kept pairing,
+/// whole ([`KeptPairing`]).
 pub(crate) fn key_selected_from(
     cmp: MapKeyComparator,
     outcomes: &[KeyPairOutcome],
-) -> Result<bool, Error> {
+    ranking: Ranking<'_>,
+) -> Result<bool, KeptPairing> {
     if outcomes.is_empty() {
         return Ok(empty_set_selects(cmp));
     }
     let mut equal_to_one = false;
     let mut equal_to_none = true;
-    let mut unfinished: Option<&String> = None;
+    // The kept pairing's reason with its registration bit, the two read together off one outcome.
+    let mut unfinished: Option<(&String, bool)> = None;
+    // The reason and the token kept are one pairing's (`keep_latest_refusal_else_registered_else_first_ranking`):
+    // the unfinished pairing whose right-hand value was the highest-ranked refusal's marker, minted
+    // latest among those, reason and token together; else the first unfinished pairing whose sentence is
+    // one to register (a plain marker whose own reason the registry holds, a refused read by text); else
+    // the first unfinished pairing's reason, with `None`. A refusal minted inside a filter predicate run
+    // marks the run's entry wherever its marker stands among the right-hand values, so a plain unfinished
+    // pairing met first does not hide a refusal met after it, nor does an earlier-minted refusal's marker
+    // hide a later one of the same rank, and the error raised names the refusal rather than pairing
+    // another pairing's text with the refusal's token; and a spent regex budget met first does not hide
+    // a registered marker met after it, so the map's marker reads as the refused read it stands beside
+    // whatever the right-hand order. Ranked by minting alone, a token the run could not read as its own
+    // (a binding of an older scope resolved inside it) outranked the entry's own earlier refusal here,
+    // and the entry read PLAIN in one resource order and REFUSED in the other (pinned, both resource
+    // orders and both conjunct orders, by `eval_tests.rs`'s
+    // `a_key_filter_under_a_run_keeps_the_entrys_own_refusal_over_a_later_binding_resolved_token`).
+    let mut refusal: Option<RefusalToken> = None;
     for each in outcomes {
         match each {
             KeyPairOutcome::Equal(true) => {
@@ -375,8 +493,19 @@ pub(crate) fn key_selected_from(
             KeyPairOutcome::NoAnswer => equal_to_none = false,
             // Noted, not returned: whether it decides anything depends on what the other pairings
             // said, and the fold has to read them all first.
-            KeyPairOutcome::Unfinished(reason) => {
-                unfinished.get_or_insert(reason);
+            KeyPairOutcome::Unfinished {
+                reason,
+                token,
+                register,
+            } => {
+                keep_latest_refusal_else_registered_else_first_ranking(
+                    &mut unfinished,
+                    &mut refusal,
+                    reason,
+                    *register,
+                    *token,
+                    ranking,
+                );
             }
         }
     }
@@ -389,8 +518,12 @@ pub(crate) fn key_selected_from(
     if equal_to_one {
         return Ok(matches!(cmp, MapKeyComparator::Eq | MapKeyComparator::In));
     }
-    if let Some(reason) = unfinished {
-        return Err(Error::UndecidableComparison(reason.clone()));
+    if let Some((reason, register)) = unfinished {
+        return Err(KeptPairing {
+            reason: reason.clone(),
+            token: refusal,
+            register,
+        });
     }
     Ok(match cmp {
         MapKeyComparator::Eq | MapKeyComparator::In => false,
@@ -788,6 +921,18 @@ pub(crate) struct KeySelection {
     /// which lands here with the path the retrieval stopped at. The caller fails the filter closed on it
     /// for the map it was selecting from; the key is not selected meanwhile.
     pub(crate) undecided: Option<String>,
+    /// The refusal token the undecided reason carries (`KeyPairOutcome::Unfinished`), paired with it:
+    /// `Some` when the kept pairing's right-hand value was a marker carrying a token, which is the pairing
+    /// whose token ranks highest and was minted latest among those when there is one
+    /// (`keep_latest_refusal_else_first_ranking`); `None` with no undecided reason, or when none of the
+    /// key's unfinished pairings carried a token.
+    pub(crate) refusal: Option<RefusalToken>,
+    /// Whether `undecided` is a sentence to register as a refused read's when the filter's fold over its
+    /// keys keeps this key's (`KeyPairOutcome::Unfinished::register`, the kept pairing's bit); `false`
+    /// with no undecided reason. Read by `real_binary_operation` after that fold, the one place the
+    /// pairing sentence enters the registry. Nothing is registered here: a selection is one key's
+    /// verdict, and the map's marker takes the sentence of the one key the fold kept.
+    pub(crate) register: bool,
     /// One entry per right-hand value, in right-hand order: the comparison made, or the refusal, or the
     /// unresolved value that was never a value to compare against. For the records.
     pub(crate) evidence: Vec<ComparisonResult>,
@@ -797,11 +942,13 @@ pub(crate) struct KeySelection {
 ///
 /// `cmp` is the comparator [`key_comparator`] widened for this right-hand side, and `rhs` is the
 /// right-hand side expanded one level. Each right-hand value is compared once, and the same comparison
-/// is both the evidence returned and the outcome folded.
+/// is both the evidence returned and the outcome folded, by `ranking`, the ranking of the filter
+/// predicate runs the caller runs under ([`key_selected_from`]).
 pub(crate) fn select_key(
     cmp: MapKeyComparator,
     key: Rc<PathAwareValue>,
     rhs: &[QueryResult],
+    ranking: Ranking<'_>,
 ) -> KeySelection {
     let mut evidence = Vec::with_capacity(rhs.len());
     let mut outcomes = Vec::with_capacity(rhs.len());
@@ -828,21 +975,23 @@ pub(crate) fn select_key(
         evidence.push(compared);
     }
 
-    match key_selected_from(cmp, &outcomes) {
+    match key_selected_from(cmp, &outcomes, ranking) {
         Ok(selected) => KeySelection {
             selected,
             undecided: None,
+            refusal: None,
+            register: false,
             evidence,
         },
-        Err(Error::UndecidableComparison(reason)) => KeySelection {
+        Err(KeptPairing {
+            reason,
+            token,
+            register,
+        }) => KeySelection {
             selected: false,
             undecided: Some(reason),
-            evidence,
-        },
-        // `key_selected_from` has one error, named above. Anything else is still "could not decide".
-        Err(other) => KeySelection {
-            selected: false,
-            undecided: Some(unanswerable_reason(other).reason),
+            refusal: token,
+            register,
             evidence,
         },
     }
