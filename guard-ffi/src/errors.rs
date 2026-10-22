@@ -111,7 +111,7 @@ fn get_code(e: &FfiError) -> ErrorCode {
             // or template problem to correct, while a comparison the engine abandoned is a pattern to
             // simplify or an input to shorten. Reusing 11 would tell such a caller the first when it is
             // the second, and the codes are cheap.
-            Error::UndecidableComparison(_) => 26,
+            Error::UndecidableComparison(..) => 26,
             // A clause the data could not answer, which the evaluator fails closed where it can; it
             // reaches this boundary only when nothing could, and then it is a verdict, not a tool
             // fault. 27, the next free code: 22 through 26 are taken above.

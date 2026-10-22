@@ -1,0 +1,10 @@
+# Two resources sharing `Type` and `S`: a `Resources` map whose own key `A` names a member while `B`
+# holds no `A` of its own, so `Resources[*].A.S == "abc"` would read the resource `A` as the map's own
+# entry and is REFUSED, the remedy the direct path `Resources.A.S`.
+Resources:
+  A:
+    Type: AWS::Custom::Thing
+    S: abc
+  B:
+    Type: AWS::Custom::Thing
+    S: xyz

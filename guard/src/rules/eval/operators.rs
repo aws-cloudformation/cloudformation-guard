@@ -288,9 +288,13 @@ pub(crate) enum ValueEvalResult {
     /// collection's elements and so had nothing to compare.
     ///
     /// Emitted instead of nothing. The ordering operators flatten a list-valued value into its
-    /// elements, and `==` against a scalar walks them, so an empty list on its own would contribute no
-    /// result at all and the clause would pass on a comparison that never ran: `Ports: []` would satisfy
-    /// `Ports <= 100` and `Ports > 100` alike, and `%max >= Sizes` would hold over a `Sizes` of `[]`.
+    /// elements, and `==` against a scalar written in the rule walks them, so an empty list on its own
+    /// would contribute no result at all and the clause would pass on a comparison that never ran:
+    /// `Ports: []` would satisfy `Ports <= 100` and `Ports > 100` alike, and `%max >= Sizes` would hold
+    /// over a `Sizes` of `[]`. Between two queries `==` and `!=` ask the comparator for each pair whole,
+    /// so an empty document list against a scalar is a refusal of kinds there, in both polarities, and
+    /// never this result; `IN` and `NOT IN` answer it once per resolved right-hand value
+    /// (`empty_left_collection`) and the orderings once per empty collection.
     /// `docs/QUERY_AND_FILTERING.md` lists an empty collection beside a missing key and an empty map as
     /// a retrieval error, and the other two fail; this result is what makes the third fail too, per
     /// value and with the empty collection's own path, so the report names the resource whose

@@ -37,6 +37,7 @@ fn test_parse_int() -> crate::rules::Result<()> {
     let mut eval = BasicQueryTesting {
         root: Rc::new(value),
         recorder: None,
+        refusal_frames: crate::rules::eval_context::RefusalFrames::default(),
     };
 
     let string_query = AccessQuery::try_from(
@@ -145,6 +146,7 @@ fn test_parse_float() -> crate::rules::Result<()> {
     let mut eval = BasicQueryTesting {
         root: Rc::new(value),
         recorder: None,
+        refusal_frames: crate::rules::eval_context::RefusalFrames::default(),
     };
 
     let string_query = AccessQuery::try_from(
@@ -235,6 +237,7 @@ fn test_parse_boolean() -> crate::rules::Result<()> {
     let mut eval = BasicQueryTesting {
         root: Rc::new(value),
         recorder: None,
+        refusal_frames: crate::rules::eval_context::RefusalFrames::default(),
     };
 
     let string_query = AccessQuery::try_from(
@@ -317,6 +320,7 @@ fn test_parse_string() -> crate::rules::Result<()> {
     let mut eval = BasicQueryTesting {
         root: Rc::new(value),
         recorder: None,
+        refusal_frames: crate::rules::eval_context::RefusalFrames::default(),
     };
 
     let string_query = AccessQuery::try_from(
@@ -388,6 +392,7 @@ fn test_parse_char() -> crate::rules::Result<()> {
     let mut eval = BasicQueryTesting {
         root: Rc::new(value),
         recorder: None,
+        refusal_frames: crate::rules::eval_context::RefusalFrames::default(),
     };
 
     let string_query = AccessQuery::try_from(

@@ -299,11 +299,20 @@ impl Path {
     }
 }
 
-/// `{text}[{location}]`, through `shown_with_location` with the path's own text, so `Display` and a
-/// rendering of a cut text are one rendering.
+/// `{text}[{location}]`, through `fmt_shown` with the path's own text and no temporary string, so
+/// `Display` and a rendering of a cut text are one rendering.
 impl std::fmt::Display for Path {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.shown_with_location(&self.0))
+        self.fmt_shown(&self.0, f)
+    }
+}
+
+/// `shown` with a path's location, for `Path::shown_with_location`.
+struct ShownWithLocation<'a>(&'a Path, &'a str);
+
+impl std::fmt::Display for ShownWithLocation<'_> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt_shown(self.1, f)
     }
 }
 
@@ -312,12 +321,17 @@ impl Path {
         Path("".to_string(), Location::default())
     }
 
-    /// `shown`, a rendering of this path's text (the text itself, or the text with its middle cut and
-    /// marked), followed by the location: `{shown}[{location}]`. The ONE place a text is joined to the
-    /// location: `Display` passes the path's own text through it, and `eval_context::template_path`
-    /// passes the text it shows, whole or cut, so the two cannot render the location differently.
+    /// Writes `shown`, a rendering of this path's text (the text itself, or the text with its middle cut
+    /// and marked), followed by the location: `{shown}[{location}]`. The ONE place a text is joined to
+    /// the location: `Display` passes the path's own text through it, and `shown_with_location` the text
+    /// a refusal shows, whole or cut, so the two cannot render the location differently.
+    pub(crate) fn fmt_shown(&self, shown: &str, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{shown}[{}]", self.1)
+    }
+
+    /// `fmt_shown` as a string, for `eval_context::template_path`.
     pub(crate) fn shown_with_location(&self, shown: &str) -> String {
-        format!("{shown}[{}]", self.1)
+        ShownWithLocation(self, shown).to_string()
     }
 
     pub(crate) fn relative(&self) -> &str {
@@ -1732,9 +1746,35 @@ impl QueryResolver for PathAwareValue {
                     let rhs = crate::rules::eval_context::interpolated_keys(&rhs);
                     let mut selected = Vec::with_capacity(map.values.len());
                     for key in map.keys.iter() {
-                        let selection = key_filter::select_key(cmp, Rc::new(key.clone()), &rhs);
+                        // The legacy resolver runs under no filter predicate run, so every token
+                        // ranks 0 and the unfinished pairings are ranked by minting alone. The reason
+                        // this holds today, which nothing here enforces: the frames a run pushes live on
+                        // the live engine's root scope (`eval_context::RefusalFrames`, pushed by
+                        // `with_refusal_frame` in `run_filter_predicate` and `select_list_members` as
+                        // the code stands), and `QueryResolver::select` is reached from the legacy
+                        // evaluator (`evaluate.rs`, whose own root scope holds no frames) and from the
+                        // metadata appender (`commands/aws_meta_appender.rs`), from neither `eval.rs`
+                        // nor `eval_context.rs` as the code stands, so no frame is live when this runs.
+                        // A live-engine caller of this arm from inside a run would have to hand the
+                        // ranking in, as the comparison in `eval.rs` hands it to `select_key`; a caller
+                        // that did not would rank by minting alone under a live frame, the resource-order
+                        // swap the run-ranking cells in `eval_tests.rs` are written to catch, and no test
+                        // fails on the call itself.
+                        let selection = key_filter::select_key(
+                            cmp,
+                            Rc::new(key.clone()),
+                            &rhs,
+                            &crate::rules::eval::no_frame_ranking,
+                        );
                         if let Some(reason) = selection.undecided {
-                            return Err(Error::UndecidableComparison(reason));
+                            // The first undecided key is the whole selection's error here, so its
+                            // sentence is the one registered, as the evaluator registers the sentence
+                            // of the key its fold keeps (`real_binary_operation`).
+                            if selection.register {
+                                let _registered =
+                                    crate::rules::eval_context::register_refusal(&reason);
+                            }
+                            return Err(Error::undecidable(reason));
                         }
                         if selection.selected {
                             match key {

@@ -15,6 +15,7 @@ fn test_count_function() -> crate::rules::Result<()> {
     let mut eval = BasicQueryTesting {
         root: Rc::new(value),
         recorder: None,
+        refusal_frames: crate::rules::eval_context::RefusalFrames::default(),
     };
     let query = AccessQuery::try_from(r#"Resources"#)?;
     let results = eval.query(&query.query)?;
@@ -30,6 +31,7 @@ fn test_count_function() -> crate::rules::Result<()> {
     let mut eval = BasicQueryTesting {
         root: Rc::new(value),
         recorder: None,
+        refusal_frames: crate::rules::eval_context::RefusalFrames::default(),
     };
     let query = AccessQuery::try_from(r#"Resources"#)?;
     let results = eval.query(&query.query)?;
@@ -55,6 +57,7 @@ fn test_count_function() -> crate::rules::Result<()> {
     let mut eval = BasicQueryTesting {
         root: Rc::new(value),
         recorder: None,
+        refusal_frames: crate::rules::eval_context::RefusalFrames::default(),
     };
     let query = AccessQuery::try_from(r#"Resources[ Type == 'AWS::S3::Bucket' ]"#)?;
     let results = eval.query(&query.query)?;
@@ -171,6 +174,7 @@ Resources:
         let mut eval = BasicQueryTesting {
             root: Rc::new(value),
             recorder: None,
+            refusal_frames: crate::rules::eval_context::RefusalFrames::default(),
         };
         let results = eval.query(&AccessQuery::try_from(query)?.query)?;
 
@@ -363,6 +367,7 @@ fn count_does_not_invent_a_value_for_an_unresolved_selection() -> crate::rules::
         let mut eval = BasicQueryTesting {
             root: Rc::new(value),
             recorder: None,
+            refusal_frames: crate::rules::eval_context::RefusalFrames::default(),
         };
         let results = eval.query(&AccessQuery::try_from(query)?.query)?;
 

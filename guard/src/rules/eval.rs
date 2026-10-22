@@ -3,9 +3,9 @@ use super::*;
 use crate::rules::eval::operators::{Comparator, InOperation};
 use crate::rules::eval_context::{
     bare_variable_root, block_scope, bounded_value_for_refusal, capture_scope, clause_as_written,
-    escaped_template_part, function_result_alias_root, interpolated_keys, is_refusal,
-    keys_of_projection, let_value_as_written, names_the_population, query_retrieval,
-    query_retrieval_shaped, refuse, resolve_function_with_shape, without_entries,
+    function_result_alias_root, interpolated_keys, is_refusal, keys_of_projection,
+    let_value_as_written, marker_part, names_the_population, query_retrieval,
+    query_retrieval_shaped, refuse, resolve_function_with_shape, template_path, without_entries,
     without_unresolved, Asked, BindingId, BindingStep, CaptureFrames, CaptureHome, EmptySelection,
     EntryCaptures, FunctionChain, FunctionEntries, PassedOn, ProjectionKeys, QueryStart,
     RhsEnumeration, ValueScope,
@@ -32,7 +32,9 @@ pub(crate) use operators::EntryCandidates;
 /// map whose exemption list the document lacks would pass. It is not absent; nobody knows what the
 /// filter selects there. So every unary operator asks this first and raises `UndecidableComparison`,
 /// which the clause reads as unevaluatable: an assertion fails closed for that value, in either
-/// polarity, and goes on to the next value; a gate hands the error up and fails its rule closed. The
+/// polarity, and goes on to the next value; a gate hands the error up and fails its rule closed, the
+/// error being the latest-minted refusal's pair among the raising value and the values not yet met when
+/// one of them carries a token (`refused_pair_among`) and this value's own otherwise. The
 /// binary operators read the same marker in `binary_operation`'s unresolved arms, as undecided rather
 /// than as the decided absence an ordinary unresolved value is, so a `when` gate over `Map[ keys ==
 /// %exempt ].Enabled == true` fails closed too instead of reporting not applicable; and
@@ -54,7 +56,7 @@ pub(crate) use operators::EntryCandidates;
 /// (`empty`, `!exists`) hold and select every entry. A scalar met under a key keeps its reading inside a
 /// predicate; a key filter nobody can decide does not. A capture refused inside a predicate leaves the
 /// same marker for the entry under test (`eval_context::to_undecidable_result`; a wildcard filter's
-/// refusal leaves it with `refused` set, `eval_context::to_refusal_result`, and a capture can hold that
+/// refusal leaves it with `refusal` set, `eval_context::to_refusal_result`, and a capture can hold that
 /// one after the walk that met it was refused, so a `%x` compared anywhere may hold it: under `==`, `!=`
 /// and the orderings the `refused` marker takes the pre-pass over a comparison's right-hand values,
 /// `refused_read_reason`, and the other two are read pair by pair; under `IN` and `NOT IN`, and for `==`
@@ -66,22 +68,357 @@ pub(crate) use operators::EntryCandidates;
 /// entry named in the report and, for a capture, on the warning channel.
 fn undecidable_selection(value: &QueryResult) -> Option<Error> {
     match value {
-        QueryResult::UnResolved(unresolved) => {
-            undecidable_reason(unresolved).map(Error::UndecidableComparison)
-        }
+        QueryResult::UnResolved(unresolved) => undecidable_error(unresolved),
         QueryResult::Literal(_) | QueryResult::Resolved(_) => None,
+    }
+}
+
+/// The error a clause raises over an undecidable marker: `undecidable_reason`'s text, with the marker's
+/// refusal token copied into the error's second field (`UnResolvedKind::refusal`), so a refusal delivered
+/// as a marker and re-raised by `exists`, a comparison, a function call or a block's own query reaches the
+/// filter predicate run it ends as the refusal it is, and the run marks the entry it was deciding a
+/// refusal when the token says the refusal was minted inside it. A key filter's own marker carries no
+/// token, so the error carries none; the marker a key filter rebuilt from a refused right-hand side is
+/// plain too and hands that refusal's token on (`carried`), which the error takes. `None` for every other
+/// kind, as `undecidable_reason` is.
+pub(crate) fn undecidable_error(unresolved: &UnResolved) -> Option<Error> {
+    undecidable_reason(unresolved)
+        .map(|reason| Error::UndecidableComparison(reason, unresolved.kind.refusal()))
+}
+
+/// The one rule every fold of undecided values reads when it keeps a reason and a refusal token across
+/// the values it meets (the comparison evidence over its right-hand markers, the block over its own
+/// query's markers and its bodies' raises, the key filter over its keys and each key's pairings): the
+/// reason and the token travel as ONE pair, the pair of the value whose refusal token is the LATEST
+/// minted (`RefusalToken::later_than`); when no value carries a token, the first reason with `None`. A
+/// refusal minted inside a filter predicate run marks the run's entry whichever value delivered it, so a
+/// refusal met after a value nobody could decide is the one the raise carries, text and token together;
+/// the token taken alone, with the first reason kept, paired a regular expression's budget text with
+/// another value's refusal token, so the entry's refusal marker named the budget, the record that read
+/// it was flagged a refusal on the token and printed the budget text whole, and the refusal's own text
+/// was reported nowhere. Where two refusals meet in one fold the one the raise names, reason and token
+/// replaced together, is the later-minted among those the run can read as its own, and the later-minted
+/// outright where the fold runs under no run: a filter predicate run reads a token against the count it
+/// opened at and the binding ranges it excludes (`eval_context::RefusalFrame::minted_inside`), and the fold
+/// ranks by that same test (`would_replace_ranking`, the frame read off the evaluation context by
+/// `ranking_under`), so a token the run can read as its own is never outranked by one it cannot: a
+/// refusal kept whole past a later one let a capture bound outside the run and compared first (`%x IN
+/// Properties.Allowed[*].Type`, the capture holding a refusal's marker) keep its older token while the
+/// in-run refusal's token was dropped, the frame read the old token as minted before it opened, and the
+/// entry read PLAIN for a refusal minted inside it; and ranked by minting alone, a token a binding of an
+/// older scope minted inside the run outranked the entry's own earlier refusal and left the entry PLAIN
+/// in one resource order and REFUSED in the other. A kept refusal is never replaced by a token-less
+/// reason, nor by a refusal of its own class minted no later than it.
+///
+/// The cells' reader of the rule under no run: every live fold reads the ranking form
+/// (`keep_latest_refusal_else_first_ranking`) with the ranking its context's frames give, so a live caller
+/// of this form would fold the key filter's or the comparison's pairs by minting alone where the run that
+/// marks the entry ranks by ownership, and the resource-order swap would stand at that fold.
+#[cfg(test)]
+pub(crate) fn keep_latest_refusal_else_first<R>(
+    kept_reason: &mut Option<R>,
+    kept_token: &mut Option<crate::rules::errors::RefusalToken>,
+    reason: R,
+    token: Option<crate::rules::errors::RefusalToken>,
+) {
+    keep_latest_refusal_else_first_ranking(
+        kept_reason,
+        kept_token,
+        reason,
+        token,
+        &no_frame_ranking,
+    );
+}
+
+/// The pair rule under a ranking (`would_replace_ranking`, `ranking`): a fold that runs under a filter
+/// predicate run reads it with the ranking the live runs' frames give (`ranking_under` over the stack the
+/// context holds), a fold under no run with every token at rank 0 (`no_frame_ranking`).
+pub(crate) fn keep_latest_refusal_else_first_ranking<R>(
+    kept_reason: &mut Option<R>,
+    kept_token: &mut Option<crate::rules::errors::RefusalToken>,
+    reason: R,
+    token: Option<crate::rules::errors::RefusalToken>,
+    ranking: Ranking<'_>,
+) {
+    if would_replace_ranking(kept_reason.is_some(), *kept_token, token, ranking) {
+        *kept_reason = Some(reason);
+        *kept_token = token;
+    }
+}
+
+/// The pair rule over a key filter's PAIRINGS, whose reason rides with its registration bit (`register`,
+/// `key_filter::KeyPairOutcome::Unfinished`): the ranking form's table
+/// (`keep_latest_refusal_else_first_ranking`), and among TOKEN-LESS pairings one whose bit is set (a plain
+/// marker whose own sentence the registry holds, a refused read by text) replaces a kept one whose bit is
+/// not (a spent regex budget, a right-hand value the document lacks), whichever was met first. A token
+/// still outranks every token-less pairing, and a token-less pairing never replaces a token, whatever its
+/// bit. Read at both folds over pairings, the one over a key's right-hand values
+/// (`key_filter::key_selected_from`) and the one over a map's keys (`real_binary_operation`), so a refused
+/// read is never hidden behind a budget text met first: folded first-met-wins, two keys whose kept
+/// pairings were a spent regex budget and a registered plain marker's wrap raised the budget text and
+/// registered nothing with the budget key first, and raised the wrap and registered it with the other key
+/// first, so the map's marker read as a budget marker in one document order and as a refused read in the
+/// other.
+pub(crate) fn keep_latest_refusal_else_registered_else_first_ranking<R>(
+    kept: &mut Option<(R, bool)>,
+    kept_token: &mut Option<crate::rules::errors::RefusalToken>,
+    reason: R,
+    register: bool,
+    token: Option<crate::rules::errors::RefusalToken>,
+    ranking: Ranking<'_>,
+) {
+    let outranks_a_kept_budget =
+        register && token.is_none() && kept_token.is_none() && matches!(kept, Some((_, false)));
+    if outranks_a_kept_budget || would_replace_ranking(kept.is_some(), *kept_token, token, ranking)
+    {
+        *kept = Some((reason, register));
+        *kept_token = token;
+    }
+}
+
+/// A token's OWNERSHIP DEPTH under the filter predicate runs a fold runs under: how many of the live runs,
+/// counted from the outermost, can mark their entry by the token (`eval_context::RefusalFrames::rank`), 0
+/// for a token none can and under no run at all (`no_frame_ranking`). Built from the stack the evaluation
+/// context holds by `ranking_under`. Under one live run the rank is a bit: 1 for a token the run reads as
+/// minted inside it, 0 for one it does not.
+pub(crate) type Ranking<'a> = &'a dyn Fn(crate::rules::errors::RefusalToken) -> usize;
+
+/// The ranking of every fold that runs under no filter predicate run: every token at rank 0, so the table
+/// is the pair rule's four arms alone, and two tokens are ranked by minting.
+pub(crate) fn no_frame_ranking(_: crate::rules::errors::RefusalToken) -> usize {
+    0
+}
+
+/// The ranking a fold reads for the frames its evaluation context holds (`EvalContext::refusal_frames`):
+/// each token's ownership depth under the live runs (`eval_context::RefusalFrames::rank`), 0 for every
+/// token under none. Read once at the top of a fold, before the context is borrowed for the clauses or
+/// values the fold runs over: the stack is a copy, so a run nested inside the fold, which pushes its own
+/// frame onto the context and pops it before it returns, changes nothing the fold holds. The one way a
+/// fold learns the ranking, so a fold reached through a block body, a comparison's evidence or a key
+/// filter ranks by the same reading the enclosing run marks its entry by; passed as an argument from the
+/// run, the ranking reached the two folds it was threaded into and no other.
+pub(crate) fn ranking_under(
+    frames: crate::rules::eval_context::RefusalFrames,
+) -> impl Fn(crate::rules::errors::RefusalToken) -> usize {
+    move |token| frames.rank(token)
+}
+
+/// The pair rule's one decision, read before a marker's reason is rendered and before a pair is replaced
+/// (`keep_latest_refusal_else_first`, `fold_marker_pair`, `latest_refused_pair`, `collect_refused_read`):
+/// whether a marker met with `met` as its token replaces the pair kept so far (`kept_reason_is_some`,
+/// `kept`), with every token at rank 0 (`would_replace_ranking`). A later-minted refusal replaces a kept
+/// refusal; an equal or earlier one does not (a tie keeps); a token-less marker never replaces a refusal;
+/// a refusal replaces a token-less reason; a token-less marker is kept only where nothing is kept yet. One
+/// table, so the fold that skips rendering a marker and the rule that keeps one cannot drift apart. Every
+/// live fold reads the ranking form through the frames its context holds (`ranking_under`), so this form
+/// is the cells' reader of the four token-less and minting arms alone.
+#[cfg(test)]
+pub(crate) fn would_replace(
+    kept_reason_is_some: bool,
+    kept: Option<crate::rules::errors::RefusalToken>,
+    met: Option<crate::rules::errors::RefusalToken>,
+) -> bool {
+    would_replace_ranking(kept_reason_is_some, kept, met, &no_frame_ranking)
+}
+
+/// [`would_replace`]'s table with the RANK the live filter predicate runs' frames add
+/// (`eval_context::RefusalFrames::rank`, the stack read off the evaluation context by `ranking_under` in
+/// every fold that runs under a run): between two tokens the deeper-ranked one, the one the innermost of
+/// the runs that can read it as their own is nested deepest, outranks the other whatever their counts,
+/// and two of one rank are ranked by minting as before. Under one live run the rank is the frame's
+/// eligibility bit, so the order is eligible-later over eligible-earlier over excluded, and among
+/// excluded tokens the later still replaces (the entry reads PLAIN either way; the raise names the later
+/// one). A token is eligible under a run when its frame reads it as minted inside the run, the frame's
+/// whole test and nothing weaker: minted at or after the run opened, and not while a binding of a scope
+/// built before the run was lazily resolved inside it. Ranking by minting alone, an entry whose own
+/// refusal was minted BEFORE such a binding resolved inside the same run lost the fold to the binding's
+/// later, excluded token and read PLAIN, while the next entry, whose own refusal came after the memoized
+/// binding's, kept its own and read REFUSED, so the kinds swapped with resource order and with conjunct
+/// order; ranking by the binding half of the test alone, an older capture's token minted before the run
+/// outranked a later in-run token that half excluded, and a nested run's plain marker carried the older
+/// token up past the one the outer run could read as its own; and ranking by the innermost frame's bit
+/// alone, a nested run's fold over two tokens it could read as neither its own kept the later-minted, a
+/// root binding's token no run can read, over the one the enclosing run had minted in its own body, so
+/// the outer entry read PLAIN for its own refusal in one resource order and REFUSED in the other. The
+/// token-less arms are unchanged: a token-less reason never outranks a token, whatever the token's rank.
+pub(crate) fn would_replace_ranking(
+    kept_reason_is_some: bool,
+    kept: Option<crate::rules::errors::RefusalToken>,
+    met: Option<crate::rules::errors::RefusalToken>,
+    ranking: Ranking<'_>,
+) -> bool {
+    match (kept, met) {
+        (Some(kept), Some(met)) => match ranking(met).cmp(&ranking(kept)) {
+            std::cmp::Ordering::Greater => true,
+            std::cmp::Ordering::Less => false,
+            std::cmp::Ordering::Equal => met.later_than(kept),
+        },
+        (Some(_), None) => false,
+        (None, Some(_)) => true,
+        (None, None) => !kept_reason_is_some,
+    }
+}
+
+/// The pair rule over a set of VALUES, with `reason_of` choosing which markers count (`undecidable_reason`
+/// for a marker of either kind, `refused_read_reason` for a refusal's marker alone): every undecidable
+/// marker among `values` that would replace the pair kept so far (`would_replace`, read on the token
+/// alone) has its reason rendered and folded by `keep_latest_refusal_else_first`; one that would not is
+/// passed over unrendered, so a fold over many markers builds the texts it keeps and no other. Every marker
+/// is read: a refusal minted later than the one kept replaces it wherever it stands, so the result is the
+/// latest-minted refusal's reason and token, or the first marker's reason with `None` when no marker is a
+/// refusal, or `(None, None)` when no value is a marker. A fold that stopped reading at the first refusal
+/// kept named the first-met refusal, not the latest: an older capture's marker before an in-run refusal
+/// in one left-hand side left the entry PLAIN where the same values reversed left it REFUSED. Every token
+/// eligible: the cells' reader of the fold; every live site holds an evaluation context and reads the
+/// ranking form ([`fold_marker_pair_ranking`] under `ranking_under`).
+#[cfg(test)]
+pub(crate) fn fold_marker_pair<'v>(
+    values: impl IntoIterator<Item = &'v QueryResult>,
+    reason_of: impl Fn(&UnResolved) -> Option<String>,
+) -> (Option<String>, Option<crate::rules::errors::RefusalToken>) {
+    fold_marker_pair_ranking(values, reason_of, &no_frame_ranking)
+}
+
+/// [`fold_marker_pair`] under a frame's ranking (`would_replace_ranking`, `eligible`: `ranking_under` over
+/// the frame the evaluation context holds), the form every reader that runs under a filter predicate run
+/// reads: the comparison's three right-hand folds, the unary operators' raise and the function dispatch's
+/// argument check.
+pub(crate) fn fold_marker_pair_ranking<'v>(
+    values: impl IntoIterator<Item = &'v QueryResult>,
+    reason_of: impl Fn(&UnResolved) -> Option<String>,
+    ranking: Ranking<'_>,
+) -> (Option<String>, Option<crate::rules::errors::RefusalToken>) {
+    values.into_iter().fold(
+        (None, None),
+        |(mut reason, mut token): (Option<String>, Option<_>), value| {
+            if let QueryResult::UnResolved(unresolved) = value {
+                if would_replace_ranking(
+                    reason.is_some(),
+                    token,
+                    unresolved.kind.refusal(),
+                    ranking,
+                ) {
+                    if let Some(found) = reason_of(unresolved) {
+                        keep_latest_refusal_else_first_ranking(
+                            &mut reason,
+                            &mut token,
+                            found,
+                            unresolved.kind.refusal(),
+                            ranking,
+                        );
+                    }
+                }
+            }
+            (reason, token)
+        },
+    )
+}
+
+/// `keep_latest_refusal_else_first` over a fold that keeps its reason and token inside the error it will
+/// raise (the block's `undecided`): an `UndecidableComparison` kept there is opened into its reason and
+/// token, merged by the one rule under `eligible`'s ranking (`would_replace_ranking`), and closed again; a
+/// kept error of any other variant stands as it is, since no undecided reason is folded into it. The
+/// block folds and the conjunction fold each read it with the ranking of the frame their context holds
+/// (`ranking_under`), every token eligible under no run.
+fn keep_latest_refusal_else_first_error(
+    undecided: &mut Option<Error>,
+    reason: String,
+    token: Option<crate::rules::errors::RefusalToken>,
+    ranking: Ranking<'_>,
+) {
+    let (mut kept_reason, mut kept_token) = match undecided.take() {
+        None => (None, None),
+        Some(Error::UndecidableComparison(kept_reason, kept_token)) => {
+            (Some(kept_reason), kept_token)
+        }
+        Some(other) => {
+            *undecided = Some(other);
+            return;
+        }
+    };
+    keep_latest_refusal_else_first_ranking(
+        &mut kept_reason,
+        &mut kept_token,
+        reason,
+        token,
+        ranking,
+    );
+    *undecided = kept_reason.map(|reason| Error::UndecidableComparison(reason, kept_token));
+}
+
+/// Hold `e`, a conjunct's or a disjunct's error that `is_unevaluatable` admits, in `held`
+/// (`eval_conjunction_clauses`): an `UndecidableComparison` is folded with the one kept there by the pair
+/// rule (`keep_latest_refusal_else_first_error`), so the error the conjunction hands up carries the
+/// latest-minted refusal's reason and token whichever conjunct met it; an error of any other variant is
+/// kept as met first, as before. Before this fold the conjunction kept its FIRST undecided error whole, so
+/// a capture bound outside a filter predicate run and read by an earlier conjunct (its refusal minted
+/// before the run opened) outlived a refusal a later conjunct minted inside the run, the run's frame read
+/// the older token as not its own, and the entry read PLAIN where a refusal was minted inside it: the
+/// shape the pair rule closes in every comparison fold, reached through the conjunction instead. The fold
+/// ranks by `eligible`, the frame of the filter predicate run this conjunction runs under, read off the
+/// context (`ranking_under`, `would_replace_ranking`): a token the frame excludes (minted while a binding
+/// of an older scope was resolved inside the run, or before the run opened) never outranks the entry's own
+/// refusal, however much later it was minted.
+fn hold_undecided(held: &mut Option<Error>, e: Error, ranking: Ranking<'_>) {
+    match e {
+        Error::UndecidableComparison(reason, token) => {
+            keep_latest_refusal_else_first_error(held, reason, token, ranking)
+        }
+        other => {
+            if held.is_none() {
+                *held = Some(other);
+            }
+        }
+    }
+}
+
+/// The pair rule over a set of VALUES for markers of either kind (`fold_marker_pair` with
+/// `undecidable_reason`): the latest-minted refusal's reason and token, or the first marker's reason with
+/// `None`, or `(None, None)` when no value is a marker. Read by the unary operators before they raise over
+/// an undecidable value (`refused_pair_among`), by the function dispatch over a call's arguments
+/// (`eval_context::undecidable_argument`) and by the comparison evidence over its right-hand markers
+/// (`binary_operation`, `rhs_marker`); the evidence's refusal-only read is the same fold with
+/// `refused_read_reason`.
+pub(crate) fn undecidable_pair_among<'v>(
+    values: impl IntoIterator<Item = &'v QueryResult>,
+    ranking: Ranking<'_>,
+) -> (Option<String>, Option<crate::rules::errors::RefusalToken>) {
+    fold_marker_pair_ranking(values, undecidable_reason, ranking)
+}
+
+/// The error a unary operator raises in a non-strict role when a REFUSAL's marker stands anywhere among
+/// its left-hand values: that refusal's reason and token as one pair (`undecidable_pair_among`), and
+/// `None` when no value carries a token, in which case the operator raises the error of the value in hand
+/// as before. A unary operator evaluates its values one by one and, as a gate or inside a filter
+/// predicate, raises at the first value nobody could decide; raised with that value's own token alone, a
+/// key filter's budget marker met before a refusal's marker ended the filter predicate run with no token,
+/// so the entry was PLAIN, and the same list reversed left it REFUSED. The entry a refusal minted inside
+/// the run marks does not depend on the order the values were met in, so the raise carries the refusal's
+/// pair whichever value delivered it, as the comparison evidence and the block arm already do. Read at the
+/// raise, over the value in hand and the ones not yet met (every value before it was decided), so a clause
+/// that raises nothing reads nothing. The pair replaces WHATEVER unevaluatable error the value in hand
+/// raised, a type error of `EMPTY` over a number or a boolean included: a refusal among the values outranks
+/// a value that cannot be empty, so the entry is REFUSED where the type error alone left it PLAIN, and the
+/// refusal's text is the one recorded for the raise (`docs/CLAUSES.md`).
+fn refused_pair_among<'v>(
+    values: impl IntoIterator<Item = &'v QueryResult>,
+    ranking: Ranking<'_>,
+) -> Option<Error> {
+    match undecidable_pair_among(values, ranking) {
+        (Some(reason), Some(token)) => Some(Error::UndecidableComparison(reason, Some(token))),
+        (_, None) | (None, Some(_)) => None,
     }
 }
 
 /// The reason an unresolved result cannot be decided, when it is the undecidable marker
 /// (`UnResolvedKind::Undecidable`: a key filter's for a map it could not decide, or a refusal's delivered
-/// inside a predicate, `refused` set, read alike here): the reason the filter recorded, or the path when
+/// inside a predicate, `refusal` set, read alike here): the reason the filter recorded, or the path when
 /// it recorded none. `None` for every other kind, which is a value the document lacks or an enumeration
 /// over an empty collection, both decided.
 ///
 /// The one place the marker's kind is read: for the unary operators through `undecidable_selection`,
 /// for `binary_operation`'s two unresolved arms directly, for the block clause's unresolved arm, and
-/// for the function dispatch through `eval_context::undecidable_argument_reason`. Those arms branch
+/// for the function dispatch through `eval_context::undecidable_argument`. Those arms branch
 /// on the kind directly, with no clone and no wildcard. Cloning the whole `UnResolved` (an `Rc` and
 /// two `String`s) into a fresh `QueryResult` to ask `undecidable_selection`, and then matching
 /// `Some(Error::UndecidableComparison(reason))` against a catch-all, would read every other answer as
@@ -104,14 +441,18 @@ pub(crate) fn undecidable_reason(unresolved: &UnResolved) -> Option<String> {
 }
 
 /// The reason a refusal carries when `unresolved` is its marker (`UnResolvedKind::is_refusal`: the
-/// `refused` flag `LacksKeysNote::marker_with` and `to_refusal_result` set), whether the marker was
+/// `refusal` token `LacksKeysNote::marker_with` and `to_refusal_result` set), whether the marker was
 /// delivered inside a filter predicate or held in a capture by the enumeration whose walk was refused
 /// (`enumerate_under_an_own_key_filter`, `captures_after_a_refused_walk`) and read through `%x` wherever
-/// that name is compared, an assertion included; `None` for every other result, the marker a key filter
-/// leaves and a capture refused inside a predicate (`to_undecidable_result`, `refused` unset) included:
+/// that name is compared, an assertion included, and the marker a capture nothing can bind leaves inside
+/// a predicate (`refuse_unbound_capture`, registered and tokened there, and announced there too, which the
+/// refused-read line reads off its text, `is_capture_not_bound_reason`); `None` for every other result,
+/// the marker a key filter leaves (`to_undecidable_result`, `refusal` None) included:
 /// under `==`, `!=` and the orderings those are read pair by pair by the `RhsUnresolved` arm of
-/// `binary_operation`, and the pre-pass over the right-hand side there is for the refusal alone, whose
-/// bare read never reached a pair. Membership (`IN`, `NOT IN`) and `==` between two value sets read both
+/// `binary_operation`, and the pre-pass over the right-hand side there is for every marker that stands
+/// for a refused read (`rhs_refused_read_pair`, the fold over `refused_read_text`: by token or by
+/// registered text), whose bare read never reached a pair; the budget marker alone is read pair by pair.
+/// Membership (`IN`, `NOT IN`) and `==` between two value sets read both
 /// kinds alike (`undecidable_reason`): there the question is whether an unknown value may hold the
 /// match, and the kind of unknown does not change the answer.
 pub(crate) fn refused_read_reason(unresolved: &UnResolved) -> Option<String> {
@@ -119,6 +460,167 @@ pub(crate) fn refused_read_reason(unresolved: &UnResolved) -> Option<String> {
         undecidable_reason(unresolved)
     } else {
         None
+    }
+}
+
+/// Whether a marker with `reason` as its text (`undecidable_reason`, read once by the caller and handed
+/// in) stands for a REFUSED READ: a marker carrying a refusal's token (`UnResolvedKind::refusal`: a
+/// refusal's own marker, or a plain marker handing a token on in `carried`), whatever its text, or a PLAIN
+/// marker with no token whose reason the registry holds (`eval_context::is_refusal_text`, a registered
+/// sentence or a numbered text of registered sentences). The token is the fact and the text a reading of
+/// it: a tokened marker whose text the registry does not know (the key filter's wrap of a marker whose
+/// reason is a numbered text of refusals, which no one registers, the joined text kept out of the registry
+/// even inside a wrap) is the refusal its token names. Read by text alone, such a marker was no refused
+/// read: beside another refused read it was dropped from the comparison's raise, which named the other
+/// refusal alone under this marker's later token, and the pairing classifier of the key filter
+/// (`key_filter::outcome_of`) dropped its token to keep the two readings agreeing, so a second key filter
+/// over the captured marker rebuilt the map's marker plain and passed over it. The ONE reading of a marker
+/// as a refused read, behind every site of `binary_operation` that asks the question: the two left-hand
+/// noting sites and the record's `left_refusal` (the `LhsUnresolved` arm), `a_refusal_beside`, the
+/// compared-nothing registration loop, and the right-hand collection (`refused_read_text`, for a site that
+/// holds no reason yet); and behind the key filter's classifier. With the two noting sites alone reading
+/// the registered text and the other four reading the kind, a plain marker carrying a refusal's sentence
+/// was noted, registered and counted as a refused read and then written as a plain marker at its own
+/// record (`%s == 'x'` under `match_all`, `%s` the marker alone: the record's message `None` and its flag
+/// false, the message-less record the record comment forbids), was no refusal of kinds beside a refusal
+/// of kinds, and was left out of the compared-nothing arm's registration where the collection registered
+/// it.
+pub(crate) fn is_refused_read(unresolved: &UnResolved, reason: &str) -> bool {
+    is_refused_pair(Some(reason), unresolved.kind.refusal())
+}
+
+/// [`is_refused_read`]'s test over a PAIR a fold kept, text and token, for the one site that holds the
+/// pair and not the marker it was read from (`rhs_marker` in `binary_operation`, the first marker of
+/// either kind the pair rule kept over the right-hand values): a token, or a text the registry holds.
+/// The one table both readers share, so a third condition added to one cannot be missed by the other;
+/// written out twice, the two drifted apart in their comments before they could in their code. `None`
+/// for the text is a marker with no reason, which is a refused read by its token alone.
+pub(crate) fn is_refused_pair(
+    text: Option<&str>,
+    token: Option<crate::rules::errors::RefusalToken>,
+) -> bool {
+    token.is_some() || text.is_some_and(crate::rules::eval_context::is_refusal_text)
+}
+
+/// The text of the REFUSED READ a marker stands for (`is_refused_read` over the marker's own reason), the
+/// one reader of both collections in `binary_operation` (the left-hand markers as the loop meets them,
+/// the right-hand markers after it): the reason of a marker carrying a token (a refusal's own marker,
+/// `refused_read_reason`; a plain marker handing a token on, `UnResolvedKind::Undecidable::carried`: a
+/// filter predicate's entry left plain by a raise over a refusal minted before its run, whose reason is
+/// that refusal's own sentence or the numbered text of the refusals the raise named; the key filter's
+/// marker for a map whose right-hand side held a refusal's marker, whose reason is the pairing sentence
+/// built over it, `key_filter::outcome_of`, or the wrap of a refused right-hand query, `rhs_undecided`),
+/// whatever that text is; or the reason of a PLAIN marker with no token that the registry holds
+/// (`eval_context::is_refusal_text`): the key filter's marker for a map whose right-hand query was refused
+/// with no token to carry, whose wrapped sentence the key-filter arm registered, and the pairing sentence
+/// over a tokenless marker whose own reason is registered, which `real_binary_operation` registers for the
+/// one pairing its fold kept. A tokened marker is read by its token, never by whether its text is
+/// registered: the wrap of a numbered text of refusals is never registered (the joined text the registry
+/// never holds, not even inside a wrap), so a marker carrying such a wrap with a token is a refused read
+/// by the token alone. `None` for a tokenless marker the registry does not know (a spent regex budget, a
+/// right-hand value the document lacks) and for every other kind. A numbered text is the reads it names,
+/// split by the collection (`collect_refused_read`), never one read; a wrap around a numbered text is one
+/// read, its own sentence. Read by kind alone, the left-hand collection missed a plain marker carrying a
+/// refusal's sentence and token (`%s` bound by `Sub[ s | %c exists ]` with the refusal's marker in `%c`):
+/// the gate's raise then took it for a reason no refused read held, promoted it over, and named the other
+/// refusal the comparison met under this marker's token, the latest refusal's sentence gone from the
+/// raise; read by text alone, it missed the tokened wrap of a numbered text the same way.
+pub(crate) fn refused_read_text(unresolved: &UnResolved) -> Option<String> {
+    undecidable_reason(unresolved).filter(|text| is_refused_read(unresolved, text))
+}
+
+/// Whether `text`, the refused read a marker stands for (`refused_read_text`), is one the comparison
+/// REGISTERS when it collects it (`eval_context::register_refusal`, at the compared-nothing arm and the
+/// collection of `binary_operation`): a refusal's OWN marker's sentence (`UnResolvedKind::is_refusal`:
+/// registered where the refusal was delivered, and registered again here for a refusal raised inside a
+/// quiet probe, whose registration the probe dropped), or a text the registry holds already
+/// (`eval_context::is_refusal_text`, whole or as numbered parts; the registration is a no-op that keeps
+/// the two readings one). Never a text a PLAIN marker carries that the registry does not hold: such a text
+/// is a refused read by the marker's token alone (`is_refused_read`'s token half), the wrap of a numbered
+/// text of refusals that nobody registers (`eval_context::query_retrieval_with_converter`'s key-filter
+/// arm, `key_filter::outcome_of`), and it travels unregistered wherever it is read. Registered as every
+/// collected text was, the first comparison that met such a marker on its LEFT put the wrap into the
+/// registry, and the right-hand readers, which read by text, saw it registered from then on: `<empty
+/// selection> NOT IN %m` over the marker in `%m` raised the refusal when an earlier clause had read `%m` on
+/// its left and was not applicable otherwise, one verdict per rule order. The rule behind every carrier
+/// of a refused read, in order of precedence: the marker's TOKEN (read by `is_refused_read`), then the
+/// pairing's registration BIT the key filter's fold carries (`key_filter::KeyPairOutcome::Unfinished`,
+/// acted on once by `real_binary_operation`), then the REGISTRY; a numbered wrap enters the registry only
+/// where neither a token nor a bit carries it (`eval_context::query_retrieval_with_converter`'s key-filter
+/// arm, `key_filter::outcome_of`), and the numbered grammar's parser finds its parts whatever markers a
+/// part's own text holds (`eval_context::numbered_refusal_parts`).
+pub(crate) fn refused_read_registers(unresolved: &UnResolved, text: &str) -> bool {
+    unresolved.kind.is_refusal() || crate::rules::eval_context::is_refusal_text(text)
+}
+
+/// The refused read a marker stands for, as ONE answer: its text (`refused_read_text`), the token it
+/// carries (`UnResolvedKind::refusal`) and whether the text is one to register (`refused_read_registers`);
+/// `None` for a marker that stands for none. The reader of every site that collects or notes a refused
+/// read (`binary_operation`'s two left-hand noting sites, its compared-nothing arm and its collection).
+/// The two reads of the kind sit side by side here on purpose: `kind.refusal().is_some()`, inside
+/// `is_refused_read`, says whether the marker is a refused read BY TOKEN, a refusal's own marker or a plain
+/// marker handing a token on; `kind.is_refusal()`, inside `refused_read_registers`, says whether it is the
+/// refusal's OWN marker, whose sentence is registered again. A plain marker handing a token on is the
+/// first and not the second, and a reader that took one for the other registered the wrap of a numbered
+/// text or dropped a refusal's own sentence from the registry after a quiet probe.
+pub(crate) fn refused_read(
+    unresolved: &UnResolved,
+) -> Option<(String, Option<crate::rules::errors::RefusalToken>, bool)> {
+    let text = refused_read_text(unresolved)?;
+    let registers = refused_read_registers(unresolved, &text);
+    Some((text, unresolved.kind.refusal(), registers))
+}
+
+/// Collect `text`, a refused read met with its marker's `token`, into the comparison's `pairs`
+/// (`refused_pairs` in `binary_operation`, both sides): a numbered text of registered sentences is its
+/// PARTS (`eval_context::numbered_refusal_parts`, the one parser of that grammar), each a read of its own
+/// carrying the marker's token; any other text is one read. A read already collected keeps the LATER of
+/// the two tokens by the pair rule (`would_replace` over a kept pair: a later token replaces, `None` never
+/// replaces a token, a token replaces `None`), so one text met twice, as a capture bound outside a run and
+/// as the same read minted inside it, stands once with the token the run reads as its own; collected by
+/// first meeting, the older token hid the newer and the enclosing entry read PLAIN. The part rule: a plain
+/// marker's reason is the raise's text, and a raise over two refusals is numbered, so collected whole it
+/// entered the registry as one text (the joined text the registry never holds, `raised_refusal`), was
+/// numbered again inside the next raise (`(1) Re (2) (1) Rd (2) Rc`) and kept twice beside its own part met
+/// as a marker. The token of a part is the marker's, the raise's, which the fold made the latest among the
+/// parts' own, so the latest token read over the collection is unchanged; a part's own minting is not
+/// recoverable from its text, a named limit for a reader that would want it. Ranked by `eligible`, the
+/// frame of the run the comparison runs under (`ranking_under`), as every fold under a run is.
+pub(crate) fn collect_refused_read(
+    pairs: &mut Vec<(String, Option<crate::rules::errors::RefusalToken>)>,
+    text: String,
+    token: Option<crate::rules::errors::RefusalToken>,
+    ranking: Ranking<'_>,
+) {
+    let parts: Option<Vec<String>> = crate::rules::eval_context::numbered_refusal_parts(&text)
+        .map(|parts| parts.into_iter().map(str::to_string).collect());
+    for part in parts.unwrap_or_else(|| vec![text]) {
+        match pairs.iter_mut().find(|(kept, _)| *kept == part) {
+            Some((_, kept_token)) => {
+                if would_replace_ranking(true, *kept_token, token, ranking) {
+                    *kept_token = token;
+                }
+            }
+            None => pairs.push((part, token)),
+        }
+    }
+}
+
+/// Whether `reason`, the text a raise is about to carry, is made of the refused reads a comparison met
+/// (`refused_reads`, the collection in [`binary_operation`]): one of them as it stands, or a NUMBERED text
+/// of registered sentences (`eval_context::numbered_refusal_parts`, the parser the collection split it by)
+/// every part of which is one of them. The one reader behind the four sites that ask it (the gate's two
+/// reads before its raise, `raised_refusal`'s check and its release-build twin), so the question has one
+/// answer whatever shape the reason took: compared whole, a plain marker whose reason is a predicate's
+/// raise over two refusals (a numbered text the collection holds part by part) read as no refused read,
+/// the debug build panicked at the compared-nothing arm and the release build keyed the raise's variant on
+/// whether the text happened to be numbered.
+pub(crate) fn reads_hold(reason: &str, refused_reads: &[String]) -> bool {
+    match crate::rules::eval_context::numbered_refusal_parts(reason) {
+        Some(parts) => parts
+            .into_iter()
+            .all(|part| refused_reads.iter().any(|text| text == part)),
+        None => refused_reads.iter().any(|text| text == reason),
     }
 }
 
@@ -199,13 +701,16 @@ fn a_mismatch_decides(cmp: (CmpOperator, bool)) -> bool {
 /// first written; and `IN` and `NOT IN`
 /// as the documentation spells them (the parser also reads `in`, `not in` and `!in`, every one the same
 /// comparator). The unary comparators (`exists`, `empty`, the type checks) never reach a comparison of
-/// two values, so they have no spelling here. This is one of three renderings of a comparator, each for
+/// two values; they are spelled all the same (`unary_comparator_as_written`), behind a debug-build
+/// assertion that none arrives. This is one of three renderings of a comparator, each for
 /// its own sentence and none shared: the console's `Operator =` line reads `eval_context::cmp_str`
 /// (`EQUALS`, `NOT IN`, `GREATER THAN`), and the record sentence of a resolved pair spells the comparator
 /// as prose (`op_msg` in `eval_context`, "not equal to"); neither is a rules file's spelling, which is
 /// what this sentence quotes. One arm per comparator, the unary ones named and no wildcard over the
 /// comparator, so a comparator added to `CmpOperator` fails to compile here instead of taking the record
-/// tree's own `Display`, which no rules file spells.
+/// tree's own `Display`, which no rules file spells. A unary comparator is asserted unreachable in a
+/// debug build and spelled as a rules file writes it in a release build, so a routing change that one day
+/// sends a unary clause's wording here produces a sentence rather than a panic at exit 101.
 fn comparator_as_written(cmp: (CmpOperator, bool)) -> &'static str {
     match cmp {
         (CmpOperator::Eq, false) => "==",
@@ -227,10 +732,52 @@ fn comparator_as_written(cmp: (CmpOperator, bool)) -> &'static str {
             | CmpOperator::IsFloat
             | CmpOperator::IsNull,
             _,
-        ) => unreachable!(
-            "a unary comparator reaches no comparison of two values; met {:?}",
-            cmp
-        ),
+        ) => {
+            // A unary comparator reaches no comparison of two values; a debug build says so, a release
+            // build spells it as a rules file writes it rather than exiting 101 on a wording path.
+            if cfg!(debug_assertions) {
+                unreachable!(
+                    "a unary comparator reaches no comparison of two values; met {:?}",
+                    cmp
+                );
+            }
+            unary_comparator_as_written(cmp)
+        }
+    }
+}
+
+/// A unary comparator as a rules file writes it, in both polarities: the release-build spelling
+/// [`comparator_as_written`] falls back to. One arm per comparator and polarity, no wildcard, so the match
+/// is the list.
+fn unary_comparator_as_written(cmp: (CmpOperator, bool)) -> &'static str {
+    match cmp {
+        (CmpOperator::Exists, false) => "exists",
+        (CmpOperator::Exists, true) => "!exists",
+        (CmpOperator::Empty, false) => "empty",
+        (CmpOperator::Empty, true) => "!empty",
+        (CmpOperator::IsString, false) => "is_string",
+        (CmpOperator::IsString, true) => "!is_string",
+        (CmpOperator::IsList, false) => "is_list",
+        (CmpOperator::IsList, true) => "!is_list",
+        (CmpOperator::IsMap, false) => "is_struct",
+        (CmpOperator::IsMap, true) => "!is_struct",
+        (CmpOperator::IsBool, false) => "is_bool",
+        (CmpOperator::IsBool, true) => "!is_bool",
+        (CmpOperator::IsInt, false) => "is_int",
+        (CmpOperator::IsInt, true) => "!is_int",
+        (CmpOperator::IsFloat, false) => "is_float",
+        (CmpOperator::IsFloat, true) => "!is_float",
+        (CmpOperator::IsNull, false) => "is_null",
+        (CmpOperator::IsNull, true) => "!is_null",
+        (
+            CmpOperator::Eq
+            | CmpOperator::In
+            | CmpOperator::Gt
+            | CmpOperator::Ge
+            | CmpOperator::Lt
+            | CmpOperator::Le,
+            _,
+        ) => comparator_as_written(cmp),
     }
 }
 
@@ -1478,12 +2025,55 @@ fn empty_collection_message(side: operators::EmptySide, role: ClauseRole) -> Str
 /// its collection. The mirror, a marker among the LEFT-hand values beside a right-hand side absent as a
 /// whole, is [`left_marker_beside_an_absence`]; both build their text through [`absence_beside_a_marker`],
 /// so the two records read alike.
-fn marker_beside_an_absence(rhs_marker: Option<&str>, lead: Option<&str>) -> Option<String> {
-    let reason = rhs_marker?;
-    let lead = lead.unwrap_or(
+/// `lead` says what the left value's own reason is, and so whether it is bounded here or written whole
+/// ([`Lead`]); `None` is the plain fact of the absence. `rhs_markers` is the right-hand markers' text
+/// (`rhs_record_marker` in [`binary_operation`]: every marker's sentence, or the refused read's and where
+/// the list is), written whole as every marker's sentence is, with the number of right-hand MARKERS it
+/// stands for (the selections among the right-hand values, not the sentences the text splits into), which
+/// decides whether the sentence around it speaks of one selection or of several.
+fn marker_beside_an_absence(
+    rhs_markers: Option<(&str, usize)>,
+    lead: Option<Lead<'_>>,
+) -> Option<String> {
+    let (reason, markers) = rhs_markers?;
+    let lead = lead.unwrap_or(Lead::Absence(
         "The value is absent, which decides the comparison whatever the right-hand side holds.",
-    );
-    Some(absence_beside_a_marker(lead, "right", reason))
+    ));
+    Some(absence_beside_a_marker(lead, "right", reason, markers > 1))
+}
+
+/// A sentence the record of a pair one of whose values is a marker embeds ([`absence_beside_a_marker`]):
+/// the lead, the OTHER value's own reason, and the marker's sentence, each named by what built it, which
+/// decides whether it is bounded here or written whole.
+#[derive(Debug, Clone, Copy)]
+enum Lead<'a> {
+    /// A reason that quotes the template as the retrieval wrote it: a retrieval's own ("Attempting to
+    /// retrieve from key Missing but type is not an struct type at path ..., Value = ...", the whole value
+    /// in its text), or an empty collection's. An UNREGISTERED sentence, so it is bounded as a marker's
+    /// quoted text is (`marker_part`: cut at the bound, line-breaking, control and bidirectional characters
+    /// escaped, the backslash kept as the report's other renderings of the value keep it), the one place
+    /// such a reason is bounded; `template_part`, which doubles the backslash for the registry's one-to-one
+    /// mapping, is for a REGISTERED refusal's own quoted parts, and this lead is never registered.
+    Absence(&'a str),
+    /// A MARKER's own sentence, of either kind: a refusal's, built bounded and escaped where it was
+    /// raised (the registry's text, the evaluator's own), or the marker a key filter leaves, whose
+    /// sentence names a key and a regular expression as their builders bounded them, or embeds a
+    /// retrieval's text bounded where that marker was built (`UnResolvedRhs::did_not_resolve_reason`),
+    /// so a key read off a 5 KB string is cut once, at the source, and read whole everywhere after.
+    /// Written whole: bounded again, a refusal's remedy and path fell past the cut and its escapes
+    /// printed doubled, and so did a budget marker's `\d` and an escaped key.
+    MarkerSentence(&'a str),
+}
+
+impl Lead<'_> {
+    /// The lead as the record carries it: bounded for a text that quotes the template, whole for a
+    /// marker's sentence.
+    fn into_text(self) -> String {
+        match self {
+            Lead::Absence(text) => marker_part(text),
+            Lead::MarkerSentence(text) => text.to_string(),
+        }
+    }
 }
 
 /// The message of a comparison a RIGHT-hand side absent as a whole (`rhs_absent` in
@@ -1504,26 +2094,42 @@ fn left_marker_beside_an_absence(lhs_marker: &str, lead: Option<&str>) -> String
     let lead = lead.unwrap_or(
         "The right-hand value is absent, which decides the comparison whatever the left-hand side holds.",
     );
-    absence_beside_a_marker(lead, "left", lhs_marker)
+    absence_beside_a_marker(Lead::Absence(lead), "left", lhs_marker, false)
 }
 
-/// The one sentence shape the absence-beside-a-marker records share: the absence's `lead`, then the
-/// marker's `reason` named as a selection standing among the `side`-hand values. The lead is BOUNDED as a
-/// template part of a refusal is (`escaped_template_part`: cut at `LONGEST_TEMPLATE_PART_IN_A_REFUSAL`
-/// printed characters with the count cut, controls escaped), because a retrieval's own reason quotes the
-/// template: a key read off a value that is not a map carries that whole value in its text ("Attempting
-/// to retrieve from key Missing but type is not an struct type at path ..., Value = ..."), so a lead
-/// taken as it is put a 5 KB template string into a sentence the record flags as a refusal and the
-/// console prints under the whole-line bound, and the refusal after it fell past the cut and was shown
-/// nowhere. The marker's `reason` is not bounded here: a refusal's text was built through `template_part`
-/// where it was raised and is the evaluator's own; a key filter's reason names a key and a regex, both
-/// bounded by their builders.
-fn absence_beside_a_marker(lead: &str, side: &str, reason: &str) -> String {
-    let lead = escaped_template_part(lead);
-    format!(
-        "{lead} A refused or undecided selection stands among the {side}-hand values, reported here \
-         so it is not silent: {reason}"
-    )
+/// The one sentence shape the absence-beside-a-marker records share: the `lead`, then the marker's
+/// `reason` named as a selection standing among the `side`-hand values. A lead that QUOTES THE TEMPLATE
+/// ([`Lead::Absence`]) is BOUNDED as a marker's quoted text is (`marker_part`: cut at
+/// `LONGEST_TEMPLATE_PART_IN_A_REFUSAL` printed characters with the count cut, line-breaking, control and
+/// bidirectional characters escaped, the backslash kept, since the lead is an unregistered sentence read
+/// beside the report's other renderings of the value), because a retrieval's own reason quotes the template: a key read off a value that is not a map
+/// carries that whole value in its text ("Attempting to retrieve from key Missing but type is not an
+/// struct type at path ..., Value = ..."), so a lead taken as it is put a 5 KB template string into a
+/// sentence the record flags as a refusal and the console prints under the whole-line bound, and the
+/// refusal after it fell past the cut and was shown nowhere. A MARKER's sentence, the lead where the left
+/// value is a marker (the `LhsUnresolved` arm of [`binary_operation`]) and the `reason` on either side, is
+/// written whole ([`Lead::MarkerSentence`]): every marker's sentence is built bounded where the marker was
+/// built (a refusal's through `template_part` where it was raised; the key filter's naming a key and a
+/// pattern as their builders bounded them, or embedding a retrieval's text bounded at
+/// `UnResolvedRhs::did_not_resolve_reason`), so bounding it again cut a refusal's remedy and path off
+/// at the bound and escaped its parts a second time (`some %x NOT IN %y` with a refused walk's marker in
+/// each capture; a budget marker's `\d` printed `\\d`), and the one marker that quoted a whole value
+/// unbounded, the key filter's retrieval marker, is bounded once at its source instead of at each record.
+/// `several` says whether `reason` names more than one marker (the right-hand record text over several
+/// markers), so the sentence around it speaks of selections, not of one selection naming several.
+fn absence_beside_a_marker(lead: Lead<'_>, side: &str, reason: &str, several: bool) -> String {
+    let lead = lead.into_text();
+    if several {
+        format!(
+            "{lead} Refused or undecided selections stand among the {side}-hand values, reported here \
+             so they are not silent: {reason}"
+        )
+    } else {
+        format!(
+            "{lead} A refused or undecided selection stands among the {side}-hand values, reported here \
+             so it is not silent: {reason}"
+        )
+    }
 }
 
 /// The reason recorded against a clause whose two operands both resolved and yet produced no
@@ -1568,17 +2174,26 @@ fn nothing_to_compare_message(context: &str, role: ClauseRole) -> String {
 /// filter's marker, a spent regex budget) is numbered too when it leads one refusal, so `(1) <reason> (2)
 /// <refusal>` is the shape of
 /// one refusal beside such a reason, never the reason alone.
-/// Pure, and no one registers the joined text: the refusal test accepts it part by part
+/// A reason that is itself a NUMBERED text of registered sentences (the kept pair of a plain marker whose
+/// reason is a raise over two refusals, kept by its later token) leads with its PARTS, each once
+/// (`eval_context::numbered_refusal_parts`, the parser the collection split it by), so the raise is one
+/// flat numbering of every read met and never a numbering nested inside another (`(1) (1) Rd (2) Rc (2)
+/// Re`). Pure, and no one registers the joined text: the refusal test accepts it part by part
 /// (`eval_context::is_refusal`), so the registry keeps one entry per refusal met; the strict raise goes
 /// through [`raised_refusal`].
 fn raised_refusal_text(reason: String, refused_reads: &[String]) -> String {
-    let mut texts: Vec<&str> = Vec::with_capacity(refused_reads.len() + 1);
-    if !refused_reads.iter().any(|text| *text == reason) {
-        texts.push(reason.as_str());
+    let mut texts: Vec<String> = Vec::with_capacity(refused_reads.len() + 1);
+    let lead: Vec<String> = match crate::rules::eval_context::numbered_refusal_parts(&reason) {
+        Some(parts) => parts.into_iter().map(str::to_string).collect(),
+        None => vec![reason],
+    };
+    for text in lead.into_iter().chain(refused_reads.iter().cloned()) {
+        if !texts.contains(&text) {
+            texts.push(text);
+        }
     }
-    texts.extend(refused_reads.iter().map(String::as_str));
     if texts.len() <= 1 {
-        return reason;
+        return texts.pop().unwrap_or_default();
     }
     texts
         .iter()
@@ -1588,14 +2203,169 @@ fn raised_refusal_text(reason: String, refused_reads: &[String]) -> String {
         .join(" ")
 }
 
-/// The REFUSAL a strict raise carries ([`raised_refusal_text`]'s text as an `Unevaluatable`), registering
-/// nothing of its own. `reason` is one of `refused_reads`, the refused reads the comparison met: both
-/// raise sites guarantee it (the `Skip` arm raises `rhs_refused`, the first right-hand refusal's marker,
-/// or else the first right-hand marker whose reason is a registered refusal, the key filter's marker for a
-/// refused right-hand query; the collection holds the refusals' markers by kind and such a marker's reason
-/// by text, so it holds either; the gate raises here only where `a_refusals` read the reason among them),
-/// and a debug build checks it, so the text is never a refusal led by a reason the registry does not
-/// hold. One refused read alone is raised as the registered refusal it is
+/// The parts of a numbered DISPLAY text, `(1) <part> (2) <part> ...`, for a record that names markers'
+/// sentences ([`numbered_texts`]), read the way the producer shapes such a text. Three parses, the first
+/// that accepts the text wins. (1) The registry's (`eval_context::numbered_refusal_parts`): every part a
+/// registered read, backtracking over a marker quoted inside a part, so a registered sentence that quotes
+/// ` (2) x` is one part. (2) A lead the registry does not hold before registered reads, the shape
+/// [`raised_refusal_text`] writes for a raise over a budget marker's text and the reads (`(1) <budget>
+/// (2) <refusal>`): every occurrence of ` (2) ` in order is tried as the lead's end, and the first whose
+/// remainder parses as registered parts (`eval_context::numbered_refusal_parts_from`) wins, so a marker
+/// quoted inside the lead (a budget sentence over a key named `a (2) b`) or inside a registered read (a
+/// refusal quoting a key named `k (3) v`) splits nothing, and the read comes out whole, to be named once
+/// beside the same read met as a marker. (3) The plain split at the first occurrence of each marker in
+/// sequence, for a numbered text whose later parts the registry does not hold either (a read a marker's
+/// token alone vouched for is never registered), taken only where each marker it uses occurs exactly once
+/// in what is left to split; a text that fails that, or whose split leaves an empty part, is one text.
+/// Its limit, named: a marker quoted inside a part the registry does not hold, when the quoted number is
+/// one the sequence reaches, is cut as a numbering, since no reading of such a text tells the two apart.
+/// A text that does not open with `(1) ` is one text. Not the refusal test: nothing decides a kind by
+/// these parts.
+fn numbered_display_parts(text: &str) -> Vec<&str> {
+    use crate::rules::eval_context::{numbered_refusal_parts, numbered_refusal_parts_from};
+    if let Some(parts) = numbered_refusal_parts(text) {
+        return parts;
+    }
+    let Some(numbered) = text.strip_prefix("(1) ") else {
+        return vec![text];
+    };
+    let second = " (2) ";
+    let mut from = 0;
+    while let Some(found) = numbered[from..].find(second) {
+        let at = from + found;
+        let lead = &numbered[..at];
+        if !lead.is_empty() {
+            let mut reads = Vec::new();
+            if numbered_refusal_parts_from(&numbered[at + second.len()..], 3, &mut reads) {
+                let mut parts = vec![lead];
+                parts.extend(reads);
+                return parts;
+            }
+        }
+        from = at + 1;
+    }
+    let mut rest = numbered;
+    let mut parts = Vec::new();
+    let mut next = 2;
+    loop {
+        let marker = format!(" ({next}) ");
+        match rest.find(&marker) {
+            Some(at) => {
+                if rest.matches(marker.as_str()).count() != 1 {
+                    return vec![text];
+                }
+                parts.push(&rest[..at]);
+                rest = &rest[at + marker.len()..];
+                next += 1;
+            }
+            None => {
+                parts.push(rest);
+                break;
+            }
+        }
+    }
+    if parts.iter().any(|part| part.is_empty()) {
+        return vec![text];
+    }
+    parts
+}
+
+/// One text over several markers' sentences, for a record that names them all (`rhs_record_marker` in
+/// [`binary_operation`]): each input's numbered parts ([`numbered_display_parts`], so a marker whose
+/// reason is a raise over two refusals is its two reads, and a raise over a budget text and a refusal is
+/// those two) or the input whole, in order, each once, numbered `(1) ... (2) ...` where more than one
+/// remains and left as it is where one does; a numbering never nests where the parts can be told, and a
+/// text no split accounts for (`numbered_display_parts`: an empty part, a marker that occurs twice in what
+/// is left to split once the registry's two parses have declined the text) is one text, numbered as one.
+/// Not [`raised_refusal_text`] with the kept marker as its reads: that lead-and-reads shape splits its
+/// lead by the registry alone and reads its arguments in the order a raise wants (the chosen reason, then
+/// the reads), not the order a record names its markers (the refused read, the kept marker, the rest).
+/// Every marker is named: the record is the one place a key filter's finding appears, the console bounds
+/// what it prints of a record (`reporters::validate::common::bounded_for_the_console`) and the structured
+/// outputs carry the text whole, so nothing here counts or drops a marker. The number of distinct
+/// sentences named comes back beside the text, the measure of the text's length the record sites bound
+/// (`record_markers_at`). Pure, and no one registers the joined text.
+fn numbered_texts(texts: &[String]) -> (String, usize) {
+    let mut kept: Vec<&str> = Vec::new();
+    for text in texts {
+        for part in numbered_display_parts(text) {
+            if !kept.contains(&part) {
+                kept.push(part);
+            }
+        }
+    }
+    let named = kept.len();
+    if named <= 1 {
+        return (kept.pop().unwrap_or_default().to_string(), named);
+    }
+    let text = kept
+        .iter()
+        .enumerate()
+        .map(|(index, text)| format!("({}) {text}", index + 1))
+        .collect::<Vec<_>>()
+        .join(" ");
+    (text, named)
+}
+
+/// How many distinct SENTENCES the right-hand markers' text may hold and still go whole into EVERY record
+/// of the comparison whatever its length (`record_markers_at` in [`binary_operation`]): a list this short
+/// stays self-contained in each record, since each key filter's marker is a finding of its own and a
+/// record is read on its own by the structured outputs. A longer list is named once per comparison, in
+/// the first record written, and a later record says where it is ([`later_record_markers`]), but only
+/// where that pointer is SHORTER than the list it stands in for: the bound exists against the output
+/// growing with the left values times what each record carries, which is characters, not sentences, and
+/// a pointer that carries a four-sentence refused read before saying "named once" would say the
+/// sentences are elsewhere while printing them all, longer than the list. Sentences are counted, never
+/// the markers: three markers whose reasons are raises over several refusals carry every one of those
+/// sentences. The MARKER count is read beside it for what it says about selections, not length: whether
+/// the record's lead speaks of one selection or of several, and how many markers the pointer says the list
+/// stands for (a marker raised over two refusals is one selection). Copied into every record, the list
+/// made the output grow with the left values times the right-hand markers (a hundred absent left values
+/// beside a hundred undecided maps, each record naming all hundred).
+const RECORD_SENTENCES_IN_EVERY_RECORD: usize = 3;
+
+/// The right-hand markers' text for a LATER record of one comparison whose list holds more than
+/// `RECORD_SENTENCES_IN_EVERY_RECORD` sentences, once the first record written has named every sentence
+/// (`rhs_record_marker` in [`binary_operation`]): the refused read's sentence, where one stands among the
+/// right-hand values (the sentence the record's flag is read by, so every flagged record carries it,
+/// whatever its shape), and where the sentences are named, by the path of the left value whose record
+/// names them. The path is written UNCUT (the pointer is the one link a later record has to the list, and
+/// a path cut at a bound names a record that does not exist for a logical id near its 255-character
+/// limit) and with its line-breaking, control, bidirectional and zero-width characters as their Rust
+/// escapes and its backslash doubled (`utils::writer::escaped_for_display`, the one-to-one escaping a
+/// notice applies to a quoted key or path): a later record beside a refused read is flagged a refusal and
+/// printed whole by the console, so a raw control character in a logical id would reach the terminal
+/// inside a refusal line; and doubled, the backslash keeps a logical id holding a tab apart from one
+/// holding the two characters `\` `t`, so the pointer maps back to one path. The structured outputs carry
+/// a record's own path raw, so a consumer of `-o json`, `sarif` or `junit` matches the pointer against a
+/// record's path after the same escaping, which it can undo. `markers` counts the right-hand selections
+/// the list stands for, and the noun agrees with it.
+fn later_record_markers(refused: Option<&str>, markers: usize, first: &str) -> String {
+    let path = crate::utils::writer::escaped_for_display(first);
+    let where_named = if markers == 1 {
+        format!(
+            "the sentences of the one right-hand marker are named once, in the record of {path}"
+        )
+    } else {
+        format!(
+            "the sentences of the {markers} right-hand markers are named once, in the record of {path}"
+        )
+    };
+    match refused {
+        Some(refused) => format!("{refused}; {where_named}"),
+        None => where_named,
+    }
+}
+
+/// The error an ASSERTED raise carries, decided from the raise's `reason`, its `token` and the refused
+/// reads the comparison met (`refused_reads`, the collection), registering nothing of its own beyond the
+/// no-op below. `reason` is usually one of the reads: the `Skip` arm raises the refused read the pair rule
+/// ranks highest among the right-hand values (`rhs_refused_read_pair`, whose text the collection holds,
+/// checked by a debug assertion at that arm), and the gate raises the pair its evidence kept, a refused
+/// read or a text promoted to one; the compared-nothing arm may raise a reason the collection does NOT
+/// hold (a budget marker's, a right-hand value the document lacks), which is read as such
+/// (`reads_hold`) and raised unregistered with the reads numbered beside it. One refused read alone, held
+/// by the registry, is raised as the registered refusal it is
 /// (`eval_context::refuse`, whose registration of a text the collection registered already is a no-op);
 /// several are joined (`(1) ... (2) ...`) and raised as they are, because the refusal test
 /// (`eval_context::is_refusal`) accepts a numbered text whose every part is a registered refusal.
@@ -1603,19 +2373,86 @@ fn raised_refusal_text(reason: String, refused_reads: &[String]) -> String {
 /// the comparison met, one that is no refusal's own sentence (the registry is read for membership alone,
 /// never for its size; the run's refused-read count comes from the texts a comparison collected), so a
 /// joined text is never registered: not here, and not for the plain undecidable error of a gate or a
-/// predicate, which carries the same text unregistered (its record reads the variant, a later change).
-fn raised_refusal(reason: String, refused_reads: &[String]) -> Error {
-    debug_assert!(
-        refused_reads.iter().any(|text| *text == reason),
-        "a strict raise's reason is one of the refused reads the comparison met; met {:?} beside {:?}",
-        reason,
-        refused_reads
-    );
+/// predicate, which carries the same text unregistered (its record reads the variant: `is_refusal` reads
+/// a token-bearing `UndecidableComparison` as a refusal, so the record is flagged by the token, not the text).
+///
+/// The ONE decision of an asserted raise's variant, made here after the collection is complete and its
+/// registrations made, for both raise sites (the `Skip` arm's and the compared-nothing arm's errors at
+/// the outcome read, and the gate's strict path), each of which hands in the reason, the raise's TOKEN and
+/// the reads: a reason the collection does not hold (a budget marker's, a right-hand value the document
+/// lacks) would make a numbered text `(1) <reason> (2) <read>` of one read, which `refuse` would register,
+/// so it is raised unregistered, as several reads are; and a text the registry does NOT hold once the
+/// collection has registered what it registers (a read a marker's token alone vouched for, the wrap of a
+/// numbered text of refusals, alone or numbered beside a registered read) is raised with its token
+/// (`UndecidableComparison`), which the asserted clause's record reads as a refusal (`is_refusal`) with
+/// nothing entering the registry. Raised through `refuse` whatever the text, the asserted raise over a
+/// token-only read registered the wrap at the raise, the one entry the collection keeps out; and the
+/// mixed text `(1) R (2) W` raised token-less read as no refusal in one token order, its sentence cut.
+/// Read by `reads_hold`, so a reason that is itself a numbered text of the reads (a plain marker's raise
+/// over two refusals) is a read, as the collection holds it part by part.
+fn raised_refusal(
+    reason: String,
+    token: Option<crate::rules::errors::RefusalToken>,
+    refused_reads: &[String],
+) -> Error {
+    let reason_is_a_read = reads_hold(&reason, refused_reads);
     let text = raised_refusal_text(reason, refused_reads);
-    if refused_reads.len() > 1 {
-        Error::Unevaluatable(text)
+    let registered = crate::rules::eval_context::is_refusal_text(&text);
+    match (refused_reads.len() > 1 || !reason_is_a_read, registered) {
+        // One registered read: the registered refusal it is (the registration is a no-op).
+        (false, true) => crate::rules::eval_context::refuse(text),
+        // Several registered reads, or a reason the collection lacks beside registered reads: the
+        // numbered text, accepted part by part and registered by nobody.
+        (true, true) => Error::Unevaluatable(text),
+        // A text the registry does not hold: the token carries the refusal.
+        (_, false) => Error::UndecidableComparison(text, token),
+    }
+}
+
+/// The LATEST-minted pair among the refused reads a comparison collected (`refused_pairs` in
+/// [`binary_operation`]): the pair rule's own table folded over the collection (`would_replace`, read
+/// with a pair kept: a pair whose token is later than the kept one's replaces it; a pair with no token
+/// ranks below any token, and among pairs with none the first met is kept), applied where the gate's
+/// raise is promoted to a refused read's sentence; `None` for an empty collection. Its live arm is the
+/// token-less one: the gate promotes a kept reason the collection does not hold, which carries no token
+/// (`refused_read_text`), and a refused pair with a token would have replaced such a reason in the fold,
+/// so the pairs ranked here are token-less and the first met is the one promoted (two key filters whose
+/// right-hand queries were refused, met in either order). The token arms stand for a tokened pair that
+/// reaches the promotion, which no builder of the engine writes today (the arm's comment in
+/// `binary_operation` names the trace); folding the one table keeps them the pair rule's, with nothing
+/// re-implemented by hand to drift, ranked by the frame of the run the comparison runs under
+/// (`eligible`, `ranking_under`) as every fold under a run is.
+fn latest_refused_pair<'p>(
+    pairs: &'p [(String, Option<crate::rules::errors::RefusalToken>)],
+    ranking: Ranking<'_>,
+) -> Option<&'p (String, Option<crate::rules::errors::RefusalToken>)> {
+    pairs.iter().fold(None, |kept, candidate| match kept {
+        None => Some(candidate),
+        Some((_, kept_token)) if would_replace_ranking(true, *kept_token, candidate.1, ranking) => {
+            Some(candidate)
+        }
+        Some(kept) => Some(kept),
+    })
+}
+
+/// The later-minted of two refusal tokens, either possibly absent (`None` ranks below any token): the
+/// token a promoted raise carries is the latest among every refusal the comparison met, the kept pair's
+/// carried token included, so the run the raise ends never reads an earlier timing than any refusal
+/// the comparison stood for. At the one site that reads it the kept pair's token is `None` (a promoted
+/// reason is one the registry does not know, and such a marker carries no token: `refused_read_text`),
+/// so the answer is the refused pair's own token; the rule is kept whole for a tokened kept pair all the
+/// same, the fail-closed side of a shape no builder writes. The pair rule's own table under the frame's
+/// ranking (`would_replace_ranking`, `eligible`): `b` replaces `a` where a marker met with `b` would
+/// replace a pair kept with `a`, so a token the run cannot read as its own never outranks one it can.
+fn later_token(
+    a: Option<crate::rules::errors::RefusalToken>,
+    b: Option<crate::rules::errors::RefusalToken>,
+    ranking: Ranking<'_>,
+) -> Option<crate::rules::errors::RefusalToken> {
+    if would_replace_ranking(true, a, b, ranking) {
+        b
     } else {
-        crate::rules::eval_context::refuse(text)
+        a
     }
 }
 
@@ -2010,7 +2847,7 @@ pub(crate) enum ClauseRole {
     /// by a key filter whose right-hand side the document lacks or whose comparison the
     /// engine could not finish (the key-filter arm of the retrieval), by a capture the
     /// evaluator cannot bind (`eval_context::to_undecidable_result`), by a wildcard filter
-    /// refused over a one-object or mixed map (`eval_context::to_refusal_result`, `refused` set)
+    /// refused over a one-object or mixed map (`eval_context::to_refusal_result`, `refusal` set)
     /// (`eval_context::refuse_a_filter_over_a_one_object_shaped_map`), and by the filter
     /// loops for an entry whose own predicate raised. The predicate's clause raises on it
     /// (`undecidable_selection`, `binary_operation`'s unresolved arms) rather than
@@ -2093,7 +2930,10 @@ pub(crate) enum ClauseRole {
 /// complement `Error::is_rules_file_mistake` plus the internal faults (returned at once), so a variant
 /// admitted here is held or folded everywhere and never stops one site while another holds it.
 pub(in crate::rules) fn is_unevaluatable(e: &Error) -> bool {
-    matches!(e, Error::Unevaluatable(_) | Error::UndecidableComparison(_))
+    matches!(
+        e,
+        Error::Unevaluatable(_) | Error::UndecidableComparison(..)
+    )
 }
 
 impl ClauseRole {
@@ -2106,6 +2946,20 @@ impl ClauseRole {
 /// `access` is the clause's whole left-hand query. Its parts are what is evaluated; the query is
 /// also what the empty-selection record below names, `some` included, so the modifier the author
 /// wrote reaches the reporters instead of being dropped at this call.
+///
+/// The values are evaluated one by one, and in a non-strict role (a gate, a filter predicate) the first
+/// value nobody could decide ends the clause with an error. The error raised is the pair of the
+/// LATEST-minted refusal's marker among the values from the raising one on, reason and token together,
+/// when any of them carries one (`refused_pair_among`, the one rule `keep_latest_refusal_else_first`
+/// states), and the value's own error otherwise. That pair outranks whatever the raising value's own read
+/// produced, a type error included: `empty` asked of an integer or a boolean is an error the strict role
+/// records per value, and beside a refusal's marker in the same selection it is the refusal that is
+/// raised, so the entry reads REFUSED where the type error alone left it PLAIN (the reversed order, the
+/// refusal met first, read REFUSED already). Before, the first undecidable value's error was raised with
+/// that value's token alone, so a key filter's budget marker met before a refusal's marker left the filter
+/// predicate's entry PLAIN and the reversed list left it REFUSED; now the fold reads every remaining value
+/// and the refusal's pair is the one raised, whatever the order. Each value's own record, written before
+/// the raise, is unchanged, and so is the strict role, which records a FAIL per value and raises nothing.
 #[allow(clippy::type_complexity)]
 fn unary_operation<'r, 'l: 'r, 'loc: 'l>(
     access: &'l AccessQuery<'loc>,
@@ -2116,6 +2970,9 @@ fn unary_operation<'r, 'l: 'r, 'loc: 'l>(
     eval_context: &'r mut dyn EvalContext<'l, 'loc>,
     role: ClauseRole,
 ) -> Result<EvaluationResult> {
+    // The frames of the runs this clause runs under, read once before the operation borrows the context
+    // (`ranking_under`): the raise over a refusal among the values ranks by them (`refused_pair_among`).
+    let frames = eval_context.refusal_frames();
     let lhs_query: &'l [QueryPart<'loc>] = &access.query;
     // The selection with the facts the retrieval recorded beside it. A pair-shaped filter straight after
     // `[*]` over a map of scalars is decided at the arm by the map's `{ Key, Value }` list twin and leaves
@@ -2217,11 +3074,20 @@ fn unary_operation<'r, 'l: 'r, 'loc: 'l>(
     let lone_variable = lhs_query.len() == 1 && lhs_query[0].is_variable();
     let empty_on_expr = selection_empty || lone_variable;
 
+    // The pair a non-strict raise carries when a refusal's marker stands among the values
+    // (`refused_pair_among`) is read AT the raise, over the value in hand and the values not yet met (the
+    // loops below hold the remaining values as a slice for that read): in a non-strict role the first
+    // undecidable value raises and every value before it was decided, so nothing earlier is read, and a
+    // clause that raises nothing builds no pair at all. A strict role raises nothing.
+
     if empty_on_expr && cmp.0 == CmpOperator::Empty {
         return Ok({
             if !lhs.is_empty() {
                 let mut results = Vec::with_capacity(lhs.len());
-                for each in lhs {
+                let mut remaining = lhs.into_iter();
+                // `while let`, not `for`: the raise below reads the iterator's remaining slice.
+                #[allow(clippy::while_let_on_iterator)]
+                while let Some(each) = remaining.next() {
                     eval_context.start_record(&context)?;
                     // `element_empty_operation`, which is the question the operator asks.
                     // `res.is_null()` is not that question: null is empty, but so are other things,
@@ -2269,13 +3135,23 @@ fn unary_operation<'r, 'l: 'r, 'loc: 'l>(
 
                             // An assertion fails closed here; a gate keeps the error so the
                             // enclosing condition fails its own rule closed rather than reading this
-                            // as a condition that did not match.
+                            // as a condition that did not match. The error a gate or a predicate
+                            // raises is the refusal's pair when a refusal's marker stands among this
+                            // value and the ones not yet met, else this value's own
+                            // (`refused_pair_among`): the record above is this value's, the raise is
+                            // the run's.
                             match role.is_strict() {
                                 true => {
                                     results.push((each, Status::FAIL));
                                     continue;
                                 }
-                                false => return Err(e),
+                                false => {
+                                    return Err(refused_pair_among(
+                                        std::iter::once(&each).chain(remaining.as_slice()),
+                                        &ranking_under(frames),
+                                    )
+                                    .unwrap_or(e))
+                                }
                             }
                         }
 
@@ -2500,7 +3376,10 @@ fn unary_operation<'r, 'l: 'r, 'loc: 'l>(
         (Eq | Gt | Ge | Lt | Le | In, _) => unreachable!(),
     };
     let mut status = Vec::with_capacity(lhs.len());
-    for each in lhs {
+    let mut remaining = lhs.into_iter();
+    // `while let`, not `for`: the raise below reads the iterator's remaining slice.
+    #[allow(clippy::while_let_on_iterator)]
+    while let Some(each) = remaining.next() {
         match (*operation)(&each) {
             Ok(true) => {
                 status.push((each, Status::PASS));
@@ -2521,9 +3400,18 @@ fn unary_operation<'r, 'l: 'r, 'loc: 'l>(
             // guards and the file exits 0. `Status` has no third value to say "could not tell", so the
             // error is the channel, and the three condition sites catch it and fail their own rule or
             // block rather than letting it escape. #720's `Outcome` lattice replaces this with a value.
+            // The error raised is the refusal's pair when a refusal's marker stands among this value
+            // and the ones not yet met, else this value's own (`refused_pair_among`); the record the
+            // operation closed above is this value's.
             Err(e) if is_unevaluatable(&e) => match role.is_strict() {
                 true => status.push((each, Status::FAIL)),
-                false => return Err(e),
+                false => {
+                    return Err(refused_pair_among(
+                        std::iter::once(&each).chain(remaining.as_slice()),
+                        &ranking_under(frames),
+                    )
+                    .unwrap_or(e))
+                }
             },
 
             Err(e) => return Err(e),
@@ -2606,7 +3494,7 @@ impl UnResolvedRhs {
             // the capture is the way such a marker arrives here): neither "did not resolve" nor "had
             // no value", since the walk arrived at a value the filter could not decide. Its own
             // reason says what could not be decided, and the keys compared against it cannot be
-            // decided either. A refusal's marker (`refused` set) arrives the same way and reads the
+            // decided either. A refusal's marker (`refusal` set) arrives the same way and reads the
             // same: the right-hand side could not be decided.
             QueryResult::UnResolved(UnResolved {
                 traversed_to,
@@ -2616,7 +3504,7 @@ impl UnResolvedRhs {
             }) => Some(format!(
                 "the right-hand side of the key filter is a value nobody could decide at {}{}, so the \
                  keys it selects cannot be decided",
-                traversed_to.self_path(),
+                template_path(traversed_to.self_path()),
                 reason
                     .as_deref()
                     .map_or(String::new(), |why| format!(": {}", why.trim_end()))
@@ -2629,21 +3517,34 @@ impl UnResolvedRhs {
                 remaining_query,
                 reason: Some(reason),
                 ..
+            // The function's reason quotes the value it had no answer for (`general_no_answer_reason`,
+            // `no_answer_reason`: the value as the template holds it), so it is a template-derived part
+            // and bounded here as the retrieval's text below is (`marker_part`).
             }) if remaining_query.is_empty() => Some(format!(
                 "the right-hand side of the key filter had no value at {}: {}, so the keys it selects \
                  cannot be decided",
-                traversed_to.self_path(),
-                reason
+                template_path(traversed_to.self_path()),
+                marker_part(reason)
             )),
+            // The retrieval's own reason quotes the template: a key read off a value that is not a map
+            // carries that whole value in its text ("Attempting to retrieve from key Names but type is
+            // not an struct type at path ..., Type = String, Value = ..."), so it is bounded HERE, where
+            // the marker's sentence is built (`marker_part`: cut at the bound, line-breaking, control
+            // and bidirectional characters escaped, the backslash kept), once, and every record that
+            // embeds the marker's sentence writes it whole as it writes a refusal's
+            // (`eval::Lead::MarkerSentence`); bounded at each record instead, the sentence was cut and
+            // escaped a second time beside its first, and the records that quote the marker whole (the
+            // per-value records, `-o json`) carried the value. The path is rendered as every marker's
+            // and refusal's sentence renders a path (`template_path`).
             QueryResult::UnResolved(unresolved) => {
                 let explanation = match &unresolved.reason {
-                    Some(reason) => format!(": {}", reason.trim_end()),
+                    Some(reason) => format!(": {}", marker_part(reason.trim_end())),
                     None => String::new(),
                 };
                 Some(format!(
                     "the right-hand side of the key filter did not resolve at {} (remaining query {}){}, \
                      so the keys it selects cannot be decided",
-                    unresolved.traversed_to.self_path(),
+                    template_path(unresolved.traversed_to.self_path()),
                     unresolved.remaining_query,
                     explanation
                 ))
@@ -3024,10 +3925,11 @@ fn binary_operation<'value, 'loc: 'value>(
     // would fail a rule closed where it should deselect the resources lacking the property. Read here,
     // before the
     // comparison, and applied to the evidence after it, by the comparator and the quantifier (the block
-    // above `undecided_gate` below). The refusal's marker only (`refused_read_reason`, through
-    // `UnResolvedKind::is_refusal`) for the POSITIVE `==` and orderings: the marker a key filter nobody
-    // could decide leaves, or a capture refused inside a predicate (`to_undecidable_result`, `refused`
-    // unset), is a value's own unresolved answer and is read pair by pair by the `RhsUnresolved` arm,
+    // above `undecided_gate` below). The refusal's marker (`refused_read_reason`, through
+    // `UnResolvedKind::is_refusal`), and every marker that stands for a refused read by its token or its
+    // registered text (`rhs_refused_read_pair`, below), for the POSITIVE `==` and orderings: the marker a spent regular
+    // expression budget leaves (`to_undecidable_result`, `refusal` None, its sentence in no registry)
+    // is a value's own unresolved answer and is read pair by pair by the `RhsUnresolved` arm,
     // which records it undecided for that pair and leaves every decided pair decided; were the marker
     // read here as well, it would wipe the decided failures beside it, so `when Y == Maps.*[ keys == /re/
     // ].*` with one key the regex could not be run over and one resolved `x` beside it would fail its rule
@@ -3039,42 +3941,189 @@ fn binary_operation<'value, 'loc: 'value>(
     // whichever kind `?` is, so that pass is not a pass (`passes_are_unknown`), as it is not under `NOT
     // IN`; read for the refusal's marker alone, `some Y != Maps.*[ keys == /re/ ].*` would pass on such a
     // value where its `NOT IN` spelling fails closed.
-    let rhs_refused = rhs.iter().find_map(|value| match value {
-        QueryResult::UnResolved(unresolved) => refused_read_reason(unresolved),
-        QueryResult::Resolved(_) | QueryResult::Literal(_) => None,
-    });
+    // Each read keeps a refusal token beside its reason (`UnResolvedKind::refusal`), so the raise the
+    // evidence ends in carries the token of a refusal it stands for, as the unary operators' raise does
+    // over their left-hand values (`refused_pair_among`, the same fold through `undecidable_pair_among`).
+    // The reason and the token are ONE marker's, the latest-minted refusal's marker among the
+    // right-hand values, or the first marker's with `None` when no marker is a refusal
+    // (`keep_latest_refusal_else_first`): a refusal minted inside a filter predicate run marks the run's
+    // entry wherever its marker stands among the right-hand values, and the raise names that refusal. A
+    // refusal's marker always carries a token, so `rhs_refused` is the latest such marker's pair;
+    // `rhs_marker` reads both kinds, may meet a plain marker first, and folds past it to the refusal.
+    // Both folds are the one helper the unary operators and the function dispatch read
+    // (`fold_marker_pair`): a marker's text is rendered only where the pair rule would keep it
+    // (`would_replace`), and every marker is read, so a refusal minted later than the one kept replaces it
+    // wherever it stands among the values.
+    // Every fold of this comparison ranks by the frames of the filter predicate runs it runs under, read
+    // off the context ONCE here (`ranking_under`; every token at rank 0 under no run): the three
+    // right-hand folds below, the evidence's undecided pair (built from the same read, below), the
+    // refused-read collection and the promotion's choice among the pairs. The stack is a copy, so a run
+    // the operands' own queries open and close changes nothing read here, and one read means the
+    // evidence and the folds cannot rank by two different readings.
+    let frames = eval_context.refusal_frames();
+    let ranking_of_frames = ranking_under(frames.clone());
+    let ranking: Ranking<'_> = &ranking_of_frames;
+    let (rhs_refused, rhs_refused_token) =
+        fold_marker_pair_ranking(rhs.iter(), refused_read_reason, ranking);
     // The refusal's reason first where both kinds stand among the values: a clause raised on the marker
-    // (the compared-nothing arm, the gate) names a rules-file mistake over a data budget, whichever
-    // value came first.
-    let rhs_marker = rhs_refused.clone().or_else(|| {
-        rhs.iter().find_map(|value| match value {
-            QueryResult::UnResolved(unresolved) => undecidable_reason(unresolved),
-            QueryResult::Resolved(_) | QueryResult::Literal(_) => None,
-        })
-    });
-    // The first right-hand marker of the key filter's kind whose REASON is a registered refusal: the
-    // marker a key filter leaves for a map whose right-hand query was refused (`eval_context::
-    // is_refusal_text`; the key-filter arm registered the wrapped sentence). Searched over EVERY
-    // right-hand value, not read off `rhs_marker`: one comparison can hold two key-filter markers of
-    // different kinds (`Resources.*.Properties.M[ keys == Statement[ Effect == 'Allow' ].Action ]` over
-    // one resource whose `M` lacks `Statement`, an unregistered marker, and one whose `Statement` is a
-    // one-object map of strings, the refused query's marker), and the first of them decides nothing about
-    // the second; read off the first marker alone, the registered refusal behind it was silent again.
-    // Read by the empty-selection arm (`Skip`, below) as the reason it raises, and by the refused-read
-    // collection after the loop as the signal that a right-hand marker's text is to be collected.
-    let rhs_registered_marker: Option<String> = rhs.iter().find_map(|value| match value {
-        QueryResult::UnResolved(unresolved) => undecidable_reason(unresolved)
-            .filter(|text| crate::rules::eval_context::is_refusal_text(text)),
-        QueryResult::Resolved(_) | QueryResult::Literal(_) => None,
-    });
+    // (the compared-nothing arm, the gate) names a rules-file mistake over a data budget. Reason and
+    // token travel as ONE pair (`keep_latest_refusal_else_first`): the latest-minted refusal's marker,
+    // text and token together, else the first marker's reason with no token.
+    let (rhs_marker, rhs_marker_token) = undecidable_pair_among(rhs.iter(), ranking);
+    // The right-hand marker that stands for a REFUSED READ by the one reading every site uses
+    // (`refused_read_text`, `is_refused_read`: a marker carrying a refusal's token, a refusal's own or one
+    // a plain marker hands on, whatever its text; or a plain marker with no token whose reason the registry
+    // holds, the marker a key filter leaves for a map whose right-hand query was refused with no token to
+    // carry, whose wrapped sentence the key-filter arm registered). Folded over EVERY right-hand value by
+    // the pair rule (`fold_marker_pair_ranking`: the highest-ranked, latest-minted tokened marker's pair,
+    // else the first token-less registered one), not read off `rhs_marker`: one comparison can hold two
+    // key-filter markers of different kinds (`Resources.*.Properties.M[ keys == Statement[ Effect ==
+    // 'Allow' ].Action ]` over one resource whose `M` lacks `Statement`, an unregistered marker, and one
+    // whose `Statement` is a one-object map of strings, the refused query's marker), and the first of them
+    // decides nothing about the second; read off the first marker alone, the registered refusal behind it
+    // was silent again. Read by the empty-selection arm (`Skip`, below) as the reason and token it
+    // raises, by the refused-read collection after the loop as the signal that a right-hand marker's text
+    // is to be collected, by the records' flag (`a_refused_read_on_the_right`) and by the pre-pass over a
+    // positive `==` and the orderings where no refusal's marker stands (below): the registered marker is
+    // a refused read by text, and the pre-pass raised on it while the arm rebuilt it as a refusal marker;
+    // rebuilt plain, the pairs beside it were read one by one and a `some` no value decided settled FAIL
+    // where it had raised the refusal. Read by TEXT alone here, a plain marker carrying a token with a
+    // text the registry does not hold (the key filter's wrap of a marker whose reason is a numbered text
+    // of refusals, which nobody registers) was no refused read on the right while it was one on the left:
+    // `<empty selection> NOT IN %m` with that marker in `%m` took the decided answer below and was not
+    // applicable, the refusal silent, where the same marker on the left of a comparison was collected and
+    // raised. The marker's token travels with the text (`UnResolvedKind::refusal`: the one the arm
+    // carried, `None` where the refusal was raised with none). Read as the FIRST such marker by position,
+    // a later tokened one behind a token-less one drove the pre-pass with no token; the fold ranks them as
+    // every other read of markers does, so the gate's kept pair under a positive `==` is the same marker's
+    // the collection ranks highest, and a tokened marker is a refused read wherever it stands, never a
+    // reason the promotion arm meets. `rhs_refused` above is the subset of these the refusal's OWN markers
+    // make (`refused_read_reason`, by kind): the strict raises key on it, and the per-pair records' flag
+    // reads it.
+    let rhs_refused_read_pair: Option<(String, Option<crate::rules::errors::RefusalToken>)> = {
+        let (text, token) = fold_marker_pair_ranking(rhs.iter(), refused_read_text, ranking);
+        text.map(|text| (text, token))
+    };
+    let rhs_refused_read_marker: Option<String> =
+        rhs_refused_read_pair.as_ref().map(|(text, _)| text.clone());
+    // The right-hand marker a LEFT-hand marker's record names in its message (the `LhsUnresolved` arm,
+    // through `marker_beside_an_absence`): the one marker the record's flag is read by. The flag
+    // (`a_refused_read_on_the_right`, below) is set by the refusal's marker by kind OR by the registered
+    // key-filter marker by text, wherever either stands among the right-hand values, while `rhs_marker`
+    // is the first token-less marker where no marker carries a token. With a token-less marker the
+    // registry does not know standing FIRST (a spent regex budget's, a right-hand value the document
+    // lacks) and the registered marker behind it, the record was flagged `refusal: true` for the
+    // registered sentence and carried the first marker's text, which holds no refusal: the console then
+    // printed a budget sentence whole under the refusal flag, and a reader of the record could not find
+    // the refusal it was flagged for. So the message names EVERY marker's sentence, numbered as a raise
+    // over several reads is (`numbered_texts`): the refused read's sentence first, the text the flag was
+    // set for, then the marker the fold kept, then the rest in value order, each once, one text alone
+    // left as it is; in every record of the comparison for a list of up to three sentences, and for a
+    // longer list in the first record written, the later records carrying the refused read's sentence and
+    // saying where the list is (`record_markers_at`, below). Every marker, not the refused read beside the
+    // kept one alone: each key filter's marker is a finding of its own (a map lacking the right-hand
+    // query's key fails that map closed), and this comparison's records are its one place; carried alone,
+    // the registered sentence pushed the kept marker's text out of the report as that text had pushed the
+    // refusal out, and named beside the kept marker alone, a second lacking map's finding, or the lacking
+    // map's where the refused read was itself the kept marker, was still pushed out. Read by every arm
+    // that names a right-hand marker beside a
+    // left-hand absence, marker or empty collection (the `LhsUnresolved` arm, the `EmptyCollection` arm
+    // and the compared-nothing arm's two empty-collection answers under a positive `IN`), so `Tags: []`
+    // and a missing `Tags` name the same markers and carry one flag under `IN`, `NOT IN` and the
+    // orderings, the comparators that answer an empty document list as the empty collection. Between two
+    // queries `==` and `!=` compare the empty list whole with each right-hand value and refuse the kinds
+    // (the `NotComparable` arm below, the operators' own reason, no flag), a record that names no
+    // marker. The pre-pass is another reader: it
+    // raises on ONE pair, `rhs_marker` for membership and the negated comparators and the ranked refused
+    // read for the positive ones, and the raise's text is completed from the collection where the outcome
+    // is read, never from this record text.
+    // Built lazily, by the arms that write such a record (four sites), never for a comparison that writes
+    // none: every right-hand marker's reason is read again here, which a comparison with no left-hand
+    // absence, marker or empty collection has no use for. Every marker is named, none counted: a
+    // right-hand side of a hundred undecided maps costs the record its length and no finding, the console
+    // bounds what it prints of a record (`reporters::validate::common::bounded_for_the_console`: a
+    // refusal's at 4096 characters with a marker naming `-o json` as the whole text, any other at 320),
+    // and the structured outputs carry the text whole.
+    // One-shot, and a LONG list named ONCE per comparison: the text is built on the first record that
+    // needs it and read from the cell after that, with the number of distinct SENTENCES it holds (the
+    // measure of what each record would carry) and the number of right-hand MARKERS it stands for (what
+    // the lead and the pointer count); a list of up to `RECORD_SENTENCES_IN_EVERY_RECORD` sentences goes
+    // whole into every record, a longer one into the first record alone (`record_markers_at`, by the
+    // left value's path), while a later record of the same comparison (a second absent left value, an
+    // empty collection beside a marker) carries the refused read's sentence, the one its flag is read
+    // by, and says where the list is (`later_record_markers`). Copied into every record, the list made
+    // the output grow with the left values times the right-hand markers, for a fact about the right-hand
+    // side the comparison's records share. The block answers of the compared-nothing arms (one per
+    // comparison, no per-value record beside them) take the whole list.
+    // Scoped to the left values of ONE comparison: the block spelling (`Resources.* { Properties.Missing
+    // != %x }`) runs one comparison per member, each with cells of its own, so each member's record
+    // carries the whole list there; a dedupe across comparisons would live where the records are kept
+    // (the recorder, keyed by the right-hand side), a design question left open, not a cell here.
+    // (the list's text; the distinct sentences it holds; the right-hand markers it stands for)
+    let rhs_record_marker: std::cell::OnceCell<Option<(String, usize, usize)>> =
+        std::cell::OnceCell::new();
+    let rhs_record_named_at: std::cell::OnceCell<String> = std::cell::OnceCell::new();
+    let build_record_marker = || -> Option<(String, usize, usize)> {
+        let kept = rhs_marker.as_ref()?;
+        let mut texts: Vec<String> = Vec::new();
+        if let Some(refused) = &rhs_refused_read_marker {
+            texts.push(refused.clone());
+        }
+        texts.push(kept.clone());
+        // The markers the list stands for: every right-hand value left undecided with a reason (the
+        // refused read and the kept marker are among them).
+        let mut markers = 0;
+        for value in rhs {
+            if let QueryResult::UnResolved(unresolved) = value {
+                if let Some(reason) = undecidable_reason(unresolved) {
+                    markers += 1;
+                    texts.push(reason);
+                }
+            }
+        }
+        let (text, named) = numbered_texts(&texts);
+        Some((text, named, markers.max(1)))
+    };
+    // The right-hand markers' text for the record of the left value at `at` (`None` for a block answer
+    // written once per comparison), with the number of markers it stands for: the whole list for a block
+    // answer, for a list of up to `RECORD_SENTENCES_IN_EVERY_RECORD` sentences and for the first record
+    // of a longer one; for every later record of a longer one, the refused read's sentence and where the
+    // list is, where that pointer is shorter than the list (a pointer that would carry a long refused
+    // read and then say "named once" saves nothing, so such a record keeps the list), the marker count
+    // the list's either way, so the sentence around the text speaks of several selections wherever
+    // several stand.
+    let record_markers_at = |at: Option<&str>| -> Option<(String, usize)> {
+        let (text, named, markers) = rhs_record_marker
+            .get_or_init(build_record_marker)
+            .as_ref()?;
+        let Some(at) = at else {
+            return Some((text.clone(), *markers));
+        };
+        let first = rhs_record_named_at.get_or_init(|| at.to_string());
+        if *named <= RECORD_SENTENCES_IN_EVERY_RECORD || first == at {
+            return Some((text.clone(), *markers));
+        }
+        let pointer = later_record_markers(rhs_refused_read_marker.as_deref(), *markers, first);
+        if pointer.chars().count() >= text.chars().count() {
+            return Some((text.clone(), *markers));
+        }
+        Some((pointer, *markers))
+    };
     // Which marker drives the pre-pass below, decided here so the bookkeeping the pre-pass reads can be
     // gated on it (`pre_pass.is_some() && cmp.1`, below): the marker of either kind for membership and
-    // for every negated comparator, the refusal's alone for the positive `==` and orderings; the reads
-    // above say why.
-    let pre_pass = match cmp.0 {
-        CmpOperator::In => rhs_marker.clone(),
-        _ if cmp.1 => rhs_marker.clone(),
-        _ => rhs_refused.clone(),
+    // for every negated comparator, the refused read's alone for the positive `==` and orderings
+    // (`rhs_refused_read_pair`: the one the pair rule ranks highest, a refusal's own marker or a plain
+    // marker handing a token on, else a token-less registered marker); the reads above say why. Its
+    // token travels with it. Read as the refusal's OWN marker first, a plain marker carrying a token the
+    // run reads as its own was outranked by a refusal minted before the run opened, and the pre-pass
+    // raised the earlier token where the fold and the empty-selection arm raise the ranked one.
+    let (pre_pass, pre_pass_token) = match cmp.0 {
+        CmpOperator::In => (rhs_marker.clone(), rhs_marker_token),
+        _ if cmp.1 => (rhs_marker.clone(), rhs_marker_token),
+        _ => match &rhs_refused_read_pair {
+            Some((reason, token)) => (Some(reason.clone()), *token),
+            None => (None, None),
+        },
     };
     // Whether any right-hand value is a LISTED entry: a resolved value, a literal, or a reference the
     // document lacks, which the comparison reads as a decided NO for every left-hand value (the
@@ -3144,14 +4193,22 @@ fn binary_operation<'value, 'loc: 'value>(
     // marker in `%x`; `some %a NOT IN ['ssh']` with the marker in `%a`) is a decided no of its own kind,
     // worded as such by the refused-read line and recorded as a refusal (`ResultEvidence::kinds_refused`,
     // `ComparisonClauseCheck::refusal`); every other refusal of kinds keeps its landed reading, a resolved
-    // no with the operators' own reason. A key filter's marker is no refusal (`mod.rs`,
-    // `ComparisonClauseCheck::refusal`: "a key filter's reason is no refusal and reads false"), so a value
-    // refused on kinds beside one alone (`some Properties.Name != %x` with the budget marker and a `[]` in
-    // `%x`) keeps the operators' reason and `refusal: false`; read for either kind of marker, that record
-    // carried the kinds sentence flagged as a refusal the console prints whole.
-    let a_refusal_beside = rhs_refused.is_some()
+    // no with the operators' own reason. A key filter's marker whose reason the registry does not hold is
+    // no refusal (`mod.rs`, `ComparisonClauseCheck::refusal`), so a value refused on kinds beside one
+    // alone (`some Properties.Name != %x` with the budget marker and a `[]` in `%x`) keeps the operators'
+    // reason and `refusal: false`; read for either kind of marker, that record carried the kinds sentence
+    // flagged as a refusal the console prints whole. A marker on EITHER side counts as the refused read
+    // it stands for by the one reading every site uses (`refused_read_text`: a marker by its token, a
+    // plain marker by its registered sentence; on the right, `rhs_refused_read_pair`, the fold above over
+    // that reading, of which `rhs_refused` is the by-kind subset), so a refusal of kinds beside the plain marker
+    // that carries a refusal's sentence is recorded as the refusal it stands beside, as it is beside the
+    // refusal's own marker, and `some %s != Properties.Name` and `some Properties.Name != %s` over one
+    // such marker in `%s` record one flag; read by kind alone on the right, the mirrored spellings
+    // differed.
+    let a_refused_read_on_the_right = rhs_refused.is_some() || rhs_refused_read_pair.is_some();
+    let a_refusal_beside = a_refused_read_on_the_right
         || lhs.iter().any(|value| {
-            matches!(value, QueryResult::UnResolved(unresolved) if refused_read_reason(unresolved).is_some())
+            matches!(value, QueryResult::UnResolved(unresolved) if refused_read_text(unresolved).is_some())
         });
     // Computed here and emitted at the bottom, because neither end of the comparison has both halves
     // of the condition.
@@ -3197,7 +4254,7 @@ fn binary_operation<'value, 'loc: 'value>(
     //
     // First rather than all of them, matching `is_one_of` and `elements_not_matched`: a clause naming
     // one reason is what the console renders for a clause anyway.
-    let mut evidence = ResultEvidence::default();
+    let mut evidence = ResultEvidence::under(frames);
     // Annotated, and bound before it is unwrapped. Every arm below is an `Ok(..)`, and the match is
     // not the tail expression, so the function's return type does not pin their error type; `?`
     // erases the error type through `From`, so without the annotation the arms infer nothing.
@@ -3276,20 +4333,45 @@ fn binary_operation<'value, 'loc: 'value>(
         // over a template with no bucket was not applicable, with the registered refusal said nowhere. The
         // marker's reason is read against the registry (`eval_context::is_refusal_text`) and, registered,
         // is raised as a refusal's marker is; the budget marker's reason is registered by nobody and keeps
-        // the decided answer. The read is by text, not kind, so every arm that reads a marker's KIND (the
-        // pre-pass over a positive `==`, the records' `refusal` flag, a filter loop's capture cut-back)
-        // reads the key filter's marker as it did.
+        // the decided answer. The read is the one every site makes (`refused_read_text`: a token, or a
+        // registered text), so a plain marker handing a refusal's token on with a text the registry does
+        // not hold (the wrap of a numbered text of refusals) is raised here too; read by text alone, that
+        // marker took the decided answer and the refusal its token names was silent. The pre-pass over a
+        // positive `==` and the orderings reads the same fold (`rhs_refused_read_pair`), a filter loop's
+        // capture cut-back reads the token a plain marker carries (`eval_context::refusal_markers_in`), and
+        // the per-pair records' `refusal` flag reads the refusal's own marker (`rhs_refused`).
         operators::EvalResult::Skip => {
-            // The refusal's marker first, else the first key-filter marker whose reason is registered,
-            // wherever it stands among the right-hand values (`rhs_registered_marker`): the first marker
-            // of any kind (`rhs_marker`) may be an unregistered one standing ahead of it.
-            let refused = rhs_refused.as_deref().or(rhs_registered_marker.as_deref());
-            if let Some(reason) = refused {
-                if role.is_strict() {
-                    Err(crate::rules::eval_context::refuse(reason.to_string()))
-                } else {
-                    Err(Error::UndecidableComparison(reason.to_string()))
-                }
+            // The refused read the pair rule ranks highest among the right-hand values, text and token
+            // together (`rhs_refused_read_pair`: a refusal's own marker, a plain marker handing a token
+            // on, or a token-less marker whose text the registry holds): the first marker of any kind
+            // (`rhs_marker`) may be an unregistered one standing ahead of it, and the refusal's own
+            // marker (`rhs_refused`) may be outranked by a plain marker carrying a token the run reads as
+            // its own, where raising the refusal's own token first would mark the entry PLAIN under a
+            // run that read that token as minted before it opened. The token travels with the raise
+            // under a gate or a predicate, as the gate's raise below carries it, so the filter predicate
+            // run the error ends marks its entry by it and the record reads the kind off the token
+            // (`eval_context::is_refusal`) where the text is not registered. The KIND of an asserted
+            // raise is decided where this outcome is read, below the collection (`raised_refusal`): a
+            // REGISTERED text (a refusal's own sentence, the key-filter arm's wrap of a refused query) as
+            // the registered refusal it is; a text the token alone vouches for (the wrap of a numbered
+            // text of refusals) with its token, which the asserted clause's record reads as a refusal all
+            // the same (`is_refusal`, `eval_guard_access_clause`'s `Err` arm), so no text a marker's
+            // token alone vouched for enters the registry through a raise. Decided here, the arm read the
+            // registry BEFORE the collection registered what it registers.
+            if let Some((reason, token)) = &rhs_refused_read_pair {
+                // The reason is some right-hand marker's refused-read text, which the collection after
+                // this match collects, so the asserted raise's decision (`raised_refusal`) reads it as a
+                // read; the compared-nothing arm has no such guarantee and none is asserted there.
+                debug_assert!(
+                    rhs.iter().any(|value| matches!(
+                        value,
+                        QueryResult::UnResolved(unresolved)
+                            if refused_read_text(unresolved).as_deref() == Some(reason.as_str())
+                    )),
+                    "the empty-selection raise names a right-hand marker's refused read; met {:?}",
+                    reason
+                );
+                Err(Error::UndecidableComparison(reason.clone(), *token))
             } else {
                 let lone_variable = lhs_query.len() == 1 && lhs_query[0].is_variable();
                 Ok(match lone_variable {
@@ -3445,8 +4527,10 @@ fn binary_operation<'value, 'loc: 'value>(
                 // says so in its line, read from the outcome; a `match_all` clause that failed on ANOTHER
                 // value's marker pair writes no line, its failure carrying the refusal). A key filter's
                 // marker is not a refusal's; the one a spent regex budget leaves is registered nowhere,
-                // and the one a refused right-hand query leaves carries a registered sentence that the
-                // empty-selection arm alone reads (`eval_context::is_refusal_text`).
+                // and the one a refused right-hand query leaves is a refused read by its token or by its
+                // registered sentence, which the empty-selection arm, the positive pre-pass
+                // (`rhs_refused_read_pair`) and the refused-read collection after the loop read
+                // (`refused_read_text`).
                 if skipped_marker_pair {
                     count_marker_pair_skip();
                 }
@@ -3596,10 +4680,24 @@ fn binary_operation<'value, 'loc: 'value>(
                     // either read as unknown beside a marker, it would fail its rule closed where the
                     // control deselects.
                     operators::ValueEvalResult::LhsUnresolved(ur) => {
-                        // The message of a LEFT-hand marker's record against a right-hand side absent as
-                        // a whole, built by the first arm below and read where the record is written.
+                        // A REFUSAL's marker as the left-hand value (the key spelling `X[*].Key` over a
+                        // map whose own key names a member another lacks, `to_refusal_result`): its
+                        // record carries the refusal's own sentence as its message and says it is one, so
+                        // the console prints it whole with its remedy (the reporters read the kind off the
+                        // record, never the text) and `-o json` carries it as the error, where a record
+                        // with no message would print the property as missing and the map traversed to
+                        // with the remedy nowhere (`left_refusal`, below). The kind is the marker's own:
+                        // the entry a filter predicate left after its body met the key spelling's refusal,
+                        // read here by a comparison after the filter (`Resources[ Cfg[*].Limits exists
+                        // ].Cfg.Tier == 'gold'`), is a refusal's marker carrying the token the predicate
+                        // run copied from the raise that ended it, so its record is filed as the refusal
+                        // too; no text of the reason is compared with the registry. A key filter's marker
+                        // keeps its reason in the marker, as before. The message of a LEFT-hand marker's
+                        // record against a right-hand side absent as a whole (`absence_led`) is built by
+                        // the first arm below and read where the record is written.
                         let mut absence_led: Option<String> = None;
-                        match undecidable_reason(&ur) {
+                        let reason = undecidable_reason(&ur);
+                        match reason.clone() {
                             // A marker among the left-hand values compared against a right-hand side that
                             // is absent as a whole (`rhs_absent`): decided, as every left-hand value is
                             // against an absence, whatever the marker hides.
@@ -3614,39 +4712,43 @@ fn binary_operation<'value, 'loc: 'value>(
                                 // (`QueryResult::UnResolved(ur)` below). Led by the marker's reason
                                 // alone, the record named no key the document lacks, so the one record
                                 // of the pair read as a refused read where the clause was decided by a
-                                // missing property. A REFUSAL's reason is also kept (`lhs_refused_reads`,
-                                // the refused reads that are not among the right-hand values), to be
-                                // registered and written to the run's output in the absence wording once
-                                // the clause is decided, as the right-hand refusal beside an absent left
-                                // value is: the line is the one place a reader of the run's output alone
-                                // learns of it, and the record is the report's.
+                                // missing property. A REFUSED READ's reason is also kept
+                                // (`lhs_refused_reads`, the refused reads that are not among the
+                                // right-hand values; `refused_read_text`: a refusal's marker by kind, a
+                                // plain marker by its registered text), to be registered and written to
+                                // the run's output in the absence wording once the clause is decided, as
+                                // the right-hand refusal beside an absent left value is: the line is the
+                                // one place a reader of the run's output alone learns of it, and the
+                                // record is the report's.
                                 absence_led = Some(left_marker_beside_an_absence(
                                     &reason,
                                     rhs_absence_lead.as_deref(),
                                 ));
-                                if refused_read_reason(&ur).is_some() {
-                                    evidence.note_left_refusal(reason);
+                                if let Some((text, token, register)) = refused_read(&ur) {
+                                    evidence.note_left_refusal(text, token, register);
                                 }
                             }
                             // A marker among the left-hand values: a value nobody knows, never an absence.
                             // It keeps the clause from being settled by its other values under `some`
                             // (`lhs_marker`): `when some %cfg NOT IN %names` with the marker alone in
                             // `%cfg` is unknown and raises whatever `%names` holds, where read as an absence
-                            // it would settle NO and skip the rule. A REFUSAL's reason is kept here too
-                            // (`lhs_refused_reads`): a clause another left-hand value decides never
-                            // consults this one (`some %x == 'A'` with a key equal to `'A'` beside the
-                            // marker passes), so the refusal the `or` swallowed upstream would reach no
-                            // record, no registry and no line; kept, it is registered whatever the
-                            // verdict and written to the run's output when the clause is decided without
-                            // raising it, as a right-hand refusal is.
+                            // it would settle NO and skip the rule. A REFUSED READ's reason is kept here
+                            // too (`lhs_refused_reads`, `refused_read_text`: a refusal's marker by kind,
+                            // a plain marker by its registered text, the one a capture carries out of a
+                            // predicate run that read a refusal minted before it): a clause another
+                            // left-hand value decides never consults this one (`some %x == 'A'` with a
+                            // key equal to `'A'` beside the marker passes), so the refusal the `or`
+                            // swallowed upstream would reach no record, no registry and no line; kept,
+                            // it is registered whatever the verdict and written to the run's output when
+                            // the clause is decided without raising it, as a right-hand refusal is; and
+                            // the gate's raise below reads it as a refused read, so a plain marker's
+                            // registered sentence is never promoted over for another refusal's.
                             Some(reason) => {
                                 evidence.lhs_marker = true;
-                                if refused_read_reason(&ur).is_some() {
-                                    evidence.note_left_refusal(reason.clone());
+                                if let Some((text, token, register)) = refused_read(&ur) {
+                                    evidence.note_left_refusal(text, token, register);
                                 }
-                                if evidence.undecided.is_none() {
-                                    evidence.undecided = Some(reason);
-                                }
+                                evidence.undecided_by(reason, ur.kind.refusal());
                             }
                             None => {
                                 evidence.decided_failure = true;
@@ -3667,26 +4769,61 @@ fn binary_operation<'value, 'loc: 'value>(
                         // above): the record leads with the right-hand absence and names the marker's
                         // reason after it, the mirror of the shape above, with `refusal` set when the
                         // marker is a REFUSAL's. With no marker on the right and the LEFT value itself a
-                        // REFUSAL's marker (`left_refusal`, the second marker branch above, the undecided
-                        // one), the record carries the refusal's own text with `refusal` set: the pair is
-                        // a FAIL status that fails an assertion and raises a gate, and the record is where
-                        // the report names what was refused, so a message-less record would have the
-                        // console read the marker as a property the template lacks ("property [] to
-                        // compare from is missing") with the reason nowhere in the output. With no marker
-                        // on either side the record carries no message and the console renders the
+                        // REFUSED READ's marker (`left_refusal`, the second marker branch above, the
+                        // undecided one: a refusal's marker by kind, or a plain marker carrying a
+                        // refusal's registered sentence, the one reading `is_refused_read` gives every
+                        // site), the record carries the refused read's own text with `refusal` set: the
+                        // pair is a FAIL status that fails an assertion and raises a gate, and the record
+                        // is where the report names what was refused, so a message-less record would have
+                        // the console read the marker as a property the template lacks ("property [] to
+                        // compare from is missing") with the reason nowhere in the output; read by kind
+                        // alone, the plain marker carrying a refusal's sentence (`%s == 'x'` under
+                        // `match_all`, `%s` that marker alone) was noted, registered and counted as a
+                        // refused read and then written here as that message-less plain record. With no
+                        // marker on either side the record carries no message and the console renders the
                         // finding from the unresolved value, as released. A REFUSAL among the right-hand
                         // values is also registered after the loop whatever the verdict and written
                         // whole to the run's output once the clause is decided (the absence that decided,
                         // `absent_failure`, set above, is the verdict the line names), and so is a
-                        // left-hand REFUSAL's marker decided by the right-hand absence; a key filter's
-                        // marker beside an absence is in this record and on no line.
-                        let left_refusal = refused_read_reason(&ur);
-                        let message =
-                            marker_beside_an_absence(rhs_marker.as_deref(), ur.reason.as_deref())
-                                .or(absence_led)
-                                .or_else(|| left_refusal.clone());
-                        let refusal =
-                            message.is_some() && (rhs_refused.is_some() || left_refusal.is_some());
+                        // left-hand refused read's marker decided by the right-hand absence; a key
+                        // filter's marker beside an absence is in this record and on no line.
+                        let left_refusal = reason
+                            .clone()
+                            .filter(|sentence| is_refused_read(&ur, sentence));
+                        // The left value's own reason leads the record (`Lead`): an absence's is the
+                        // retrieval's text, which quotes the template and is bounded as a marker's
+                        // sentence is (`marker_part`, through `Lead::Absence`); a MARKER's is the marker's
+                        // sentence (`reason`, the one read above, with the fallback a marker left without
+                        // one gets), built bounded where the marker was built and written whole (bounded
+                        // again, a left refusal beside a right marker lost its remedy past the cut and
+                        // printed its escapes doubled, and a budget marker's `\d` printed doubled too).
+                        let lead = match reason.as_deref() {
+                            Some(sentence) => Some(Lead::MarkerSentence(sentence)),
+                            None => ur.reason.as_deref().map(Lead::Absence),
+                        };
+                        // The right-hand markers named here are the ones the flag below is read by
+                        // (`rhs_record_marker`): the markers' sentences, the refused read's first, then
+                        // the kept marker's, then the rest in value order, every one named, so a record
+                        // flagged for a refused read carries that sentence and never a budget text
+                        // alone, and no marker's own finding is pushed out of the report by it. A list
+                        // of more than three sentences is named once per comparison
+                        // (`record_markers_at`): the first such record carries it, a later one the
+                        // refused read's sentence and where the list is.
+                        let at = ur.traversed_to.self_path().0.clone();
+                        let right_markers = record_markers_at(Some(&at));
+                        let message = marker_beside_an_absence(
+                            right_markers
+                                .as_ref()
+                                .map(|(text, named)| (text.as_str(), *named)),
+                            lead,
+                        )
+                        .or(absence_led)
+                        .or_else(|| left_refusal.clone());
+                        // A refused read on either side flags the record (`a_refused_read_on_the_right`:
+                        // the refusal's marker by kind or the registered right-hand marker by text, the
+                        // one reading the left value is read by).
+                        let refusal = message.is_some()
+                            && (a_refused_read_on_the_right || left_refusal.is_some());
                         eval_context.start_record(&context)?;
                         eval_context.end_record(
                             &context,
@@ -3760,12 +4897,26 @@ fn binary_operation<'value, 'loc: 'value>(
                             evidence.compared_a_left_value = true;
                         }
                         // The marker among the right-hand values, where one stands, is reported in this
-                        // record as it is in the absent value's (`marker_beside_an_absence`); a refusal
-                        // among them is registered after the loop whatever the verdict, and the run's
-                        // output line reads this absence (`absent_failure`) as the verdict that left it
-                        // unraised, an empty collection on either side alike.
-                        let reason = marker_beside_an_absence(rhs_marker.as_deref(), Some(&reason))
-                            .unwrap_or(reason);
+                        // record as it is in the absent value's (`marker_beside_an_absence`, over the
+                        // same marker the `LhsUnresolved` arm names, `rhs_record_marker`, so `Tags: []`
+                        // and a missing `Tags` beside the same right-hand values carry one sentence and
+                        // one flag: named by `rhs_marker` and flagged by `rhs_refused` here while the
+                        // absent value's record named the refused read and was flagged for it, the two
+                        // routes this arm promises are one differed in both); a refusal among them is
+                        // registered after the loop whatever the verdict, and the run's output line
+                        // reads this absence (`absent_failure`) as the verdict that left it unraised, an
+                        // empty collection on either side alike. A list of more than three sentences is
+                        // named once per comparison (`record_markers_at`, by the empty collection's
+                        // path).
+                        let at = empty.self_path().0.clone();
+                        let right_markers = record_markers_at(Some(&at));
+                        let reason = marker_beside_an_absence(
+                            right_markers
+                                .as_ref()
+                                .map(|(text, named)| (text.as_str(), *named)),
+                            Some(Lead::Absence(&reason)),
+                        )
+                        .unwrap_or(reason);
                         eval_context.start_record(&context)?;
                         eval_context.end_record(
                             &context,
@@ -3777,9 +4928,13 @@ fn binary_operation<'value, 'loc: 'value>(
                                     comparison: cmp,
                                     from: QueryResult::Resolved(empty),
                                     to: Some(QueryResult::Resolved(other)),
-                                    // The message embeds the marker's reason where one stands, and
-                                    // `rhs_marker` reads a refusal's first.
-                                    refusal: rhs_refused.is_some(),
+                                    // The message embeds every marker's reason where one stands, and
+                                    // the flag reads whether a REFUSED READ stands among the right-hand
+                                    // values (`a_refused_read_on_the_right`, which no marker-less side
+                                    // sets), the reading the absent value's record is flagged by; read
+                                    // off the refusal's own kind, a registered or tokened plain marker
+                                    // alone left the record `refusal: false` with the refusal in its text.
+                                    refusal: a_refused_read_on_the_right,
                                 },
                             )),
                         )?;
@@ -3836,11 +4991,7 @@ fn binary_operation<'value, 'loc: 'value>(
                             evidence.compared_a_left_value = true;
                         }
                         match undecidable_reason(&urhs) {
-                            Some(reason) => {
-                                if evidence.undecided.is_none() {
-                                    evidence.undecided = Some(reason);
-                                }
-                            }
+                            Some(reason) => evidence.undecided_by(reason, urhs.kind.refusal()),
                             None => {
                                 // A decided failure for the pair and never a MISMATCH: the reference
                                 // resolved to nothing, so no value was read against the left-hand one
@@ -3882,7 +5033,11 @@ fn binary_operation<'value, 'loc: 'value>(
                         // part lost. A reference the document lacks carries no reason and keeps the
                         // message-less record, whose finding the console renders from the unresolved
                         // value, as released.
-                        let refusal = refused_read_reason(&urhs).is_some();
+                        // Read by the one reading of a marker as a refused read (`refused_read_text`:
+                        // by kind, or by a registered sentence), as the left-hand sites read it: read
+                        // by kind alone here, the key filter's marker for a refused right-hand query
+                        // read `refusal: false` on the right where its mirror read `true` on the left.
+                        let refusal = refused_read_text(&urhs).is_some();
                         eval_context.start_record(&context)?;
                         eval_context.end_record(
                             &context,
@@ -3933,9 +5088,7 @@ fn binary_operation<'value, 'loc: 'value>(
                         let mut own_kind_refusal = false;
                         match nc.cause {
                             operators::Unanswerable::EngineGaveUp => {
-                                if evidence.undecided.is_none() {
-                                    evidence.undecided = Some(nc.reason.clone());
-                                }
+                                evidence.undecided_by(nc.reason.clone(), None);
                             }
                             operators::Unanswerable::IncomparableKinds if empty_left => {
                                 evidence.decided_failure = true;
@@ -4077,7 +5230,7 @@ fn binary_operation<'value, 'loc: 'value>(
                             evidence.decided_failure = true;
                             evidence.comparison_failed = true;
                         } else if let Some(reason) = rhs_marker.as_ref() {
-                            evidence.undecided.get_or_insert_with(|| reason.clone());
+                            evidence.undecided_by(reason.clone(), rhs_marker_token);
                         }
                         match cmpr {
                             operators::Compare::Value(pair) => {
@@ -4211,13 +5364,26 @@ fn binary_operation<'value, 'loc: 'value>(
             // other operator, so a membership clause that compared nothing is explained the same way
             // rather than passing vacuously.
             if statues.is_empty() {
-                // A refusal's marker among the LEFT-hand values on this path is registered here, before
-                // any return below: the collection after this match registers what the loop noted, and
-                // this arm's raise must leave the same registration behind it whatever the loop met.
+                // A refused read's marker among the LEFT-hand values on this path is registered here,
+                // before any return below, by the one reading the collection uses (`refused_read_text`: a
+                // marker by its token, a plain marker by its registered sentence; a numbered text is
+                // registered part by part, as the collection registers it), and only where the text is
+                // one to register (`refused_read_registers`: a refusal's own marker's sentence, or a text
+                // the registry holds; a text a plain marker carries by its token alone, the wrap of a
+                // numbered text, travels unregistered): the collection after this match registers what
+                // the loop noted, and this arm's raise must leave the same registration behind it
+                // whatever the loop met.
                 for value in &lhs {
                     if let QueryResult::UnResolved(unresolved) = value {
-                        if let Some(text) = refused_read_reason(unresolved) {
-                            crate::rules::eval_context::register_refusal(&text);
+                        if let Some((text, _, register)) = refused_read(unresolved) {
+                            if !register {
+                                continue;
+                            }
+                            for part in crate::rules::eval_context::numbered_refusal_parts(&text)
+                                .unwrap_or_else(|| vec![text.as_str()])
+                            {
+                                crate::rules::eval_context::register_refusal(part);
+                            }
                         }
                     }
                 }
@@ -4239,15 +5405,21 @@ fn binary_operation<'value, 'loc: 'value>(
                 // empty list would fail its rule closed where the missing key is decided, two readings
                 // of one fact about the document.
                 match rhs_marker.as_ref() {
-                    Some(reason) if evidence.every_value_absent() => {
+                    Some(_) if evidence.every_value_absent() => {
                         debug_assert!(
                             cmp == (CmpOperator::In, false),
                             "a marker beside no status is the positive `IN`'s shape alone; met {:?}",
                             cmp
                         );
                         let absence = empty_collection_message(operators::EmptySide::Lhs, role);
-                        let reason = marker_beside_an_absence(Some(reason), Some(&absence))
-                            .unwrap_or(absence);
+                        let right_markers = record_markers_at(None);
+                        let reason = marker_beside_an_absence(
+                            right_markers
+                                .as_ref()
+                                .map(|(text, named)| (text.as_str(), *named)),
+                            Some(Lead::Absence(&absence)),
+                        )
+                        .unwrap_or(absence);
                         Ok(EvaluationResult::EmptyQueryResult(
                             Status::FAIL,
                             Some(reason),
@@ -4263,15 +5435,21 @@ fn binary_operation<'value, 'loc: 'value>(
                     // the document. Under `some` the absence decides nothing (`OR(no, unknown)` is
                     // unknown, the hidden entry may be the one the other value is among), and the arm
                     // below raises, as the missing-key twin is raised there.
-                    Some(reason) if match_all && evidence.absent_failure => {
+                    Some(_) if match_all && evidence.absent_failure => {
                         debug_assert!(
                             cmp == (CmpOperator::In, false),
                             "a marker beside no status is the positive `IN`'s shape alone; met {:?}",
                             cmp
                         );
                         let absence = empty_collection_message(operators::EmptySide::Lhs, role);
-                        let reason = marker_beside_an_absence(Some(reason), Some(&absence))
-                            .unwrap_or(absence);
+                        let right_markers = record_markers_at(None);
+                        let reason = marker_beside_an_absence(
+                            right_markers
+                                .as_ref()
+                                .map(|(text, named)| (text.as_str(), *named)),
+                            Some(Lead::Absence(&absence)),
+                        )
+                        .unwrap_or(absence);
                         Ok(EvaluationResult::EmptyQueryResult(
                             Status::FAIL,
                             Some(reason),
@@ -4283,19 +5461,21 @@ fn binary_operation<'value, 'loc: 'value>(
                             "a marker beside no status is the positive `IN`'s shape alone; met {:?}",
                             cmp
                         );
-                        // Asserted, a REFUSAL's reason is raised as the registered refusal it is
-                        // (`eval_context::refuse`), so the record the `Err` arm of
-                        // `eval_guard_access_clause` writes reads `refusal: true` and the console prints
-                        // the sentence whole; a key filter's marker is no refusal and keeps the plain
-                        // undecidable error, as every gate and predicate raise does. The arm chooses the
-                        // KIND and the leading text; the error's text is completed where this outcome is
-                        // read (below the collection), with every refused read the comparison met
-                        // (`raised_refusal_text`), so a second refusal among the values is named too.
-                        if role.is_strict() && rhs_refused.as_deref() == Some(reason.as_str()) {
-                            Err(crate::rules::eval_context::refuse(reason.clone()))
-                        } else {
-                            Err(Error::UndecidableComparison(reason.clone()))
-                        }
+                        // The arm chooses the leading text and its token; the KIND of an asserted raise
+                        // is decided where this outcome is read, below the collection (`raised_refusal`:
+                        // a registered refusal's sentence as the registered refusal it is, so the record
+                        // the `Err` arm of `eval_guard_access_clause` writes reads `refusal: true` and
+                        // the console prints the sentence whole; a text the registry does not hold with
+                        // its token; a budget marker's reason as the plain undecidable error, as every
+                        // gate and predicate raise is), and the error's text is completed there with
+                        // every refused read the comparison met (`raised_refusal_text`), so a second
+                        // refusal among the values is named too. Decided here, before the collection,
+                        // the arm raised the refusal's own marker as the refusal and a registered
+                        // key-filter marker as the plain error, two kinds for one registered text.
+                        Err(Error::UndecidableComparison(
+                            reason.clone(),
+                            rhs_marker_token,
+                        ))
                     }
                     None => {
                         let reason = nothing_to_compare_message(&context, role);
@@ -4314,17 +5494,19 @@ fn binary_operation<'value, 'loc: 'value>(
     // the first of them, was read before the loop for the pre-pass), every right-hand marker of the key
     // filter's kind whose REASON is a registered refusal (the marker a refused right-hand query leaves,
     // read by text through `eval_context::is_refusal_text`, as the `Skip` arm above reads it), and every
-    // refusal's marker among the LEFT-hand values (`lhs_refused_reads`, noted by the `LhsUnresolved` arm
+    // refused read's marker among the LEFT-hand values (`lhs_refused_reads`, noted by the `LhsUnresolved`
+    // arm by the same reading, a refusal's marker by kind or a plain marker by its registered sentence,
     // whether the right-hand side was absent as a whole or not). Collected ONCE, here, whenever a refusal
-    // stands among the values (a comparison with no refusal among its values allocates no text), one entry per distinct text,
+    // stands among the values (a comparison with no refusal among its values allocates no text), one entry
+    // per distinct text, a numbered text split into the reads it names (`collect_refused_read`),
     // WHATEVER the verdict: a clause that passed beside the refusal never raised it (a listed value settled
     // the `IN`, another value passed the `some`, on either side of the marker), a clause an absence or a
     // resolved no decided never consulted it, and a clause that failed or is raised on the marker's pair (a
     // positive `IN` beside a value no listed entry accepted; the marker alone on the right, whose every pair
     // is skipped and whose outcome is the compared-nothing raise; a left-hand marker whose pair is a FAIL
     // status under an assertion) carries the text in its record or its error, which must print whole.
-    // Every one is registered as a refusal (`register_refusal`, keyed by text, so a
-    // text `refuse` did register is registered once) BEFORE the outcome is read, so the compared-nothing
+    // Every one whose marker says so is registered as a refusal (`register_refusal`, keyed by text, so a
+    // text `refuse` did register is registered once; the bit is below) BEFORE the outcome is read, so the compared-nothing
     // arm's raise and the gate's raise below leave the texts in the registry too: a refusal raised inside a
     // quiet probe left no registration behind it, and a later error carrying the text must print whole.
     // The registration does not wait on the verdict; the run's output gets the LINE only after the gate
@@ -4334,36 +5516,58 @@ fn binary_operation<'value, 'loc: 'value>(
     // resolved to nothing, under every operator, so `[ Properties.Tags == %env ]` over `Tags: []` and `[
     // Properties.Owner == %env ]` against a reference the document lacks write the line a missing `Tags`
     // writes), or a value that does not match decided it (`decided_by_a_mismatch`, below).
-    let refused_reads: Vec<String> = {
-        let mut texts: Vec<String> = Vec::new();
-        // A right-hand marker of the key filter's kind whose reason is a registered refusal (the marker a
-        // refused right-hand query leaves, `eval_context::is_refusal_text`; `rhs_registered_marker` found
-        // the first of them, over every right-hand value): a refused read by text, the one the `Skip` arm
-        // above raises, so every such marker is collected with the refusals' markers.
-        if rhs_refused.is_some() || rhs_registered_marker.is_some() {
+    // Each read travels with its marker's token (`UnResolvedKind::refusal`: the refusal's own, the one a
+    // plain marker carries, `None` for a text raised with none), so the gate's promotion below takes
+    // text and token as ONE pair, as every other reader of a marker does; promoted to a left-hand
+    // refusal's text with the raise's own token kept, the raise named one refusal and carried another
+    // marker's timing, which the enclosing run read to mark its entry. One text met twice keeps the
+    // LATER token (`collect_refused_read`, the pair rule over a kept pair), whichever side met it first.
+    // Collected and REGISTERED are two sets: a read is registered only where its marker says so
+    // (`refused_read_registers`: a refusal's own marker's sentence, or a text the registry holds; a text
+    // a plain marker carries by its token alone, the wrap of a numbered text of refusals, is collected,
+    // raised and named by the line, and never registered), so the registry holds no text a marker's
+    // token alone vouched for, whatever side met the marker and in whatever order the clauses ran.
+    let (refused_pairs, registered_reads): (
+        Vec<(String, Option<crate::rules::errors::RefusalToken>)>,
+        Vec<String>,
+    ) = {
+        let mut pairs: Vec<(String, Option<crate::rules::errors::RefusalToken>)> = Vec::new();
+        let mut registered: Vec<String> = Vec::new();
+        let mut collect =
+            |text: String, token: Option<crate::rules::errors::RefusalToken>, register: bool| {
+                if register {
+                    for part in crate::rules::eval_context::numbered_refusal_parts(&text)
+                        .unwrap_or_else(|| vec![text.as_str()])
+                    {
+                        if !registered.iter().any(|kept| kept == part) {
+                            registered.push(part.to_string());
+                        }
+                    }
+                }
+                collect_refused_read(&mut pairs, text, token, ranking);
+            };
+        // A right-hand marker that is a refused read by its token or by its registered text
+        // (`rhs_refused_read_pair` is the one the pair rule ranks highest, folded over every right-hand
+        // value; `rhs_refused` the refusal's own marker among them): the one the `Skip` arm above raises,
+        // so every such marker is collected (`refused_read_text`, the reader the left-hand loop above used
+        // for its markers).
+        if rhs_refused.is_some() || rhs_refused_read_marker.is_some() {
             for value in rhs {
                 if let QueryResult::UnResolved(unresolved) = value {
-                    let text = refused_read_reason(unresolved).or_else(|| {
-                        undecidable_reason(unresolved)
-                            .filter(|text| crate::rules::eval_context::is_refusal_text(text))
-                    });
-                    if let Some(text) = text {
-                        if !texts.contains(&text) {
-                            texts.push(text);
-                        }
+                    if let Some((text, token, register)) = refused_read(unresolved) {
+                        collect(text, token, register);
                     }
                 }
             }
         }
-        for text in evidence.lhs_refused_reads.drain(..) {
-            if !texts.contains(&text) {
-                texts.push(text);
-            }
+        for (text, token, register) in evidence.lhs_refused_reads.drain(..) {
+            collect(text, token, register);
         }
-        texts
+        (pairs, registered)
     };
+    let refused_reads: Vec<String> = refused_pairs.iter().map(|(text, _)| text.clone()).collect();
     count_refusal_texts_collected(refused_reads.len());
-    for text in &refused_reads {
+    for text in &registered_reads {
         crate::rules::eval_context::register_refusal(text);
     }
     // The compared-nothing arm's raise leaves here, with the collection complete: its error's text is
@@ -4375,14 +5579,37 @@ fn binary_operation<'value, 'loc: 'value>(
     // kinds); every other failure left the function through `?` inside the loop.
     let outcome = match outcome {
         Ok(outcome) => outcome,
+        // No arm of the match above raises this variant any more (both raise `UndecidableComparison`
+        // with their token, the kind decided below); an `Unevaluatable` here would be a new arm that
+        // skipped that decision, so a debug build says so, and a release build still makes the decision
+        // for it, by the clause's role as the two arms below do (asserted, `raised_refusal` with no
+        // token: the reads the comparison met are joined into the text and the kind is read off the
+        // registry; a gate's or a predicate's, the plain undecidable error over the joined text), never
+        // returning the error as it came: returned raw, the other refused reads the comparison met would
+        // leave the report in silence.
         Err(Error::Unevaluatable(reason)) => {
-            return Err(raised_refusal(reason, &refused_reads));
+            debug_assert!(
+                false,
+                "a comparison arm raised `Unevaluatable` past the asserted raise's decision: {}",
+                reason
+            );
+            return Err(if role.is_strict() {
+                raised_refusal(reason, None, &refused_reads)
+            } else {
+                Error::UndecidableComparison(raised_refusal_text(reason, &refused_reads), None)
+            });
         }
-        Err(Error::UndecidableComparison(reason)) => {
-            return Err(Error::UndecidableComparison(raised_refusal_text(
-                reason,
-                &refused_reads,
-            )));
+        // Asserted, the raise's kind is decided here, with the collection complete and its
+        // registrations made (`raised_refusal`); a gate's or a predicate's raise keeps the plain
+        // undecidable error with its token, as every gate and predicate raise does.
+        Err(Error::UndecidableComparison(reason, token)) if role.is_strict() => {
+            return Err(raised_refusal(reason, token, &refused_reads));
+        }
+        Err(Error::UndecidableComparison(reason, token)) => {
+            return Err(Error::UndecidableComparison(
+                raised_refusal_text(reason, &refused_reads),
+                token,
+            ));
         }
         Err(other) => return Err(other),
     };
@@ -4509,8 +5736,10 @@ fn binary_operation<'value, 'loc: 'value>(
     // whatever the right-hand side holds. The reason kept is the
     // comparison's own when it read one, and a REFUSAL's reason is preferred over a key filter's where
     // both kinds stand among the values on either side (`rhs_marker` reads the right-hand refusal
-    // first; the gate's raise below promotes a marker's reason to the first of `refused_reads`, the
-    // refusals met on either side). For membership and every negated comparator the marker of
+    // first; the gate's raise below promotes a marker's reason the collection does not hold to the
+    // refused read `latest_refused_pair` ranks highest among `refused_reads`, the reads met on either
+    // side: the latest-minted tokened one, else the first met among the token-less). For membership and
+    // every negated comparator the marker of
     // either kind drives this block, for the positive `==` and orderings the refusal's alone; the reads
     // above say why.
     //
@@ -4536,7 +5765,7 @@ fn binary_operation<'value, 'loc: 'value>(
     if let (Some(reason), EvaluationResult::QueryValueResult(_)) = (pre_pass, &outcome) {
         if !cmp.1 {
             if !clause_passed(&outcome, match_all) {
-                evidence.undecided.get_or_insert(reason);
+                evidence.undecided_by(reason, pre_pass_token);
                 evidence.decided_failure = evidence.absent_failure
                     || (a_mismatch_decides(cmp)
                         && (evidence.comparison_failed || evidence.kinds_refused));
@@ -4556,7 +5785,7 @@ fn binary_operation<'value, 'loc: 'value>(
             // hides (`absent_failure`). Under `match_all` one decided NO settles the clause; under `some`
             // only every value decided NO does (`settled_no`), and any value without a resolved equal
             // leaves it unknown.
-            evidence.undecided.get_or_insert(reason);
+            evidence.undecided_by(reason, pre_pass_token);
             evidence.passes_are_unknown = true;
             evidence.decided_failure =
                 evidence.absent_failure || evidence.comparison_failed || evidence.kinds_refused;
@@ -4619,36 +5848,103 @@ fn binary_operation<'value, 'loc: 'value>(
     // Whether `some` is settled NO by its values (`ResultEvidence::settled_no`) is read inside the gate
     // from the evidence, not set here: this block runs over a `QueryValueResult` alone, and the
     // compared-nothing arm's `EmptyQueryResult` beside a marker alone reaches the gate too.
-    if let Some(reason) = undecided_gate(&outcome, evidence, match_all, cmp.1, role) {
-        // A REFUSAL's reason over a key filter's where both kinds stand among the values, on one side or
-        // one on each, whichever pair recorded its reason first (`evidence.undecided` keeps the first): a
+    if let Some(error) = undecided_gate(&outcome, evidence, match_all, cmp.1, role) {
+        // The gate's error carries the reason and the refusal token of the marker it was read from
+        // (`ResultEvidence::refusal`); the token travels with whichever reason the raise below names.
+        let (reason, token) = match error {
+            Error::UndecidableComparison(reason, token) => (reason, token),
+            other => return Err(other),
+        };
+        // A REFUSAL's reason over a key filter's where both kinds stand among the values, on one side
+        // or one on each: the latest-minted RIGHT-hand refusal's pair (`evidence.undecided_by` keeps it,
+        // by `keep_latest_refusal_else_first`; a key filter's marker alone keeps the first reason), else
+        // the refused read the pair rule ranks highest among those met (`latest_refused_pair` over
+        // `refused_pairs`, the collection above: the right-hand reads in value order, then the
+        // left-hand ones; the latest-minted tokened pair, else the first met among the token-less), so
+        // a refusal met beside a LEFT-hand key filter's marker is the raise too and the raised text is
+        // the collection's, each read numbered once: a
         // refusal names a rules-file mistake, a key filter's marker a data budget, and the raise is the
-        // one place the clause's answer is read from. The refusal promoted to is the first refused read
-        // met (`refused_reads`, the collection above: the right-hand refusals in value order, then the
-        // left-hand refusals'), so the raised text is the collection's, each read numbered once. Only
-        // over a MARKER's reason, read on EITHER side (`undecidable_reason` over the left-hand values in
-        // `lhs` and the right-hand values in `rhs`: a key filter's marker a capture holds is compared as
-        // `%x` on whichever side the clause writes it): a resolved pair's own undecided reason (an engine
-        // that gave up on `Name != /catastrophic/` beside the refusal) is the comparison's answer and
-        // stays, leading the raised text, with the refusal numbered after it (`raised_refusal_text`) as
-        // well as registered and in the per-value records. A reason that is itself a refused read stays
-        // too: it is one of the collection, which numbers it in its place. A key filter's reason promoted
-        // over is in no collection, so it leaves the raise; the per-value record of its pair keeps it. The
-        // refusal's own text is registered either way (the collection above); the joined text the raise
-        // carries is registered by nobody and accepted by the refusal test part by part, so the asserted
-        // raise below prints whole, and the record of a gate's or a predicate's raise, a plain undecidable
-        // error, reads the variant (a later change).
+        // one place the clause's answer is read from. Only over a MARKER's reason, read on EITHER side
+        // (`undecidable_reason` over the left-hand values in `lhs` and the right-hand values in `rhs`: a
+        // key filter's marker a capture holds is compared as `%x` on whichever side the clause writes
+        // it): a resolved pair's own undecided reason (an engine that gave up on `Name !=
+        // /catastrophic/` beside the refusal) is the comparison's answer and stays, leading the raised
+        // text, with the refusal numbered after it (`raised_refusal_text`) as well as registered and in
+        // the per-value records. A reason that is itself a refused read is replaced only by a
+        // later-minted right-hand refusal (the pair rule), never by the collection's first; a key
+        // filter's reason promoted over is in no collection, so it leaves the raise, and the per-value
+        // record of its pair keeps it. The refusal's own text is registered either way (the collection
+        // above); the joined text the raise carries is registered by nobody and accepted by the refusal
+        // test part by part, so the asserted raise below prints whole, and the record of a gate's or a
+        // predicate's raise, a plain undecidable error, reads the variant: `is_refusal` reads a
+        // token-bearing `UndecidableComparison` as a refusal, so that record is flagged by the token.
         let a_markers_reason = lhs.iter().chain(rhs.iter()).any(|value| {
             matches!(value, QueryResult::UnResolved(unresolved)
                 if undecidable_reason(unresolved).as_deref() == Some(reason.as_str()))
         });
-        let reason = match refused_reads.first() {
-            Some(refused)
-                if a_markers_reason && !refused_reads.iter().any(|text| *text == reason) =>
-            {
-                refused.clone()
+        let reason_is_a_refused_read = reads_hold(&reason, &refused_reads);
+        // The right-hand refusal replaces the kept reason only where its token is no earlier than the
+        // kept pair's (`would_replace`'s rule read from the kept side): a plain marker's reason kept
+        // with a LATER carried token stands, so the raise never swaps a later token for an earlier
+        // refusal's. The false reading of the first arm is REACHED, not defensive: a left-hand capture
+        // bound inside the enclosing predicate run by `Sub[ s | %c2 exists ]`, a plain marker carrying
+        // the refusal `Cfg2[ c2 | .. ]` minted in that run, compared against a refusal's marker bound
+        // before the run (`some %s NOT IN %c`); the kept pair is then a refused read by text
+        // (`refused_read_text`), the match below falls to its last arm, and the raise numbers the kept
+        // sentence first with the right-hand refusal after it, under the later token.
+        // Ranked by the frame of the run the comparison runs under (`would_replace_ranking`,
+        // `eligible`), as every other fold of this comparison is: a right-hand refusal the run cannot read
+        // as its own (a `let` resolved inside it) never replaces a kept refusal the run can, however much
+        // later it was minted; ranked by minting alone, `some Cfg[ c | Limits[*].K exists ] NOT IN %lim`
+        // promoted the entry's own refusal over to the binding's later, excluded one in the first entry
+        // and kept its own in the second, the resource-order swap through this arm. A tie (one token
+        // on both sides: a plain marker carrying the refusal's token beside the refusal's own marker)
+        // still takes the refusal's own sentence.
+        let refused_not_earlier = match (rhs_refused_token, token) {
+            (Some(refused), Some(kept)) => {
+                refused == kept || would_replace_ranking(true, Some(kept), Some(refused), ranking)
             }
-            _ => reason,
+            (Some(_), None) => true,
+            (None, _) => false,
+        };
+        let (reason, token) = match rhs_refused.clone() {
+            Some(refused) if a_markers_reason && refused_not_earlier => {
+                (refused, rhs_refused_token)
+            }
+            // A kept marker's reason the collection does not hold (a spent regex budget, a right-hand
+            // value the document lacks: a reason the registry does not know, so `refused_read_text`
+            // collected it on neither side) beside refused reads met with it: promoted to the
+            // LATEST-minted refused read's text (`latest_refused_pair`: a pair with no token ranks
+            // lowest, the first met among those), with the latest token among every refusal the
+            // comparison met, the kept pair's carried one included (`later_token`). Promoted to the FIRST
+            // pair with the raise's own token, the raise named one refusal under another marker's
+            // timing. DEFENSIVE in its token half: a marker that carries a token is a refused read by
+            // that token whatever its text (`refused_read_text`), so it is collected and never a reason
+            // the collection lacks, a kept pair this arm promotes over carries none, every refused pair
+            // with a token would have replaced it in the fold (`would_replace`), the pairs this selector
+            // ranks are token-less and `later_token` returns the refused pair's own token; the text and
+            // the token of the raise are one refused read's. The arm is written for the two halves all
+            // the same, so a reader that ever read a tokened marker as no refused read would still raise
+            // under the latest token, never an earlier one.
+            // Four shapes that look like the token half and do not reach it: a plain marker carrying a
+            // refusal's own sentence and token (`Sub[ s | %c exists ]` over a refusal in `%c`) is a
+            // refused read by text and leads the raise itself; a kept pair with a token later than the
+            // right-hand refusal's takes the arm above this one's fall-through, its own text numbered
+            // first; a tokened right-hand marker of the key filter's kind whose sentence the registry
+            // holds, driving the pre-pass of a positive `==` or an ordering (`rhs_refused_read_pair`,
+            // ranked by the same fold), is a refused read by text too and is never a reason the
+            // collection lacks; and `(1) <budget> (2) <refusal>`, a numbered text led by no refused
+            // read, is never raised with a token, since a budget's reason carries none and a refusal
+            // beside it replaces it in the fold.
+            None if a_markers_reason && !reason_is_a_refused_read => {
+                match latest_refused_pair(&refused_pairs, ranking) {
+                    Some((refused, refused_token)) => {
+                        (refused.clone(), later_token(*refused_token, token, ranking))
+                    }
+                    None => (reason, token),
+                }
+            }
+            _ => (reason, token),
         };
         // Asserted (the strict path's raise), a REFUSAL's reason is raised as the registered refusal it
         // is (`raised_refusal`): the `Err` arm of `eval_guard_access_clause` then records it with
@@ -4660,25 +5956,29 @@ fn binary_operation<'value, 'loc: 'value>(
         // record its reason (`some %x NOT IN %y`, a refused walk's marker in each capture), and read on the
         // right-hand side alone that refusal was raised as a plain undecidable error, its record
         // `refusal: false` and its numbered text cut by the console where the same text led by the
-        // right-hand refusal printed whole.
-        let a_refusals = refused_reads.iter().any(|text| *text == reason);
+        // right-hand refusal printed whole. Read by `reads_hold`: a reason that is a numbered text of the
+        // reads (a plain marker's raise over two refusals, kept by its later token) is made of refused
+        // reads, which the collection holds part by part.
         // Every refused read the comparison met joins the raised text (`raised_refusal_text`, from the
         // collection above): a second refusal, registered beside the chosen reason, would otherwise
         // reach no error and no line, since the line below is written only where this gate declines.
-        // The kind of the raise keeps its key on the chosen reason. The joined text is registered by
-        // NOBODY, for either kind: the refusal test accepts a numbered text whose every part is a
-        // registered refusal (`eval_context::is_refusal`), so the asserted raise prints whole without a
-        // third registry entry beside the two refusals met, an entry that would be no refusal's own
-        // sentence (the registry is read for membership alone, never for its size); the gate's or the
-        // predicate's plain undecidable error carries the same text, its record reading the variant (a
-        // later change).
-        if role.is_strict() && a_refusals {
-            return Err(raised_refusal(reason, &refused_reads));
+        // The kind of an asserted raise is `raised_refusal`'s one decision, over the chosen reason, the
+        // raise's token and the reads (a reason the collection lacks is raised as the plain error with
+        // the reads numbered beside it). The joined text is registered by NOBODY, for either kind: the
+        // refusal test accepts a numbered text whose every part is a registered refusal
+        // (`eval_context::is_refusal`), so the asserted raise prints whole without a third registry entry
+        // beside the two refusals met, an entry that would be no refusal's own sentence (the registry is
+        // read for membership alone, never for its size); the gate's or the predicate's plain undecidable
+        // error carries the same text, its record reading its kind off the variant and the token it
+        // carries, never off the text (`refusal: true` for the two-refusal `when some %x NOT IN %y`, whose
+        // raise carries the later refusal's token).
+        if role.is_strict() {
+            return Err(raised_refusal(reason, token, &refused_reads));
         }
-        return Err(Error::UndecidableComparison(raised_refusal_text(
-            reason,
-            &refused_reads,
-        )));
+        return Err(Error::UndecidableComparison(
+            raised_refusal_text(reason, &refused_reads),
+            token,
+        ));
     }
     // The run's output line for the refused reads collected above (`record_unraised_refusal`), only now
     // that the gate declined: the clause PASSED (a listed value settled it, or `some` passed on another
@@ -4700,7 +6000,30 @@ fn binary_operation<'value, 'loc: 'value>(
     // (a no decides nothing there, and an absent reference among the values is the pair's own failure,
     // not the clause's): it failed on the marker's pair, its record names the refusal, and no line is
     // written, as under `NOT IN` with a value no resolved entry matches.
-    if !refused_reads.is_empty() {
+    // A capture nothing can bind was announced where it was refused (`announce_unbound_capture`, once per
+    // clause and input, in words that say the clause fails closed on it or is decided past), and where
+    // that line was recorded its reason went into the root's set (`EvalContext::announced_capture_refusals`;
+    // a refusal met under a measurement or a quiet probe, which record no line, is not in it), so that
+    // reason is left off this line: written here too, one refusal would be reported twice at one clause,
+    // in two wordings, while a refusal no line names is named here. The set holds the one builder's texts
+    // and nothing else (`is_capture_not_bound_reason`, asserted in a debug build); a scope with no root
+    // behind it has no set and the line names every refused read.
+    let announced = eval_context.announced_capture_refusals();
+    debug_assert!(announced.as_ref().map_or(true, |set| {
+        set.borrow()
+            .iter()
+            .all(|text| crate::rules::eval_context::is_capture_not_bound_reason(text))
+    }));
+    let unannounced: Vec<String> = refused_reads
+        .iter()
+        .filter(|text| {
+            !announced
+                .as_ref()
+                .is_some_and(|set| set.borrow().contains(*text))
+        })
+        .cloned()
+        .collect();
+    if !unannounced.is_empty() {
         let verdict = if passed {
             Some(crate::rules::UnraisedVerdict::Passed)
         } else if decided_by_an_absence {
@@ -4721,7 +6044,7 @@ fn binary_operation<'value, 'loc: 'value>(
                 location,
                 &access_clause_text(clause),
                 verdict,
-                &refused_reads,
+                &unannounced,
             );
         }
     }
@@ -4784,10 +6107,24 @@ fn binary_operation<'value, 'loc: 'value>(
 /// Grouped rather than passed as two parameters because they are only ever read together, by
 /// [`undecided_gate`], and because a bare `Option<String>` beside a bare `bool` at a call site says
 /// nothing about which is which.
-#[derive(Default)]
 struct ResultEvidence {
-    /// The first reason a comparison could not be answered, if one could not.
+    /// The frames of the filter predicate runs the comparison runs under, the one read the comparison
+    /// takes off the context (`EvalContext::refusal_frames`, in `binary_operation`), empty under no run:
+    /// the ranking `undecided_by` folds by (`ranking_under`), so the pair the raise carries is ranked as
+    /// the run marks its entry, by the same reading the comparison's own folds rank by. Named by every
+    /// construction (`under`), never defaulted: evidence built with no frames under a run would rank its
+    /// undecided pair by minting alone where the run ranks by ownership.
+    frames: crate::rules::eval_context::RefusalFrames,
+    /// The reason the raise names, if a comparison could not be answered: the refusal the run can read as
+    /// its own minted latest among the undecided comparisons, else the first undecided reason met
+    /// (`undecided_by`, the pair rule `keep_latest_refusal_else_first_ranking` under `frame`; `refusal`
+    /// below is its token).
     undecided: Option<String>,
+    /// The latest-minted refusal token any undecided reason was read with (`UnResolvedKind::refusal`),
+    /// paired with that reason in `undecided` (`undecided_by`), carried by the error [`undecided_gate`]
+    /// raises, so a filter predicate run that error ends reads the refusal as the one minted inside it;
+    /// `None` when no undecided reason named a refusal.
+    refusal: Option<crate::rules::errors::RefusalToken>,
     /// Whether some value's comparison was performed and answered no, or some operand was absent, or
     /// some pair was refused on kinds. A refusal to compare kinds counts here, not in `undecided`, except
     /// under membership beside a marker (see the `NotComparable` arm); see [`operators::Unanswerable`].
@@ -4846,11 +6183,20 @@ struct ResultEvidence {
     /// assertion unless every left-hand value is a decided NO; under `match_all` a FAIL status decides
     /// the clause and nothing is recorded.
     undecided_under_some: bool,
-    /// The refused reads that are not among the right-hand values: every LEFT-hand marker's own refusal
-    /// (the `LhsUnresolved` arm, both its marker branches), one entry per distinct text, since the
-    /// right-hand side does not hold them; collected with the others after the loop. Allocates nothing
-    /// for a comparison with no left-hand refusal.
-    lhs_refused_reads: Vec<String>,
+    /// The refused reads that are not among the right-hand values: every LEFT-hand marker that stands
+    /// for one (the `LhsUnresolved` arm, both its marker branches, by `is_refused_read`: a refusal's
+    /// marker by kind, or a plain marker whose reason the registry holds, a refusal's sentence carried
+    /// out of a predicate run or the numbered text of a raise over two), one entry per MEETING with the
+    /// marker's token beside it and whether the text is one to REGISTER (`refused_read_registers`: a
+    /// refusal's own marker's or a text the registry holds, never a text the token alone vouched for);
+    /// every meeting is pushed as it was met (`note_left_refusal`), since the right-hand side does not
+    /// hold them, and the collection after the loop is the one fold over the meetings
+    /// (`collect_refused_read`: a numbered text as its parts, one text met twice with the later token
+    /// under the frames' ranking, registered when any meeting says so), where the gate's promotion takes
+    /// text and token as ONE pair. Allocates nothing for a comparison with no left-hand refused read; a
+    /// left-hand side of many markers carrying one text costs one entry and one parse of the text per
+    /// marker at the collection.
+    lhs_refused_reads: Vec<(String, Option<crate::rules::errors::RefusalToken>, bool)>,
     /// Whether the per-value bookkeeping below RAN for this comparison (`binary_operation`'s negated
     /// pre-pass over a marker among the right-hand values, the one place `lhs_seen` and `lhs_decided_no`
     /// are written). Required by [`ResultEvidence::every_value_decided_no`]: `absent_lhs` is also written
@@ -4882,6 +6228,55 @@ struct ResultEvidence {
 }
 
 impl ResultEvidence {
+    /// Evidence for a comparison that runs under `frames`, the stack its context held when the
+    /// comparison read it (`binary_operation`): nothing noted yet, every flag off.
+    fn under(frames: crate::rules::eval_context::RefusalFrames) -> Self {
+        ResultEvidence {
+            frames,
+            undecided: None,
+            refusal: None,
+            decided_failure: false,
+            kinds_refused: false,
+            comparison_failed: false,
+            absent_failure: false,
+            compared_a_left_value: false,
+            passes_are_unknown: false,
+            undecided_under_some: false,
+            lhs_refused_reads: Vec::new(),
+            bookkeeping_active: false,
+            absent_lhs: false,
+            lhs_marker: false,
+            lhs_seen: std::collections::HashMap::new(),
+            lhs_decided_no: std::collections::HashMap::new(),
+        }
+    }
+
+    /// Keeps the reason and the token the raise names as one pair (`keep_latest_refusal_else_first`):
+    /// the undecided value whose refusal was minted latest, text and token together, or the first
+    /// undecided reason with `None` when none is a refusal. A refusal minted inside a filter predicate
+    /// run marks the run's entry whatever value it was read from, so a refusal met after a value nobody
+    /// could decide is the one the raise carries; kept with the first reason alone, the token depended on
+    /// the order the values were compared in, and `%x NOT IN {?, refused}` ended its run with `None`;
+    /// taken alone with the first reason kept, it paired another value's text with the refusal's token;
+    /// and a refusal kept whole past a later one let a capture's older marker, compared first, outlive
+    /// the in-run refusal read after it, so the run read its own refusal as minted before it opened.
+    fn undecided_by(
+        &mut self,
+        reason: String,
+        refusal: Option<crate::rules::errors::RefusalToken>,
+    ) {
+        // Ranked by the frames of the runs the comparison runs under (`frames`, `ranking_under`): ranked
+        // by minting alone, the resource-order swap the conjunction fold closes survived through this
+        // fold in a single comparison with the binding on the left.
+        keep_latest_refusal_else_first_ranking(
+            &mut self.undecided,
+            &mut self.refusal,
+            reason,
+            refusal,
+            &ranking_under(self.frames.clone()),
+        );
+    }
+
     /// Record a left-hand value a result named, and whether that result decided it NO. Keyed by the
     /// address of the value's `Rc`, and the `Rc` itself is HELD beside the key: an address is a value's
     /// identity only while the value is alive, and a noted value the results own alone (the loop consumes
@@ -4900,11 +6295,25 @@ impl ResultEvidence {
         self.lhs_seen.insert(key, Rc::clone(value));
     }
 
-    /// Keep a LEFT-hand marker's refusal text for the collection after the loop, once per distinct text.
-    fn note_left_refusal(&mut self, text: String) {
-        if !self.lhs_refused_reads.contains(&text) {
-            self.lhs_refused_reads.push(text);
-        }
+    /// Note a LEFT-hand marker's refused-read text (a marker by its token, or a plain marker's
+    /// registered sentence, `is_refused_read`), with the marker's token and whether the text is one to
+    /// register (`refused_read_registers`), for the collection after the loop, every meeting as it was
+    /// met. The collection is the ONE fold over the meetings, left-hand and right-hand alike: it splits a
+    /// numbered text into its parts and keeps the LATER token of a text met twice under the frames'
+    /// ranking (`collect_refused_read`, the pair rule over a kept pair), and it registers a text when ANY
+    /// meeting says so (the registered set is the OR over the meetings). So one text met twice here, as
+    /// a refusal's own marker and as a plain marker carrying it, is pushed twice and folded there, by the
+    /// rule the right-hand markers are folded by, with nothing of that rule written a second time at this
+    /// push to drift from it. Kept as the first meeting left it, the plain marker met first left the
+    /// refusal's own sentence unregistered in one value order and registered in the other, and an older
+    /// token hid the newer one the collection is written to prefer.
+    fn note_left_refusal(
+        &mut self,
+        text: String,
+        token: Option<crate::rules::errors::RefusalToken>,
+        register: bool,
+    ) {
+        self.lhs_refused_reads.push((text, token, register));
     }
 
     /// Whether every left-hand value was decided NO: the bookkeeping ran (`bookkeeping_active`), each
@@ -5116,7 +6525,10 @@ fn undecided_gate(
     match_all: bool,
     negated: bool,
     role: ClauseRole,
-) -> Option<String> {
+) -> Option<Error> {
+    // The refusal token kept with the reason (`ResultEvidence::refusal`): the error raised below carries
+    // it, so the filter predicate run that error ends reads the refusal as minted inside it or not.
+    let refusal = evidence.refusal;
     // Read before the reason is taken out of the evidence: whether `some` is decided NO by its values
     // ([`ResultEvidence::settled_no`]), for whatever outcome shape reached this gate.
     let settled_no = evidence.settled_no(match_all, negated);
@@ -5141,7 +6553,7 @@ fn undecided_gate(
             && !settled_no
             && (evidence.passes_are_unknown || evidence.undecided_under_some)
         {
-            return Some(reason);
+            return Some(Error::UndecidableComparison(reason, refusal));
         }
         return None;
     }
@@ -5171,7 +6583,7 @@ fn undecided_gate(
         return None;
     }
 
-    Some(reason)
+    Some(Error::UndecidableComparison(reason, refusal))
 }
 
 /// True when the clause reached PASS, under the `match_all` its query was written with.
@@ -5244,8 +6656,21 @@ pub(super) fn real_binary_operation<'value, 'loc: 'value>(
     eval_context: &mut dyn EvalContext<'value, 'loc>,
 ) -> Result<EvaluationResult> {
     let mut statues: Vec<(QueryResult, Status)> = Vec::with_capacity(lhs.len());
-    // The first key comparison that had no answer, if any had none. See the return below.
-    let mut undecided: Option<String> = None;
+    // The ranking of the filter predicate runs this key filter runs under, read off the context once
+    // before anything below borrows it (`ranking_under`; every token at rank 0 under no run): the per-key
+    // fold (`select_key`, `key_selected_from`) and the fold over the keys below both rank by it, so a
+    // key filter inside a run keeps the run's own refusal over a later token the run cannot read as its
+    // own, as the conjunction fold and the comparison's evidence do. Read as every token eligible, the
+    // two folds ranked by minting alone and the resource-order swap stood here.
+    let ranking_of_frames = ranking_under(eval_context.refusal_frames());
+    let ranking: Ranking<'_> = &ranking_of_frames;
+    // The key comparison that had no answer whose refusal ranks highest under the runs, minted latest
+    // among those, with its token (`KeySelection::refusal`), or the first key comparison that had no
+    // answer with `None` when none was a refusal, whichever key that was: its reason, with whether that
+    // reason is a sentence to register (`KeySelection::register`), the two read together off the one
+    // key the fold keeps. See the return below.
+    let mut undecided: Option<(String, bool)> = None;
+    let mut undecided_refusal: Option<crate::rules::errors::RefusalToken> = None;
     // The right-hand side as written, before the normalization and the expansion below: the earlier
     // engine counted these values to decide whether a written `==` was membership, and
     // `containment_move` reads that count. Nothing else reads this name; the comparator below reads
@@ -5424,8 +6849,10 @@ pub(super) fn real_binary_operation<'value, 'loc: 'value>(
                 let key_filter::KeySelection {
                     selected,
                     undecided: key_undecided,
+                    refusal: key_refusal,
+                    register: key_register,
                     evidence,
-                } = key_filter::select_key(cmp, Rc::clone(l), rhs);
+                } = key_filter::select_key(cmp, Rc::clone(l), rhs, ranking);
 
                 // The deprecated reading of a string on the right is text the key could be contained
                 // in. When that reading and `select_key`'s select the key differently, the move is
@@ -5500,9 +6927,23 @@ pub(super) fn real_binary_operation<'value, 'loc: 'value>(
                         statues.extend(status);
                     }
                 }
-                // After the records, which read the key's own reason; the filter's is the first key's.
-                if undecided.is_none() {
-                    undecided = key_undecided;
+                // After the records, which read the key's own reason; the filter's is the key's whose
+                // refusal ranks highest under the runs and was minted latest among those, reason and
+                // token together, else the first undecided key's whose sentence is one to register, else
+                // the first undecided key's, with `None` (`keep_latest_refusal_else_registered_else_first_ranking`
+                // under `ranking`), since a refusal minted inside a filter predicate run marks the run's
+                // entry whichever key met it, and the raise names that refusal, and a refused read by text
+                // is never hidden behind a budget text another key met first. The key's registration bit
+                // rides with its reason, so the one registered below is the kept key's.
+                if let Some(reason) = key_undecided {
+                    keep_latest_refusal_else_registered_else_first_ranking(
+                        &mut undecided,
+                        &mut undecided_refusal,
+                        reason,
+                        key_register,
+                        key_refusal,
+                        ranking,
+                    );
                 }
             }
         };
@@ -5539,7 +6980,21 @@ pub(super) fn real_binary_operation<'value, 'loc: 'value>(
     // and its siblings are tested. The legacy resolver's key-filter arm still returns the error for the
     // whole selection; no command path reaches it.
     match undecided {
-        Some(reason) => Err(Error::UndecidableComparison(reason)),
+        Some((reason, register)) => {
+            // The one registration of a key filter's pairing sentence: the sentence of the one key the
+            // fold over every key kept, when its marker stood for a refused read
+            // (`KeyPairOutcome::Unfinished::register`, decided where the marker was read), so the
+            // marker the caller rebuilds for the map from this error (`undecided_map`) is a refused read
+            // by text where it carries no token. Registered per key in `select_key`, one key's sentence
+            // entered the registry while another key's became the map's marker: two keys whose kept
+            // pairings differ (a regex that spends its budget on one key beside a tokenless marker whose
+            // reason is registered) registered the second key's wrap and raised the first key's budget
+            // text, a registered text no marker carried.
+            if register {
+                let _registered = crate::rules::eval_context::register_refusal(&reason);
+            }
+            Err(Error::UndecidableComparison(reason, undecided_refusal))
+        }
         None => Ok(EvaluationResult::QueryValueResult(statues)),
     }
 }
@@ -6872,9 +8327,21 @@ where
 /// per-value arm's does not: every reporter stops at the filter's record (`find_failing_clauses`), so a
 /// sentence here would be recorded and never rendered; the refusal's text reaches the reader through the
 /// enclosing clause, which fails on the undecidable marker the selection delivered and prints its reason.
-/// `fails` and `undecided` are the block's fold: one more failed body, and the FIRST reason kept. Both
-/// arms hand it the FIRST refusal the selection delivered (`EmptySelection::refusal_text`), so the text
-/// a refused body reports does not depend on which arm met it either.
+/// `fails` and `undecided` are the block's fold: one more failed body, and the reason and token of the
+/// value whose raise is the LATEST-minted refusal kept together, or the first reason with `None` when
+/// none is (`keep_latest_refusal_else_first`). Both arms hand it the FIRST refusal the selection delivered
+/// (`EmptySelection::refusal_text`), so the text a refused body reports does not depend on which arm met
+/// it either. `refusal` is the token of the raise
+/// folded, carried into the error's second field: the own-key refusal's, minted where the block arm
+/// registered it; a fresh mint for the refusal a one-object filter's selection delivered (the arms register
+/// the kept text and mint for it, `register_refusal`, so an error carrying the text with no token is still
+/// read as the refusal where it is written into a record); a nested body's raise's own token, copied as it arrived,
+/// which is none for a raise that is no refusal. A filter predicate run that ends on the block's error
+/// reads that token against the count at its start and marks the entry it was deciding a refusal when the
+/// refusal was minted inside the run; the fold itself registers nothing, so a body's regular expression
+/// out of budget or a key filter's undecided map is folded as the undecided value it is and never becomes
+/// a refusal by being folded.
+#[allow(clippy::too_many_arguments)]
 fn fold_refused_body<'value, 'loc: 'value>(
     resolver: &mut dyn EvalContext<'value, 'loc>,
     guard_cxt: &str,
@@ -6882,6 +8349,7 @@ fn fold_refused_body<'value, 'loc: 'value>(
     fails: &mut usize,
     undecided: &mut Option<Error>,
     reason: String,
+    refusal: Option<crate::rules::errors::RefusalToken>,
 ) -> Result<()> {
     resolver.start_record(guard_cxt)?;
     resolver.end_record(
@@ -6894,9 +8362,23 @@ fn fold_refused_body<'value, 'loc: 'value>(
         }),
     )?;
     *fails += 1;
-    if undecided.is_none() {
-        *undecided = Some(Error::UndecidableComparison(reason));
-    }
+    // The block's reason and token are one value's pair (`keep_latest_refusal_else_first`): the value
+    // folded whose raise is the latest-minted refusal, text and token together, or the first value's
+    // reason with `None` when none is, since a refusal minted inside a filter predicate run marks the
+    // run's entry whichever value was folded first and the raise names that refusal. Kept whole, the
+    // first error's `None` outlived a later value's refusal, and the entry's kind depended on the order
+    // the values were met in; with the token alone taken from the later value, the first value's text
+    // (a regular expression's budget) was raised under the refusal's token and reported as the refusal;
+    // and a refusal kept whole past a later one dropped an in-run refusal's token behind one minted
+    // before the run, so the frame read the entry plain. Ranked by the frame of the run the block runs
+    // under, read off the context (`ranking_under`): ranked by minting alone, the resource-order swap the
+    // conjunction fold closes survived through this fold in a block shape.
+    keep_latest_refusal_else_first_error(
+        undecided,
+        reason,
+        refusal,
+        &ranking_under(resolver.refusal_frames()),
+    );
     Ok(())
 }
 
@@ -7030,6 +8512,20 @@ pub(in crate::rules) fn eval_guard_block_clause<'value, 'loc: 'value>(
     // decided, and how many values were decided against. Read together after the loop, by the table
     // `undecided_gate` holds for the clause form.
     let mut undecided: Option<Error> = None;
+    // The block body's key tree for the own-key check, read once per block clause on the first map that
+    // passes the provenance test and resolved per map (`block_arm_own_key_refusal`): the keys under a
+    // `when` count for a map only where its condition can hold on that map.
+    let mut body_keys: Option<crate::rules::eval_context::BodyKeys<'value>> = None;
+    // The source query a bare binding or parameter at the clause's head was bound to (`let r =
+    // Resources[*]` or `let r = Resources`, `check(Resources[*])`), for the remedy's `X` of the own-key
+    // check below: read for `%r { .. }` and for `%r[*] { .. }` alike (the head is the query before its
+    // trailing `[*]`, `eval_context::query_head_before_a_trailing_wildcard`); none for a head that is not
+    // a bare name, whose `X` is the clause query itself. The head is the clause's, not a value's, so it is
+    // read ONCE per block clause (a walk of up to sixteen scope lookups) and reused for every value of the
+    // block, as `body_keys` is; and read LAZILY, at the first value the arm judges (a map the author's
+    // `[*]` handed on whole, the arm's provenance test), so the common `%p { .. }` body over values the
+    // arm leaves alone pays no lookup at all, as the key spelling's arm defers its own.
+    let mut binding_source = None;
     let mut decided_fails = 0;
     // The block form of the lacks-keys refusal. `Tags[*][ Key == 'Env' ] { Value == 'prod' }` over
     // map-shaped tags is the author's `Tags[*][ Key == 'Env' ].Value == 'prod'` with the key read in the
@@ -7198,13 +8694,22 @@ pub(in crate::rules) fn eval_guard_block_clause<'value, 'loc: 'value>(
             // and marked beneath the block by `fold_refused_body`, the one function both arms that meet
             // the refusal fold through (the `Err(e)` arm below reaches it for the same refusal met after
             // another clause's error), so the record tree reads the same whichever clause ran first.
-            Err(Error::UndecidableComparison(reason)) if !role.is_strict() => {
+            Err(Error::UndecidableComparison(reason, refusal)) if !role.is_strict() => {
                 // The text folded is the FIRST refusal the selection delivered (`refusal_text`, the one
                 // `LacksKeysNote::deliver` keeps), as the `Err(e)` arm folds it, so a body refused twice
                 // (`{ Sid == 'x' or %flag == true  Condition exists }` over a statement lacking both)
-                // reports the same read inside a predicate as outside one; the marker's own reason is
-                // the fallback for a marker no refusal of this selection stands behind.
-                let first = selection.refusal_text().unwrap_or(reason);
+                // reports the same read inside a predicate as outside one, carrying a token minted
+                // here and the text registered (`register_refusal`: the text travels as the block's
+                // undecided reason, and an error carrying it with no token is read as the refusal where
+                // it is written into a record, `is_refusal`); the marker's own reason and token are the
+                // fallback for a marker no refusal of this selection stands behind.
+                let (first, refusal) = match selection.refusal_text() {
+                    Some(kept) => {
+                        let refusal = crate::rules::eval_context::register_refusal(&kept);
+                        (kept, Some(refusal))
+                    }
+                    None => (reason, refusal),
+                };
                 fold_refused_body(
                     resolver,
                     &format!("GuardBlockAccessClause#{}", block_clause.location),
@@ -7212,6 +8717,7 @@ pub(in crate::rules) fn eval_guard_block_clause<'value, 'loc: 'value>(
                     &mut fails,
                     &mut undecided,
                     first,
+                    refusal,
                 )?;
             }
             // The held refusal handed up by a gate: the enclosing condition site fails its rule
@@ -7258,6 +8764,11 @@ pub(in crate::rules) fn eval_guard_block_clause<'value, 'loc: 'value>(
                 // ran first.
                 if in_predicate && !role.is_strict() && selection.refused() {
                     if let Some(refusal) = selection.refusal_text() {
+                        // A token minted for the fold and the text registered (`register_refusal`: the
+                        // text travels as the block's undecided reason, and an error carrying it with no
+                        // token is read as the refusal where it is written into a record, `is_refusal`),
+                        // carried by the fold.
+                        let token = crate::rules::eval_context::register_refusal(&refusal);
                         fold_refused_body(
                             resolver,
                             &format!("GuardBlockAccessClause#{}", block_clause.location),
@@ -7265,6 +8776,7 @@ pub(in crate::rules) fn eval_guard_block_clause<'value, 'loc: 'value>(
                             &mut fails,
                             &mut undecided,
                             refusal,
+                            Some(token),
                         )?;
                         continue;
                     }
@@ -7344,15 +8856,34 @@ pub(in crate::rules) fn eval_guard_block_clause<'value, 'loc: 'value>(
                 // condition site fails its rule closed. Inside a filter predicate the marker arrives
                 // here too and is kept the same way, so the enclosing clause fails closed instead of
                 // deselecting an entry nobody could decide. The record is written either way so the
-                // tree names the reason. The kind is read by `undecidable_reason` on the borrowed
-                // value, as the binary arms read it: no clone to ask, and no second kind test here.
+                // tree names the reason. The kind is read by `undecidable_error` on the borrowed
+                // value, as the unary operators read it, the marker's refusal token copied into the
+                // raise: no clone to ask, and no second kind test here. The marker's reason and token
+                // join the block's fold by the one rule the bodies' raises join it by
+                // (`keep_latest_refusal_else_first_error`): a refusal's marker met after a body's raise
+                // that was no refusal is the pair the block raises, and so is a refusal's marker minted
+                // later than the refusal a body's raise carried; kept only when nothing was kept yet,
+                // the marker's token was dropped behind a budget text folded first, and the entry was
+                // plain in that order and refused in the other.
                 match (!role.is_strict())
-                    .then(|| undecidable_reason(&ur).map(Error::UndecidableComparison))
+                    .then(|| undecidable_error(&ur))
                     .flatten()
                 {
-                    Some(error) => {
+                    Some(Error::UndecidableComparison(reason, refusal)) => {
+                        // Ranked by the frame of the run the block runs under (`ranking_under`), as
+                        // the bodies' raises are (`fold_refused_body`).
+                        keep_latest_refusal_else_first_error(
+                            &mut undecided,
+                            reason,
+                            refusal,
+                            &ranking_under(resolver.refusal_frames()),
+                        );
+                    }
+                    // `undecidable_error` builds the one variant above; another kept here would be kept
+                    // whole, as the fold kept every error before the pair rule.
+                    Some(other) => {
                         if undecided.is_none() {
-                            undecided = Some(error);
+                            undecided = Some(other);
                         }
                     }
                     None => decided_fails += 1,
@@ -7376,6 +8907,85 @@ pub(in crate::rules) fn eval_guard_block_clause<'value, 'loc: 'value>(
             }
 
             QueryResult::Literal(rv) | QueryResult::Resolved(rv) => {
+                // The own-key shape test for the block arm, PER VALUE: a `[*]` that hands this map on
+                // whole while the body reads a key that is the map's own key and the name of one member
+                // but not of every member would be answered by the map's own entry, a false pass. The
+                // map is refused (`eval_context::block_arm_own_key_refusal`, the refusal registered) with
+                // its own FAIL record carrying the text, counted as a decided failure, and the loop goes
+                // on to the block's other values, so `match_all` fails on this record while the others'
+                // verdicts are reported and `some` is settled by a passing sibling: every value of the
+                // block is evaluated and reported, the refused one with its text.
+                //
+                // The remedy's `X` (`binding_source`, above) is resolved here, the first time a value
+                // passes the provenance test the arm itself makes first, and kept for the clause's other
+                // values; a value the arm leaves alone resolves nothing.
+                let source = if passed_on.names(rv.self_path()) {
+                    *binding_source.get_or_insert_with(|| {
+                        match crate::rules::eval_context::query_head_before_a_trailing_wildcard(
+                            &block_clause.query.query,
+                        ) {
+                            [QueryPart::Variable(name)] => {
+                                crate::rules::eval_context::binding_source_query(resolver, name)
+                                    .map(|binding| binding.query.as_slice())
+                            }
+                            _ => None,
+                        }
+                    })
+                } else {
+                    None
+                };
+                if let Some((text, refusal)) = crate::rules::eval_context::block_arm_own_key_refusal(
+                    &block_clause.query.query,
+                    &rv,
+                    &passed_on,
+                    &block_clause.block,
+                    &mut |name| resolver.find_parameterized_rule(name).ok(),
+                    source,
+                    &mut body_keys,
+                ) {
+                    let guard_cxt = format!("GuardBlockAccessClause#{}", block_clause.location);
+                    if role.is_strict() {
+                        resolver.start_record(&guard_cxt)?;
+                        resolver.end_record(
+                            &guard_cxt,
+                            RecordType::GuardClauseBlockCheck(BlockCheck {
+                                status: Status::FAIL,
+                                at_least_one_matches: !match_all,
+                                message: Some(text),
+                                refusal: true,
+                            }),
+                        )?;
+                        fails += 1;
+                        decided_fails += 1;
+                    } else {
+                        // In a filter predicate or a `when` gate the refusal is the block's UNDECIDED,
+                        // not a decided failure: a decided failure would drop the resource from a filter's
+                        // selection (`Resources.*[ Properties[*] { Status exists } ] empty` would pass at
+                        // exit 0 over the ambiguous map) and would take a gate as unmet (the rule not
+                        // applicable), where the key spelling of the same check fails closed through
+                        // `deliver_wildcard_filter_refusal`. Folded as a value's refused body is, so the
+                        // table after the loop raises it unless a sibling decides and the clause that
+                        // meets the marker fails closed; the text is registered in every role where the
+                        // block arm built it, and the fold carries the token that registration minted
+                        // (`fold_refused_body`). Inside a filter predicate the run that ends on this
+                        // error reads the token as minted inside it and marks the ENTRY a refusal (its
+                        // captures cut); a fold the loop's settle leaves unraised (a passing sibling
+                        // under `some`, a decided failure under `match_all`) or outranked by an earlier
+                        // value's marker never reaches the run, and a raise that carries no token (a key
+                        // filter's undecided map, a regular expression out of budget) never flags an
+                        // entry.
+                        fold_refused_body(
+                            resolver,
+                            &guard_cxt,
+                            match_all,
+                            &mut fails,
+                            &mut undecided,
+                            text,
+                            Some(refusal),
+                        )?;
+                    }
+                    continue;
+                }
                 // A block clause written inside a filter predicate is part of the predicate's test,
                 // so the scope over the block's value carries the answer of the scope it opens from.
                 let in_predicate = resolver.in_predicate();
@@ -7457,9 +9067,11 @@ pub(in crate::rules) fn eval_guard_block_clause<'value, 'loc: 'value>(
                     // the raise is kept as the block's first undecided reason, and the loop goes on; the
                     // table after the loop decides, as it does for the block's own query. The value
                     // counts as not passed, as an unresolved value does, and not as decided.
-                    Err(Error::UndecidableComparison(reason)) if !role.is_strict() => {
+                    Err(Error::UndecidableComparison(reason, refusal)) if !role.is_strict() => {
                         // The same mark and fold as the empty-selection arms (`fold_refused_body`): a
-                        // value's body that raised the marker is recorded as a refused body of this block.
+                        // value's body that raised the marker is recorded as a refused body of this block,
+                        // the raise's own token carried as it arrived (a refusal the body met keeps its
+                        // mint; a raise that is no refusal carries none).
                         fold_refused_body(
                             &mut val_resolver,
                             &format!("GuardBlockAccessClause#{}", block_clause.location),
@@ -7467,6 +9079,7 @@ pub(in crate::rules) fn eval_guard_block_clause<'value, 'loc: 'value>(
                             &mut fails,
                             &mut undecided,
                             reason,
+                            refusal,
                         )?;
                     }
 
@@ -7541,6 +9154,10 @@ pub(in crate::rules) fn eval_guard_block_clause<'value, 'loc: 'value>(
                     refusal: false,
                 }),
             )?;
+            // The raise names the reason and carries the token of the folded value whose refusal was
+            // minted latest (a fold's, minted where the fold registered it; a marker's, copied from the
+            // marker), or the first undecided value's reason with no token when no folded value was a
+            // refusal, carried on to the run or gate that reads it (`fold_refused_body`).
             return Err(error);
         }
     }
@@ -7899,7 +9516,12 @@ impl<'eval, 'value, 'loc: 'value> EvalContext<'value, 'loc>
     }
 
     /// Forwarded for the reason `record_warning` is.
-    fn record_capture_warning(&mut self, site: &FileLocation<'_>, capture: &str, notice: String) {
+    fn record_capture_warning(
+        &mut self,
+        site: &FileLocation<'_>,
+        capture: &str,
+        notice: String,
+    ) -> bool {
         self.parent.record_capture_warning(site, capture, notice)
     }
 
@@ -8352,6 +9974,13 @@ impl<'eval, 'value, 'loc: 'value> EvalContext<'value, 'loc>
         self.parent.document_binding_memo()
     }
 
+    /// Forwarded to the caller: the set is the root's.
+    fn announced_capture_refusals(
+        &self,
+    ) -> Option<std::rc::Rc<std::cell::RefCell<std::collections::HashSet<String>>>> {
+        self.parent.announced_capture_refusals()
+    }
+
     fn binding_owners_memo(
         &self,
     ) -> Option<std::rc::Rc<std::cell::RefCell<super::eval_context::BindingOwnersMemo<'value>>>>
@@ -8371,6 +10000,16 @@ impl<'eval, 'value, 'loc: 'value> EvalContext<'value, 'loc>
         // This is the call: a block built beneath it is the called rule's body, bound again for every
         // call from this call's arguments.
         true
+    }
+
+    /// Forwarded: the stack is the root's, and a run inside the called rule's body pushes onto it there,
+    /// so a fold in that body ranks by the runs that made the call as well as its own.
+    fn refusal_frames(&self) -> crate::rules::eval_context::RefusalFrames {
+        self.parent.refusal_frames()
+    }
+
+    fn refusal_frames_mut(&mut self) -> &mut crate::rules::eval_context::RefusalFrames {
+        self.parent.refusal_frames_mut()
     }
 
     /// The call site's arguments first and then the parent's bindings, which is the order
@@ -9013,6 +10652,10 @@ pub(in crate::rules) fn eval_guard_clause<'value, 'loc: 'value>(
     resolver: &mut dyn EvalContext<'value, 'loc>,
     role: ClauseRole,
 ) -> Result<Status> {
+    // The member notice's copy table lives for one top-level clause: this guard counts the clause open
+    // and, when it is the outermost one, clears the table as it is dropped
+    // (`eval_context::ClauseCopies`, `ValueBeforeClones`).
+    let _clause_copies = crate::rules::eval_context::ClauseCopies::open(resolver);
     // A clause of a block body running over the empty selection a one-object filter left
     // (`EvalContext::empty_selection`: `Some` under such a body and nowhere else) is marked before it
     // runs and judged once it has decided (`EmptySelection::clause_begins`, `clause_decided`): a clause
@@ -9064,6 +10707,9 @@ pub(in crate::rules) fn eval_when_clause<'value, 'loc: 'value>(
 ) -> Result<Status> {
     #[cfg(test)]
     WHEN_CLAUSE_EVALUATIONS.with(|evaluations| evaluations.set(evaluations.get() + 1));
+    // A rule's own gate is a top-level clause of its own for the copy table (`ClauseCopies`), so what
+    // a condition asks goes with the condition, not with the body's first clause.
+    let _clause_copies = crate::rules::eval_context::ClauseCopies::open(resolver);
     match when_clause {
         // Every arm is a gate. A clause whose reference did not resolve, or a
         // reference to a rule that did not apply, must not disarm the block being
@@ -9768,6 +11414,12 @@ fn disjunction_type_name<T>() -> &'static str {
     }
 }
 
+/// The conjunction fold. The undecided error it folds across its conjuncts and across each disjunction
+/// (`hold_undecided`) is ranked by the frame of the filter predicate run the fold runs under, read off
+/// `resolver` (`ranking_under`, `eval_context::RefusalFrame::eligible`): a token the frame would exclude
+/// from marking the entry never outranks the entry's own refusal in the fold. Under no run every token is
+/// eligible, the pair rule as released. Read once, before the clauses run: a run nested inside a clause
+/// sets its own frame on the context and puts this one back before it returns.
 #[allow(clippy::never_loop)]
 pub(in crate::rules) fn eval_conjunction_clauses<'value, 'loc: 'value, T, E>(
     conjunctions: &'value Conjunctions<T>,
@@ -9777,6 +11429,8 @@ pub(in crate::rules) fn eval_conjunction_clauses<'value, 'loc: 'value, T, E>(
 where
     E: Fn(&'value T, &mut dyn EvalContext<'value, 'loc>) -> Result<Status>,
 {
+    let ranking_of_frames = ranking_under(resolver.refusal_frames());
+    let ranking: Ranking<'_> = &ranking_of_frames;
     Ok(loop {
         let mut num_passes = 0;
         let mut num_fails = 0;
@@ -9869,9 +11523,10 @@ where
                     // `a_recorder_fault_in_a_disjunction_stops_the_run` inject each variant through
                     // `eval_fn` and pin what this arm holds and what it returns.
                     Err(e) if is_unevaluatable(&e) => {
-                        if undecided.is_none() {
-                            undecided = Some(e);
-                        }
+                        // The disjunction's held error, folded by the pair rule (`hold_undecided`): the
+                        // first error of any other variant, the latest-minted refusal's pair among
+                        // undecidable ones.
+                        hold_undecided(&mut undecided, e, ranking);
                     }
 
                     // The record carries no message. `validate` reports the record tree before it
@@ -9920,9 +11575,12 @@ where
                         }),
                     )?;
                 }
-                if held.is_none() {
-                    held = Some(e);
-                }
+                // The conjunction's held error, folded by the same rule across its conjuncts: a refusal a
+                // later conjunct minted inside the run outlives an earlier conjunct's older one, so the
+                // filter predicate run this error ends reads the token as its own (`hold_undecided`), and
+                // the run's frame ranks the tokens (`eligible`), so an excluded token a binding minted
+                // inside the run never outranks the entry's own refusal.
+                hold_undecided(&mut held, e, ranking);
                 continue;
             }
 

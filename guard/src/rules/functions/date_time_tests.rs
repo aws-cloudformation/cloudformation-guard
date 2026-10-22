@@ -40,6 +40,7 @@ fn test_parse_epoch(
     let mut eval = BasicQueryTesting {
         root: Rc::new(value),
         recorder: None,
+        refusal_frames: crate::rules::eval_context::RefusalFrames::default(),
     };
     let root_query =
         format!(r#"Resources[ Type == 'AWS::Lambda::Function' ].Properties.{query_str}"#,);

@@ -17004,6 +17004,315 @@ mod validate_tests {
         }
     }
 
+    /// The block arm's own-key refusal is recorded PER VALUE (`eval_guard_block_clause` writes a failing
+    /// `GuardClauseBlockCheck` carrying the text for the refused map and goes on to the block's other
+    /// values), and that record reaches the reader: over three resources whose `Cfg` maps share `cpu`,
+    /// `Resources.*.Cfg[*] { Limits exists  Tier == 'gold' }` refuses `R1.Cfg` (its own key `Limits` names a
+    /// member `Other` lacks), passes `R2.Cfg` and fails `R3.Cfg` on its `Tier`, and the console summary and
+    /// the JSON report both print the refusal with its path, `/Resources/R1/Cfg`, and the direct-path remedy,
+    /// beside `R3`'s own failure. A record whose message no reporter printed would leave the rule FAIL with
+    /// `R3`'s reason alone and the refused map unexplained
+    /// (`every_recorded_explanation_has_a_rendering_path` counts the site; this is its end-to-end check).
+    #[test]
+    fn the_block_arms_per_value_refusal_reaches_the_console_and_the_json_report() {
+        const REFUSAL: &str = "`[*]` handed the map at path /Resources/R1/Cfg[";
+        const REMEDY: &str = "Write `X.Key == value` to read `X` as one object";
+        let (status_code, stdout, _) = validate_both_streams(
+            "own_key_block_per_value.guard",
+            "own-key-block-per-value-template.yaml",
+        );
+        assert_eq!(
+            StatusCode::VALIDATION_ERROR,
+            status_code,
+            "stdout {:?}",
+            stdout
+        );
+        assert!(
+            stdout.contains(REFUSAL) && stdout.contains(REMEDY),
+            "the console prints the refused map's path and the remedy; got stdout {:?}",
+            stdout
+        );
+        assert!(
+            stdout.contains("/Resources/R3/Cfg/Tier"),
+            "the console prints the third resource's own failure beside the refusal; got stdout {:?}",
+            stdout
+        );
+        assert!(
+            !stdout.contains("/Resources/R2/Cfg"),
+            "the passing resource is reported as no failure; got stdout {:?}",
+            stdout
+        );
+        let (status_code, json_stdout, _) = utils::capture_both_streams(|writer, reader| {
+            ValidateTestRunner::default()
+                .data(vec!["own-key-block-per-value-template.yaml"])
+                .rules(vec!["own_key_block_per_value.guard"])
+                .show_summary(vec!["none"])
+                .output_format(Some("json"))
+                .run(writer, reader)
+        });
+        assert_eq!(
+            StatusCode::VALIDATION_ERROR,
+            status_code,
+            "json stdout {:?}",
+            json_stdout
+        );
+        assert!(
+            json_stdout.contains(REFUSAL) && json_stdout.contains("/Resources/R3/Cfg/Tier"),
+            "the JSON report carries the refusal and the third resource's failure; got json stdout {:?}",
+            json_stdout
+        );
+    }
+
+    /// The block arm's own-key refusal as a `when` GATE reaches the console whole on the OUTER rule's
+    /// line: `rule inner(cfgs) { %cfgs[*] { Limits exists } }` under `rule outer when
+    /// inner(Resources.*.Cfg)` over the per-value template (`R1.Cfg` ambiguous). `inner` is parameterized,
+    /// so it is evaluated through the call alone and never reported on its own: the exit and every line
+    /// are `outer`'s, which fails closed, and the console prints `outer`'s condition line with the
+    /// refusal's path and its remedy, which stands last in a sentence longer than the console's bound for
+    /// a text that is no refusal (a condition record flagged as no refusal would be cut there and would
+    /// lose the remedy). The record is flagged by the registry (`eval_context::is_refusal`), whichever error
+    /// variant carried the raise. The rule for the fixture: `inner` is never a top-level rule, since a
+    /// top-level `inner` would show the same substrings from its own failure, with or without the gate's
+    /// flag, and the cell would measure nothing of the gate.
+    #[test]
+    fn the_block_arms_gate_refusal_prints_its_remedy_whole_on_the_console() {
+        let (status_code, stdout, _) = validate_both_streams(
+            "own_key_block_gate.guard",
+            "own-key-block-per-value-template.yaml",
+        );
+        assert_eq!(
+            StatusCode::VALIDATION_ERROR,
+            status_code,
+            "stdout {:?}",
+            stdout
+        );
+        assert!(
+            stdout.contains("outer")
+                && stdout.contains("The rule's condition could not be evaluated")
+                && stdout.contains("`[*]` handed the map at path /Resources/R1/Cfg[")
+                && stdout.contains("Write `X.Key == value` to read `X` as one object"),
+            "the console prints the outer rule's condition line with the refusal's path and its remedy; got stdout {:?}",
+            stdout
+        );
+        // Nothing is printed for `inner` but the one legitimate mention, the CALL inside `outer`'s
+        // condition as written (`inner(Resources.*.Cfg)`): every line that names `inner` names it as that
+        // call, so neither a rule line (`Rule inner`), a status, nor a nested clause label of its own
+        // (`inner: %cfgs[*] { Limits exists }`) is printed.
+        let inner_reported = stdout
+            .lines()
+            .any(|line| line.contains("inner") && !line.contains("inner("));
+        assert!(
+            !inner_reported,
+            "the parameterized `inner` is printed nowhere but as the call in `outer`'s condition; got stdout {:?}",
+            stdout
+        );
+    }
+
+    /// What the own-key refusal says about the members is read off the map, and does not change with
+    /// the order the members are written in: over `R1.Cfg: { Limits: { cpu }, Other: { cpu } }` the
+    /// sentence says that no member holds a `Limits` of its own, `Other` among them, on the console and in
+    /// the JSON report, and the template with `Other` written before `Limits` renders the SAME sentence.
+    /// Before this the text named the first lacking member in map order and, when that was the one named
+    /// like the key, said "while another member does": over this fixture it claimed another member held
+    /// `Limits` when none did, and swapping the two members changed the text.
+    #[test]
+    fn the_own_key_refusals_member_sentence_is_read_off_the_map_in_either_member_order() {
+        const SENTENCE: &str = " on as one object, and `Limits`, a key the block reads, is a key of that \
+                                map and the name of one of its members and no member holds a `Limits` of \
+                                its own, `Other` among them: `Limits` would be answered by the map's own \
+                                entry named `Limits`, not by each member. Write `X.Key == value` to read \
+                                `X` as one object, or `X.*.Key` or `X.* { Key == value }` to read each \
+                                member's own `Key`, where `X` is `Resources.*.Cfg`.";
+        for template in [
+            "own-key-block-per-value-template.yaml",
+            "own-key-block-per-value-template-swapped.yaml",
+        ] {
+            let (status_code, stdout, _) =
+                validate_both_streams("own_key_block_per_value.guard", template);
+            assert_eq!(
+                StatusCode::VALIDATION_ERROR,
+                status_code,
+                "{template}: stdout {:?}",
+                stdout
+            );
+            assert!(
+                stdout.contains(SENTENCE),
+                "{template}: the console prints the member sentence whole, read off the map; got stdout {:?}",
+                stdout
+            );
+            let (status_code, json_stdout, _) = utils::capture_both_streams(|writer, reader| {
+                ValidateTestRunner::default()
+                    .data(vec![template])
+                    .rules(vec!["own_key_block_per_value.guard"])
+                    .show_summary(vec!["none"])
+                    .output_format(Some("json"))
+                    .run(writer, reader)
+            });
+            assert_eq!(
+                StatusCode::VALIDATION_ERROR,
+                status_code,
+                "{template}: json stdout {:?}",
+                json_stdout
+            );
+            assert!(
+                json_stdout.contains(SENTENCE),
+                "{template}: the JSON report carries the same sentence; got json stdout {:?}",
+                json_stdout
+            );
+        }
+    }
+
+    /// The key spelling's own-key refusal reaches the console whole, remedy included, and the JSON report
+    /// carries it, in both of the key spelling's assertion forms: the unary `resources[*].limits exists`
+    /// over a Kubernetes `resources` map (the own key `limits` names a member `requests` lacks) and the
+    /// binary `Resources[*].A.S == "abc"` over a `Resources` of two resources sharing their keys (the own
+    /// key `A` names a member `B` lacks). The binary form's record is the comparison's own, which carries
+    /// the refusal's sentence and the kind since the `LhsUnresolved` arm writes them; before that the
+    /// console printed the missing property and the map it traversed to, and the remedy nowhere.
+    #[test]
+    fn the_key_spellings_refusal_reaches_the_console_whole_and_the_json_report() {
+        const REFUSAL: &str = "`[*]` handed the map at path ";
+        const REMEDY: &str = "Write `X.Key == value` to read `X` as one object";
+        for (rules, template, written) in [
+            (
+                "own_key_key_spelling_exists.guard",
+                "own-key-key-spelling-k8s-template.yaml",
+                "where `X` is `resources`.",
+            ),
+            (
+                "own_key_key_spelling_compare.guard",
+                "own-key-key-spelling-two-resources-template.yaml",
+                "where `X` is `Resources`.",
+            ),
+        ] {
+            let (status_code, stdout, _) = validate_both_streams(rules, template);
+            assert_eq!(
+                StatusCode::VALIDATION_ERROR,
+                status_code,
+                "{rules}: stdout {:?}",
+                stdout
+            );
+            assert!(
+                stdout.contains(REFUSAL) && stdout.contains(REMEDY) && stdout.contains(written),
+                "{rules}: the console prints the refusal with its remedy and its `X`; got stdout {:?}",
+                stdout
+            );
+            let (status_code, json_stdout, _) = utils::capture_both_streams(|writer, reader| {
+                ValidateTestRunner::default()
+                    .data(vec![template])
+                    .rules(vec![rules])
+                    .show_summary(vec!["none"])
+                    .output_format(Some("json"))
+                    .run(writer, reader)
+            });
+            assert_eq!(
+                StatusCode::VALIDATION_ERROR,
+                status_code,
+                "{rules}: json stdout {:?}",
+                json_stdout
+            );
+            assert!(
+                json_stdout.contains(REFUSAL) && json_stdout.contains(REMEDY),
+                "{rules}: the JSON report carries the refusal with its remedy; got json stdout {:?}",
+                json_stdout
+            );
+        }
+    }
+
+    /// The key spelling's own-key refusal met INSIDE a filter predicate reaches the console whole, remedy
+    /// included, and the JSON report carries it: `Resources[ Cfg[*].Limits exists ] !empty` over `R1.Cfg`
+    /// (the own key `Limits` names a member `Other` lacks) beside a decided `R2`. The refused marker stands
+    /// at `R1`'s `Cfg` and the entry `R1` is left a plain marker the outer `!empty` fails closed on; the
+    /// outer clause's record carries the refusal, and its sentence is the refusal's own text, with nothing
+    /// of the entry's value in it to cut.
+    #[test]
+    fn the_key_spellings_refusal_inside_a_predicate_reaches_the_console_whole_and_the_json_report()
+    {
+        const REFUSAL: &str = "`[*]` handed the map at path /Resources/R1/Cfg";
+        const REMEDY: &str = "Write `X.Key == value` to read `X` as one object";
+        const WRITTEN: &str = "where `X` is `Cfg`.";
+        let rules = "own_key_key_spelling_in_predicate.guard";
+        let template = "own-key-key-spelling-in-predicate-template.yaml";
+        let (status_code, stdout, _) = validate_both_streams(rules, template);
+        assert_eq!(
+            StatusCode::VALIDATION_ERROR,
+            status_code,
+            "{rules}: stdout {:?}",
+            stdout
+        );
+        assert!(
+            stdout.contains(REFUSAL) && stdout.contains(REMEDY) && stdout.contains(WRITTEN),
+            "{rules}: the console prints the refusal with its remedy and its `X`; got stdout {:?}",
+            stdout
+        );
+        assert!(
+            !stdout.contains("Value traversed to"),
+            "{rules}: the sentence is the refusal's own text, with no value traversed to; got stdout {:?}",
+            stdout
+        );
+        let (status_code, json_stdout, _) = utils::capture_both_streams(|writer, reader| {
+            ValidateTestRunner::default()
+                .data(vec![template])
+                .rules(vec![rules])
+                .show_summary(vec!["none"])
+                .output_format(Some("json"))
+                .run(writer, reader)
+        });
+        assert_eq!(
+            StatusCode::VALIDATION_ERROR,
+            status_code,
+            "{rules}: json stdout {:?}",
+            json_stdout
+        );
+        assert!(
+            json_stdout.contains(REFUSAL) && json_stdout.contains(REMEDY),
+            "{rules}: the JSON report carries the refusal with its remedy; got json stdout {:?}",
+            json_stdout
+        );
+        assert!(
+            !json_stdout.contains("Value traversed to"),
+            "{rules}: the JSON report's sentence is the refusal's own text, with no value traversed to; got json stdout {:?}",
+            json_stdout
+        );
+    }
+
+    /// The key spelling's own-key refusal reaches the live `--verbose` TREE output whole, remedy included,
+    /// and nothing of the refused map's value is printed there: `Resources[*].A.S == "abc"` over the two
+    /// resources sharing `Type` and `S` (the own key `A` names a member `B` lacks) fails on the comparison's
+    /// own record, flagged as the refusal it is, and the tree prints that record's sentence as the refusal's
+    /// text, never "Value traversed to [..]" with the whole map in it.
+    #[test]
+    fn the_key_spellings_refusal_reaches_the_verbose_tree_whole() {
+        const REFUSAL: &str = "`[*]` handed the map at path /Resources";
+        const REMEDY: &str = "Write `X.Key == value` to read `X` as one object";
+        let rules = "own_key_key_spelling_compare.guard";
+        let template = "own-key-key-spelling-two-resources-template.yaml";
+        let (status_code, stdout, _) = utils::capture_both_streams(|writer, reader| {
+            ValidateTestRunner::default()
+                .data(vec![template])
+                .rules(vec![rules])
+                .show_summary(vec!["all"])
+                .verbose()
+                .run(writer, reader)
+        });
+        assert_eq!(
+            StatusCode::VALIDATION_ERROR,
+            status_code,
+            "{rules}: verbose stdout {:?}",
+            stdout
+        );
+        assert!(
+            stdout.contains(REFUSAL) && stdout.contains(REMEDY),
+            "{rules}: the verbose tree carries the refusal with its remedy; got stdout {:?}",
+            stdout
+        );
+        assert!(
+            !stdout.contains("Value traversed to"),
+            "{rules}: the verbose tree prints the refusal's own text, with no value traversed to; got stdout {:?}",
+            stdout
+        );
+    }
+
     /// The member spellings of an own-key refusal sit between the definition of `X` and the path, only
     /// where a member is named like the key, and the console summary and the JSON report both print them
     /// whole, whatever the length of the key and the query.

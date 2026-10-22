@@ -9295,6 +9295,70 @@ fn a_quoted_key_beginning_with_a_percent_sign_is_a_literal_key() -> Result<(), E
     Ok(())
 }
 
+/// A quoted string on the LEFT of a comparator parses to a KEY, never to a literal.
+///
+/// A clause opens with an `access`, whose first part is `this`, a `%name` or a `property_name`, and
+/// `property_name` takes a quoted string as a key whose text holds what a bare name cannot
+/// (`'Fn::GetAtt'`). A literal stands on the RIGHT only, where `clause_tail_with_map` tries `parse_value`
+/// before `access`. So `'x' == %t` is a clause whose query starts with `Key("x")` and whose right-hand
+/// side is the variable `t`, `'x' == Name` compares that key with the key `Name`, and only `Name == 'x'`
+/// holds a string literal, on its right. The evaluator's reading of the same clauses is pinned by
+/// `a_quoted_string_on_the_left_of_a_comparator_is_a_key_not_a_literal` beside its tests.
+#[test]
+fn a_quoted_string_on_the_left_of_a_comparator_parses_to_a_key() -> Result<(), Error> {
+    let clause_of = |spelling: &'static str| -> Result<AccessClause<'static>, Error> {
+        match GuardClause::try_from(spelling)? {
+            GuardClause::Clause(clause) => Ok(clause.access_clause),
+            other => panic!(
+                "{} parses to a comparison clause, got {:?}",
+                spelling, other
+            ),
+        }
+    };
+    for spelling in ["'x' == %t", r#""x" == %t"#] {
+        let clause = clause_of(spelling)?;
+        assert_eq!(
+            Some(&QueryPart::Key("x".to_string())),
+            clause.query.query.first(),
+            "{spelling}: the quoted string on the left is the key `x`"
+        );
+        let Some(LetValue::AccessClause(rhs)) = &clause.compare_with else {
+            panic!(
+                "{spelling}: the right-hand side is a query, got {:?}",
+                clause.compare_with
+            );
+        };
+        assert_eq!(Some("t"), rhs.query[0].variable(), "{spelling}");
+    }
+
+    let key_against_key = clause_of("'x' == Name")?;
+    assert_eq!(
+        Some(&QueryPart::Key("x".to_string())),
+        key_against_key.query.query.first()
+    );
+    assert_eq!(
+        Some(LetValue::AccessClause(AccessQuery {
+            query: vec![QueryPart::Key("Name".to_string())],
+            match_all: true,
+        })),
+        key_against_key.compare_with
+    );
+
+    let literal_on_the_right = clause_of("Name == 'x'")?;
+    assert_eq!(
+        Some(&QueryPart::Key("Name".to_string())),
+        literal_on_the_right.query.query.first()
+    );
+    assert_eq!(
+        Some(LetValue::Value(PathAwareValue::try_from(Value::String(
+            "x".to_string()
+        ))?)),
+        literal_on_the_right.compare_with,
+        "a string literal is built on the right only"
+    );
+    Ok(())
+}
+
 /// A byte order mark anywhere else is still an error, and the error says so.
 ///
 /// Two files concatenated, the second saved with a mark, put one in the middle of the text. The

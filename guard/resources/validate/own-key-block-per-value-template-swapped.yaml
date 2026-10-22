@@ -1,0 +1,24 @@
+# The per-value template (`own-key-block-per-value-template.yaml`) with `R1.Cfg`'s two members in the
+# other order, `Other` before `Limits`: the map is the same map, so the refusal's sentence about its
+# members is the same sentence (no member holds a `Limits` of its own, `Other` among them), whichever
+# member is written first.
+Resources:
+  R1:
+    Type: AWS::Custom::Thing
+    Cfg:
+      Other:
+        cpu: "2"
+      Limits:
+        cpu: "1"
+  R2:
+    Type: AWS::Custom::Thing
+    Cfg:
+      Limits:
+        cpu: "1"
+      Tier: gold
+  R3:
+    Type: AWS::Custom::Thing
+    Cfg:
+      Limits:
+        cpu: "1"
+      Tier: silver

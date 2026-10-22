@@ -99,32 +99,31 @@ impl Display for ValueOnlyDisplay {
     }
 }
 
-/// The one writer of the `Path=<path> Value=<value>` shape a value quoted from the template takes in
-/// a report's sentence: `PathAwareValue`'s `Display` below writes it as it is, and a refusal's sentence
-/// (`eval_context::bounded_value_for_refusal`) writes it with each of the two parts passed through
-/// `bound` first, so the two renderings cannot drift apart in anything but the bound. With no bound the
-/// two parts are streamed into `f`; with one, each part is rendered to a string, bounded, and written.
+/// The `Path=<path> Value=<value>` shape a value quoted from the template takes in a report's
+/// sentence, written from its two parts already rendered: the ONE writer of the shape, so the unbounded
+/// rendering (`PathAwareValue`'s `Display`, through [`write_path_and_value`]) and the bounded one a
+/// refusal's sentence takes (`eval_context::bounded_value_for_refusal`, each part cut and escaped on its
+/// own through `template_path` and `template_part`) cannot part; the cells over
+/// `bounded_value_for_refusal` in `eval_context_tests.rs` read the bounded form against the unbounded.
+pub(crate) struct PathAndValue<P: Display, V: Display>(pub(crate) P, pub(crate) V);
+
+impl<P: Display, V: Display> Display for PathAndValue<P, V> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.write_fmt(format_args!("Path={} Value={}", self.0, self.1))
+    }
+}
+
+/// The unbounded `Path=<path> Value=<value>` rendering of a value: `PathAwareValue`'s `Display` below.
 pub(crate) fn write_path_and_value(
     f: &mut Formatter<'_>,
     value: &PathAwareValue,
-    bound: Option<&dyn Fn(&str) -> String>,
 ) -> std::fmt::Result {
-    match bound {
-        None => {
-            f.write_fmt(format_args!("Path={} Value=", value.self_path()))?;
-            ValueOnlyDisplay(Rc::new(value.clone())).fmt(f)
-        }
-        Some(bound) => f.write_fmt(format_args!(
-            "Path={} Value={}",
-            bound(&value.self_path().to_string()),
-            bound(&ValueOnlyDisplay(Rc::new(value.clone())).to_string())
-        )),
-    }
+    PathAndValue(value.self_path(), ValueOnlyDisplay(Rc::new(value.clone()))).fmt(f)
 }
 
 impl std::fmt::Display for PathAwareValue {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write_path_and_value(f, self, None)
+        write_path_and_value(f, self)
     }
 }
 
