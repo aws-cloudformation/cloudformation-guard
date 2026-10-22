@@ -171,8 +171,9 @@ impl std::fmt::Display for EvaluationType {
 
 /// How a retrieval came to stop short of a value, read by the operators that have to tell the cases
 /// apart. Not part of the serialized record: the reports print `traversed_to`, `remaining_query` and
-/// `reason`, and this is what the engine does with the marker, not what the author sees. Equality and
-/// `Debug` are written by hand below so that neither reads the refusal token's count.
+/// `reason`, and this is what the engine does with the marker, not what the author sees. `Debug` is
+/// written by hand below so that it does not read the refusal token's count, and no equality is offered
+/// (see `reading`).
 #[derive(Clone, Copy, Default)]
 pub(crate) enum UnResolvedKind {
     /// The document lacks the value: a key the map does not have, an index past the end, a function
@@ -234,51 +235,64 @@ pub(crate) enum UnResolvedKind {
 /// (`carried`) is transport, not a fact about the entry, and is not printed either.
 impl std::fmt::Debug for UnResolvedKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let (kind, refused) = self.reading();
         match self {
-            UnResolvedKind::Absent => f.write_str("Absent"),
-            UnResolvedKind::EmptyEnumeration => f.write_str("EmptyEnumeration"),
-            UnResolvedKind::Undecidable { refusal, .. } => f
-                .debug_struct("Undecidable")
-                .field("refused", &refusal.is_some())
-                .finish(),
+            UnResolvedKind::Undecidable { .. } => {
+                f.debug_struct(kind).field("refused", &refused).finish()
+            }
+            UnResolvedKind::Absent | UnResolvedKind::EmptyEnumeration => f.write_str(kind),
         }
     }
 }
 
-/// Equal when `Debug` prints the same: two `Undecidable` markers are equal when both are refusals or
-/// neither is, whatever count each token carries, so two markers of one refusal compare equal and a
-/// refused marker and a plain one do not. A derived equality read the counts, and two markers that
-/// printed alike then compared unequal: an `assert_eq!` over them failed with identical sides, and so
-/// would any `==` over the `QueryResult`s holding them. The other variants are equal to themselves alone.
-/// A carried token (`carried`) is not read either: a plain marker handing a token on is equal to a plain
-/// marker handing none, as the two print alike.
-///
-/// The token decides which marker a fold keeps and whether a run's entry is refused
-/// (`eval::would_replace`, `eval_context::RefusalFrame::minted_inside`), so an equality that ignores it
-/// must never stand in for those readers: a `contains` or a dedup over markers would keep the older-minted
-/// one with no test going red. Every production comparison over a `QueryResult`, an `UnResolved` or this
-/// kind was read for that (`eval.rs`, `eval_context.rs`, `eval/`, this file): `key_filter::stands_for_no_entry`
-/// compares a kind with `EmptyEnumeration`, a variant with no token; `FunctionEntries::contains` compares
-/// an entry's `remaining_query` and `reason` by field and never its kind; the key filter's rendering of its
-/// holders and the operators' membership compare `PathAwareValue`s. No site compares two `QueryResult`s or
-/// two markers whole, and no marker list is searched or deduplicated by equality. The token is read through
-/// `RefusalToken::later_than`, by `would_replace` alone, so the folds and the frames never go through this
-/// `eq`. A full equality was not taken: the record cells compare markers minted apart in one run and the
-/// pin above (`two_markers_of_one_refusal_are_equal_whatever_their_tokens_count`) states this reading.
+/// The evaluator offers no equality for this kind, nor for the `UnResolved`, `QueryResult` and record
+/// types that carry it; test builds derive one through `reading` (below). The token decides which marker a
+/// fold keeps and whether a run's entry is refused (`eval::would_replace`,
+/// `eval_context::RefusalFrame::minted_inside`), so an equality that ignored it, as a hand-written one did
+/// in every build (two markers were equal when both were refusals or neither was, whatever count each
+/// token carried, the reading `Debug` prints), could stand in for those readers in a `contains` or a dedup
+/// over markers, keeping the older-minted one with no test going red; and a derived equality read the
+/// counts, so two markers that printed alike compared unequal, and an `assert_eq!` over them failed with
+/// identical sides. Neither is what a production caller means by `==`, so production has none: a site
+/// that wants the kind and whether it is a refusal reads `reading`, and the token is read through
+/// `RefusalToken::later_than`, by `would_replace` alone. Every production comparison over a `QueryResult`,
+/// an `UnResolved` or this kind was read for that (`eval.rs`, `eval_context.rs`, `eval/`, this file):
+/// `key_filter::stands_for_no_entry` matches a kind against `EmptyEnumeration`, a variant with no token;
+/// `FunctionEntries::contains` compares an entry's `remaining_query` and `reason` by field and never its
+/// kind; the key filter's rendering of its holders and the operators' membership compare
+/// `PathAwareValue`s. No production site compares two `QueryResult`s or two markers whole, and no marker
+/// list is searched or deduplicated by equality; the compiler says so now, where this comment said it. The
+/// tests that compare two runs' record dumps record for record keep `assert_eq!`: under `cfg(test)` the
+/// kind is equal by `reading`, the two facts `Debug` prints, and the carriers derive `PartialEq` over it.
+impl UnResolvedKind {
+    /// The two facts a reader of a record dump compares, the kind's name and whether an `Undecidable`
+    /// marker is a refusal, with no token in either: `("Absent", false)`, `("EmptyEnumeration", false)`,
+    /// `("Undecidable", refused)`. `Debug` prints these two and nothing else, and the test-build equality
+    /// below compares them, so the two cannot drift apart. Two markers of one refusal read alike though
+    /// their tokens were minted apart, and a refused marker and a plain one read apart; a token the marker
+    /// carries for an enclosing run (`carried`) is transport, not a fact about the entry, and is not read.
+    /// The pin is `two_markers_of_one_refusal_read_alike_whatever_their_tokens_count`.
+    pub(crate) fn reading(&self) -> (&'static str, bool) {
+        match self {
+            UnResolvedKind::Absent => ("Absent", false),
+            UnResolvedKind::EmptyEnumeration => ("EmptyEnumeration", false),
+            UnResolvedKind::Undecidable { refusal, .. } => ("Undecidable", refusal.is_some()),
+        }
+    }
+}
+
+/// Test builds only: equal by `reading`, so a record-dump test's `assert_eq!` over two runs compares what
+/// the dump prints and never the token's count (two markers of one refusal, minted apart, are equal; a
+/// refused marker and a plain one are not; `carried` is not read). Production builds have no `==` over
+/// this kind or its carriers, which is the point of the gate: see the comment above `reading`.
+#[cfg(test)]
 impl PartialEq for UnResolvedKind {
     fn eq(&self, other: &Self) -> bool {
-        match (self, other) {
-            (UnResolvedKind::Absent, UnResolvedKind::Absent) => true,
-            (UnResolvedKind::EmptyEnumeration, UnResolvedKind::EmptyEnumeration) => true,
-            (
-                UnResolvedKind::Undecidable { refusal, .. },
-                UnResolvedKind::Undecidable { refusal: other, .. },
-            ) => refusal.is_some() == other.is_some(),
-            _ => false,
-        }
+        self.reading() == other.reading()
     }
 }
 
+#[cfg(test)]
 impl Eq for UnResolvedKind {}
 
 impl UnResolvedKind {
@@ -304,8 +318,10 @@ impl UnResolvedKind {
     /// The refusal's token the marker carries: its own when the marker is a refusal (`is_refusal`), else
     /// the one it hands on for an enclosing filter predicate run (`carried`: a refusal minted before the
     /// run that left this entry plain, or the refusal a key filter's right-hand side raised, whose marker
-    /// for the map is rebuilt plain because that arm has no run to read the token against), `None` for a
-    /// value nobody could decide and for every other kind.
+    /// for the map is rebuilt plain because that arm has no run to read the token against; a right-hand
+    /// side refused as unevaluatable, a query with no answer on the data such as a filter over a string,
+    /// raises no token, so that marker carries none and the entry it is met under stays plain), `None`
+    /// for a value nobody could decide and for every other kind.
     /// What the error a clause raises over the marker carries in its second field
     /// (`Error::UndecidableComparison`), copied from here so the filter predicate run it ends reads
     /// where the refusal was minted against the count that run opened at, at any depth of nesting.
@@ -317,7 +333,12 @@ impl UnResolvedKind {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+/// Equality in test builds only: `kind` carries the refusal token, which `eval::would_replace` and
+/// `eval_context::RefusalFrame::minted_inside` decide on, so the evaluator offers no whole-value equality
+/// that could stand in for those readers (see `UnResolvedKind::reading` and the `PartialEq` under
+/// `cfg(test)` beside it, which the record-dump tests compare through).
+#[derive(Debug, Clone, Serialize)]
+#[cfg_attr(test, derive(PartialEq))]
 pub(crate) struct UnResolved {
     pub(crate) traversed_to: Rc<PathAwareValue>,
     pub(crate) remaining_query: String,
@@ -326,7 +347,8 @@ pub(crate) struct UnResolved {
     pub(crate) kind: UnResolvedKind,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, Serialize)]
+#[cfg_attr(test, derive(PartialEq))]
 pub(crate) enum QueryResult {
     Literal(Rc<PathAwareValue>),
     Resolved(Rc<PathAwareValue>),
@@ -349,7 +371,8 @@ impl QueryResult {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, Serialize)]
+#[cfg_attr(test, derive(PartialEq))]
 pub(crate) struct ComparisonClauseCheck {
     pub(crate) comparison: (CmpOperator, bool),
     pub(crate) from: QueryResult,
@@ -380,7 +403,8 @@ pub(crate) struct ComparisonClauseCheck {
     pub(crate) refusal: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, Serialize)]
+#[cfg_attr(test, derive(PartialEq))]
 pub(crate) struct InComparisonCheck {
     pub(crate) comparison: (CmpOperator, bool),
     pub(crate) from: QueryResult,
@@ -420,7 +444,8 @@ pub(crate) struct InComparisonCheck {
 /// key that did or did not match. Only then does the operator the author wrote decide between the
 /// equality readings of a key filter's `==` and `!=` against a set and the membership reading of `IN`
 /// and `NOT IN`, the scalar `IN` records included, which carry no `matched`.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
+#[cfg_attr(test, derive(PartialEq))]
 pub(crate) enum MembershipLead {
     /// `IN` or `NOT IN`: the value was, or was not, a member of the set.
     Membership,
@@ -447,7 +472,8 @@ impl InComparisonCheck {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, Serialize)]
+#[cfg_attr(test, derive(PartialEq))]
 pub(crate) struct ValueCheck {
     pub(crate) from: QueryResult,
     pub(crate) message: Option<String>,
@@ -466,7 +492,8 @@ pub(crate) struct ValueCheck {
     pub(crate) refusal: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, Serialize)]
+#[cfg_attr(test, derive(PartialEq))]
 pub(crate) struct UnaryValueCheck {
     pub(crate) value: ValueCheck,
     pub(crate) comparison: (CmpOperator, bool),
@@ -505,7 +532,8 @@ impl Serialize for EmptySelectionCheck {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, Serialize)]
+#[cfg_attr(test, derive(PartialEq))]
 pub(crate) enum ClauseCheck<'value> {
     Success,
     Comparison(ComparisonClauseCheck),
@@ -556,7 +584,8 @@ impl<'value> Default for NamedStatus<'value> {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize)]
+#[derive(Debug, Clone, Serialize)]
+#[cfg_attr(test, derive(PartialEq))]
 pub(crate) enum RecordType<'value> {
     //
     // has as many child events for RuleCheck as there are rules in the file

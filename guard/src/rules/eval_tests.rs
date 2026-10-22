@@ -4039,7 +4039,8 @@ fn test_rules_with_some_clauses() -> Result<()> {
     let value = PathAwareValue::try_from(resources)?;
     let parsed = RulesFile::try_from(query)?;
     let mut eval = root_scope(&parsed, Rc::new(value));
-    let selected = eval.resolve_variable("x")?;
+    // A bare drive of a `let` whose filters write one record per resource: one record around it.
+    let selected = eval.drive_bare(|scope| scope.resolve_variable("x"))?;
     println!("{:?}", selected);
     assert_eq!(selected.len(), 1);
 
@@ -17553,28 +17554,43 @@ fn a_refusal_minted_inside_the_run_outlives_a_captures_older_marker_whichever_si
     const OUTSIDE_THE_RUN: &str = "/Resources/R1/Cfg/C1/Limits";
     const INSIDE_THE_RUN: &str = "/Resources/R1/Sub/S1/Allowed";
     let mut cells = CellFailures::default();
-    for (label, comparison) in [
+    // The third field: whether the in-run refusal's OWN marker stands in the record tree under
+    // `INSIDE_THE_RUN`. It does where the refused read is the comparison's LEFT operand (`Allowed[*].Type
+    // IN %c`), which the operator records as a left-hand marker; where it is the RIGHT operand (`%c IN
+    // Allowed[*].Type`) the comparison's raise numbers the refusal into the entry's own text and records
+    // no marker of its own under `Allowed`, so there is no in-run token in the tree to read, and the row
+    // says so rather than passing on a read that found nothing.
+    for (label, comparison, in_run_marker_recorded) in [
         (
             "the capture on the left, `%c IN Allowed[*].Type`: the older pair read first",
             "%c IN Allowed[*].Type",
+            false,
         ),
         (
             "the capture on the left under `NOT IN`",
             "%c NOT IN Allowed[*].Type",
+            false,
         ),
         (
             "the capture on the left under `==`",
             "%c == Allowed[*].Type",
+            false,
         ),
         (
             "the operands reversed, `Allowed[*].Type IN %c`: the in-run pair read first",
             "Allowed[*].Type IN %c",
+            true,
         ),
         (
             "the operands reversed under `NOT IN`",
             "Allowed[*].Type NOT IN %c",
+            true,
         ),
-        ("the operands reversed under `==`", "Allowed[*].Type == %c"),
+        (
+            "the operands reversed under `==`",
+            "Allowed[*].Type == %c",
+            true,
+        ),
     ] {
         let rules = format!(
             "rule r {{ Resources[ x | Cfg[ c | Limits[*].K exists ] !empty\n Sub[ s | {comparison} ] !empty ] !empty }}"
@@ -17617,10 +17633,13 @@ fn a_refusal_minted_inside_the_run_outlives_a_captures_older_marker_whichever_si
             }),
         );
         // The raise names every refused read the comparison met, numbered in the order it met them, so
-        // the inner entry's text carries both refusals; which pair the raise CARRIES is read off the
-        // token: the entry's token is the in-run refusal's (its own marker stands at `Allowed`, inside
-        // `S1`) and not the capture's (the marker at `C1`, minted before `S1`'s run opened). The two
-        // marker tokens are read where the record tree holds those markers.
+        // the inner entry's text carries both refusals; which refusal the raise CARRIES is read off the
+        // token: the entry's token is the in-run refusal's and not the capture's (the marker at `C1`,
+        // minted before `S1`'s run opened, recorded in every row). The in-run refusal's own marker
+        // stands at `Allowed` inside `S1` only where the refused read is the comparison's LEFT operand;
+        // on the RIGHT the raise numbers it into the entry's text and records no marker of its own
+        // under `Allowed`, a limit of the recording the rows with the third field `false` pin as an
+        // absence. The two marker tokens are read where the record tree holds those markers.
         cells.check(
             &format!("{label}: the inner entry's marker names the in-run refusal (`{INSIDE_THE_RUN}`) and, numbered beside it, the capture's (`{OUTSIDE_THE_RUN}`): {inner:?}"),
             true,
@@ -17641,11 +17660,21 @@ fn a_refusal_minted_inside_the_run_outlives_a_captures_older_marker_whichever_si
             true,
             entry_token.is_some(),
         );
+        // The in-run refusal's own marker (under `INSIDE_THE_RUN`) is in the tree exactly where the row
+        // says (the `[*]` key arm's refusal recorded as a left-hand marker), so its token is read, never
+        // assumed: a read that passed when the marker was absent measured nothing in such a row, and a
+        // row whose marker is not recorded states the absence instead. What every row can read is that
+        // the entry's token is not the capture's (whose marker at `C1` is recorded in every row).
+        cells.check(
+            &format!("{label}: the in-run refusal's own marker is recorded with a token exactly where it stood on the left: {read:?}"),
+            in_run_marker_recorded,
+            in_run.is_some(),
+        );
         cells.check(
             &format!("{label}: the inner entry's token is the in-run refusal's where its marker is recorded, and never the capture's: {read:?}"),
-            (true, false),
+            (in_run_marker_recorded, false),
             (
-                in_run.map_or(true, |token| entry_token == Some(token)),
+                in_run.is_some_and(|token| entry_token == Some(token)),
                 older.is_some_and(|token| entry_token == Some(token)),
             ),
         );
@@ -18079,14 +18108,35 @@ fn two_refusals_minted_inside_one_run_fold_to_the_later_minted_pair_in_both_orde
                 true,
                 entry_token.is_some(),
             );
+            // Neither map's own marker stands in the record tree at its own path: the two comparison
+            // folds raise the refusals from the right-hand side into the entry's marker, whose text
+            // numbers them, and the block arm refuses each map inside the block's own record, so
+            // `token_at` reads `None` for both maps in every row and a token-identity read over them
+            // would pass on nothing. The row states that absence, and the pair the raise carries is read
+            // off the text rows above (which map is named, and whether the earlier is numbered beside
+            // it) and the entry's kind; a change that records those markers flips this row, and the
+            // token read then belongs here.
             cells.check(
-                &format!("{label}: the entry's token is the later-minted refusal's where its marker is recorded, and never the earlier's: {read:?}"),
-                (true, false),
-                (
-                    later_token.map_or(true, |token| entry_token == Some(token)),
-                    earlier_token.is_some_and(|token| entry_token == Some(token)),
-                ),
+                &format!("{label}: neither map's own marker is recorded at its path, so the later mint is read off the entry's text: {read:?}"),
+                (false, false),
+                (later_token.is_some(), earlier_token.is_some()),
             );
+            // Where the raise numbers both refusals, the text alone tells later from earlier: the
+            // numbered text leads with the refused read the fold kept, the later mint, and the earlier
+            // follows it, in both document orders (the kind reads REFUSED either way, and `contains`
+            // alone would pass with the two swapped).
+            if numbered {
+                cells.check(
+                    &format!("{label}: the later-minted refusal leads the numbered text and the earlier follows it: {entry:?}"),
+                    true,
+                    entry.iter().any(|(_, reason, _)| {
+                        matches!(
+                            (reason.find(later), reason.find(earlier)),
+                            (Some(later_at), Some(earlier_at)) if later_at < earlier_at
+                        )
+                    }),
+                );
+            }
         }
     }
     cells.assert_all_agreed();
@@ -30105,8 +30155,9 @@ fn a_key_filter_widens_equality_by_the_shape_of_its_right_hand_side(
     let rules_file = RulesFile::try_from(BINDINGS)?;
     let query = AccessQuery::try_from(query_text)?;
     let mut root = root_scope(&rules_file, Rc::new(PathAwareValue::try_from(INPUT)?));
+    // A bare drive of the key filter: its per-key comparison records need one record around them.
     let mut selected: Vec<String> = root
-        .query(&query.query)?
+        .drive_bare(|scope| scope.query(&query.query))?
         .iter()
         .map(|each| match each {
             QueryResult::Resolved(value) => value.self_path().0.clone(),
@@ -32849,6 +32900,77 @@ const RULES_ALLOW_THEN_DENY: &str = r#"
     }
     "#;
 
+/// What a case of `a_filter_after_a_bracket_wildcard_over_one_object_tests_the_object` expects of the
+/// record beyond the rule's status. A refused clause and a decided failure both read `FAIL`, so a status
+/// alone would also pass a refusal that had lost its text and remedy, and a decided clause that drew a
+/// refusal: every case reads the record. A `Refused` case names the needles a refusal record's message
+/// must carry, and the record is read for one message flagged a refusal that holds every one of them;
+/// `RefusedWithoutMemberSpellings` reads the same and that the message does not carry the member
+/// spellings (`THE_MEMBER_SPELLINGS`), for the one-object maps whose sub-maps share no key name, where
+/// no member is named like the key; `Decided` reads that no record is flagged a refusal.
+#[derive(Clone, Copy, Debug)]
+enum Expect {
+    Decided,
+    Refused(&'static [&'static str]),
+    RefusedWithoutMemberSpellings(&'static [&'static str]),
+}
+
+// The texts the refusals print, one set for every test in this file that reads them: the by-name test
+// (`a_wildcard_filter_over_a_mixed_or_dot_enumerated_one_object_map_is_refused_by_name`) reads them
+// in the record dump, the own-key rstest reads them coupled with the record's refusal flag.
+
+/// The own-key refusal over a map handed on whole (`own_key_handed_on_whole_refusal_text`, the one
+/// sentence the block arm and the key arm write): the map handed on, the key named, the member spelling
+/// in the remedy's own grammar and the binding of `X` that makes the remedy usable for this map.
+const OWN_KEY_HANDED_ON_WHOLE_OVER_RESOURCES: &[&str] = &[
+    // The path prints with its location (`/Resources[L:0,C:0]`), so the path is read up to the `[` that
+    // opens the location, which also keeps `/Resources/BucketA[..]` from matching, and the sentence's
+    // continuation is a second needle.
+    "`[*]` handed the map at path /Resources[",
+    "on as one object",
+    "`BucketA`",
+    "`X.*.Key`",
+    "where `X` is `Resources`",
+];
+/// The mixed map after `[*]`: a scalar entry beside the members, named as the entry that cannot be a
+/// member (`one_object_shaped_map_refusal_text`'s `Mixed` arm).
+const THE_STRAY_ENTRY: &str = "the entry `Note` is a String and cannot be a member";
+const THE_STRAY_NOTE: &[&str] = &[THE_STRAY_ENTRY];
+/// The own-key refusal after a wildcard, by opener and key (`one_object_shaped_map_refusal_text`'s
+/// `OwnKeyNamed` arm): the filter ran, kept no entry holding a key the predicate names, and the key is a
+/// key of the map itself. It shares the named-map refusal's key and spelling sentences; its opener
+/// differs (the filter has run: "no kept entry holds a key the predicate names").
+const BRACKET_OWN_KEY_OPENER: &str = "`[*]` then no kept entry holds a key the predicate names";
+const DOT_OWN_KEY_OPENER: &str = "`.*` then no kept entry holds a key the predicate names";
+const OWN_KEY_BUCKET_A: &str = "`Key` is `BucketA`, a key of the map itself";
+const OWN_KEY_AUTHENTICATION: &str =
+    "`Key` is `AWS::CloudFormation::Authentication`, a key of the map itself";
+const OWN_KEY_BUCKET_ENCRYPTION: &str = "`Key` is `BucketEncryption`, a key of the map itself";
+const OWN_KEY_ACTION: &str = "`Key` is `Action`, a key of the map itself";
+const OWN_KEY_EFFECT: &str = "`Key` is `Effect`, a key of the map itself";
+const THE_OWN_KEY_SPELLINGS: &str = "Write `X[*] { Key == value }` or `X[*].Key == value`";
+/// `.*` over a one-object map of scalars: refused for having no array-or-single reading, naming the
+/// bracket spelling that has one (`dot_wildcard_filter_refusal`).
+const NO_ARRAY_OR_SINGLE_READING: &str = "has no array-or-single reading";
+const THE_BRACKET_SPELLING: &str = "Write `[*]` before the filter";
+const DOT_WILDCARD_OVER_ONE_OBJECT_OF_SCALARS: &[&str] =
+    &[NO_ARRAY_OR_SINGLE_READING, THE_BRACKET_SPELLING];
+const OWN_KEY_BUCKET_A_AFTER_BRACKET: &[&str] = &[BRACKET_OWN_KEY_OPENER, OWN_KEY_BUCKET_A];
+const OWN_KEY_BUCKET_A_NAMED: &[&str] = &[OWN_KEY_BUCKET_A];
+const OWN_KEY_AUTHENTICATION_AFTER_BRACKET: &[&str] =
+    &[BRACKET_OWN_KEY_OPENER, OWN_KEY_AUTHENTICATION];
+const OWN_KEY_AUTHENTICATION_NAMED: &[&str] = &[OWN_KEY_AUTHENTICATION];
+const OWN_KEY_BUCKET_ENCRYPTION_AFTER_BRACKET: &[&str] =
+    &[BRACKET_OWN_KEY_OPENER, OWN_KEY_BUCKET_ENCRYPTION];
+const OWN_KEY_ACTION_AFTER_BRACKET: &[&str] = &[
+    BRACKET_OWN_KEY_OPENER,
+    OWN_KEY_ACTION,
+    THE_OWN_KEY_SPELLINGS,
+    "where `X` is `Statement`",
+];
+const OWN_KEY_ACTION_AFTER_DOT: &[&str] = &[DOT_OWN_KEY_OPENER, OWN_KEY_ACTION];
+const OWN_KEY_EFFECT_AFTER_BRACKET: &[&str] = &[BRACKET_OWN_KEY_OPENER, OWN_KEY_EFFECT];
+
 /// A filter straight after `[*]` over a single object tests the object, as it tests a list element.
 ///
 /// `Statement[*]` hands one map through so that `Statement[*].Action` reads an IAM statement written as
@@ -32914,82 +33036,98 @@ const RULES_ALLOW_THEN_DENY: &str = r#"
 #[case::one_object_violating_empty(
     ONE_OBJECT_STATEMENT_ALLOWING_ALL,
     "Statement[*][ Effect == 'Allow' Action == '*' ] empty",
-    Status::FAIL
+    Status::FAIL,
+    Expect::Decided
 )]
 #[case::one_object_violating_not_empty(
     ONE_OBJECT_STATEMENT_ALLOWING_ALL,
     "Statement[*][ Effect == 'Allow' Action == '*' ] !empty",
-    Status::PASS
+    Status::PASS,
+    Expect::Decided
 )]
 #[case::one_object_violating_tail(
     ONE_OBJECT_STATEMENT_ALLOWING_ALL,
     "Statement[*][ Effect == 'Allow' ].Action != '*'",
-    Status::FAIL
+    Status::FAIL,
+    Expect::Decided
 )]
 #[case::one_object_compliant_empty(
     ONE_OBJECT_STATEMENT_ALLOWING_ONE,
     "Statement[*][ Effect == 'Allow' Action == '*' ] empty",
-    Status::PASS
+    Status::PASS,
+    Expect::Decided
 )]
 #[case::one_object_compliant_not_empty(
     ONE_OBJECT_STATEMENT_ALLOWING_ONE,
     "Statement[*][ Effect == 'Allow' Action == '*' ] !empty",
-    Status::FAIL
+    Status::FAIL,
+    Expect::Decided
 )]
 #[case::one_object_compliant_tail(
     ONE_OBJECT_STATEMENT_ALLOWING_ONE,
     "Statement[*][ Effect == 'Allow' ].Action != '*'",
-    Status::PASS
+    Status::PASS,
+    Expect::Decided
 )]
 #[case::one_element_list_violating_empty(
     ONE_ELEMENT_LIST_ALLOWING_ALL,
     "Statement[*][ Effect == 'Allow' Action == '*' ] empty",
-    Status::FAIL
+    Status::FAIL,
+    Expect::Decided
 )]
 #[case::one_element_list_violating_not_empty(
     ONE_ELEMENT_LIST_ALLOWING_ALL,
     "Statement[*][ Effect == 'Allow' Action == '*' ] !empty",
-    Status::PASS
+    Status::PASS,
+    Expect::Decided
 )]
 #[case::one_element_list_violating_tail(
     ONE_ELEMENT_LIST_ALLOWING_ALL,
     "Statement[*][ Effect == 'Allow' ].Action != '*'",
-    Status::FAIL
+    Status::FAIL,
+    Expect::Decided
 )]
 #[case::one_element_list_compliant_empty(
     ONE_ELEMENT_LIST_ALLOWING_ONE,
     "Statement[*][ Effect == 'Allow' Action == '*' ] empty",
-    Status::PASS
+    Status::PASS,
+    Expect::Decided
 )]
 #[case::one_element_list_compliant_not_empty(
     ONE_ELEMENT_LIST_ALLOWING_ONE,
     "Statement[*][ Effect == 'Allow' Action == '*' ] !empty",
-    Status::FAIL
+    Status::FAIL,
+    Expect::Decided
 )]
 #[case::one_element_list_compliant_tail(
     ONE_ELEMENT_LIST_ALLOWING_ONE,
     "Statement[*][ Effect == 'Allow' ].Action != '*'",
-    Status::PASS
+    Status::PASS,
+    Expect::Decided
 )]
 #[case::two_elements_one_violating_empty(
     TWO_ELEMENT_LIST_ONE_ALLOWING_ALL,
     "Statement[*][ Effect == 'Allow' Action == '*' ] empty",
-    Status::FAIL
+    Status::FAIL,
+    Expect::Decided
 )]
 #[case::two_elements_one_violating_not_empty(
     TWO_ELEMENT_LIST_ONE_ALLOWING_ALL,
     "Statement[*][ Effect == 'Allow' Action == '*' ] !empty",
-    Status::PASS
+    Status::PASS,
+    Expect::Decided
 )]
 #[case::two_elements_one_violating_tail(
     TWO_ELEMENT_LIST_ONE_ALLOWING_ALL,
     "Statement[*][ Effect == 'Allow' ].Action != '*'",
-    Status::FAIL
+    Status::FAIL,
+    Expect::Decided
 )]
 #[case::a_map_whose_entries_are_all_maps_stays_a_selection(
     RESOURCES_WITH_A_PUBLIC_BUCKET,
     "Resources[*][ Type == 'AWS::S3::Bucket' ].Properties.Public == false",
-    Status::FAIL
+    Status::FAIL,
+    Expect::Decided
 )]
 // A resource named like the predicate's key is a member: the map is nothing but members, so the filter
 // is the selection the author wrote and keeps nothing (no resource holds a `BucketA` key); `!empty`
@@ -32997,67 +33135,80 @@ const RULES_ALLOW_THEN_DENY: &str = r#"
 #[case::a_map_whose_entries_are_all_maps_under_a_member_named_like_the_key_is_a_selection(
     RESOURCES_WITH_A_PUBLIC_BUCKET,
     "Resources[*][ BucketA exists ] !empty",
-    Status::FAIL
+    Status::FAIL,
+    Expect::Decided
 )]
 #[case::a_map_whose_entries_are_all_maps_under_a_member_named_like_the_key_passes_empty(
     RESOURCES_WITH_A_PUBLIC_BUCKET,
     "Resources[*][ BucketA exists ] empty",
-    Status::PASS
+    Status::PASS,
+    Expect::Decided
 )]
 // The key spelling the refusal names reads the map itself and a list of such maps alike. The block
 // spelling is REFUSED over this map (`[*]` hands it on whole, `BucketA` is a key of the map and the name of
 // one member while another member holds no `BucketA` of its own, so the own entry would answer for every
-// member, a false pass) and fails closed as an assertion; `Resources.*.BucketA` and `Resources.* { BucketA
-// == value }` are the remedy it prints (the block arm's own-key test, `the_members_spelling_over_a_map_
-// hands_the_map_on_whole`).
+// member, a false pass) and fails closed as an assertion. The remedy it prints is written in its own
+// grammar, never spelled out for this map: `X.Key == value` for the map as one object, `X.*.Key` or
+// `X.* { Key == value }` for each member's own `Key`, "where `X` is `Resources`" (the block arm's own-key
+// test, `the_members_spelling_over_a_map_hands_the_map_on_whole`); the needles read the handed-on
+// sentence, the key, the member spelling and the binding of `X`.
 #[case::the_block_spelling_the_refusal_names_is_refused_over_the_maps_own_key(
     RESOURCES_WITH_A_PUBLIC_BUCKET,
     "Resources[*] { BucketA exists }",
-    Status::FAIL
+    Status::FAIL,
+    Expect::Refused(OWN_KEY_HANDED_ON_WHOLE_OVER_RESOURCES)
 )]
 // The key spelling takes the block spelling's classification over a map handed on whole: `BucketA` is a
 // key of the map and the name of a member while `TableC` lacks it, so the own entry would answer for every
-// member, and the clause is REFUSED and fails closed, with the direct path and the member spellings as the
-// remedy.
+// member, and the clause is REFUSED and fails closed, in the same words as the block spelling (one text
+// builder, `own_key_handed_on_whole_refusal_text`, serves both arms), so the same needles are read.
 #[case::the_key_spelling_the_refusal_names_is_refused_over_the_maps_own_key(
     RESOURCES_WITH_A_PUBLIC_BUCKET,
     "Resources[*].BucketA exists",
-    Status::FAIL
+    Status::FAIL,
+    Expect::Refused(OWN_KEY_HANDED_ON_WHOLE_OVER_RESOURCES)
 )]
 #[case::a_map_with_a_scalar_entry_is_read_as_one_object(
     RESOURCES_WITH_A_SCALAR_ENTRY,
     "Resources[*][ Note exists ] !empty",
-    Status::PASS
+    Status::PASS,
+    Expect::Decided
 )]
 #[case::a_map_with_a_scalar_entry_no_longer_selects_among_its_maps(
     RESOURCES_WITH_A_SCALAR_ENTRY,
     "Resources[*][ Type == 'AWS::S3::Bucket' ] !empty",
-    Status::FAIL
+    Status::FAIL,
+    Expect::Refused(THE_STRAY_NOTE)
 )]
 #[case::a_map_with_a_scalar_entry_is_refused_in_the_assertion_polarity_too(
     RESOURCES_WITH_A_SCALAR_ENTRY,
     "Resources[*][ Type == 'AWS::S3::Bucket' ].Properties.Public == false",
-    Status::FAIL
+    Status::FAIL,
+    Expect::Refused(THE_STRAY_NOTE)
 )]
 #[case::a_map_with_a_scalar_entry_is_refused_in_the_empty_polarity_where_it_failed_open(
     RESOURCES_WITH_A_SCALAR_ENTRY,
     "Resources[*][ Type == 'AWS::S3::Bucket' ] empty",
-    Status::FAIL
+    Status::FAIL,
+    Expect::Refused(THE_STRAY_NOTE)
 )]
 #[case::a_predicate_naming_a_member_key_beside_the_maps_own_key_is_refused_not_empty(
     RESOURCES_WITH_A_SCALAR_ENTRY,
     "Resources[*][ Type == 'AWS::S3::Bucket' or Note exists ] !empty",
-    Status::FAIL
+    Status::FAIL,
+    Expect::Refused(THE_STRAY_NOTE)
 )]
 #[case::a_predicate_naming_a_member_key_beside_the_maps_own_key_is_refused_empty(
     RESOURCES_WITH_A_SCALAR_ENTRY,
     "Resources[*][ Type == 'AWS::S3::Bucket' or Note exists ] empty",
-    Status::FAIL
+    Status::FAIL,
+    Expect::Refused(THE_STRAY_NOTE)
 )]
 #[case::a_this_head_naming_a_member_key_is_refused_over_the_mixed_map(
     RESOURCES_WITH_A_SCALAR_ENTRY,
     "Resources[*][ this.Type == 'AWS::S3::Bucket' ].Properties.Public == false",
-    Status::FAIL
+    Status::FAIL,
+    Expect::Refused(THE_STRAY_NOTE)
 )]
 // `.*` is the author's enumeration and keeps it over the mixed map: the bucket is selected and tested,
 // the stray string beside it is passed over, and nothing is refused. The assertion fails on the
@@ -33065,32 +33216,38 @@ const RULES_ALLOW_THEN_DENY: &str = r#"
 #[case::the_dot_wildcard_over_a_map_with_a_scalar_entry_enumerates_its_maps_and_fails_on_the_bucket(
     RESOURCES_WITH_A_SCALAR_ENTRY,
     "Resources.*[ Type == 'AWS::S3::Bucket' ].Properties.Public == false",
-    Status::FAIL
+    Status::FAIL,
+    Expect::Decided
 )]
 #[case::the_dot_wildcard_over_a_map_with_a_scalar_entry_selects_the_bucket_under_empty(
     RESOURCES_WITH_A_SCALAR_ENTRY,
     "Resources.*[ Type == 'AWS::S3::Bucket' ] empty",
-    Status::FAIL
+    Status::FAIL,
+    Expect::Decided
 )]
 #[case::the_dot_wildcard_with_a_this_head_enumerates_the_mixed_map(
     RESOURCES_WITH_A_SCALAR_ENTRY,
     "Resources.*[ this.Type == 'AWS::S3::Bucket' ].Properties.Public == false",
-    Status::FAIL
+    Status::FAIL,
+    Expect::Decided
 )]
 #[case::a_map_with_a_null_entry_stays_a_selection(
     RESOURCES_WITH_A_NULL_ENTRY,
     "Resources[*][ Type == 'AWS::S3::Bucket' ].Properties.Public == false",
-    Status::FAIL
+    Status::FAIL,
+    Expect::Decided
 )]
 #[case::a_map_with_a_null_entry_is_refused_under_its_own_key(
     RESOURCES_WITH_A_NULL_ENTRY,
     "Resources[*][ BucketA exists ] !empty",
-    Status::FAIL
+    Status::FAIL,
+    Expect::Refused(OWN_KEY_BUCKET_A_AFTER_BRACKET)
 )]
 #[case::a_map_with_a_null_entry_is_refused_under_its_own_key_in_the_empty_polarity_too(
     RESOURCES_WITH_A_NULL_ENTRY,
     "Resources[*][ BucketA exists ] empty",
-    Status::FAIL
+    Status::FAIL,
+    Expect::Refused(OWN_KEY_BUCKET_A_AFTER_BRACKET)
 )]
 // An `Fn::Transform` entry beside the members is an intrinsic directive, not a member: passed over, it
 // leaves `BucketA` and `TableC` the collection they are, so the filter is the selection the author wrote
@@ -33103,12 +33260,14 @@ const RULES_ALLOW_THEN_DENY: &str = r#"
 #[case::a_transform_entry_beside_the_members_is_passed_over_and_the_own_key_is_a_selection_under_empty(
     RESOURCES_WITH_A_TRANSFORM_ENTRY,
     "Resources[*][ BucketA exists ] empty",
-    Status::PASS
+    Status::PASS,
+    Expect::Decided
 )]
 #[case::a_transform_entry_beside_the_members_is_passed_over_and_the_own_key_is_a_selection_under_not_empty(
     RESOURCES_WITH_A_TRANSFORM_ENTRY,
     "Resources[*][ BucketA exists ] !empty",
-    Status::FAIL
+    Status::FAIL,
+    Expect::Decided
 )]
 // One resource beside the transform: with the directive passed over, the map holds one member, which
 // has nothing to be like, and a one-member map cannot be told from the one object, so the own-key
@@ -33119,12 +33278,14 @@ const RULES_ALLOW_THEN_DENY: &str = r#"
 #[case::one_member_beside_a_transform_is_a_one_member_map_and_the_own_key_is_refused_under_empty(
     RESOURCES_WITH_ONE_MEMBER_BESIDE_A_TRANSFORM,
     "Resources[*][ BucketA exists ] empty",
-    Status::FAIL
+    Status::FAIL,
+    Expect::Refused(OWN_KEY_BUCKET_A_NAMED)
 )]
 #[case::one_member_beside_a_transform_is_a_one_member_map_and_the_own_key_is_refused_under_not_empty(
     RESOURCES_WITH_ONE_MEMBER_BESIDE_A_TRANSFORM,
     "Resources[*][ BucketA exists ] !empty",
-    Status::FAIL
+    Status::FAIL,
+    Expect::Refused(OWN_KEY_BUCKET_A_NAMED)
 )]
 // The pass-over reads the key, not the value: a list under `Fn::ForEach::<Name>` and a one-key intrinsic
 // map under `Fn::ImportValue` are passed over as the transform's map is. Read as members, neither was a
@@ -33133,22 +33294,26 @@ const RULES_ALLOW_THEN_DENY: &str = r#"
 #[case::a_foreach_list_beside_the_members_is_passed_over_and_the_own_key_is_a_selection_under_empty(
     RESOURCES_WITH_A_FOREACH_LIST_ENTRY,
     "Resources[*][ BucketA exists ] empty",
-    Status::PASS
+    Status::PASS,
+    Expect::Decided
 )]
 #[case::a_foreach_list_beside_the_members_is_passed_over_and_the_own_key_is_a_selection_under_not_empty(
     RESOURCES_WITH_A_FOREACH_LIST_ENTRY,
     "Resources[*][ BucketA exists ] !empty",
-    Status::FAIL
+    Status::FAIL,
+    Expect::Decided
 )]
 #[case::a_map_valued_import_beside_the_members_is_passed_over_and_the_own_key_is_a_selection_under_empty(
     RESOURCES_WITH_A_MAP_VALUED_IMPORTVALUE_ENTRY,
     "Resources[*][ BucketA exists ] empty",
-    Status::PASS
+    Status::PASS,
+    Expect::Decided
 )]
 #[case::a_map_valued_import_beside_the_members_is_passed_over_and_the_own_key_is_a_selection_under_not_empty(
     RESOURCES_WITH_A_MAP_VALUED_IMPORTVALUE_ENTRY,
     "Resources[*][ BucketA exists ] !empty",
-    Status::FAIL
+    Status::FAIL,
+    Expect::Decided
 )]
 // Members are the same kind of thing, read as a key name every one of them carries (`Type` on `BucketA`
 // and `TableC` above). Sub-maps that share no key name are the fields of one object, so the key stays
@@ -33159,37 +33324,44 @@ const RULES_ALLOW_THEN_DENY: &str = r#"
 #[case::sub_maps_sharing_no_key_name_are_one_object_and_the_own_key_is_refused_under_empty(
     METADATA_WITH_INIT_AND_AUTHENTICATION,
     "Resources.*.Metadata[*][ \"AWS::CloudFormation::Authentication\" exists ] empty",
-    Status::FAIL
+    Status::FAIL,
+    Expect::RefusedWithoutMemberSpellings(OWN_KEY_AUTHENTICATION_AFTER_BRACKET)
 )]
 #[case::sub_maps_sharing_no_key_name_are_one_object_and_the_own_key_is_refused_under_not_empty(
     METADATA_WITH_INIT_AND_AUTHENTICATION,
     "Resources.*.Metadata[*][ \"AWS::CloudFormation::Authentication\" exists ] !empty",
-    Status::FAIL
+    Status::FAIL,
+    Expect::RefusedWithoutMemberSpellings(OWN_KEY_AUTHENTICATION_AFTER_BRACKET)
 )]
 #[case::the_one_entry_metadata_keeps_the_own_key_refusal_under_empty(
     METADATA_WITH_AUTHENTICATION_ONLY,
     "Resources.*.Metadata[*][ \"AWS::CloudFormation::Authentication\" exists ] empty",
-    Status::FAIL
+    Status::FAIL,
+    Expect::Refused(OWN_KEY_AUTHENTICATION_NAMED)
 )]
 #[case::the_one_entry_metadata_keeps_the_own_key_refusal_under_not_empty(
     METADATA_WITH_AUTHENTICATION_ONLY,
     "Resources.*.Metadata[*][ \"AWS::CloudFormation::Authentication\" exists ] !empty",
-    Status::FAIL
+    Status::FAIL,
+    Expect::Refused(OWN_KEY_AUTHENTICATION_NAMED)
 )]
 #[case::all_structure_properties_sharing_no_key_name_are_one_object_and_the_own_key_is_refused(
     BUCKET_WITH_ALL_STRUCTURE_PROPERTIES,
     "Resources.*.Properties[*][ BucketEncryption exists ] empty",
-    Status::FAIL
+    Status::FAIL,
+    Expect::RefusedWithoutMemberSpellings(OWN_KEY_BUCKET_ENCRYPTION_AFTER_BRACKET)
 )]
 #[case::the_dot_wildcard_over_the_one_object_statement_is_refused_under_empty(
     ONE_OBJECT_STATEMENT_ALLOWING_ALL,
     "Statement.*[ Effect == 'Allow' Action == '*' ] empty",
-    Status::FAIL
+    Status::FAIL,
+    Expect::Refused(DOT_WILDCARD_OVER_ONE_OBJECT_OF_SCALARS)
 )]
 #[case::the_dot_wildcard_over_the_one_object_statement_is_refused_under_not_empty(
     ONE_OBJECT_STATEMENT_ALLOWING_ALL,
     "Statement.*[ Effect == 'Allow' Action == '*' ] !empty",
-    Status::FAIL
+    Status::FAIL,
+    Expect::Refused(DOT_WILDCARD_OVER_ONE_OBJECT_OF_SCALARS)
 )]
 // The all-intrinsic one-object statement is refused under its own key in both polarities: `empty`
 // now fails it as the list twin does, where it passed the statement that allows everything; `!empty`
@@ -33198,52 +33370,62 @@ const RULES_ALLOW_THEN_DENY: &str = r#"
 #[case::an_all_intrinsic_one_object_statement_is_refused_under_empty_and_fails_like_its_list_twin(
     ALL_INTRINSIC_ONE_OBJECT_STATEMENT,
     "Statement[*][ Action == '*' ] empty",
-    Status::FAIL
+    Status::FAIL,
+    Expect::Refused(OWN_KEY_ACTION_AFTER_BRACKET)
 )]
 #[case::an_all_intrinsic_one_element_list_tests_the_element(
     ALL_INTRINSIC_ONE_ELEMENT_LIST,
     "Statement[*][ Action == '*' ] empty",
-    Status::FAIL
+    Status::FAIL,
+    Expect::Decided
 )]
 #[case::an_all_intrinsic_one_object_statement_is_refused_under_not_empty_the_known_limit(
     ALL_INTRINSIC_ONE_OBJECT_STATEMENT,
     "Statement[*][ Action == '*' ] !empty",
-    Status::FAIL
+    Status::FAIL,
+    Expect::Refused(OWN_KEY_ACTION_AFTER_BRACKET)
 )]
 #[case::an_all_intrinsic_one_element_list_passes_not_empty(
     ALL_INTRINSIC_ONE_ELEMENT_LIST,
     "Statement[*][ Action == '*' ] !empty",
-    Status::PASS
+    Status::PASS,
+    Expect::Decided
 )]
 #[case::the_block_spelling_reads_the_all_intrinsic_one_object_statement(
     ALL_INTRINSIC_ONE_OBJECT_STATEMENT,
     "Statement[*] { Action == '*' }",
-    Status::PASS
+    Status::PASS,
+    Expect::Decided
 )]
 #[case::the_block_spelling_reads_the_all_intrinsic_one_element_list(
     ALL_INTRINSIC_ONE_ELEMENT_LIST,
     "Statement[*] { Action == '*' }",
-    Status::PASS
+    Status::PASS,
+    Expect::Decided
 )]
 #[case::the_key_spelling_reads_the_all_intrinsic_one_object_statement(
     ALL_INTRINSIC_ONE_OBJECT_STATEMENT,
     "Statement[*].Action == '*'",
-    Status::PASS
+    Status::PASS,
+    Expect::Decided
 )]
 #[case::the_key_spelling_reads_the_all_intrinsic_one_element_list(
     ALL_INTRINSIC_ONE_ELEMENT_LIST,
     "Statement[*].Action == '*'",
-    Status::PASS
+    Status::PASS,
+    Expect::Decided
 )]
 #[case::an_all_intrinsic_one_object_statement_under_a_key_it_lacks_stays_a_selection(
     ALL_INTRINSIC_ONE_OBJECT_STATEMENT,
     "Statement[*][ Sid == 'x' ] empty",
-    Status::PASS
+    Status::PASS,
+    Expect::Decided
 )]
 #[case::the_dot_wildcard_over_the_all_intrinsic_one_object_statement_is_refused(
     ALL_INTRINSIC_ONE_OBJECT_STATEMENT,
     "Statement.*[ Action == '*' ] empty",
-    Status::FAIL
+    Status::FAIL,
+    Expect::Refused(OWN_KEY_ACTION_AFTER_DOT)
 )]
 // The own key may be map-valued: `Effect` holds an intrinsic, and the refusal is the same. Before it,
 // `Effect exists !empty` enumerated the object and failed where the list twin passes; now both
@@ -33251,119 +33433,142 @@ const RULES_ALLOW_THEN_DENY: &str = r#"
 #[case::an_all_intrinsic_one_object_statement_is_refused_under_its_map_valued_key_not_empty(
     ALL_INTRINSIC_ONE_OBJECT_STATEMENT,
     "Statement[*][ Effect exists ] !empty",
-    Status::FAIL
+    Status::FAIL,
+    Expect::Refused(OWN_KEY_EFFECT_AFTER_BRACKET)
 )]
 #[case::an_all_intrinsic_one_element_list_under_its_map_valued_key_exists(
     ALL_INTRINSIC_ONE_ELEMENT_LIST,
     "Statement[*][ Effect exists ] !empty",
-    Status::PASS
+    Status::PASS,
+    Expect::Decided
 )]
 #[case::an_all_intrinsic_one_object_statement_is_refused_under_its_map_valued_key_empty(
     ALL_INTRINSIC_ONE_OBJECT_STATEMENT,
     "Statement[*][ Effect exists ] empty",
-    Status::FAIL
+    Status::FAIL,
+    Expect::Refused(OWN_KEY_EFFECT_AFTER_BRACKET)
 )]
 #[case::an_all_intrinsic_one_element_list_under_its_map_valued_key_fails_empty(
     ALL_INTRINSIC_ONE_ELEMENT_LIST,
     "Statement[*][ Effect exists ] empty",
-    Status::FAIL
+    Status::FAIL,
+    Expect::Decided
 )]
 // An intrinsic compared with a string does not hold on the list element, so `empty` passes the
 // list and `!empty` fails it; the object is refused in both polarities whatever the comparison.
 #[case::an_all_intrinsic_one_object_statement_is_refused_comparing_its_map_valued_key_empty(
     ALL_INTRINSIC_ONE_OBJECT_STATEMENT,
     "Statement[*][ Effect == 'Allow' ] empty",
-    Status::FAIL
+    Status::FAIL,
+    Expect::Refused(OWN_KEY_EFFECT_AFTER_BRACKET)
 )]
 #[case::an_all_intrinsic_one_element_list_compares_its_map_valued_key_empty(
     ALL_INTRINSIC_ONE_ELEMENT_LIST,
     "Statement[*][ Effect == 'Allow' ] empty",
-    Status::PASS
+    Status::PASS,
+    Expect::Decided
 )]
 #[case::an_all_intrinsic_one_object_statement_is_refused_comparing_its_map_valued_key_not_empty(
     ALL_INTRINSIC_ONE_OBJECT_STATEMENT,
     "Statement[*][ Effect == 'Allow' ] !empty",
-    Status::FAIL
+    Status::FAIL,
+    Expect::Refused(OWN_KEY_EFFECT_AFTER_BRACKET)
 )]
 #[case::an_all_intrinsic_one_element_list_compares_its_map_valued_key_not_empty(
     ALL_INTRINSIC_ONE_ELEMENT_LIST,
     "Statement[*][ Effect == 'Allow' ] !empty",
-    Status::FAIL
+    Status::FAIL,
+    Expect::Decided
 )]
 #[case::a_predicate_naming_only_a_map_valued_key_reads_the_object_not_empty(
     ONE_OBJECT_STATEMENT_WITH_A_CONDITION,
     "Statement[*][ Condition exists ] !empty",
-    Status::PASS
+    Status::PASS,
+    Expect::Decided
 )]
 #[case::a_predicate_naming_only_a_map_valued_key_reads_the_object_empty(
     ONE_OBJECT_STATEMENT_WITH_A_CONDITION,
     "Statement[*][ Condition exists ] empty",
-    Status::FAIL
+    Status::FAIL,
+    Expect::Decided
 )]
 #[case::an_absent_key_reads_the_object(
     ONE_OBJECT_STATEMENT_WITH_A_PRINCIPAL,
     "Statement[*][ Condition !exists ] !empty",
-    Status::PASS
+    Status::PASS,
+    Expect::Decided
 )]
 #[case::an_absent_key_reads_the_list_element(
     ONE_ELEMENT_LIST_WITH_A_PRINCIPAL,
     "Statement[*][ Condition !exists ] !empty",
-    Status::PASS
+    Status::PASS,
+    Expect::Decided
 )]
 #[case::an_absent_key_asserted_empty_fails_the_object(
     ONE_OBJECT_STATEMENT_WITH_A_PRINCIPAL,
     "Statement[*][ Condition !exists ] empty",
-    Status::FAIL
+    Status::FAIL,
+    Expect::Decided
 )]
 #[case::a_map_valued_key_reads_the_object(
     ONE_OBJECT_STATEMENT_WITH_A_PRINCIPAL,
     "Statement[*][ Principal.AWS == '*' ] empty",
-    Status::FAIL
+    Status::FAIL,
+    Expect::Decided
 )]
 #[case::a_map_valued_key_reads_the_list_element(
     ONE_ELEMENT_LIST_WITH_A_PRINCIPAL,
     "Statement[*][ Principal.AWS == '*' ] empty",
-    Status::FAIL
+    Status::FAIL,
+    Expect::Decided
 )]
 #[case::a_this_prefixed_predicate_reads_the_object(
     ONE_OBJECT_STATEMENT_WITH_A_PRINCIPAL,
     "Statement[*][ this.Effect == 'Allow' this.Action == '*' ] empty",
-    Status::FAIL
+    Status::FAIL,
+    Expect::Decided
 )]
 #[case::a_this_prefixed_predicate_reads_the_list_element(
     ONE_ELEMENT_LIST_WITH_A_PRINCIPAL,
     "Statement[*][ this.Effect == 'Allow' this.Action == '*' ] empty",
-    Status::FAIL
+    Status::FAIL,
+    Expect::Decided
 )]
 #[case::the_block_spelling_reads_the_map_valued_key(
     ONE_OBJECT_STATEMENT_WITH_A_CONDITION,
     "Statement[*] { Condition exists }",
-    Status::PASS
+    Status::PASS,
+    Expect::Decided
 )]
 #[case::a_scalar_key_beside_a_map_valued_key_reads_the_object(
     ONE_OBJECT_STATEMENT_WITH_A_CONDITION,
     "Statement[*][ Condition exists Effect == 'Allow' ] !empty",
-    Status::PASS
+    Status::PASS,
+    Expect::Decided
 )]
 #[case::parameters_with_an_entry_named_type_stay_a_selection(
     PARAMETERS_ONE_NAMED_TYPE,
     "Parameters[*][ Type == 'Number' ] !empty",
-    Status::PASS
+    Status::PASS,
+    Expect::Decided
 )]
 #[case::parameters_with_an_entry_named_type_select_nothing(
     PARAMETERS_ONE_NAMED_TYPE,
     "Parameters[*][ Type == 'List' ] empty",
-    Status::PASS
+    Status::PASS,
+    Expect::Decided
 )]
 #[case::an_index_before_the_filter_tests_that_value(
     RULES_ALLOW_THEN_DENY,
     "Rules[0][ Action == 'allow' ] exists",
-    Status::PASS
+    Status::PASS,
+    Expect::Decided
 )]
 fn a_filter_after_a_bracket_wildcard_over_one_object_tests_the_object(
     #[case] input: &str,
     #[case] clause: &str,
     #[case] expected: Status,
+    #[case] expect: Expect,
 ) -> Result<()> {
     let rules = "rule checked { CLAUSE }".replace("CLAUSE", clause);
 
@@ -33374,6 +33579,54 @@ fn a_filter_after_a_bracket_wildcard_over_one_object_tests_the_object(
         clause,
         input
     );
+
+    // Every case reads the record. A refused case is REFUSED, not decided: a FAIL alone would also be
+    // read for a decided failure that had lost the refusal and its remedy, so the record is read for one
+    // message flagged a refusal that carries every needle the case names (the arm's opener, the key named,
+    // the remedy in its own grammar and the binding of `X` where the case reads them), and, for a map
+    // whose sub-maps share no key name, that the message leaves the member spellings out (no member is
+    // named like the key, so there is no member reading to offer). A decided case reads that nothing on
+    // record is flagged a refusal, so a clause that drew one is not read as decided by its status. The
+    // needles are the texts the refusal builders print (`one_object_shaped_map_refusal_text`,
+    // `own_key_handed_on_whole_refusal_text`, `dot_wildcard_filter_refusal`), the one set the by-name test
+    // reads in the record dump for the clauses it shares with this one; the rows with no by-name
+    // counterpart follow the builders' arms.
+    let rules_file = RulesFile::try_from(rules.as_str())?;
+    let mut root = root_scope(&rules_file, Rc::new(PathAwareValue::try_from(input)?));
+    let _ = eval_rules_file(&rules_file, &mut root, None)?;
+    let mut messages = Vec::new();
+    recorded_messages_with_kind(&root.reset_recorder().extract(), &mut messages);
+    match expect {
+        Expect::Decided => assert!(
+            !messages.iter().any(|(refusal, _)| *refusal),
+            "clause `{}` over {}: a decided clause, no record flagged a refusal: {:?}",
+            clause,
+            input,
+            messages
+        ),
+        Expect::Refused(needles) => assert!(
+            messages.iter().any(|(refusal, message)| {
+                *refusal && needles.iter().all(|needle| message.contains(needle))
+            }),
+            "clause `{}` over {}: a refusal record carrying {:?} is on record, flagged: {:?}",
+            clause,
+            input,
+            needles,
+            messages
+        ),
+        Expect::RefusedWithoutMemberSpellings(needles) => assert!(
+            messages.iter().any(|(refusal, message)| {
+                *refusal
+                    && needles.iter().all(|needle| message.contains(needle))
+                    && !message.contains(crate::rules::eval_context::THE_MEMBER_SPELLINGS)
+            }),
+            "clause `{}` over {}: a refusal record carrying {:?} and no member spellings is on record, flagged: {:?}",
+            clause,
+            input,
+            needles,
+            messages
+        ),
+    }
 
     Ok(())
 }
@@ -39145,12 +39398,9 @@ fn a_wildcard_filter_over_a_mixed_or_dot_enumerated_one_object_map_is_refused_by
         }
     }
     "#;
-    const THE_STRAY_ENTRY: &str = "the entry `Note` is a String and cannot be a member";
-    const THE_BRACKET_SPELLING: &str = "Write `[*]` before the filter";
-    const NO_ARRAY_OR_SINGLE_READING: &str = "has no array-or-single reading";
-    // The own-key refusal after a wildcard shares the named-map refusal's key and spelling sentences;
-    // its opener differs (the filter has run: "no kept entry holds a key the predicate names").
-    const THE_OWN_KEY_SPELLINGS: &str = "Write `X[*] { Key == value }` or `X[*].Key == value`";
+    // The refusal texts (`THE_STRAY_ENTRY`, `THE_BRACKET_SPELLING`, `NO_ARRAY_OR_SINGLE_READING`,
+    // `THE_OWN_KEY_SPELLINGS`, the openers and the `OWN_KEY_*` key sentences) are the module's one set,
+    // shared with `a_filter_after_a_bracket_wildcard_over_one_object_tests_the_object`.
     // Between the definition of `X` and the path: the spellings that read each member's own `Key`, for
     // the author who meant the members and not the map's own key. The engine's own constant, so a cell
     // can never assert a copy that drifted from what the refusal prints.
@@ -39164,13 +39414,6 @@ fn a_wildcard_filter_over_a_mixed_or_dot_enumerated_one_object_map_is_refused_by
     // one-object statement's path in every in-process input of this test.)
     const NO_MEMBER_SPELLINGS_AFTER_THE_PATH: &str =
         "at path /Statement[L:0,C:0].` when handling clause";
-    const BRACKET_OWN_KEY_OPENER: &str = "`[*]` then no kept entry holds a key the predicate names";
-    const DOT_OWN_KEY_OPENER: &str = "`.*` then no kept entry holds a key the predicate names";
-    const OWN_KEY_ACTION: &str = "`Key` is `Action`, a key of the map itself";
-    const OWN_KEY_BUCKET_A: &str = "`Key` is `BucketA`, a key of the map itself";
-    const OWN_KEY_AUTHENTICATION: &str =
-        "`Key` is `AWS::CloudFormation::Authentication`, a key of the map itself";
-    const OWN_KEY_BUCKET_ENCRYPTION: &str = "`Key` is `BucketEncryption`, a key of the map itself";
 
     // A value in the record is printed as `Path("/Resources/B/Type", Location { .. })`, so the paths
     // are matched up to the comma after the string. The refused resource is answered with the
@@ -39711,6 +39954,20 @@ fn an_own_key_filter_after_a_wildcard_that_keeps_an_entry_is_not_refused() -> Re
     "#;
     const OWN_KEY_OPENER: &str = "then no kept entry holds a key the predicate names";
     const BUCKET_PUBLIC_COMPARED: &str = "Path(\"/Resources/BucketA/Properties/Public\",";
+    // The two arms' texts: the FILTER arm's refusal opens with `OWN_KEY_OPENER` (no kept entry held a key
+    // the predicate named); the BLOCK arm's names the map handed on whole and the key the block reads.
+    const BLOCK_ARM_OPENER: &str = "`[*]` handed the map at path ";
+
+    /// Which arm, if any, refused the row's clause. Each row asserts its arm's text present and the
+    /// other arm's absent, so a decided FAIL that lost its refusal, or a refusal by the wrong arm, is a
+    /// red, where a column reading one arm's opener read `false` for a decided FAIL and for the other
+    /// arm's refusal alike.
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    enum Refusal {
+        None,
+        FilterArm,
+        BlockArm,
+    }
 
     let mut cells = CellFailures::default();
     // The first field: the notices the row leaves on the channel. A selection among members after `[*]`
@@ -39718,7 +39975,7 @@ fn an_own_key_filter_after_a_wildcard_that_keeps_an_entry_is_not_refused() -> Re
     // a predicate as outside one, since the previous release asked the predicate of the whole map there
     // and the selection moved; a refusal leaves none, and so does every `.*` row, which enumerated the
     // entries in the previous release as it does now.
-    for (member_notices, label, rules, input, expected, refused, bucket_compared) in [
+    for (member_notices, label, rules, input, expected, refusal, bucket_compared) in [
         // The last column: whether the bucket's `Public` is the value the clause records. A clause that
         // holds records no value, so the PASS rows read `Some(false)`; the read-on assertion fails on
         // `Public` itself, `Some(true)`; a refused clause records the refusal over the whole map it
@@ -39729,7 +39986,7 @@ fn an_own_key_filter_after_a_wildcard_that_keeps_an_entry_is_not_refused() -> Re
             "rule r { Resources[*][ Type == 'AWS::S3::Bucket' or BucketA exists ] !empty }",
             RESOURCES_WITH_A_PUBLIC_BUCKET,
             Status::PASS,
-            false,
+            Refusal::None,
             Some(false),
         ),
         (
@@ -39738,7 +39995,7 @@ fn an_own_key_filter_after_a_wildcard_that_keeps_an_entry_is_not_refused() -> Re
             "rule r { Resources[*][ Type == 'AWS::S3::Bucket' or BucketA exists ].Properties.Public == false }",
             RESOURCES_WITH_A_PUBLIC_BUCKET,
             Status::FAIL,
-            false,
+            Refusal::None,
             Some(true),
         ),
         // Kept by a miss alone over a map that is NOT uniformly members: every field value of the
@@ -39752,7 +40009,7 @@ fn an_own_key_filter_after_a_wildcard_that_keeps_an_entry_is_not_refused() -> Re
             "rule r { Resources[*][ BucketA !exists ] !empty }",
             RESOURCES_WITH_A_PUBLIC_BUCKET,
             Status::PASS,
-            false,
+            Refusal::None,
             Some(false),
         ),
         (
@@ -39761,7 +40018,7 @@ fn an_own_key_filter_after_a_wildcard_that_keeps_an_entry_is_not_refused() -> Re
             "rule r { Resources[*][ BucketA exists ] !empty }",
             RESOURCES_WITH_A_PUBLIC_BUCKET,
             Status::FAIL,
-            false,
+            Refusal::None,
             None,
         ),
         (
@@ -39770,7 +40027,7 @@ fn an_own_key_filter_after_a_wildcard_that_keeps_an_entry_is_not_refused() -> Re
             "rule r { Statement[*][ Action !exists ] !empty }",
             ALL_INTRINSIC_ONE_OBJECT_STATEMENT,
             Status::FAIL,
-            true,
+            Refusal::FilterArm,
             None,
         ),
         (
@@ -39779,7 +40036,7 @@ fn an_own_key_filter_after_a_wildcard_that_keeps_an_entry_is_not_refused() -> Re
             "rule r { Statement.*[ Action !exists ] !empty }",
             ALL_INTRINSIC_ONE_OBJECT_STATEMENT,
             Status::FAIL,
-            true,
+            Refusal::FilterArm,
             None,
         ),
         (
@@ -39788,7 +40045,7 @@ fn an_own_key_filter_after_a_wildcard_that_keeps_an_entry_is_not_refused() -> Re
             "rule r { Statement[*][ Resource !exists ] empty }",
             ALL_INTRINSIC_ONE_OBJECT_STATEMENT,
             Status::FAIL,
-            true,
+            Refusal::FilterArm,
             None,
         ),
         (
@@ -39797,7 +40054,7 @@ fn an_own_key_filter_after_a_wildcard_that_keeps_an_entry_is_not_refused() -> Re
             "rule r { Statement[*][ Action !exists ] !empty }",
             ALL_INTRINSIC_ONE_ELEMENT_LIST,
             Status::FAIL,
-            false,
+            Refusal::None,
             None,
         ),
         // A parameter literally named `Default` is a member named like the key the filter asks of every
@@ -39811,7 +40068,7 @@ fn an_own_key_filter_after_a_wildcard_that_keeps_an_entry_is_not_refused() -> Re
             "rule r { Parameters.*[ Default exists ] empty }",
             PARAMETERS_ONE_NAMED_DEFAULT,
             Status::PASS,
-            false,
+            Refusal::None,
             None,
         ),
         (
@@ -39820,7 +40077,7 @@ fn an_own_key_filter_after_a_wildcard_that_keeps_an_entry_is_not_refused() -> Re
             "rule r { Parameters[*][ Default exists ] !empty }",
             PARAMETERS_ONE_NAMED_DEFAULT,
             Status::FAIL,
-            false,
+            Refusal::None,
             None,
         ),
         (
@@ -39829,7 +40086,7 @@ fn an_own_key_filter_after_a_wildcard_that_keeps_an_entry_is_not_refused() -> Re
             "rule r { Parameters.*[ Default !exists ] !empty }",
             PARAMETERS_ONE_NAMED_DEFAULT,
             Status::PASS,
-            false,
+            Refusal::None,
             None,
         ),
         (
@@ -39838,7 +40095,7 @@ fn an_own_key_filter_after_a_wildcard_that_keeps_an_entry_is_not_refused() -> Re
             "rule r { Parameters.*[ Default exists ] empty }",
             PARAMETERS_ONE_NAMED_DEFAULT_ONE_DECLARING_IT,
             Status::FAIL,
-            false,
+            Refusal::None,
             None,
         ),
         (
@@ -39847,7 +40104,7 @@ fn an_own_key_filter_after_a_wildcard_that_keeps_an_entry_is_not_refused() -> Re
             "rule r { Parameters.*.Default !exists }",
             PARAMETERS_ONE_NAMED_DEFAULT,
             Status::PASS,
-            false,
+            Refusal::None,
             None,
         ),
         (
@@ -39856,7 +40113,7 @@ fn an_own_key_filter_after_a_wildcard_that_keeps_an_entry_is_not_refused() -> Re
             "rule r { Parameters.*.Default !exists }",
             PARAMETERS_ONE_NAMED_DEFAULT_ONE_DECLARING_IT,
             Status::FAIL,
-            false,
+            Refusal::None,
             None,
         ),
         (
@@ -39865,19 +40122,22 @@ fn an_own_key_filter_after_a_wildcard_that_keeps_an_entry_is_not_refused() -> Re
             "rule r { Parameters.* { Default !exists } }",
             PARAMETERS_ONE_NAMED_DEFAULT,
             Status::PASS,
-            false,
+            Refusal::None,
             None,
         ),
-        // `[*]` before a block or a key hands a map on whole (the array-or-single reading), so this
-        // spelling asks the map itself, as `Parameters.Default !exists` does: a parameter named
-        // `Default` exists, and the clause fails by evaluation, nothing refused.
+        // `[*]` before a block hands a map on whole (the array-or-single reading), and the block arm
+        // REFUSES this clause: both entries are plain member maps, `Default` is the map's own key and
+        // the name of one member while `Other` holds no `Default` of its own, so the map's own entry
+        // would answer for every member. The clause fails closed with the block arm's own text, not the
+        // filter arm's opener (`Refusal::BlockArm`: the one row refused by that arm, which also reads the
+        // key the text names).
         (
             0,
-            "the block after the bracket wildcard reads the map itself: a parameter named Default exists",
+            "the block after the bracket wildcard is refused over the map's own key: the block arm's text, not the filter arm's opener",
             "rule r { Parameters[*] { Default !exists } }",
             PARAMETERS_ONE_NAMED_DEFAULT,
             Status::FAIL,
-            false,
+            Refusal::BlockArm,
             None,
         ),
         (
@@ -39886,7 +40146,7 @@ fn an_own_key_filter_after_a_wildcard_that_keeps_an_entry_is_not_refused() -> Re
             "rule r { Resources.*[ Type == 'AWS::S3::Bucket' or BucketA exists ] !empty }",
             RESOURCES_WITH_A_PUBLIC_BUCKET,
             Status::PASS,
-            false,
+            Refusal::None,
             Some(false),
         ),
         (
@@ -39895,7 +40155,7 @@ fn an_own_key_filter_after_a_wildcard_that_keeps_an_entry_is_not_refused() -> Re
             "rule r { Resources.*[ Properties.Rules[*][ Action == 'allow' or R1 exists ] !empty ].Type == 'X' }",
             ONE_RESOURCE_WITH_A_RULES_MAP,
             Status::PASS,
-            false,
+            Refusal::None,
             Some(false),
         ),
         // The one-entry rules map above can never be read as members (two are needed), so it says
@@ -39907,7 +40167,7 @@ fn an_own_key_filter_after_a_wildcard_that_keeps_an_entry_is_not_refused() -> Re
             "rule r { Resources.*[ Properties.Rules[*][ Action == 'allow' or R1 exists ] !empty ].Type == 'X' }",
             ONE_RESOURCE_WITH_A_TWO_MEMBER_RULES_MAP,
             Status::PASS,
-            false,
+            Refusal::None,
             Some(false),
         ),
         // Controls: a predicate the enumeration keeps nothing under is refused as before, outside a
@@ -39918,7 +40178,7 @@ fn an_own_key_filter_after_a_wildcard_that_keeps_an_entry_is_not_refused() -> Re
             "rule r { Resources[*][ BucketA exists or Type == 'AWS::SQS::Queue' ] !empty }",
             RESOURCES_WITH_A_PUBLIC_BUCKET,
             Status::FAIL,
-            false,
+            Refusal::None,
             None,
         ),
         (
@@ -39927,7 +40187,7 @@ fn an_own_key_filter_after_a_wildcard_that_keeps_an_entry_is_not_refused() -> Re
             "rule r { Resources[*][ BucketA exists ] empty }",
             RESOURCES_WITH_A_PUBLIC_BUCKET,
             Status::PASS,
-            false,
+            Refusal::None,
             None,
         ),
         (
@@ -39936,7 +40196,7 @@ fn an_own_key_filter_after_a_wildcard_that_keeps_an_entry_is_not_refused() -> Re
             "rule r { Resources.*[ Properties.Rules[*][ R1 exists ] !empty ].Type == 'X' }",
             ONE_RESOURCE_WITH_A_RULES_MAP,
             Status::FAIL,
-            true,
+            Refusal::FilterArm,
             None,
         ),
         // Grounding is the clause that kept the entry, not the keys the entry holds. `R1`'s map holds
@@ -39950,7 +40210,7 @@ fn an_own_key_filter_after_a_wildcard_that_keeps_an_entry_is_not_refused() -> Re
             "rule r { Resources.A.Properties.Rules[*][ R1 !exists or Action == 'deny' ] !empty }",
             RULES_MAP_WITH_AN_INTRINSIC_SIBLING,
             Status::FAIL,
-            true,
+            Refusal::FilterArm,
             None,
         ),
         (
@@ -39959,7 +40219,7 @@ fn an_own_key_filter_after_a_wildcard_that_keeps_an_entry_is_not_refused() -> Re
             "rule r { Resources.A.Properties.Rules.*[ R1 !exists or Action == 'deny' ] !empty }",
             RULES_MAP_WITH_AN_INTRINSIC_SIBLING,
             Status::FAIL,
-            true,
+            Refusal::FilterArm,
             None,
         ),
         (
@@ -39968,7 +40228,7 @@ fn an_own_key_filter_after_a_wildcard_that_keeps_an_entry_is_not_refused() -> Re
             "rule r { Resources.A.Properties.Rules[*][ R1 !exists ] !empty }",
             RULES_MAP_WITH_AN_INTRINSIC_SIBLING,
             Status::FAIL,
-            true,
+            Refusal::FilterArm,
             None,
         ),
         (
@@ -39977,7 +40237,7 @@ fn an_own_key_filter_after_a_wildcard_that_keeps_an_entry_is_not_refused() -> Re
             "rule r { Resources.A.Properties.Rules[*][ R1 !exists or Action == 'allow' ] !empty }",
             RULES_MAP_WITH_AN_INTRINSIC_SIBLING,
             Status::PASS,
-            false,
+            Refusal::None,
             None,
         ),
     ] {
@@ -39990,14 +40250,44 @@ fn an_own_key_filter_after_a_wildcard_that_keeps_an_entry_is_not_refused() -> Re
             status.as_ref().ok().copied(),
         );
         let notices: Vec<String> = root.deprecations().cloned().collect();
-        let record = format!("{:?}", root.reset_recorder().extract());
+        let tree = root.reset_recorder().extract();
+        let record = format!("{:?}", tree);
+        let mut messages = Vec::new();
+        recorded_messages_with_kind(&tree, &mut messages);
+        // Each arm read for its own text: the pair reads (filter arm's opener, block arm's opener), so a
+        // row expects its arm's text present and the other's absent, and a decided row expects neither.
         cells.check(
             &format!(
-                "{label}: the own-key refusal is in the record exactly when the filter kept no entry through a clause that resolved a key of it"
+                "{label}: the arm that refused the clause, read as (filter arm's opener present, block arm's text present)"
             ),
-            refused,
-            record.contains(OWN_KEY_OPENER),
+            (
+                refusal == Refusal::FilterArm,
+                refusal == Refusal::BlockArm,
+            ),
+            (
+                record.contains(OWN_KEY_OPENER),
+                record.contains(BLOCK_ARM_OPENER),
+            ),
         );
+        if refusal == Refusal::BlockArm {
+            // ONE message flagged a refusal carries every part: the path with its location
+            // (`/Parameters[L:0,C:0]`, read up to the `[` that opens the location, so a member's path
+            // does not match), the sentence's continuation, the key the block reads, and the remedy in
+            // its own grammar with `X` bound, which is what makes it usable for this map. Read on one
+            // message, not on the whole tree's dump, so the parts cannot be gathered from two records.
+            cells.check(
+                &format!("{label}: one refusal record names the map handed on whole at its path, the key the block reads and the remedy with `X` bound: {messages:?}"),
+                true,
+                messages.iter().any(|(flagged, message)| {
+                    *flagged
+                        && message.contains("`[*]` handed the map at path /Parameters[")
+                        && message.contains("on as one object")
+                        && message.contains("`Default`")
+                        && message.contains("`X.*.Key`")
+                        && message.contains("where `X` is `Parameters`")
+                }),
+            );
+        }
         if let Some(bucket_compared) = bucket_compared {
             cells.check(
                 &format!("{label}: the bucket's Public is compared exactly when the selection is read on"),
@@ -51505,9 +51795,10 @@ fn the_key_filter_selection_shape_beside_an_empty_list_entry_is_read_from_the_va
             selection.len(),
         )
     };
-    let bare = root.resolve_variable("bare")?;
-    let by_key = root.resolve_variable("by_key")?;
-    let by_star = root.resolve_variable("by_star")?;
+    // Bare drives of three `let`s whose filters write one record per entry: one record around each.
+    let bare = root.drive_bare(|scope| scope.resolve_variable("bare"))?;
+    let by_key = root.drive_bare(|scope| scope.resolve_variable("by_key"))?;
+    let by_star = root.drive_bare(|scope| scope.resolve_variable("by_star"))?;
     let mut cells = CellFailures::default();
     cells.check(
         &format!(
@@ -52028,14 +52319,34 @@ fn a_plain_marker_carrying_a_refusals_sentence_is_a_refused_read_on_either_side(
     const THE_KEY_ARM: &str = "handed the map at path /Cfg/C1/Limits";
     const THE_WRAP: &str =
         "the right-hand side of the key filter could not be evaluated at /Resources/R1/Props/M";
-    // (the rule's status; a record reads `refusal: true`; the recorded messages holding a numbered text)
+    // The gate's own comparison records, selected by the COMPARISON: the `when` clause is the rule's one
+    // `NOT IN` (`(In, true)`; the binding clauses are unary, and the key filter's own `keys ==` runs
+    // inside its filter), so these are its per-value records and nothing else's. Read for the flag here,
+    // never the whole tree: `BINDS`'s key arm leaves its own flagged refusal record at /Cfg/C1 whatever the
+    // gate does, so a whole-tree "refusal: true" could not go red if the gate's record lost its flag.
+    fn gate_pairs_flagged(record: &EventRecord<'_>, out: &mut Vec<bool>) {
+        if let Some(RecordType::ClauseValueCheck(ClauseCheck::Comparison(check))) =
+            &record.container
+        {
+            if check.comparison == (CmpOperator::In, true) {
+                out.push(check.refusal);
+            }
+        }
+        for child in &record.children {
+            gate_pairs_flagged(child, out);
+        }
+    }
+    // (the rule's status; a record of the gate's own comparison reads `refusal: true`; the recorded
+    // messages holding a numbered text)
     let run = |comparison: &str| -> Result<(Status, bool, Vec<String>)> {
         let rules = format!("rule r {{ {BINDS}  when {comparison} {{ Other exists }} }}");
         let rules_file = RulesFile::try_from(rules.as_str())?;
         let mut root = root_scope(&rules_file, Rc::new(PathAwareValue::try_from(DOC)?));
         let status = eval_rules_file(&rules_file, &mut root, None)?;
         let record = root.reset_recorder().extract();
-        let flagged = format!("{record:?}").contains("refusal: true");
+        let mut gate_flags = Vec::new();
+        gate_pairs_flagged(&record, &mut gate_flags);
+        let flagged = gate_flags.iter().any(|flag| *flag);
         let mut messages = Vec::new();
         recorded_messages(&record, &mut messages);
         let numbered = messages
@@ -52062,7 +52373,7 @@ fn a_plain_marker_carrying_a_refusals_sentence_is_a_refused_read_on_either_side(
             status,
         );
         cells.check(
-            &format!("{label}: a record reads `refusal: true`"),
+            &format!("{label}: a record of the gate's own comparison reads `refusal: true`"),
             true,
             flagged,
         );
@@ -52470,17 +52781,20 @@ fn a_key_filter_registers_the_kept_keys_sentence_once_after_the_fold_over_its_ke
                   lhs: &[QueryResult],
                   rhs: &[QueryResult]|
      -> Result<Option<(String, Option<RefusalToken>)>> {
-        match real_binary_operation(
-            lhs,
-            rhs,
-            RhsEnumeration::Names,
-            &PassedOn::default(),
-            MapKeyComparator::In,
-            &site,
-            String::new(),
-            None,
-            root,
-        ) {
+        // A bare drive of the key filter's comparison: one record per key, so one record around them.
+        match root.drive_bare(|scope| {
+            real_binary_operation(
+                lhs,
+                rhs,
+                RhsEnumeration::Names,
+                &PassedOn::default(),
+                MapKeyComparator::In,
+                &site,
+                String::new(),
+                None,
+                scope,
+            )
+        }) {
             Ok(_) => Ok(None),
             Err(Error::UndecidableComparison(reason, token)) => Ok(Some((reason, token))),
             Err(other) => Err(other),
@@ -53340,11 +53654,9 @@ fn a_records_list_is_bounded_by_its_sentences_and_counts_its_markers() -> Result
             refusal_frames: RefusalFrames::default(),
         };
         // One enclosing record around the comparison, as a block clause's record encloses its clauses'
-        // records in a rules-file run: the tracker files a finished record as a child of the open one and,
-        // with none open, keeps the LAST finished record alone, so a comparison driven here with nothing
-        // around it handed back one record of two (the second left value's, whose pointer named the
-        // first's record). The tracker says nothing when a top-level record replaces another, so a
-        // harness that drives a comparison bare reads one record and no error: open a record first.
+        // records in a rules-file run: a tracker holds one top-level record, and a comparison over two
+        // left values ends two (`RecordTracker::end_record` refuses a second one as a recorder fault; this
+        // harness once read the last record of two). The records are read as the enclosing one's children.
         const ENCLOSING: &str = "the comparison's records";
         eval.start_record(ENCLOSING)?;
         let _ = binary_operation(
@@ -74056,9 +74368,11 @@ fn a_variable_root_selection_names_the_members_it_chose() -> Result<()> {
             .collect()
     }
 
-    let selected = paths(root.resolve_variable("selected")?);
-    let enumerated = paths(root.resolve_variable("enumerated")?);
-    let from_a_projection = paths(root.resolve_variable("from_a_projection")?);
+    // Bare drives of three `let`s whose filters write one record per member: one record around each.
+    let selected = paths(root.drive_bare(|scope| scope.resolve_variable("selected"))?);
+    let enumerated = paths(root.drive_bare(|scope| scope.resolve_variable("enumerated"))?);
+    let from_a_projection =
+        paths(root.drive_bare(|scope| scope.resolve_variable("from_a_projection"))?);
 
     assert_eq!(
         (
@@ -76769,6 +77083,21 @@ fn a_some_modifier_is_printed_in_the_recorded_clause(
 )]
 // Comparing the empty list with an empty list literal is a comparison that happens, and it holds.
 #[case::eq_against_an_empty_list_literal_control("Ports == []", Status::PASS, false)]
+// Against a populated list literal the two lists compare as lists too: unequal under `==`, a plain
+// mismatch that names no empty collection, and so a pass under `!=`; the exception the docs name to
+// "fails on every binary operator".
+#[case::eq_against_a_populated_list_literal("Ports == [1]", Status::FAIL, false)]
+#[case::ne_against_a_populated_list_literal("Ports != [1]", Status::PASS, false)]
+// A populated list the DOCUMENT holds on the right is the same exception: two lists compared as lists,
+// unequal under `==` and a pass under `!=`, naming no empty collection.
+#[case::eq_against_a_populated_document_list("Ports == Populated", Status::FAIL, false)]
+#[case::ne_against_a_populated_document_list("Ports != Populated", Status::PASS, false)]
+// Two document lists both empty: two lists compared as lists, equal under `==` and so a plain mismatch
+// under `!=`, naming no empty collection either way (the two-query arm asks the comparator for each
+// pair whole and `[] == []` holds), where the orderings over the same pair (`le_with_both_sides_empty`)
+// flatten both to nothing and fail at the block level.
+#[case::eq_against_an_empty_document_list("Ports == SecurityGroupIds", Status::PASS, false)]
+#[case::ne_against_an_empty_document_list("Ports != SecurityGroupIds", Status::FAIL, false)]
 // The right-hand side resolving to an empty collection fails the same way, per left-hand value, with
 // the empty collection as the finding's subject: `%expected == Resources.*.Properties.L` and
 // `%max >= Resources.*.Properties.Sizes` are the shapes, written here against the document's lists.
@@ -77055,6 +77384,38 @@ fn an_empty_collection_compared_with_a_value_is_one_status(
     "rule r when Mode == [] { Num == 5 }",
     Status::SKIP
 )]
+// A document's empty list against a populated list literal is a comparison of two lists, the one place
+// an empty left collection is not a retrieval error: unequal under `==`, so the condition is not
+// satisfied and the rule is not applicable; a pass under `!=`, so the gate opens and the body decides.
+#[case::a_populated_list_literal_under_eq_leaves_the_rule_not_applicable(
+    "rule r when Ports == [22] { Num == 5 }",
+    Status::SKIP
+)]
+#[case::a_populated_list_literal_under_ne_opens_the_gate(
+    "rule r when Ports != [22] { Num == 5 }",
+    Status::PASS
+)]
+// The same two lists with the populated one resolved from the document rather than written in the rule.
+#[case::a_populated_document_list_under_eq_leaves_the_rule_not_applicable(
+    "rule r when Ports == Populated { Num == 5 }",
+    Status::SKIP
+)]
+#[case::a_populated_document_list_under_ne_opens_the_gate(
+    "rule r when Ports != Populated { Num == 5 }",
+    Status::PASS
+)]
+// Two empty document lists: equal as lists, so `==` opens the gate and `!=` leaves the rule not
+// applicable. The comparison records the `==` gates above and this `!=` gate leave are read by
+// `a_two_list_comparison_fails_on_the_list_mismatch_and_names_no_empty_collection`, since SKIP alone
+// is what the empty-collection route reads too.
+#[case::an_empty_document_list_under_eq_opens_the_gate(
+    "rule r when Ports == SecurityGroupIds { Num == 5 }",
+    Status::PASS
+)]
+#[case::an_empty_document_list_under_ne_leaves_the_rule_not_applicable(
+    "rule r when Ports != SecurityGroupIds { Num == 5 }",
+    Status::SKIP
+)]
 // `IN` and `NOT IN` over an empty collection are the same retrieval error: the gate is not satisfied
 // and the filter deselects, as for every other operator. An empty list that passed `IN` as a vacuous
 // subset would open the gate and enforce the body; a populated list is the control.
@@ -77111,6 +77472,132 @@ fn an_empty_collection_in_a_when_condition_leaves_the_rule_not_applicable(
     "#;
     let status = rule_status_in(rules, INPUT, "r")?;
     assert_eq!(expected, status, "rules:\n{}", rules);
+    Ok(())
+}
+
+/// A comparison of two lists decided against the author fails, or leaves its `when` gate unmet, on the
+/// list mismatch it found, never on an empty collection, and its record says which lists: `Ports ==
+/// Populated` and `Ports == [22]` over `Ports: []` are two unequal lists, and `Ports != SecurityGroupIds`
+/// over two empty lists is an equality the `!=` does not accept. The status tables read FAIL and SKIP
+/// for these, and FAIL and SKIP are what the empty-collection route reads too, so the comparison record
+/// is read here: one failing comparison record whose `from` is the document's `Ports` and whose `to`
+/// holds the other list (the two-query `==` records the pair as an `InComparison` with no message, the
+/// literal arm as a `Comparison`), and no recorded message names an empty collection, which `Ports == 80`
+/// over the same `Ports` does (the control, in both roles). The not-applicable REASON of such a gate is
+/// not read: `find_skip_reason` renders a `Comparison` record's message, and the two-query pair carries
+/// none, so a gate decided as a two-list mismatch has no reason text (its record is the finding).
+#[test]
+fn a_two_list_comparison_fails_on_the_list_mismatch_and_names_no_empty_collection() -> Result<()> {
+    const INPUT: &str = r#"{ Ports: [], SecurityGroupIds: [], Populated: [8080], Num: 5 }"#;
+    // One failing comparison record: its kind, the path of `from` and the `Debug` of `to`, with the
+    // message where the record carries one.
+    fn failing_comparisons(
+        record: &EventRecord<'_>,
+        out: &mut Vec<(&'static str, String, String, Option<String>)>,
+    ) {
+        match &record.container {
+            Some(RecordType::ClauseValueCheck(ClauseCheck::Comparison(
+                ComparisonClauseCheck {
+                    status: Status::FAIL,
+                    from,
+                    to,
+                    message,
+                    ..
+                },
+            ))) => out.push((
+                "Comparison",
+                format!("{:?}", from.resolved().map(|v| v.self_path().0.clone())),
+                format!("{:?}", to),
+                message.clone(),
+            )),
+            Some(RecordType::ClauseValueCheck(ClauseCheck::InComparison(InComparisonCheck {
+                status: Status::FAIL,
+                from,
+                to,
+                message,
+                ..
+            }))) => out.push((
+                "InComparison",
+                format!("{:?}", from.resolved().map(|v| v.self_path().0.clone())),
+                format!("{:?}", to),
+                message.clone(),
+            )),
+            _ => {}
+        }
+        for child in &record.children {
+            failing_comparisons(child, out);
+        }
+    }
+    let mut cells = CellFailures::default();
+    // Per row: the clause, the rule's status in the clause role and under `when`, the needle the `to`
+    // side must carry (the other list's path for a document list, its element for a literal), and
+    // whether a recorded message names an empty collection.
+    for (label, clause, asserted, gated, to_needle, names_the_empty_collection) in [
+        (
+            "a populated document list under `==`",
+            "Ports == Populated",
+            Status::FAIL,
+            Status::SKIP,
+            "\"/Populated\"",
+            false,
+        ),
+        (
+            "a populated list literal under `==`",
+            "Ports == [22]",
+            Status::FAIL,
+            Status::SKIP,
+            "22",
+            false,
+        ),
+        (
+            "two empty document lists under `!=`",
+            "Ports != SecurityGroupIds",
+            Status::FAIL,
+            Status::SKIP,
+            "\"/SecurityGroupIds\"",
+            false,
+        ),
+        (
+            "control: a scalar literal under `==`, the empty-collection route",
+            "Ports == 80",
+            Status::FAIL,
+            Status::SKIP,
+            "80",
+            true,
+        ),
+    ] {
+        for (role, rules, expected) in [
+            ("asserted", format!("rule r {{ {clause} }}"), asserted),
+            (
+                "under `when`",
+                format!("rule r when {clause} {{ Num == 5 }}"),
+                gated,
+            ),
+        ] {
+            let rules_file = RulesFile::try_from(rules.as_str())?;
+            let mut root = root_scope(&rules_file, Rc::new(PathAwareValue::try_from(INPUT)?));
+            let status = eval_rules_file(&rules_file, &mut root, None)?;
+            cells.check(&format!("{label}, {role}: the status"), expected, status);
+            let top = root.reset_recorder().extract();
+            let mut failing = Vec::new();
+            failing_comparisons(&top, &mut failing);
+            cells.check(
+                &format!("{label}, {role}: one failing comparison record pairs the document's `Ports` with the other list: {failing:?}"),
+                true,
+                failing.iter().any(|(_, from_path, to, _)| {
+                    from_path.contains("\"/Ports\"") && to.contains(to_needle)
+                }),
+            );
+            let mut messages = Vec::new();
+            recorded_comparison_messages(&top, &mut messages);
+            cells.check(
+                &format!("{label}, {role}: a message names an empty collection exactly on the empty-collection route: {messages:?}"),
+                names_the_empty_collection,
+                messages.iter().any(|m| m.contains("empty collection")),
+            );
+        }
+    }
+    cells.assert_all_agreed();
     Ok(())
 }
 
@@ -77385,8 +77872,9 @@ fn empty_on_a_null_value_answers_that_it_is_empty(
 
 /// The record tracker's own start/end imbalance is an internal error, not a clause verdict.
 ///
-/// `RecordTracker::end_record` raises two errors of its own -- an end with no matching start, and an
-/// end whose context differs from the start -- and raises neither as `IncompatibleError`, the
+/// `RecordTracker::end_record` raises three errors of its own: an end with no matching start, an end
+/// whose context differs from the start (the two this test pins), and a second top-level record while
+/// one is held (its own test below). It raises none of them as `IncompatibleError`, the
 /// variant `is_unevaluatable` reads as "this clause could not be evaluated". Raised that way, every
 /// role-split site in this module would answer such an error as a clause FAIL (or hold it for a gate)
 /// and carry on with the recorder misaligned, so a pairing bug in the evaluator would surface as an
@@ -77394,9 +77882,10 @@ fn empty_on_a_null_value_answers_that_it_is_empty(
 /// of as the error that names the fault. No such bug exists at this revision; the classification is
 /// what this test pins, so that one arriving later is loud.
 ///
-/// Both errors are produced by a real tracker rather than retyped, and the test reads their variant,
-/// `InternalError::EventRecordMismatch`, not their wording: the predicate has to decide by variant,
-/// because a decision by message text is one rewording away from reopening the gap. Two rows pin that.
+/// The two imbalance errors are produced by a real tracker rather than retyped, and the test reads their
+/// variant, `InternalError::EventRecordMismatch`, not their wording: the predicate has to decide by
+/// variant, because a decision by message text is one rewording away from reopening the gap. Two rows
+/// pin that.
 /// One is an `Unevaluatable` whose text is the tracker's own sentence: it is a clause verdict all the
 /// same, since the variant says so, and a predicate that excluded it by its text would answer wrongly
 /// there. The other is an `IncompatibleError` whose text is the comparator's `EMPTY`-on-a-boolean
@@ -77487,6 +77976,76 @@ fn a_record_tracker_imbalance_is_not_an_unevaluatable_clause() {
     assert!(
         !is_unevaluatable(&parse),
         "a parse error was never a clause verdict"
+    );
+}
+
+/// A tracker holds ONE top-level record. Driven bare over two (a harness ending two records with nothing
+/// open around them, or a run whose stack a pairing fault emptied), the second replaced the first and
+/// `extract` handed back the last with no error, which is how a comparison over two absent left values
+/// once read as one record. The second end is now the recorder's own fault, `EventRecordMismatch`, as
+/// the two imbalance arms raise theirs, in every build, naming the record's context; the first record
+/// stays held. A run never reaches it on its own: `eval_rules_file` opens the file's record first and
+/// every record nests under it.
+#[test]
+fn a_tracker_driven_bare_over_two_top_level_records_refuses_the_second() {
+    use crate::rules::errors::InternalError;
+
+    let mut tracker = RecordTracker::new();
+    tracker.start_record("one").expect("start");
+    tracker
+        .end_record("one", RecordType::Filter(Status::PASS))
+        .expect("the first top-level record is held");
+    tracker.start_record("two").expect("start");
+    let second = tracker
+        .end_record("two", RecordType::Filter(Status::PASS))
+        .expect_err("a second top-level record is the recorder's own fault");
+    assert!(
+        matches!(
+            &second,
+            Error::InternalError(InternalError::EventRecordMismatch(text))
+                if text.contains("context two") && text.contains("second top-level record")
+        ),
+        "the same variant the imbalance arms raise, naming the record and the fault: {:?}",
+        second
+    );
+    assert!(
+        !is_unevaluatable(&second),
+        "a second top-level record must propagate as an error, never be held as a clause verdict: {}",
+        second
+    );
+    assert_eq!(
+        tracker.extract().context,
+        "one",
+        "the first top-level record is still the one the tracker holds"
+    );
+}
+
+/// The contract a harness that drives more than one record follows: one enclosing record around them,
+/// and both come back as its children in order. The same two records that are refused above, under one
+/// open record, are read whole.
+#[test]
+fn two_records_under_one_enclosing_record_are_both_read() {
+    let mut tracker = RecordTracker::new();
+    tracker.start_record("enclosing").expect("start");
+    for context in ["one", "two"] {
+        tracker.start_record(context).expect("start");
+        tracker
+            .end_record(context, RecordType::Filter(Status::PASS))
+            .expect("a record under the open one is its child");
+    }
+    tracker
+        .end_record("enclosing", RecordType::Filter(Status::PASS))
+        .expect("the enclosing record is the one top-level record");
+    let top = tracker.extract();
+    let children: Vec<&str> = top
+        .children
+        .iter()
+        .map(|child| child.context.as_str())
+        .collect();
+    assert_eq!(
+        (top.context.as_str(), children),
+        ("enclosing", vec!["one", "two"]),
+        "both records are read as the enclosing record's children, in order"
     );
 }
 

@@ -324,9 +324,13 @@ impl Error {
 /// let _: Option<cfn_guard::RefusalToken> = None;
 /// ```
 ///
-/// and cannot build one:
+/// and cannot build one. The doctest above is what proves the path resolves: a `compile_fail` test
+/// passes on any compile error, a dropped re-export in `lib.rs` included, so on its own it could pass for
+/// the wrong reason. The error code names the one error the test below is meant to fail with, the private
+/// constructor (E0603); rustdoc checks the code on a nightly toolchain only and accepts the annotation
+/// without checking it on stable, so the resolving doctest, not the code, is the check that runs everywhere:
 ///
-/// ```compile_fail
+/// ```compile_fail,E0603
 /// let forged = cfn_guard::RefusalToken(1);
 /// ```
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -384,10 +388,12 @@ pub enum InternalError {
     /// buffer. Nothing in the evaluator raises it.
     #[error("{0}")]
     UnsupportedOperationError(String),
-    /// The recorder was asked to end a record whose context does not match the one last started, or
-    /// one that was never started. Always a defect in the evaluator's own bookkeeping, never a fact
-    /// about the data or the rules file, so it stops the run as an `InternalError`, which no command
-    /// classifies: raised as `IncompatibleError` it would be classified by `is_rules_file_mistake` and
+    /// The recorder was asked to end a record whose context does not match the one last started, one
+    /// that was never started, or a second top-level record while it already holds one (a tracker holds
+    /// one top-level record; see `RecordTracker::final_event`). Always a defect in the evaluator's own
+    /// bookkeeping, never a fact about the data or the rules file, so it stops the run as an
+    /// `InternalError`, which no command classifies: raised as `IncompatibleError` it would be
+    /// classified by `is_rules_file_mistake` and
     /// exit 5, blaming the rules file for a fault in the tool.
     #[error("internal error {0}")]
     EventRecordMismatch(String),

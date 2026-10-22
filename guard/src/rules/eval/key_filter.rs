@@ -218,7 +218,9 @@ fn as_key_set(entry: &QueryResult) -> Option<Vec<QueryResult>> {
 
 fn stands_for_no_entry(entry: &QueryResult) -> bool {
     match entry {
-        QueryResult::UnResolved(unresolved) => unresolved.kind == UnResolvedKind::EmptyEnumeration,
+        QueryResult::UnResolved(unresolved) => {
+            matches!(unresolved.kind, UnResolvedKind::EmptyEnumeration)
+        }
         QueryResult::Resolved(value) | QueryResult::Literal(value) => match &**value {
             PathAwareValue::Null(_) => true,
             PathAwareValue::List((_, list)) => list.is_empty(),
