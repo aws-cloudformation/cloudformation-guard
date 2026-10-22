@@ -197,6 +197,28 @@ mod validate_tests {
         )
     }
 
+    /// `run_payload` with the summary off (`--show-summary none`): the console output is the findings
+    /// alone, so a line that carries a record's sentence is a finding's and never the summary's quote of
+    /// the same record.
+    fn run_payload_without_summary(rule: &str, document: &str) -> (i32, String) {
+        let payload = format!(
+            r#"{{"data": [{}], "rules": [{}]}}"#,
+            serde_json::to_string(document).unwrap(),
+            serde_json::to_string(rule).unwrap()
+        );
+        let mut reader = Reader::new(ReadCursor(Cursor::new(payload.into_bytes())));
+        let mut writer =
+            Writer::new_with_err(WBVec(vec![]), WBVec(vec![])).expect("Failed to create writer.");
+        let status_code = ValidateTestRunner::default()
+            .payload()
+            .show_summary(vec!["none"])
+            .run(&mut writer, &mut reader);
+        (
+            status_code,
+            writer.stripped().expect("failed to read stdout"),
+        )
+    }
+
     /// The status the summary printed for `rule`, read from the rule's own line.
     ///
     /// A summary line is the rules file's path, `/`, the rule's name, whitespace, and the status, and
@@ -6679,7 +6701,8 @@ mod validate_tests {
     /// reached a reader only on stderr and in the structured output. `Resources.R.Properties.Cfg.Missing
     /// == %x` asserted with the keys and the refusal's marker in `%x` now prints the record's sentence,
     /// the refusal in it, on an `Error =` line right before the `RequiredPropertyError` block, as a decided
-    /// comparison's finding prints its sentence. The control, the same assertion with `%x` a plain list,
+    /// comparison's finding prints its sentence; the retrieval's reason leads that sentence, so the block
+    /// prints no `Reason =` line restating it. The control, the same assertion with `%x` a plain list,
     /// prints the block as released, the `Check =` line followed by the `RequiredPropertyError` block,
     /// and no `Error =` line: a missing property with no refusal beside it says what it said.
     #[test]
@@ -6738,9 +6761,12 @@ mod validate_tests {
             "the `Error =` line carries the sentence with the absent key, the refusal and its path:\n{}",
             before
         );
+        // The retrieval's own reason is on the `Error =` line, as the lead of the record's message, so the
+        // block prints no `Reason =` line restating it: the reason is printed once.
         assert!(
-            out.contains("Reason = Could not find key Missing"),
-            "the block keeps the retrieval's own reason on its `Reason` line:\n{}",
+            !out.contains("Reason = Could not find key Missing"),
+            "the `Error =` line already carries the retrieval's reason, so the block prints no `Reason` \
+             line:\n{}",
             out
         );
 
@@ -6769,6 +6795,360 @@ mod validate_tests {
         assert!(
             out.contains("Reason = Could not find key Missing"),
             "the control's block keeps the retrieval's own reason:\n{}",
+            out
+        );
+    }
+
+    /// A refusal's sentence is printed once per console finding, whichever record carries it, and never
+    /// on a `Reason =` line.
+    ///
+    /// Two records carry an asserted `IN` against a capture holding a refusal's marker. With the marker
+    /// ALONE in `%x` (no earlier clause binds `x`) the clause compares nothing and is raised on the
+    /// refusal's reason: its record is the clause's block record, which names no value and so belongs
+    /// to no resource, and the console prints it under its `Could not be evaluated:` heading, the
+    /// sentence once, whole and as recorded, with the record's word that the clause is raised and the
+    /// run continues. That case is a pin of what the console prints for the shape, unchanged here. With
+    /// listed keys beside the marker and a value no key accepts (`Ref` is among no key) the clause fails
+    /// on its statuses and the marker's pair keeps its record, a right-hand value the evaluator could
+    /// not read, printed under the resource as a `Check = { }` block whose `Error =` line is the record's
+    /// sentence, which quotes the refusal (`Error = [...]`); that block also wrote the unresolved
+    /// value's own reason on a `Reason =` line, and for a refusal's marker the reason IS the refusal, so
+    /// the resource's finding carried the refusal's key sentence, remedy and path twice, each up to the
+    /// console's refusal bound. The summary is off so that every line carrying the sentence is a
+    /// finding's; the key pairs' own findings carry no refusal, and an absent value's `Reason =` line is
+    /// kept (`a_refusal_beside_a_missing_template_value_prints_on_an_error_line`).
+    #[rstest::rstest]
+    #[case::marker_alone(false)]
+    #[case::listed_keys_beside_the_marker(true)]
+    fn an_asserted_in_against_a_refusals_marker_prints_the_refusal_once(
+        #[case] keys_beside_the_marker: bool,
+    ) {
+        const THE_REFUSALS_PATH: &str = "t path /Resources/R/Properties/Cfg";
+        let cfg = CAPTURED_KEYS_AND_A_REFUSAL
+            .strip_prefix(r#"{"Cfg": "#)
+            .and_then(|rest| rest.strip_suffix('}'))
+            .expect("the shared document is one `Cfg` map");
+        let template = format!(
+            r#"{{"Resources": {{"R": {{"Type": "AWS::S3::Bucket", "Properties": {{"Cfg": {cfg}}}}}}}}}"#
+        );
+        let walk = REFUSED_WALK_INTO_X.replace("Cfg", "Resources.R.Properties.Cfg");
+        let bind = match keys_beside_the_marker {
+            true => "Resources.R.Properties.Cfg[ x | Kind == 'k' ] !empty  ",
+            false => "",
+        };
+        let rules = format!("rule r {{ {bind}{walk}  Resources.R.Properties.Cfg.Mode.Ref IN %x }}");
+
+        // `run_payload` prints the summary, whose line for a failing rule quotes the record's message;
+        // with the summary off the lines that carry the sentence are the findings' alone. The same
+        // payload through `-o json` gives the record's sentence as recorded, which the console line is
+        // compared with.
+        let run = |output_format: Option<&str>| -> (i32, String) {
+            let payload = format!(
+                r#"{{"data": [{}], "rules": [{}]}}"#,
+                serde_json::to_string(&template).unwrap(),
+                serde_json::to_string(&rules).unwrap()
+            );
+            let mut reader = Reader::new(ReadCursor(Cursor::new(payload.into_bytes())));
+            let mut writer = Writer::new_with_err(WBVec(vec![]), WBVec(vec![]))
+                .expect("Failed to create writer.");
+            let status_code = ValidateTestRunner::default()
+                .payload()
+                .output_format(output_format)
+                .show_summary(vec!["none"])
+                .run(&mut writer, &mut reader);
+            (
+                status_code,
+                writer.stripped().expect("failed to read stdout"),
+            )
+        };
+        let (status_code, out) = run(None);
+        assert_eq!(
+            StatusCode::VALIDATION_ERROR,
+            status_code,
+            "keys beside the marker {}: the assertion fails and the run goes on to its exit code:\n{}",
+            keys_beside_the_marker,
+            out
+        );
+
+        let carrying: Vec<&str> = out
+            .lines()
+            .filter(|line| line.contains(THE_OWN_KEY_REFUSAL))
+            .collect();
+        assert_eq!(
+            1,
+            carrying.len(),
+            "keys beside the marker {}: the refusal's sentence is on exactly one line of the console \
+             output (an empty output fails this too):\n{}",
+            keys_beside_the_marker,
+            out
+        );
+        let line = carrying[0];
+        assert!(
+            line.contains(THE_REFUSALS_PATH),
+            "keys beside the marker {}: the one line carries the refusal whole, its path included:\n{}",
+            keys_beside_the_marker,
+            line
+        );
+        assert!(
+            !line.trim_start().starts_with("Reason"),
+            "keys beside the marker {}: the sentence is never the `Reason =` line's:\n{}",
+            keys_beside_the_marker,
+            line
+        );
+        if keys_beside_the_marker {
+            // The marker's pair, under the resource: the record's sentence on the `Error =` line of the
+            // `Check = { }` block, and no `Reason =` line restating the refusal under it.
+            let resource_block: Vec<&str> = out
+                .lines()
+                .skip_while(|l| !l.starts_with("Resource = R "))
+                .skip(1)
+                .take_while(|l| *l != "}")
+                .collect();
+            assert!(
+                resource_block.iter().any(|l| *l == line),
+                "the sentence is in the resource's own block:\n{}",
+                out
+            );
+            assert!(
+                line.trim_start().starts_with("Error = ")
+                    && line.contains("the value to compare to could not be read"),
+                "the sentence is the record's, on the finding's `Error =` line:\n{}",
+                line
+            );
+            assert!(
+                !resource_block
+                    .iter()
+                    .any(|l| l.trim_start().starts_with("Reason = ")),
+                "no `Reason =` line restates the refusal under the finding:\n{}",
+                out
+            );
+        } else {
+            // The clause's block record: it names no value, so the per-resource output has nowhere to
+            // put it, and the console prints it under its `Could not be evaluated:` heading, the rule
+            // and the clause's context on a line indented by two and the record's sentence, whole, on
+            // the line after it indented by four. The sentence is the record's as `-o json` carries it:
+            // the unevaluatable error's display around the refusal, then the record's word that the
+            // clause is raised and the run continues.
+            let (json_status, json) = run(Some("json"));
+            assert_eq!(StatusCode::VALIDATION_ERROR, json_status, "{}", json);
+            let report: serde_json::Value = serde_json::from_str(&json)
+                .unwrap_or_else(|e| panic!("one JSON document ({}):\n{}", e, json));
+            fn error_messages(value: &serde_json::Value, out: &mut Vec<String>) {
+                match value {
+                    serde_json::Value::Object(map) => {
+                        for (key, value) in map {
+                            match (key.as_str(), value) {
+                                ("error_message", serde_json::Value::String(text)) => {
+                                    out.push(text.clone())
+                                }
+                                _ => error_messages(value, out),
+                            }
+                        }
+                    }
+                    serde_json::Value::Array(items) => {
+                        items.iter().for_each(|item| error_messages(item, out))
+                    }
+                    _ => {}
+                }
+            }
+            let mut recorded = Vec::new();
+            error_messages(&report, &mut recorded);
+            let recorded: Vec<&String> = recorded
+                .iter()
+                .filter(|text| text.contains(THE_OWN_KEY_REFUSAL))
+                .collect();
+            assert_eq!(
+                1,
+                recorded.len(),
+                "one recorded sentence carries the refusal, the raised clause's block record:\n{}",
+                json
+            );
+            let recorded = recorded[0];
+            assert!(
+                recorded.starts_with("Error Clause could not be evaluated against the incoming context `")
+                    && recorded.ends_with(
+                        "` when handling clause; the clause is raised and the run continues"
+                    )
+                    && recorded.contains(THE_REFUSALS_PATH),
+                "the record's sentence is the unevaluatable error's display around the refusal, its \
+                 path included, and says the clause is raised and the run continues:\n{}",
+                recorded
+            );
+
+            let lines: Vec<&str> = out.lines().collect();
+            let heading = lines
+                .iter()
+                .position(|l| *l == "Could not be evaluated:")
+                .unwrap_or_else(|| {
+                    panic!(
+                        "the console prints the `Could not be evaluated:` heading for a record \
+                         naming no value:\n{}",
+                        out
+                    )
+                });
+            assert_eq!(
+                Some(&format!("    {recorded}").as_str()),
+                lines.get(heading + 2),
+                "the record's sentence, whole and as recorded, is the entry's second line under the \
+                 heading, indented by four:\n{}",
+                out
+            );
+            assert!(
+                lines
+                    .get(heading + 1)
+                    .is_some_and(|l| l.starts_with("  r: GuardAccessClause#block ")),
+                "the entry's first line names the rule and the clause's context, indented by two:\n{}",
+                out
+            );
+            assert_eq!(
+                lines[heading + 2],
+                line,
+                "and that line is the one line of the output carrying the refusal"
+            );
+        }
+    }
+
+    /// A refused marker compared against a value a long template string lacks prints its refusal once on
+    /// the console, whatever part of the record's sentence the console's bound keeps. `%x != Resources.R.
+    /// Properties.Cfg.Mode.Ref.Missing` with the refusal's marker alone in `%x` and `Cfg.Mode.Ref` a
+    /// 5000-character string: the record is the marker's, the retrieval's reason the refusal, and the
+    /// console's `Error =` line is the record's sentence bounded at 4096 characters. A sentence that
+    /// leads with the long string is cut before the refusal, and the `Reason =` line, the refusal
+    /// bounded, is then the one line that carries it; a sentence that does not lead with it carries the
+    /// refusal on the `Error =` line and prints no `Reason =` line. Either way: exactly one console line
+    /// carries the refusal, its path included, and an empty output fails. The summary is off so every
+    /// line carrying the sentence is a finding's.
+    #[test]
+    fn a_refused_marker_against_a_long_strings_missing_key_prints_the_refusal_once() {
+        const THE_REFUSALS_PATH: &str = "t path /Resources/R/Properties/Cfg";
+        let long = "y".repeat(5000);
+        let cfg = CAPTURED_KEYS_AND_A_REFUSAL
+            .strip_prefix(r#"{"Cfg": "#)
+            .and_then(|rest| rest.strip_suffix('}'))
+            .expect("the shared document is one `Cfg` map")
+            .replacen("\"ModeParam\"", &format!("\"{long}\""), 1);
+        assert!(
+            cfg.contains(&long),
+            "the fixture's `Cfg.Mode.Ref` is the 5000-character string"
+        );
+        let template = format!(
+            r#"{{"Resources": {{"R": {{"Type": "AWS::S3::Bucket", "Properties": {{"Cfg": {cfg}}}}}}}}}"#
+        );
+        let walk = REFUSED_WALK_INTO_X.replace("Cfg", "Resources.R.Properties.Cfg");
+        let rules =
+            format!("rule r {{ {walk}  %x != Resources.R.Properties.Cfg.Mode.Ref.Missing }}");
+
+        let (status_code, out) = run_payload_without_summary(&rules, &template);
+        assert_eq!(
+            StatusCode::VALIDATION_ERROR,
+            status_code,
+            "the marker's pair fails the assertion and the run goes on to its exit code:\n{}",
+            out
+        );
+        let carrying: Vec<&str> = out
+            .lines()
+            .filter(|line| line.contains(THE_OWN_KEY_REFUSAL))
+            .collect();
+        assert_eq!(
+            1,
+            carrying.len(),
+            "the refusal is on exactly one line of the console output (zero fails this too):\n{}",
+            out
+        );
+        assert!(
+            carrying[0].contains(THE_REFUSALS_PATH),
+            "the one line carries the refusal whole, its path included:\n{}",
+            carrying[0]
+        );
+    }
+
+    /// The short-lead sibling of the cell above: `%x != Resources.R.Properties.Cfg.Mode.Ref.Missing` with
+    /// the refusal's marker alone in `%x` and `Cfg.Mode.Ref` the fixture's short string. The record's
+    /// sentence, bounded, keeps the refusal, so the `Error =` line carries it and the block prints no
+    /// `Reason =` line, whose text would restate what that line already carries. Decided on the sentence
+    /// as recorded instead of as printed, the block printed the refusal on both lines.
+    #[test]
+    fn a_refused_marker_against_a_short_strings_missing_key_prints_the_refusal_on_the_error_line() {
+        const THE_REFUSALS_PATH: &str = "t path /Resources/R/Properties/Cfg";
+        let cfg = CAPTURED_KEYS_AND_A_REFUSAL
+            .strip_prefix(r#"{"Cfg": "#)
+            .and_then(|rest| rest.strip_suffix('}'))
+            .expect("the shared document is one `Cfg` map");
+        let template = format!(
+            r#"{{"Resources": {{"R": {{"Type": "AWS::S3::Bucket", "Properties": {{"Cfg": {cfg}}}}}}}}}"#
+        );
+        let walk = REFUSED_WALK_INTO_X.replace("Cfg", "Resources.R.Properties.Cfg");
+        let rules =
+            format!("rule r {{ {walk}  %x != Resources.R.Properties.Cfg.Mode.Ref.Missing }}");
+
+        let (status_code, out) = run_payload_without_summary(&rules, &template);
+        assert_eq!(
+            StatusCode::VALIDATION_ERROR,
+            status_code,
+            "the marker's pair fails the assertion and the run goes on to its exit code:\n{}",
+            out
+        );
+        let carrying: Vec<&str> = out
+            .lines()
+            .filter(|line| line.contains(THE_OWN_KEY_REFUSAL))
+            .collect();
+        assert_eq!(
+            1,
+            carrying.len(),
+            "the refusal is on exactly one line of the console output:\n{}",
+            out
+        );
+        assert!(
+            carrying[0].trim_start().starts_with("Error = ")
+                && carrying[0].contains(THE_REFUSALS_PATH),
+            "the one line is the `Error =` line and carries the refusal whole, its path included:\n{}",
+            carrying[0]
+        );
+        assert!(
+            !out.lines()
+                .any(|line| line.trim_start().starts_with("Reason = ")),
+            "no `Reason =` line restates what the `Error =` line carries:\n{}",
+            out
+        );
+    }
+
+    /// The control for the two cells above: the same absent key compared against a plain list, no
+    /// refusal anywhere, prints its `RequiredPropertyError` block as released, the retrieval's reason on
+    /// the `Reason =` line and no `Error =` line, so a record that is no refusal's keeps its one line.
+    #[test]
+    fn an_absent_key_of_a_string_with_no_refusal_beside_it_keeps_its_reason_line() {
+        let cfg = CAPTURED_KEYS_AND_A_REFUSAL
+            .strip_prefix(r#"{"Cfg": "#)
+            .and_then(|rest| rest.strip_suffix('}'))
+            .expect("the shared document is one `Cfg` map");
+        let template = format!(
+            r#"{{"Resources": {{"R": {{"Type": "AWS::S3::Bucket", "Properties": {{"Cfg": {cfg}}}}}}}}}"#
+        );
+        let rules =
+            "rule r { let x = ['a', 'b']  %x != Resources.R.Properties.Cfg.Mode.Ref.Missing }";
+
+        let (status_code, out) = run_payload_without_summary(rules, &template);
+        assert_eq!(
+            StatusCode::VALIDATION_ERROR,
+            status_code,
+            "the absence fails the assertion:\n{}",
+            out
+        );
+        assert!(
+            out.lines()
+                .any(|line| line.trim_start().starts_with("Reason = ")),
+            "a record that is no refusal's prints its reason on the `Reason =` line:\n{}",
+            out
+        );
+        assert!(
+            !out.lines()
+                .any(|line| line.trim_start().starts_with("Error = ")),
+            "and prints no `Error =` line:\n{}",
+            out
+        );
+        assert!(
+            !out.contains(THE_OWN_KEY_REFUSAL),
+            "no refusal is printed, there being none:\n{}",
             out
         );
     }

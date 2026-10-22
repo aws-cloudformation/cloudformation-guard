@@ -99,10 +99,32 @@ impl Display for ValueOnlyDisplay {
     }
 }
 
+/// The one writer of the `Path=<path> Value=<value>` shape a value quoted from the template takes in
+/// a report's sentence: `PathAwareValue`'s `Display` below writes it as it is, and a refusal's sentence
+/// (`eval_context::bounded_value_for_refusal`) writes it with each of the two parts passed through
+/// `bound` first, so the two renderings cannot drift apart in anything but the bound. With no bound the
+/// two parts are streamed into `f`; with one, each part is rendered to a string, bounded, and written.
+pub(crate) fn write_path_and_value(
+    f: &mut Formatter<'_>,
+    value: &PathAwareValue,
+    bound: Option<&dyn Fn(&str) -> String>,
+) -> std::fmt::Result {
+    match bound {
+        None => {
+            f.write_fmt(format_args!("Path={} Value=", value.self_path()))?;
+            ValueOnlyDisplay(Rc::new(value.clone())).fmt(f)
+        }
+        Some(bound) => f.write_fmt(format_args!(
+            "Path={} Value={}",
+            bound(&value.self_path().to_string()),
+            bound(&ValueOnlyDisplay(Rc::new(value.clone())).to_string())
+        )),
+    }
+}
+
 impl std::fmt::Display for PathAwareValue {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        f.write_fmt(format_args!("Path={} Value=", self.self_path()))?;
-        ValueOnlyDisplay(Rc::new(self.clone())).fmt(f)
+        write_path_and_value(f, self, None)
     }
 }
 

@@ -1,6 +1,6 @@
 use crate::commands::tracker::StatusContext;
 use crate::commands::validate::{OutputFormatType, Reporter};
-use crate::rules::eval_context::EventRecord;
+use crate::rules::eval_context::{names_a_refused_read, EventRecord};
 use crate::rules::path_value::traversal::Traversal;
 use crate::rules::values::CmpOperator;
 use crate::rules::{
@@ -212,7 +212,6 @@ fn pprint_failed_sub_tree(
                     from,
                     status: Status::FAIL,
                     to,
-                    refusal,
                     ..
                 }) => {
                     let custom_message = custom_message.as_ref().map_or("".to_string(), |s| {
@@ -232,8 +231,10 @@ fn pprint_failed_sub_tree(
                                 // A right-hand side the evaluator REFUSED to read is named as the
                                 // refusal (the error text that follows), not as a missing property
                                 // spelled with the marker's remaining query; an absent right-hand
-                                // value keeps the missing-property sentence.
-                                if *refusal {
+                                // value keeps the missing-property sentence, beside a refused read
+                                // among the other values too, so the operand is read and not the
+                                // record's flag (`names_a_refused_read`, as the report's arm reads).
+                                if names_a_refused_read(to_unres, message.as_ref()) {
                                     writeln!(
                                         writer,
                                         "{}{}Check was not compliant as the value to compare to could not be read.{err}{msg}",
@@ -269,7 +270,7 @@ fn pprint_failed_sub_tree(
                             // follows), not as a missing property spelled with the marker's remaining
                             // query, as the right-hand arm above names its refusal; an absent
                             // left-hand value keeps the missing-property sentence.
-                            if to_unres.kind.is_refusal() && message.is_some() {
+                            if names_a_refused_read(to_unres, message.as_ref()) {
                                 writeln!(
                                     writer,
                                     "{}{}Check was not compliant as the value to compare from could not be read.{err}{msg}",
@@ -440,6 +441,87 @@ mod tests {
         assert!(
             !printed.contains("was not empty"),
             "an empty selection must not be reported as not empty, in:\n{}",
+            printed
+        );
+        Ok(())
+    }
+
+    /// The failed-clause tree's line for a LEFT-hand value that is a REFUSAL's marker, decided by a
+    /// right-hand side the document lacks, says the value could not be read and carries, in its one
+    /// error, the absent right-hand key before the refusal: `%x != Cfg.Missing` with the keys and the
+    /// refusal's marker in the capture `%x` (the document and the refused walk are the ones the
+    /// evaluator's own cells use for this shape), `Missing` a key the document lacks. One line holds
+    /// the could-not-be-read wording, `Missing` and the refusal, the refusal is printed once in the
+    /// whole tree, and no line reads the marker as a property the template lacks ("to compare from is
+    /// missing"); the keys' own pairs keep the missing-property wording for the right-hand side ("to
+    /// compare to is missing"), since for them the key is the one place the absence is named.
+    #[test]
+    fn a_left_refusal_beside_an_absent_right_hand_side_prints_the_absence_and_the_refusal_once(
+    ) -> crate::rules::Result<()> {
+        const THE_REFUSAL: &str = "then no kept entry holds a key the predicate names";
+        const COULD_NOT_BE_READ: &str = "the value to compare from could not be read";
+        let data = PathAwareValue::try_from(
+            r#"{
+                "Cfg": {
+                    "Mode": { "Ref": "ModeParam" },
+                    "Fallback": { "Kind": "k" },
+                    "A": { "Kind": "k", "Sub": { "R1": { "Ref": "P" }, "P": { "Kind": "k" }, "Q": { "Kind": "k" } } },
+                    "B": { "Kind": "k", "Sub": { "R1": { "Ref": "P" }, "P": { "Kind": "k" }, "Q": { "Kind": "k" } } }
+                }
+            }"#,
+        )?;
+        let rules = RulesFile::try_from(
+            r#"
+            rule r {
+                Cfg[ x | Kind == 'k' ] !empty
+                Cfg[*][ x | Mode exists or Kind == 'k' ].Sub[*][ s | R1 !exists ] !empty or Cfg.Fallback exists
+                %x != Cfg.Missing
+            }
+            "#,
+        )?;
+        let mut scope = root_scope(&rules, Rc::new(data));
+        assert_eq!(Status::FAIL, eval_rules_file(&rules, &mut scope, None)?);
+        let root = scope.reset_recorder().extract();
+
+        let mut out = Vec::new();
+        pprint_failed_sub_tree(&root, String::new(), true, "rules", "data", &mut out)?;
+        let printed = String::from_utf8(out).expect("the tree is text");
+
+        let could_not_be_read: Vec<&str> = printed
+            .lines()
+            .filter(|line| line.contains(COULD_NOT_BE_READ))
+            .collect();
+        assert_eq!(
+            1,
+            could_not_be_read.len(),
+            "one line says the value to compare from could not be read, in:\n{}",
+            printed
+        );
+        let line = could_not_be_read[0];
+        assert!(
+            line.contains("Could not find key Missing") && line.contains(THE_REFUSAL),
+            "that line names the absent right-hand key and the refusal, got:\n{}",
+            line
+        );
+        assert!(
+            line.find("Could not find key Missing") < line.find(THE_REFUSAL),
+            "the absence leads and the refusal follows, got:\n{}",
+            line
+        );
+        assert_eq!(
+            1,
+            printed.matches(THE_REFUSAL).count(),
+            "the refusal is printed once in the tree, in:\n{}",
+            printed
+        );
+        assert!(
+            !printed.contains("to compare from is missing"),
+            "the marker is not read as a property the template lacks, in:\n{}",
+            printed
+        );
+        assert!(
+            printed.contains("to compare to is missing"),
+            "the keys' pairs keep the missing-property wording for the absent right-hand side, in:\n{}",
             printed
         );
         Ok(())

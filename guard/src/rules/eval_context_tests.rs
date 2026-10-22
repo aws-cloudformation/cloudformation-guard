@@ -7596,15 +7596,18 @@ fn a_declared_capture_absent_from_the_store_reads_as_an_empty_selection_at_both_
     Ok(())
 }
 
-/// The kind a unary report carries describes the sentence the report prints, not the record it was
-/// built from. A refused read recorded over a resolved value reports a sentence that names a path and
-/// the refusal and keeps the record's kind; one recorded over an unresolved value prints the value the
-/// query traversed to into its sentence, and that sentence is no refusal whatever the record says: it
-/// carries a template value, which the console's refusal bound would print whole. The composed sentence
-/// is also no member of the registry, which holds the exact texts the producers registered: a text that
-/// contains a registered refusal is not one.
+/// A unary report keeps the kind of the record it was built from (`ValueCheck::refusal`) and, for a
+/// refusal's record, bounds what its sentence quotes from the template, as the comparison reports do. A
+/// refused read recorded over an unresolved value prints the value the query traversed to into its
+/// sentence cut at the template-part bound with the marker, the refusal whole beside it, and the report
+/// is the refusal the record says it is, so the console prints the sentence whole with its remedy; it
+/// used to be written as no refusal whatever the record said, the value unbounded, and the console cut
+/// the sentence at `LONGEST_RECORDED_MESSAGE` with the remedy among what was cut. A refused read over a
+/// resolved value names the value's path, which a key of three thousand characters used to print whole;
+/// now the path is cut and marked too. The composed sentence is no member of the registry, which holds
+/// the exact texts the producers registered: a text that contains a registered refusal is not one.
 #[test]
-fn a_unary_report_over_a_traversed_value_is_no_refusal_whatever_the_record_says() -> Result<()> {
+fn a_unary_report_keeps_the_records_kind_and_bounds_what_it_quotes() -> Result<()> {
     let refusal_text = String::from(
         "`[*]` then the filter read one object that has no `Sid`, the key the predicate compares, and kept nothing; refused in both polarities",
     );
@@ -7645,6 +7648,8 @@ fn a_unary_report_over_a_traversed_value_is_no_refusal_whatever_the_record_says(
         }
     };
 
+    const CUT_MARKER: &str = " more characters cut]";
+
     let over_a_value = report_of(&[record(QueryResult::UnResolved(UnResolved {
         traversed_to: Rc::clone(&traversed),
         remaining_query: String::from("Value"),
@@ -7652,14 +7657,22 @@ fn a_unary_report_over_a_traversed_value_is_no_refusal_whatever_the_record_says(
         kind: UnResolvedKind::Absent,
     }))]);
     let sentence = over_a_value.error_message.clone().unwrap_or_default();
-    assert!(
-        sentence.contains(&value) && sentence.contains(&refusal_text),
-        "the sentence carries the traversed value and the refusal: {}",
-        sentence
+    assert_eq!(
+        (true, true, false, true, true),
+        (
+            sentence.contains("property [Value] is missing. Value traversed to [Path="),
+            sentence.contains(&refusal_text),
+            sentence.contains(&value),
+            sentence.contains(CUT_MARKER),
+            sentence.chars().count() < 4096,
+        ),
+        "the sentence names the missing key, carries the refusal whole and the traversed value cut and \
+         marked, under the whole-line bound: {sentence}"
     );
     assert!(
-        !over_a_value.refusal,
-        "a sentence that carries a traversed value is no refusal, whatever the record said"
+        over_a_value.refusal,
+        "the report keeps the record's kind over a traversed value: the value is bounded, so the console \
+         prints the sentence whole with the refusal's remedy"
     );
     assert!(
         !is_refusal(&Error::Unevaluatable(sentence.clone())),
@@ -7668,14 +7681,208 @@ fn a_unary_report_over_a_traversed_value_is_no_refusal_whatever_the_record_says(
 
     let over_a_path = report_of(&[record(QueryResult::Resolved(Rc::clone(&traversed)))]);
     let sentence = over_a_path.error_message.clone().unwrap_or_default();
-    assert!(
-        !sentence.contains(&value) && sentence.contains(&refusal_text),
-        "the sentence names a path and the refusal, and no value: {}",
-        sentence
+    assert_eq!(
+        (false, true, false),
+        (
+            sentence.contains(&value),
+            sentence.contains(&refusal_text),
+            sentence.contains(CUT_MARKER),
+        ),
+        "the sentence names a short path whole and the refusal, and no value: {sentence}"
     );
     assert!(
         over_a_path.refusal,
-        "a sentence that interpolates no value keeps the record's kind"
+        "a sentence that interpolates a path keeps the record's kind"
+    );
+
+    // The control for the resolved arm's bound: a value whose path holds a key of three thousand
+    // characters, which the sentence used to quote whole inside a refusal printed whole.
+    let long_key = "k".repeat(3000);
+    let under_a_long_key = Rc::new(PathAwareValue::Int((
+        Path::new(format!("/Resources/{long_key}"), 1, 1),
+        1,
+    )));
+    let over_a_long_path = report_of(&[record(QueryResult::Resolved(under_a_long_key))]);
+    let sentence = over_a_long_path.error_message.clone().unwrap_or_default();
+    assert_eq!(
+        (false, true, true, true, true),
+        (
+            sentence.contains(&long_key),
+            sentence.contains(&"k".repeat(LONGEST_TEMPLATE_PART_IN_A_REFUSAL - 11)),
+            sentence.contains(CUT_MARKER),
+            sentence.contains(&refusal_text),
+            sentence.chars().count() < 4096,
+        ),
+        "the long key's path is cut at the template-part bound and marked, the refusal whole beside it, \
+         under the whole-line bound: {sentence}"
+    );
+    assert!(
+        over_a_long_path.refusal,
+        "the record's kind is kept over the bounded path"
+    );
+    Ok(())
+}
+
+/// The sentence the comparison report writes for an unresolved right-hand operand reads the OPERAND
+/// (`names_a_refused_read`: the marker's kind, `UnResolvedKind::is_refusal`), as the left-hand arm does,
+/// and not the record's `refusal` flag. A right-hand value the evaluator REFUSED to read prints "the value
+/// to compare to could not be read" with the refusal's text and no traversed value, keeps the record's
+/// kind and stays under the whole-line bound. The control, an absent right-hand value with no refusal
+/// beside it, keeps the released rendering: `property [<remaining query>] to compare to is missing. Value
+/// traversed to [<value>]`, the key named and the value quoted whole, with no marker. (The only writer of
+/// an unresolved right-hand operand sets the flag from that operand's own kind, so the two readings agree
+/// on every record written today; the operand is read so the sentence cannot depend on how a writer sets
+/// the flag.)
+#[test]
+fn a_comparison_report_names_a_refused_right_hand_read_as_unread() -> Result<()> {
+    const THE_MISSING_TO: &str =
+        "property [Missing] to compare to is missing. Value traversed to [Path=";
+    const COULD_NOT_BE_READ: &str = "the value to compare to could not be read";
+    const CUT_MARKER: &str = " more characters cut]";
+    let refusal_text = String::from(
+        "`[*]` then the filter read one object that has no `Sid`, the key the predicate compares, and kept nothing; refused in both polarities",
+    );
+    let value = "v".repeat(2048);
+    let properties = Rc::new(PathAwareValue::try_from(
+        format!("{{ A: 1, Pad: '{value}' }}").as_str(),
+    )?);
+    let left = Rc::new(PathAwareValue::Int((
+        Path::new(String::from("/Resources/R/Properties/A"), 1, 1),
+        1,
+    )));
+    let record = |to: UnResolved, message: Option<String>, refusal: bool| EventRecord {
+        context: String::from("Resources.R.Properties.A != Resources.R.Properties.Missing"),
+        container: Some(RecordType::ClauseValueCheck(ClauseCheck::Comparison(
+            ComparisonClauseCheck {
+                comparison: (CmpOperator::Eq, true),
+                from: QueryResult::Resolved(Rc::clone(&left)),
+                to: Some(QueryResult::UnResolved(to)),
+                message,
+                custom_message: None,
+                status: Status::FAIL,
+                refusal,
+            },
+        ))),
+        children: vec![],
+    };
+    let report_of = |records: &[EventRecord<'_>]| -> Messages {
+        let clauses = report_all_failed_clauses_for_rules(records);
+        match clauses.as_slice() {
+            [ClauseReport::Clause(clause)] => clause.get_message(),
+            other => panic!("one clause report for one record, got {}", other.len()),
+        }
+    };
+    // A right-hand value the evaluator refused to read: the marker's kind says so.
+    let refused = report_of(&[record(
+        UnResolved {
+            traversed_to: Rc::clone(&properties),
+            remaining_query: String::new(),
+            reason: Some(refusal_text.clone()),
+            kind: UnResolvedKind::Undecidable { refused: true },
+        },
+        Some(refusal_text.clone()),
+        true,
+    )]);
+    let sentence = refused.error_message.clone().unwrap_or_default();
+    assert_eq!(
+        (true, false, true, false, true),
+        (
+            sentence.contains(COULD_NOT_BE_READ),
+            sentence.contains("to compare to is missing"),
+            sentence.contains(&refusal_text),
+            sentence.contains(&value),
+            sentence.chars().count() < 4096,
+        ),
+        "a refused right-hand read is named as one, with the refusal and no traversed value: {sentence}"
+    );
+    assert!(refused.refusal, "the record's kind is kept");
+
+    // The control: an absent right-hand value with no refusal beside it, as released.
+    let plain = report_of(&[record(
+        UnResolved {
+            traversed_to: Rc::clone(&properties),
+            remaining_query: String::from("Missing"),
+            reason: None,
+            kind: UnResolvedKind::Absent,
+        },
+        None,
+        false,
+    )]);
+    let sentence = plain.error_message.clone().unwrap_or_default();
+    assert_eq!(
+        (true, false, true, false),
+        (
+            sentence.contains(THE_MISSING_TO),
+            sentence.contains(COULD_NOT_BE_READ),
+            sentence.contains(&value),
+            sentence.contains(CUT_MARKER),
+        ),
+        "an absent key with no refusal beside it keeps the released sentence, the value whole: {sentence}"
+    );
+    assert!(!plain.refusal, "no refusal, as recorded");
+    Ok(())
+}
+
+/// A refusal's report sentence ESCAPES what it quotes from the template and bounds the PRINTED form
+/// (`bounded_value_for_refusal` through `escaped_template_part`): the console writes the sentence as it
+/// is, so a value of 256 bidi overrides, cut by source characters, printed every one of them raw at eight
+/// times the bound, and the four values a comparison's sentence can quote passed the whole-line bound
+/// again. Now each bidi override prints as its escape, each quoted value stops at the bound on an escape
+/// boundary with the marker counting the source characters left out (the two string values here each
+/// print the opening quote and 31 escapes, 249 characters, and leave 226 out), no raw override reaches the
+/// sentence, and the sentence stays under the whole-line bound. The control, the same record as no
+/// refusal, keeps the released unbounded rendering with the overrides as they are.
+#[test]
+fn a_refusals_report_sentence_escapes_and_bounds_what_it_prints() -> Result<()> {
+    let bidi = "\u{202e}".repeat(LONGEST_TEMPLATE_PART_IN_A_REFUSAL);
+    let value = Rc::new(PathAwareValue::String((
+        Path::new(String::from("/Resources/R/Properties/Tags/Env"), 1, 1),
+        bidi.clone(),
+    )));
+    let record = |refusal: bool| EventRecord {
+        context: String::from("Resources.R.Properties.Tags.Env != Resources.R.Properties.Tags.Env"),
+        container: Some(RecordType::ClauseValueCheck(ClauseCheck::Comparison(
+            ComparisonClauseCheck {
+                comparison: (CmpOperator::Eq, true),
+                from: QueryResult::Resolved(Rc::clone(&value)),
+                to: Some(QueryResult::Resolved(Rc::clone(&value))),
+                message: Some(String::from("refused")),
+                custom_message: None,
+                status: Status::FAIL,
+                refusal,
+            },
+        ))),
+        children: vec![],
+    };
+    let report_of = |records: &[EventRecord<'_>]| -> Messages {
+        let clauses = report_all_failed_clauses_for_rules(records);
+        match clauses.as_slice() {
+            [ClauseReport::Clause(clause)] => clause.get_message(),
+            other => panic!("one clause report for one record, got {}", other.len()),
+        }
+    };
+    let sentence = report_of(&[record(true)]).error_message.unwrap_or_default();
+    assert_eq!(
+        (false, 62, 2, true),
+        (
+            sentence.contains('\u{202e}'),
+            sentence.matches("\\u{202e}").count(),
+            sentence.matches("...[226 more characters cut]").count(),
+            sentence.chars().count() < 4096,
+        ),
+        "each quoted value prints its overrides escaped, 31 of them, and the count left out; no raw \
+         override; under the whole-line bound: {sentence:?}"
+    );
+    let released = report_of(&[record(false)])
+        .error_message
+        .unwrap_or_default();
+    assert_eq!(
+        (true, 0),
+        (
+            released.contains(&bidi),
+            released.matches("more characters cut]").count(),
+        ),
+        "a record that is no refusal keeps the unbounded rendering, as released"
     );
     Ok(())
 }

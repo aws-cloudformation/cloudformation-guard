@@ -1128,7 +1128,10 @@ fn evaluate_against_data_input<'r>(
         };
 
         // Notices, the deprecations and then the warnings, written to stderr and read before
-        // `reset_recorder` consumes the scope. Stderr rather than the report because the report on
+        // `reset_recorder` takes the records out of the scope (it borrows the scope; the scope itself,
+        // and the refusal registry its root holds, live to the end of this file's iteration, so the
+        // reporters below read the registry of the evaluation that wrote it). Stderr rather than the
+        // report because the report on
         // stdout is what pipelines parse, and a notice about how a reading moved, or will move, is not
         // part of this run's result -- adding it there would change the document for every consumer in
         // order to tell them something that is not a verdict. Of both kinds, only the lines this file
