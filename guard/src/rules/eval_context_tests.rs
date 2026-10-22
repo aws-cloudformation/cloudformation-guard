@@ -1549,11 +1549,17 @@ fn one_variable_rooted_clause_answers_the_same_in_two_rules() -> Result<()> {
         let value = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(ITEMS)?)?;
         let mut scope = root_scope(&control_file, Rc::new(value));
         crate::rules::eval::eval_rules_file(&control_file, &mut scope, None)?;
+        // `rule_status` after the run re-evaluates the rule (its cache is filled only by itself), a
+        // bare drive after the file record closed: one record around each.
         assert_eq!(
             (Status::PASS, Status::FAIL),
             (
-                scope.rule_status("first", crate::rules::eval::ClauseRole::Assertion)?,
-                scope.rule_status("second", crate::rules::eval::ClauseRole::Assertion)?
+                scope.drive_bare(|scope| {
+                    scope.rule_status("first", crate::rules::eval::ClauseRole::Assertion)
+                })?,
+                scope.drive_bare(|scope| {
+                    scope.rule_status("second", crate::rules::eval::ClauseRole::Assertion)
+                })?
             ),
             "per-rule status has to be able to report two different answers for one file, or the \
              equality below witnesses nothing"
@@ -1565,8 +1571,12 @@ fn one_variable_rooted_clause_answers_the_same_in_two_rules() -> Result<()> {
     let mut scope = root_scope(&rules_file, Rc::new(value));
     let whole = crate::rules::eval::eval_rules_file(&rules_file, &mut scope, None)?;
 
-    let first = scope.rule_status("first", crate::rules::eval::ClauseRole::Assertion)?;
-    let second = scope.rule_status("second", crate::rules::eval::ClauseRole::Assertion)?;
+    let first = scope.drive_bare(|scope| {
+        scope.rule_status("first", crate::rules::eval::ClauseRole::Assertion)
+    })?;
+    let second = scope.drive_bare(|scope| {
+        scope.rule_status("second", crate::rules::eval::ClauseRole::Assertion)
+    })?;
 
     assert_eq!(
         first, second,
@@ -2715,10 +2725,14 @@ fn a_referenced_rules_condition_capture_is_not_read_by_the_referencing_rule() ->
                 PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(TEMPLATE)?)?;
             let mut scope = root_scope(&rules_file, Rc::new(value));
             crate::rules::eval::eval_rules_file(&rules_file, &mut scope, None)?;
+            // `rule_status` after the run re-evaluates the rule (its cache is filled only by itself), a
+            // bare drive after the file record closed: one record around it.
             per_case.push((
                 shape,
                 order,
-                scope.rule_status("main", crate::rules::eval::ClauseRole::Assertion)?,
+                scope.drive_bare(|scope| {
+                    scope.rule_status("main", crate::rules::eval::ClauseRole::Assertion)
+                })?,
             ));
         }
     }
@@ -5155,12 +5169,13 @@ fn the_refusal_token_is_opaque_in_the_dump_and_dropped_by_a_rebuilt_error() {
     );
 }
 
-/// Two markers of one refusal are equal though their tokens were minted apart, and a refused marker is not
-/// equal to a plain one: equality reads what `Debug` prints, the kind and whether it is a refusal, never
-/// the count. Pinned with `assert_eq!` on two tokens minted in one run, the comparison a derived equality
-/// failed with identical prints on both sides (which is why the record cells read `matches!` instead).
+/// Two markers of one refusal read alike though their tokens were minted apart, and a refused marker
+/// reads apart from a plain one: `UnResolvedKind::reading` is the kind's name and whether it is a
+/// refusal, what `Debug` prints, never the count. Pinned on two tokens minted in one run, the two markers
+/// a derived equality told apart with identical prints on both sides; the kind offers no `==` outside test
+/// builds, and the test-build `==` is this reading, so a comparison of two markers compares nothing else.
 #[test]
-fn two_markers_of_one_refusal_are_equal_whatever_their_tokens_count() {
+fn two_markers_of_one_refusal_read_alike_whatever_their_tokens_count() {
     let first = UnResolvedKind::Undecidable {
         refusal: Some(mint_refusal_token()),
         carried: None,
@@ -5169,32 +5184,45 @@ fn two_markers_of_one_refusal_are_equal_whatever_their_tokens_count() {
         refusal: Some(mint_refusal_token()),
         carried: None,
     };
-    assert_eq!(first, second);
+    let plain = UnResolvedKind::Undecidable {
+        refusal: None,
+        carried: None,
+    };
+    assert_eq!(("Undecidable", true), first.reading());
+    assert_eq!(first.reading(), second.reading());
+    assert_eq!(("Undecidable", false), plain.reading());
+    assert_ne!(first.reading(), plain.reading());
+    assert_eq!(("Absent", false), UnResolvedKind::Absent.reading());
     assert_eq!(
-        UnResolvedKind::Undecidable {
-            refusal: None,
-            carried: None
-        },
-        UnResolvedKind::Undecidable {
-            refusal: None,
-            carried: None
-        }
+        ("EmptyEnumeration", false),
+        UnResolvedKind::EmptyEnumeration.reading()
     );
     assert_ne!(
+        UnResolvedKind::Absent.reading(),
+        UnResolvedKind::EmptyEnumeration.reading()
+    );
+    assert_ne!(first.reading(), UnResolvedKind::Absent.reading());
+    // `Debug` is written through `reading`, so the whole dump of a kind is a rendering of its reading
+    // and nothing else: the kind's name alone for the two decided kinds, the name with the refusal flag
+    // for a marker. Pinned on every variant, so a `Debug` that grew a field the reading does not hold
+    // (the token's count, say) goes red here.
+    for kind in [
         first,
-        UnResolvedKind::Undecidable {
-            refusal: None,
-            carried: None
-        }
-    );
-    assert_ne!(first, UnResolvedKind::Absent);
-    assert_ne!(first, UnResolvedKind::EmptyEnumeration);
-    assert_ne!(UnResolvedKind::Absent, UnResolvedKind::EmptyEnumeration);
-    assert_eq!(UnResolvedKind::Absent, UnResolvedKind::Absent);
-    assert_eq!(
+        plain,
+        UnResolvedKind::Absent,
         UnResolvedKind::EmptyEnumeration,
-        UnResolvedKind::EmptyEnumeration
-    );
+    ] {
+        let (name, refused) = kind.reading();
+        let rendering = match kind {
+            UnResolvedKind::Undecidable { .. } => format!("{} {{ refused: {} }}", name, refused),
+            UnResolvedKind::Absent | UnResolvedKind::EmptyEnumeration => name.to_string(),
+        };
+        assert_eq!(
+            rendering,
+            format!("{:?}", kind),
+            "`Debug` is the reading's rendering and nothing more"
+        );
+    }
 }
 
 /// The token's `Debug` form names the type and no count, on the token itself and through an
@@ -8072,12 +8100,20 @@ fn a_declared_capture_absent_from_the_store_reads_as_an_empty_selection_at_both_
         r#"{ "Resources": { "A": { "Type": "X" } } }"#,
     )?);
     let mut root = root_scope(&rules_file, Rc::clone(&value));
+    // Bare drives of the `let`s, whose filters write one record per entry: one record around each.
     // The real run resolves the let: its key `b` is captured and the result memoised.
-    assert_eq!(1, root.resolve_variable("bs")?.len());
-    assert_eq!(1, root.resolve_variable("b")?.len(), "the key, as captured");
+    assert_eq!(
+        1,
+        root.drive_bare(|scope| scope.resolve_variable("bs"))?.len()
+    );
+    assert_eq!(
+        1,
+        root.drive_bare(|scope| scope.resolve_variable("b"))?.len(),
+        "the key, as captured"
+    );
     // The shape a refusal's cut and the entry's end leave for the later entries: the name gone.
     root.assignment_captures.remove("b");
-    let read = root.resolve_variable("b")?;
+    let read = root.drive_bare(|scope| scope.resolve_variable("b"))?;
     assert!(
         read.is_empty(),
         "an empty selection, not an error: {:?}",
@@ -8087,12 +8123,19 @@ fn a_declared_capture_absent_from_the_store_reads_as_an_empty_selection_at_both_
         root.variable_is_resolved("bs"),
         "the let's own result is still memoised"
     );
+    // The block scope borrows the root, so it cannot reset the recorder itself: the tracker is cleared
+    // of the root's `Harness` record first, and `drive_under_a_harness_record` (what `drive_bare` runs
+    // after its reset) encloses the three drives in one `Harness` record, so a `?` inside leaves no
+    // record open behind the error it returns.
+    let _ = root.reset_recorder();
     let block = &rules_file.guard_rules[0].block;
     let mut scope = block_scope(block, Rc::clone(&value), &mut root);
-    assert_eq!(1, scope.resolve_variable("cs")?.len());
-    assert_eq!(1, scope.resolve_variable("c")?.len());
-    scope.captured.remove("c");
-    let read = scope.resolve_variable("c")?;
+    let read = drive_under_a_harness_record(&mut scope, |scope| {
+        assert_eq!(1, scope.resolve_variable("cs")?.len());
+        assert_eq!(1, scope.resolve_variable("c")?.len());
+        scope.captured.remove("c");
+        scope.resolve_variable("c")
+    })?;
     assert!(
         read.is_empty(),
         "the block's declared capture, absent: an empty selection, not an error: {:?}",
@@ -9017,14 +9060,31 @@ fn a_paths_display_is_its_text_shown_with_its_location() {
 /// the boundaries computed off the markers, so a figure cannot drift from the code.
 #[test]
 fn the_clause_tables_example_of_a_cut_path_reads_what_template_path_renders() {
-    const CLAUSES: &str = include_str!("../../../docs/CLAUSES.md");
+    // Read at run time from the repository beside the crate, as `guard/tests/docs_pinned_by.rs` reads the
+    // documents, with the same escape: a crate packaged without `docs/` sets `GUARD_DOCS_ABSENT=1` and this
+    // check is skipped with a line on stderr, where an `include_str!` would fail to compile the test binary.
+    let clauses_path = concat!(env!("CARGO_MANIFEST_DIR"), "/../docs/CLAUSES.md");
+    let clauses = match std::fs::read_to_string(clauses_path) {
+        Ok(text) => text,
+        Err(e) if std::env::var("GUARD_DOCS_ABSENT").as_deref() == Ok("1") => {
+            eprintln!(
+                "GUARD_DOCS_ABSENT=1: {clauses_path} is not readable ({e}); the cut-path example is not checked here"
+            );
+            return;
+        }
+        Err(e) => panic!(
+            "{} is readable (set GUARD_DOCS_ABSENT=1 for a crate packaged without docs/): {}",
+            clauses_path, e
+        ),
+    };
+    let clauses = clauses.as_str();
     const LEAD_IN: &str = "a refusal path reads `";
-    let start = CLAUSES
+    let start = clauses
         .find(LEAD_IN)
         .expect("the clause table carries the cut-path example")
         + LEAD_IN.len();
     let documented =
-        &CLAUSES[start..start + CLAUSES[start..].find('`').expect("the example is closed")];
+        &clauses[start..start + clauses[start..].find('`').expect("the example is closed")];
     let rendered = template_path(&Path(
         format!("/Resources/{}/Properties/Tags", "R".repeat(300)),
         Location::new(3, 9),
@@ -9055,15 +9115,15 @@ fn the_clause_tables_example_of_a_cut_path_reads_what_template_path_renders() {
     // both found on character boundaries, so a multi-byte character anywhere in the paragraph cannot
     // make the slice panic and a reworded neighbour cannot move the figures out of it.
     const FIGURES_LEAD_IN: &str = "the figures are pinned at the boundary lengths, a name of ";
-    let figures_start = CLAUSES
+    let figures_start = clauses
         .find(FIGURES_LEAD_IN)
         .expect("the clause table states the boundary lengths")
         + FIGURES_LEAD_IN.len();
     let figures_end = figures_start
-        + CLAUSES[figures_start..]
+        + clauses[figures_start..]
             .find(')')
             .expect("the figures sentence closes its parenthesis");
-    let figures = &CLAUSES[figures_start..figures_end];
+    let figures = &clauses[figures_start..figures_end];
     // The four figures are read in sequence from a cursor that moves past each one, since the lead-ins
     // repeat (" whole and one of " follows the name's figure and the path's).
     let mut cursor = 0usize;

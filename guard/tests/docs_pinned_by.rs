@@ -109,7 +109,7 @@ const CITED_FIXTURE_DIRS: [&str; 1] = ["wildcard-filter-release-verdicts"];
 /// with another verdict or notice); an entry met on another number of rows than its count is reported,
 /// so no copied row inherits an exemption unlisted. Regenerate it from the test's own report, or from a
 /// reading of every row's labels against the sources.
-const KNOWN_UNRESOLVED_LABELS: [(&str, &str, &str, &str); 134] = [
+const KNOWN_UNRESOLVED_LABELS: [(&str, &str, &str, &str); 133] = [
     (
         "KNOWN_ISSUES.md",
         r#"`%s[ securityContext !exists ] !empty`"#,
@@ -475,12 +475,6 @@ const KNOWN_UNRESOLVED_LABELS: [(&str, &str, &str, &str); 134] = [
         r#"`%p[*][ BucketEncryption exists ] !empty`"#,
         "eval_tests.rs:a_wildcard_filter_over_a_mixed_or_dot_enumerated_one_object_map_is_refused_by_name",
         r#"the projecting binding over all-structure Properties, gate polarity"#,
-    ),
-    (
-        "KNOWN_ISSUES.md",
-        r#"`Parameters[*] { Default !exists }`"#,
-        "eval_tests.rs:an_own_key_filter_after_a_wildcard_that_keeps_an_entry_is_not_refused",
-        r#"the block after the bracket wildcard reads the map itself"#,
     ),
     (
         "KNOWN_ISSUES.md",

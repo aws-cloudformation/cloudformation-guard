@@ -224,7 +224,8 @@ impl std::fmt::Debug for BindingId<'_> {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Default)]
+#[derive(Debug, Clone, Serialize, Default)]
+#[cfg_attr(test, derive(PartialEq))]
 pub(crate) struct EventRecord<'value> {
     pub(crate) context: String,
     pub(crate) container: Option<RecordType<'value>>,
@@ -870,6 +871,25 @@ impl<'value, 'loc: 'value> RootScope<'value, 'loc> {
         )
     }
 
+    /// Runs `drive` under one enclosing record, for a test that drives a query, a `let` or a rule's
+    /// status on this scope bare (outside `eval_rules_file`, whose file record encloses every record a
+    /// run writes). A tracker holds ONE top-level record (`RecordTracker::final_event`): a bare drive
+    /// that writes two, a filter over two entries, a key filter over two keys, a rule evaluated after
+    /// the file record closed, is the recorder's own fault and `end_record` refuses the second. This
+    /// drops whatever the tracker held (a test that reads records does so with `reset_recorder` before
+    /// the drive, or reads the `Harness` record this leaves, whose children are the drive's records)
+    /// and then runs the drive under `drive_under_a_harness_record`, which says what the record is and
+    /// whose error wins. A block scope borrows its root, so it cannot reset the recorder itself; a test
+    /// over one resets the root's and calls the free function on the block scope.
+    #[cfg(test)]
+    pub(crate) fn drive_bare<T>(
+        &mut self,
+        drive: impl FnOnce(&mut Self) -> Result<T>,
+    ) -> Result<T> {
+        let _ = self.reset_recorder();
+        drive_under_a_harness_record(self, drive)
+    }
+
     /// The body of both `resolve_variable` and `resolve_variable_from_nested_block`.
     fn lookup(
         &mut self,
@@ -1089,6 +1109,41 @@ impl<'value, 'loc: 'value> RootScope<'value, 'loc> {
             self.lookup(source, MergedKeys::Visible, UnboundName::Error)?;
         }
         Ok(())
+    }
+}
+
+/// Runs `drive` on `scope` under one enclosing `Harness` record, for a test that drives a query, a `let`
+/// or a rule's status bare (outside `eval_rules_file`, whose file record encloses every record a run
+/// writes); `RootScope::drive_bare` resets the recorder first and comes here, and a test over a
+/// `BlockScope`, which borrows its root and forwards `start_record` and `end_record` to it, resets the
+/// root's recorder itself and calls this on the block. The record is closed as the file record
+/// `eval_rules_file` writes (`RecordType::FileCheck`, named `Harness`), so the tree a test reads
+/// (`reset_recorder().extract()`, whose children are the drive's records) is walked as a run's is: closed
+/// as a `Filter` record it read to `ReachedThrough::descend` as a query-filter gate over every comparison
+/// under it, and `find_skip_reason` would have reported "a comparison in one of its query filters" where
+/// a real run reports the comparison itself. The drive's own result is returned as it came, so an `Err`
+/// the drive is expected to produce can be matched by the caller: a drive that fails may leave a record
+/// of its own open, and closing `Harness` over it is then the recorder's `EventRecordMismatch`, which
+/// would have replaced the drive's error with a pairing message that points away from the cause. That
+/// close error is read only when the drive succeeded, where it is the harness's own fault.
+#[cfg(test)]
+pub(crate) fn drive_under_a_harness_record<'value, S: RecordTracer<'value>, T>(
+    scope: &mut S,
+    drive: impl FnOnce(&mut S) -> Result<T>,
+) -> Result<T> {
+    const HARNESS: &str = "Harness";
+    scope.start_record(HARNESS)?;
+    let out = drive(scope);
+    let closed = scope.end_record(
+        HARNESS,
+        RecordType::FileCheck(NamedStatus {
+            name: HARNESS,
+            ..Default::default()
+        }),
+    );
+    match out {
+        Err(e) => Err(e),
+        Ok(v) => closed.map(|_| v),
     }
 }
 
@@ -23873,6 +23928,10 @@ pub(crate) fn capture_scope<'value, 'loc: 'value, 'eval>(
 
 pub(crate) struct RecordTracker<'value> {
     pub(crate) events: Vec<EventRecord<'value>>,
+    /// The one top-level record a tracker holds, handed out by `extract`, which consumes the tracker: a
+    /// run nests every record under the file's, and a harness that drives more than one top-level record
+    /// opens an enclosing record around them or uses a fresh tracker per record (a second one is an
+    /// `EventRecordMismatch` error from `end_record` in every build, never a silent replacement).
     pub(crate) final_event: Option<EventRecord<'value>>,
 }
 
@@ -23900,8 +23959,9 @@ impl<'value> RecordTracer<'value> for RecordTracker<'value> {
     }
 
     fn end_record(&mut self, context: &str, record: RecordType<'value>) -> Result<()> {
-        // Both imbalances are the evaluator's own pairing fault and are raised as `InternalError`, never
-        // as `IncompatibleError`: the latter is the variant the evaluator answers as a clause verdict, and
+        // All three faults (an end with no start, a mismatched context, a second top-level record below)
+        // are the evaluator's own pairing fault and are raised as `InternalError`, never as
+        // `IncompatibleError`: the latter is the variant the evaluator answers as a clause verdict, and
         // a recorder fault answered that way is reported as an unrelated clause failing and then panics
         // in `extract`. See `InternalError::EventRecordMismatch`.
         let matched = match self.events.pop() {
@@ -23940,6 +24000,19 @@ impl<'value> RecordTracer<'value> for RecordTracker<'value> {
             }
 
             None => {
+                // A tracker holds ONE top-level record. A run nests every record under the file's, which
+                // `eval_rules_file` opens first; a harness that drives a recording function bare can end a
+                // second one, and so can a run whose stack was emptied by a pairing fault above, and then
+                // `extract` handed back the last record with no error. The same recorder fault as the
+                // two arms above, raised the same way in every build, never a silent replacement.
+                if self.final_event.is_some() {
+                    return Err(Error::InternalError(InternalError::EventRecordMismatch(
+                        format!(
+                            "Event Record end with context {} would make a second top-level record while one is already held",
+                            context
+                        ),
+                    )));
+                }
                 self.final_event.replace(matched);
             }
         }

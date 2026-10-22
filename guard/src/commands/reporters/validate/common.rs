@@ -610,7 +610,8 @@ pub(super) fn write_unattributed_explanations<'record, 'value: 'record>(
     Ok(())
 }
 
-#[derive(Debug, PartialEq, Serialize)]
+#[derive(Debug, Serialize)]
+#[cfg_attr(test, derive(PartialEq))]
 pub(super) struct NameInfo<'a> {
     pub(super) rule: &'a str,
     pub(super) path: String,

@@ -607,7 +607,8 @@ let api_gws = Resources.*[ Type == 'AWS::ApiGateway::RestApi' ]
    decided failure and the rule is not applicable at exit 0, the one place the unary reading and the
    comparison's part (the rows of
    `the_hand_up_reading_of_an_undecidable_value_inside_a_unary_filter_is_pinned` in `eval_tests.rs`
-   are the record). The wildcard's own capture (`Cfg[ y ][ x | ... ]`) is the
+   are the record; the latest-minted reading over two refused maps, in either order, has its own record
+   (pinned by `eval_tests.rs:a_unary_operator_over_two_refusals_raises_the_later_minted_pair_in_both_orders` and `eval_tests.rs:two_refusals_minted_inside_one_run_fold_to_the_later_minted_pair_in_both_orders`)). The wildcard's own capture (`Cfg[ y ][ x | ... ]`) is the
    enumeration, not the selection: every key the wildcard enumerated when some entry grounded it
    (`[Mode, A, B]`, as `Cfg[ y ][ Kind == 'k' ]` reads it) and the markers alone otherwise. Both
    captures are bound as the rest of the query is walked under the held entries, entry by entry in the
@@ -647,7 +648,13 @@ let api_gws = Resources.*[ Type == 'AWS::ApiGateway::RestApi' ]
    `!empty`, a fold in a rule the run calls), marks that run's entry refused and cuts the entry's
    captures, read off the refusal token the ending raise carries against the count the run opened at,
    where a marker that carries no token (a key filter's own undecidable, a regular expression out of
-   budget) leaves the entry plain; where two refusals meet in one fold the later-minted one is the one
+   budget, and a refusal that reaches a key filter's right-hand side as a query with no answer on the
+   data: `M[ keys == Tags[ Key == 'Env' ].Value ]` over a `Tags` that is a string is refused there as
+   unevaluatable, which carries no token, so the filter's marker for the map carries none; pinned by `eval_tests.rs:a_capture_of_an_own_key_filter_holds_no_entry_held_without_grounding_beside_an_undecided_one`)
+   leaves the entry plain with its captures. The same side refused by a comparison the engine abandoned,
+   `M[ keys IN Allowed[*].Type ]` over an `Allowed` whose own key names a member, arrives with its token
+   and marks the entry (pinned by `eval_tests.rs:a_plain_marker_carrying_a_refusals_sentence_is_a_refused_read_inside_a_predicate_run`);
+   where two refusals meet in one fold the later-minted one is the one
    the raise names, reason and token together, so a refusal minted inside the run marks the entry
    whichever order the values were met in; a plain marker left by an inner run over a refusal minted
    before that run opened still carries the token for the enclosing run, which marks its own entry by it
@@ -655,13 +662,14 @@ let api_gws = Resources.*[ Type == 'AWS::ApiGateway::RestApi' ]
    no entry's run: the binding's query runs once, inside whichever predicate run read it first, and that
    run's entry reads the memoized marker as every later reader does, so two entries over one binding read
    one kind in either resource order (a `let` owned by a block built inside the run, or a called rule's
-   body, is the run's own and marks its entry). A refusal minted in a query's TAIL, after the predicate
-   decided an entry (`let sel = Resources[ x | Type exists ].Properties.M[ keys IN Allowed[*].Type ]`),
-   marks no entry and cuts no capture: `%x` keeps the entry and `some Resources.%x.Type == 'T'` passes,
+   body, is the run's own and marks its entry). A refusal minted in a query's TAIL, outside a predicate,
+   after the predicate decided an entry (`let sel = Resources[ x | Type exists ].Properties.M[ keys IN
+   Allowed[*].Type ]`), marks no entry and cuts no capture: `%x` keeps the entry and `some
+   Resources.%x.Type == 'T'` passes,
    the refusal standing in `%sel`'s own value, registered where it was raised (unmeasured on the releases:
    no fixture row holds a key filter refused in a selection's tail, so the baseline is this evaluator's
-   reading before the change, which cut the capture for a refusal the predicate never met; pinned by
-   `a_refusal_minted_inside_a_walk_cuts_the_loops_captures_whatever_marker_carries_it`). A continuation that refuses its own capture (`.Rules[0][ r |
+   reading before the change, which cut the capture for a refusal the predicate never met;
+   pinned by `eval_tests.rs:a_refusal_minted_inside_a_walk_cuts_the_loops_captures_whatever_marker_carries_it`). A continuation that refuses its own capture (`.Rules[0][ r |
    ... ]`, a capture after an index over a map) is such a refusal inside a predicate as it is outside
    one. What another clause of the block filed
    under the same name before the clause (`Cfg[ x | Kind == 'k' ] !empty` ahead of the refused `Cfg[*][ x
@@ -1035,14 +1043,14 @@ let api_gws = Resources.*[ Type == 'AWS::ApiGateway::RestApi' ]
    | `when %p[*][ BucketEncryption exists ] !empty` and `%p[*][ VersioningConfiguration exists ] empty` under `let p = Resources.*[ Type == 'AWS::S3::Bucket' ].Properties` | n/a | n/a | FAIL | none | eval_tests.rs:a_wildcard_filter_over_a_mixed_or_dot_enumerated_one_object_map_is_refused_by_name |
    | `%p[*][ BucketEncryption exists ] !empty` | one-object | when gate over !empty | REFUSED | none | eval_tests.rs:a_wildcard_filter_over_a_mixed_or_dot_enumerated_one_object_map_is_refused_by_name (case "the projecting binding over all-structure Properties, gate polarity") |
    | `Statement[*][ Action == '*' ] empty`, `Statement[*][ Action == '*' ] !empty`, `Statement[*] { Action == '*' }`, `Statement[*].Action == '*'` over the all-intrinsic one-object statement | all-intrinsic one-object statement | empty; !empty; block; == | `empty` FAIL; `!empty` FAIL; block PASS; `.Action == '*'` PASS | none | eval_tests.rs:a_filter_after_a_bracket_wildcard_over_one_object_tests_the_object |
-   | `Parameters[*] { Default !exists }` | collection | block | FAIL | none | eval_tests.rs:an_own_key_filter_after_a_wildcard_that_keeps_an_entry_is_not_refused (case "the block after the bracket wildcard reads the map itself") |
+   | `Parameters[*] { Default !exists }` | collection | block | REFUSED, FAIL as an assertion (`[*]` hands the map on whole; `Default` is a key of the map and the name of one member while `Other` holds no `Default` of its own, so the own entry would answer for every member) | the block-arm own-key refusal, one flagged record naming the map handed on whole at its path with its location (`/Parameters[L:0,C:0]`) and `Default`, the key the block reads; its remedy is written in the refusal's own grammar, `X.*.Key` for each member's own `Key`, "where `X` is `Parameters`" (the refusal never spells `Parameters.*.Default` out; the test reads the path, the key, `X.*.Key` and the binding of `X` on one message) | eval_tests.rs:an_own_key_filter_after_a_wildcard_that_keeps_an_entry_is_not_refused (case "the block after the bracket wildcard is refused over the map's own key: the block arm's text, not the filter arm's opener") |
    | `Parameters[*].Default` | collection | key read | unpinned (no test asserts this cell) | none | none |
    | `Resources[*][ BucketA exists ]` | collection | !empty and empty | !empty FAIL / empty PASS over the members | none | eval_tests.rs:an_own_key_filter_after_a_wildcard_that_keeps_an_entry_is_not_refused (cases "`BucketA exists`, !empty: the selection keeps nothing", "a member named like the key alone under empty") |
    | `Statement[*] { Action == '*' }` | one-object | block | PASS | none | eval_tests.rs:a_filter_after_a_bracket_wildcard_over_one_object_tests_the_object (case "the_block_spelling_reads_the_all_intrinsic_one_object_statement") |
    | `Statement[*].Action == '*'` | one-object | == | PASS | none | eval_tests.rs:a_filter_after_a_bracket_wildcard_over_one_object_tests_the_object (case "the_key_spelling_reads_the_all_intrinsic_one_object_statement") |
    | `%r[*][ A exists ]` | collection | !empty | FAIL | none | eval_tests.rs:a_variable_query_root_enumerates_only_when_its_binding_did_not (case "filter_attribution_names_a_key_of_the_collection") |
-   | `Resources[*] { BucketA exists }` | collection | block | REFUSED, FAIL as an assertion (`[*]` hands the map on whole; `BucketA` is a key of the map and the name of one member while another member holds no `BucketA` of its own, so the own entry would answer for every member, a false pass) | the block-arm own-key refusal, with `Resources.BucketA`, `Resources.*.BucketA` and `Resources.* { BucketA exists }` as the remedy | eval_tests.rs:a_filter_after_a_bracket_wildcard_over_one_object_tests_the_object (case "the_block_spelling_the_refusal_names_is_refused_over_the_maps_own_key") |
-   | `Resources[*].BucketA exists` | collection | exists | REFUSED, FAIL as an assertion (the key read after `[*]` takes the block spelling's classification over a map handed on whole) | the own-key refusal, the direct path and the member spellings as the remedy | eval_tests.rs:a_filter_after_a_bracket_wildcard_over_one_object_tests_the_object (case "the_key_spelling_the_refusal_names_is_refused_over_the_maps_own_key") |
+   | `Resources[*] { BucketA exists }` | collection | block | REFUSED, FAIL as an assertion (`[*]` hands the map on whole; `BucketA` is a key of the map and the name of one member while another member holds no `BucketA` of its own, so the own entry would answer for every member, a false pass) | the block-arm own-key refusal, flagged, naming `BucketA` and the map handed on whole; its remedy is written in the refusal's own grammar, `X.Key == value` for the map as one object and `X.*.Key` or `X.* { Key == value }` for each member's own `Key`, "where `X` is `Resources`" (the refusal never spells `Resources.*.BucketA` out; the test reads the handed-on sentence, `X.*.Key` and the binding of `X`) | eval_tests.rs:a_filter_after_a_bracket_wildcard_over_one_object_tests_the_object (case "the_block_spelling_the_refusal_names_is_refused_over_the_maps_own_key") |
+   | `Resources[*].BucketA exists` | collection | exists | REFUSED, FAIL as an assertion (the key read after `[*]` takes the block spelling's classification over a map handed on whole) | the same own-key refusal, flagged, in the same words (one text builder serves the block arm and the key arm): `X.Key == value`, `X.*.Key` or `X.* { Key == value }`, "where `X` is `Resources`" | eval_tests.rs:a_filter_after_a_bracket_wildcard_over_one_object_tests_the_object (case "the_key_spelling_the_refusal_names_is_refused_over_the_maps_own_key") |
    | `rule no_admin { %admin empty }` under `let admin = Resources.*[ Type == 'AWS::IAM::Policy' Properties.PolicyDocument.Statement[ Effect == 'Allow' Action == '*' ] !empty ]` | all-scalar | `%admin empty` | FAIL | named-map refusal text REFUSAL_HEAD "The filter selected nothing among the map's own entries. `Key` is ..." | eval_tests.rs:a_named_map_refusal_inside_a_filter_predicate_fails_the_whole_selection_closed |
    | `rule all_ok { %ok !empty }` under `let ok = Resources.*[ Type == 'AWS::IAM::Policy' Properties.PolicyDocument.Statement[ Effect == 'Deny' ] !empty ]` | all-scalar | `%ok !empty` | REFUSED | named-map refusal text | eval_tests.rs:a_named_map_refusal_inside_a_filter_predicate_fails_the_whole_selection_closed |
    | `Resources.*[ Type == 'AWS::IAM::Policy' Properties.PolicyDocument.Statement[*][ Effect == 'Allow' Action == '*' ] !empty ]` | all-scalar one-object statement | `%admin empty` | FAIL | own-key refusal text WILDCARD_HEAD on the all-intrinsic row only | eval_tests.rs:a_named_map_refusal_inside_a_filter_predicate_fails_the_whole_selection_closed |
@@ -1622,12 +1630,12 @@ let api_gws = Resources.*[ Type == 'AWS::ApiGateway::RestApi' ]
     (`refused_read_text`), and the refusal's marker, now on the left, has its own record flagged `true`. Two open
     choices, not one: whether the `to` arm should word a marker as the `from` arm does, and whether a record should
     be flagged by the operand it holds alone or by its right-hand company as well. No verdict, exit or registry entry
-    moves with either; the shape is pinned as it reads by
-    eval_tests.rs:a_plain_left_marker_beside_a_right_refusal_is_reported_as_unreadable_where_its_mirror_is_missing,
-    which selects the comparison's own records by the comparison and by the marker operand (never by context or by
-    `any` over the rule's records, which an earlier form of the cell did, passing on records of the unrelated
-    `Cfg[ x | Kind == 'k' ]` clause), reads each pair's flag and message, and reads the report's sentences for the two
-    wordings; it goes red when either arm's reading or either spelling's flags change.
+    moves with either; the shape is pinned as it reads by a test which selects the comparison's own records by the
+    comparison and by the marker operand (never by context or by `any` over the rule's records, which an earlier form of
+    the cell did, passing on records of the unrelated `Cfg[ x | Kind == 'k' ]` clause), reads each pair's flag and
+    message, and reads the report's sentences for the two wordings, so it goes red when either arm's reading or either
+    spelling's flags change
+    (pinned by `eval_tests.rs:a_plain_left_marker_beside_a_right_refusal_is_reported_as_unreadable_where_its_mirror_is_missing`).
 
 21. <a name="a-map-filters-capture-holds-the-key"></a> A filter's capture over a MAP holds the KEYS the filter kept, not the
     members: `Sub[ s | Name exists ]` over `Sub: { S1: { Name: 'n' } }` binds `%s` to the string `S1`, so `%s.Name == 'n'`
@@ -1637,7 +1645,7 @@ let api_gws = Resources.*[ Type == 'AWS::ApiGateway::RestApi' ]
     its parent, `Sub.%s.Name == 'n'`, the way `Resources[ id | ... ]` is read back as `Resources.%id.Type`. A filter over
     a LIST (`Rules[ r | Action == 'allow' ]`) binds the member itself, so `%r.Name` reads there. Not a defect, the
     documented binding; recorded because the two spellings read alike and the fail-closed verdict names a retrieval, not
-    the binding. Pinned by eval_tests.rs:a_map_filters_capture_holds_the_key_so_a_field_read_off_it_fails_closed in all
+    the binding (pinned by `eval_tests.rs:a_map_filters_capture_holds_the_key_so_a_field_read_off_it_fails_closed`), in all
     three roles, each beside its `Sub.%s.Name` control: the assertion's FAIL with the retrieval's reason on record, the
     filter predicate's deselected entry (`!empty` over the filter fails), and the `when` condition not applicable; the
     rows go red if `%s.Name` ever decides a clause.
