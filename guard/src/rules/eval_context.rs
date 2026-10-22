@@ -3928,8 +3928,11 @@ impl PredicateKeys {
 // layer, five of them in free functions with no scope in reach, so the kind travels out of band rather
 // than through the resolver. Membership is exact: the set holds the texts the engine itself wrote, so an
 // `Unevaluatable` found in it is one the engine raised as a refusal, never one that merely contains a
-// refusal's words (a sentence that wraps another error, a converter's message). The one limit: an
-// `Unevaluatable` of another origin whose whole text equals a registered refusal's reads as a refusal.
+// refusal's words (a sentence that wraps another error, a converter's message). Two limits: an
+// `Unevaluatable` of another origin whose whole text equals a registered refusal's reads as a refusal;
+// and a NUMBERED composition of registered texts, `(1) <a> (2) <b>` with every part registered, reads as
+// one too whatever wrote it (`is_refusal` through `numbered_parts_all`: the shape a comparison raised
+// beside several refused reads writes and no one registers), so the exact membership is of the parts.
 thread_local! {
     static REFUSALS: RefCell<Vec<(u64, HashSet<String>)>> = const { RefCell::new(Vec::new()) };
     static NEXT_REGISTRY: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
@@ -4058,8 +4061,9 @@ fn whole_unless_the_cut_is_shorter(text: &str, cut: String) -> String {
 /// prints 32 of them and the marker (escaped after a cut by source characters, it printed at eight times
 /// the bound), and no escape is cut in half (cut after escaping by printed characters, the bound could
 /// fall inside `\u{202e}`). For the builders whose sentence is printed whole by the reporters and the
-/// refused-read line (`undecidable_pair_text`); a builder that only bounds, for a caller that escapes
-/// where it writes, keeps `template_part`.
+/// refused-read line (`undecidable_pair_text`, and the values a refusal's report sentence quotes,
+/// `bounded_value_for_refusal`); a builder that only bounds, for a caller that escapes where it writes,
+/// keeps `template_part`.
 pub(crate) fn escaped_template_part(text: &str) -> String {
     let total = text.chars().count();
     let mut out = String::new();
@@ -4076,44 +4080,83 @@ pub(crate) fn escaped_template_part(text: &str) -> String {
     out
 }
 
-/// `value`, a value quoted from the template (the value a query traversed to, or a value a comparison
-/// decided), rendered for the sentence of a record that carries a REFUSAL
-/// (`ComparisonClauseCheck::refusal`): the `Path=<path> Value=<value>` shape its `Display` gives, with
-/// the path and the value each a template part cut at `LONGEST_TEMPLATE_PART_IN_A_REFUSAL` with the
-/// marker (`template_part`). The console prints a refusal's sentence whole under
-/// `LONGEST_REFUSAL_MESSAGE` on the premise that the sentence is the evaluator's own and every part it
-/// takes from the template is bounded on its own; a quoted value is such a part (for a query that failed
-/// at a key of the root it is the whole document; beside an empty left-hand collection it is a whole
-/// right-hand value), so it takes the same bound, and the refusal's key sentence, remedy and path beside
-/// it stay whole while a 3 KB map prints as 256 characters and the count cut. A record that is no
-/// refusal keeps the unbounded `Display`: the console cuts its sentence at `LONGEST_RECORDED_MESSAGE`
-/// as released.
-pub(crate) fn bounded_traversed_to(value: &PathAwareValue) -> String {
-    format!(
-        "Path={} Value={}",
-        template_part(&value.self_path().to_string()),
-        template_part(&crate::rules::display::ValueOnlyDisplay(Rc::new(value.clone())).to_string())
-    )
+/// `value`, a value quoted from the template (the value a query traversed to, the two values a comparison
+/// decided, the value a unary check was asked of), rendered for the sentence of a record that carries a
+/// REFUSAL (`ComparisonClauseCheck::refusal`, `ValueCheck::refusal`): the `Path=<path> Value=<value>`
+/// shape its `Display` gives, written by the same formatter (`display::write_path_and_value`) with the
+/// path and the value each escaped and bounded as a template part of a refusal is
+/// (`escaped_template_part`: cut at `LONGEST_TEMPLATE_PART_IN_A_REFUSAL` printed characters with the
+/// marker, a control or bidi character as its escape). The console prints a refusal's sentence whole
+/// under `LONGEST_REFUSAL_MESSAGE` on the premise that the sentence is the evaluator's own and every part
+/// it takes from the template is bounded on its own; a quoted value is such a part (for a query that
+/// failed at a key of the root it is the whole document; beside an empty left-hand collection it is a
+/// whole right-hand value), so it takes the same bound, and the refusal's key sentence, remedy and path
+/// beside it stay whole while a 3 KB map prints as 256 characters and the count cut. The bound is on the
+/// printed form because the console writes the sentence as it is: a value of 256 bidi controls, cut by
+/// source characters, printed at eight times the bound, and four such parts in one sentence passed the
+/// whole-line bound again. A record that is no refusal keeps the unbounded `Display`: the console cuts
+/// its sentence at `LONGEST_RECORDED_MESSAGE` as released.
+pub(crate) fn bounded_value_for_refusal(value: &PathAwareValue) -> String {
+    struct Bounded<'a>(&'a PathAwareValue);
+    impl std::fmt::Display for Bounded<'_> {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            crate::rules::display::write_path_and_value(f, self.0, Some(&escaped_template_part))
+        }
+    }
+    Bounded(value).to_string()
+}
+
+/// Whether the record of an unresolved operand names a READ THE EVALUATOR REFUSED, so the report's
+/// sentence says the value could not be read and carries the refusal, rather than a property the
+/// template lacks spelled with the marker's remaining query: the marker is a refusal's
+/// (`UnResolvedKind::is_refusal`, the kind a refused walk or a refused key filter leaves) and the record
+/// carries a message to print. Read from the operand's kind, never from the record's `refusal` flag:
+/// that flag is also set for an ABSENT left-hand operand decided beside a refused read among the
+/// right-hand values (the absence's record carries the retrieval's own reason and the refusal after it,
+/// with no right-hand operand), whose sentence keeps the missing-property wording, since the remaining
+/// query is the one place the missing key is named; the writer of an unresolved right-hand operand sets
+/// the flag from that operand's own kind, so for it the two readings agree today and the operand is read
+/// so that they cannot part. The message's text is not consulted here, and that is a choice the four
+/// report arms make alone: a key filter's marker whose REASON is a registered refusal text (the marker a
+/// refused right-hand query leaves, `UnResolvedKind::Undecidable` with `refused` unset) is read by TEXT
+/// where a comparison raises on it (the compared-nothing arm and the gate collect it with the refusals'
+/// markers through `is_refusal_text`, so an asserted raise on it is a refusal and its block record reads
+/// `refusal: true`), but this predicate reads its kind, so the comparison report's two unresolved arms and
+/// the console reporter's twin arms keep the missing-property wording for that operand, the remaining
+/// query named. An absence record's message leads with the retrieval's reason and is never a registered
+/// text whole. The four arms ask this one predicate, so the four sentences cannot drift apart; whether
+/// they should read that marker by text too is open.
+pub(crate) fn names_a_refused_read(unresolved: &UnResolved, message: Option<&String>) -> bool {
+    message.is_some() && unresolved.kind.is_refusal()
 }
 
 /// Whether `e` is a refusal an evaluation alive on this thread raised (`refuse`): an `Unevaluatable`
 /// whose whole text is one the producers registered under a live root scope, or a NUMBERED text,
 /// `(1) <part> (2) <part> ...`, whose every part is one (the text a comparison raised beside several
 /// refused reads, `eval::raised_refusal_text`, which no one registers: registered, it would be a third
-/// entry beside the two refusals met, and the registry's size is what the run's output counts as the
-/// refused reads). Read where an error is written into a record (`BlockCheck::refusal`,
+/// entry beside the two refusals met that is no refusal's own sentence; the registry is read for
+/// membership alone, never for its size). Read where an error is written into a record (`BlockCheck::refusal`,
 /// `ValueCheck::refusal`, `NamedStatus::refusal`), so the reporters can print a refusal whole where they
 /// cut a sentence that may carry a value.
 pub(crate) fn is_refusal(e: &Error) -> bool {
     match e {
-        Error::Unevaluatable(text) => REFUSALS.with(|refusals| {
-            let refusals = refusals.borrow();
-            let registered =
-                |candidate: &str| refusals.iter().any(|(_, set)| set.contains(candidate));
-            registered(text) || numbered_parts_all(text, &registered)
-        }),
+        Error::Unevaluatable(text) => is_refusal_text(text),
         _ => false,
     }
+}
+
+/// Whether `text` is a refusal's: the test `is_refusal` applies to an `Unevaluatable`'s text (the text
+/// whole, or numbered parts each registered), for the one site that holds a refusal's text and no error
+/// around it: the marker a key filter leaves for a map whose right-hand query was refused carries the
+/// refusal inside its own sentence, which the key-filter arm registers (`query_retrieval_with_converter`,
+/// the `MapKeyFilter` arm), and `eval::binary_operation`'s empty-selection arm reads the marker's reason
+/// here to tell that marker from the one a spent regex budget leaves, which no one registers.
+pub(crate) fn is_refusal_text(text: &str) -> bool {
+    REFUSALS.with(|refusals| {
+        let refusals = refusals.borrow();
+        let registered = |candidate: &str| refusals.iter().any(|(_, set)| set.contains(candidate));
+        registered(text) || numbered_parts_all(text, &registered)
+    })
 }
 
 /// Whether `text` is `(1) <part> (2) <part> ...` with at least one part and `registered` true of every
@@ -21078,10 +21121,37 @@ fn query_retrieval_with_converter<'value, 'loc: 'value>(
                         traversed_to: Rc::clone(&current),
                         remaining_query: format!("{}", SliceDisplay(&query[query_index..])),
                         reason: Some(reason),
-                        // A map the key filter could not decide: not a refusal, so a filter loop
-                        // reading it through a capture keeps its other keys.
+                        // A map the key filter could not decide: not a refusal's marker, so a filter
+                        // loop reading it through a capture keeps its other keys, whatever the reason
+                        // wraps (`rhs_undecided` below says how a wrapped refusal is still told apart).
                         kind: UnResolvedKind::Undecidable { refused: false },
                     })]
+                };
+                // The marker for a right-hand query that had no answer on this data (the query arm and
+                // the function arm below): `reason` wrapped in a sentence naming this map. When the
+                // reason is a REFUSAL the right-hand query raised (`is_refusal_text`: `refuse`
+                // registered it when the query was refused on the data, `Tags[ Key == 'Env' ].Value`
+                // over a `Tags` that is a string; a comparison the query abandoned beside a refused read
+                // carries the refusal's text), the wrapped sentence is registered as that refusal's too,
+                // so a clause that meets this marker with nothing on its left to compare
+                // (`eval::binary_operation`, its empty-selection arm) tells it from the marker a spent
+                // regex budget leaves, which no one registers, and raises on it as it raises on every
+                // refusal's marker, instead of leaving the registered refusal silent inside a decided
+                // answer. The sentence is the one the marker carried before, the map's path included, so
+                // the records that quote it are unchanged. The marker's kind is the key filter's own
+                // either way, so the arms that read a marker's KIND (the pre-pass over a positive `==`, a
+                // filter loop's capture cut-back) are unchanged.
+                let rhs_undecided = |reason: String| -> Vec<QueryResult> {
+                    let wrapped = format!(
+                        "the right-hand side of the key filter could not be evaluated at {}: {}, so \
+                         the keys it selects cannot be decided",
+                        current.self_path(),
+                        reason
+                    );
+                    if is_refusal_text(&reason) {
+                        register_refusal(&wrapped);
+                    }
+                    undecided_map(wrapped)
                 };
 
                 let rhs = match &map_key_filter.compare_with {
@@ -21114,16 +21184,7 @@ fn query_retrieval_with_converter<'value, 'loc: 'value>(
                         Ok(rhs) => rhs,
                         Err(Error::Unevaluatable(reason))
                         | Err(Error::UndecidableComparison(reason)) => {
-                            return undecided_map_captured(
-                                resolver,
-                                name,
-                                undecided_map(format!(
-                                    "the right-hand side of the key filter could not be evaluated at \
-                                     {}: {}, so the keys it selects cannot be decided",
-                                    current.self_path(),
-                                    reason
-                                )),
-                            );
+                            return undecided_map_captured(resolver, name, rhs_undecided(reason));
                         }
                         Err(other) => return Err(other),
                     },
@@ -21184,12 +21245,7 @@ fn query_retrieval_with_converter<'value, 'loc: 'value>(
                                 return undecided_map_captured(
                                     resolver,
                                     name,
-                                    undecided_map(format!(
-                                        "the right-hand side of the key filter could not be evaluated \
-                                         at {}: {}, so the keys it selects cannot be decided",
-                                        current.self_path(),
-                                        reason
-                                    )),
+                                    rhs_undecided(reason),
                                 );
                             }
                             Err(other) => return Err(other),
@@ -26493,7 +26549,8 @@ pub(crate) struct Messages {
     /// `ComparisonClauseCheck::refusal`, `InComparisonCheck::refusal`); the comparison records' sentences
     /// name the value the query traversed to beside the record's message and keep the record's kind, so
     /// a refusal decided beside an absent value, or beside a value no listed entry accepted under `IN`,
-    /// prints whole with the value, whose parts a refusal bounds (`template_part`). The console reporter
+    /// prints whole with the value, whose parts a refusal escapes and bounds
+    /// (`bounded_value_for_refusal`). The console reporter
     /// bounds a refusal's line by `LONGEST_REFUSAL_MESSAGE` and every other message by
     /// `LONGEST_RECORDED_MESSAGE`, and reads the kind here rather than from the text, which cannot say
     /// (a message that wraps another error displays the same wrapper a refusal does). Not part of the
@@ -27436,13 +27493,27 @@ fn report_all_failed_clauses_for_rules<'value>(
                         .as_ref()
                         .map_or("".to_string(), |s| format!("Error = [{}]", s));
 
-                    // The report's message is the record's message inside a sentence, and the kind
-                    // the report carries describes that sentence, not the record's: a sentence that
-                    // interpolates nothing from the template beyond a path keeps the record's kind,
-                    // and one that interpolates a value the query traversed to is no refusal whatever
-                    // the record says, because the console prints a refusal whole and such a value
-                    // has no length to clear (`reporters::validate::common::bounded_for_the_console`).
-                    let (message, check, refusal) = match from {
+                    // The report's message is the record's message inside a sentence, and the
+                    // record's own kind travels with it (`ValueCheck::refusal`), as it does for the
+                    // comparison records below: the console prints a refusal's sentence whole
+                    // (`reporters::validate::common::bounded_for_the_console`), so in a refusal's
+                    // sentence every part quoted from the template, the path of the value the check
+                    // was asked of and the value the query traversed to, is escaped and bounded as a
+                    // refusal's template parts are (`bounded_value_for_refusal`,
+                    // `escaped_template_part`). The sentence over a traversed value used to be
+                    // written as no refusal whatever the record said, since the value it quoted had
+                    // no bound to clear; that cut the refusal's remedy off the sentence at
+                    // `LONGEST_RECORDED_MESSAGE`, and a resolved value's path was quoted unbounded.
+                    let refusal = *refusal;
+                    let rendered_path = |value: &PathAwareValue| match refusal {
+                        true => escaped_template_part(&value.self_path().to_string()),
+                        false => value.self_path().to_string(),
+                    };
+                    let rendered = |value: &PathAwareValue| match refusal {
+                        true => bounded_value_for_refusal(value),
+                        false => value.to_string(),
+                    };
+                    let (message, check) = match from {
                             // A literal reaches here through `let x = 5` followed by a unary check
                             // such as `%x empty`: the operator has no answer for a number, the
                             // clause fails, and this is the message that failure carries. It was
@@ -27457,7 +27528,7 @@ fn report_all_failed_clauses_for_rules<'value>(
                                 (
                                     format!(
                                         "Check was not compliant as property [{prop}] {cmp_msg}.{err}",
-                                        prop=res.self_path(),
+                                        prop=rendered_path(res),
                                         cmp_msg=cmp_msg,
                                         err=error_message
                                     ),
@@ -27465,26 +27536,24 @@ fn report_all_failed_clauses_for_rules<'value>(
                                         comparison: (*cmp, *not),
                                         value: res.clone(),
                                     }),
-                                    *refusal,
                                 )
 
                             },
 
-                            // The value traversed to is printed into the sentence, so the sentence
-                            // carries a template value even when the error it embeds is a refusal.
+                            // The value traversed to is printed into the sentence, bounded when the
+                            // record is a refusal's; the structured `check` carries it whole.
                             QueryResult::UnResolved(unres) => {
                                 (
                                     format!(
                                         "Check was not compliant as property [{remain}] is missing. Value traversed to [{tr}].{err}",
                                         remain=unres.remaining_query,
-                                        tr=unres.traversed_to,
+                                        tr=rendered(&unres.traversed_to),
                                         err=error_message
                                     ),
                                     UnaryCheck::UnResolved(ValueUnResolved{
                                         value: unres.clone(),
                                         comparison: (*cmp, *not),
                                     }),
-                                    false,
                                 )
                             }
                         };
@@ -27529,13 +27598,13 @@ fn report_all_failed_clauses_for_rules<'value>(
                     // records do, and the console reads the kind to print a refusal's remedy and path
                     // whole where it cuts the rest. In a refusal's sentence every value quoted from
                     // the template (the value a query traversed to, the two values a comparison
-                    // decided) is bounded as every template part of a refusal is
-                    // (`bounded_traversed_to`): printed whole, a document the query failed at the root
-                    // of, or a long right-hand value beside an empty left-hand collection, would fill
-                    // the refusal's bound and the sentence would carry the document.
+                    // decided) is escaped and bounded as every template part of a refusal is
+                    // (`bounded_value_for_refusal`): printed whole, a document the query failed at
+                    // the root of, or a long right-hand value beside an empty left-hand collection,
+                    // would fill the refusal's bound and the sentence would carry the document.
                     let refusal = *refusal;
                     let rendered = |value: &PathAwareValue| match refusal {
-                        true => bounded_traversed_to(value),
+                        true => bounded_value_for_refusal(value),
                         false => value.to_string(),
                     };
                     match from {
@@ -27545,8 +27614,10 @@ fn report_all_failed_clauses_for_rules<'value>(
                             // refusal's text, is named as the refusal (the error the record carries,
                             // printed whole by the console), not as a missing property spelled with
                             // the marker's remaining query, as the right-hand arm below names its
-                            // refusal. An absent left-hand value keeps the missing-property sentence.
-                            let message = if to_unres.kind.is_refusal() && message.is_some() {
+                            // refusal. An absent left-hand value keeps the missing-property sentence,
+                            // beside a refused read among the right-hand values too
+                            // (`names_a_refused_read` reads the operand, not the record's flag).
+                            let message = if names_a_refused_read(to_unres, message.as_ref()) {
                                 format!(
                                     "Check was not compliant as the value to compare from could not be read.{err}",
                                     err=error_message
@@ -27620,8 +27691,17 @@ fn report_all_failed_clauses_for_rules<'value>(
                                         // (the error the record carries, printed whole by the console),
                                         // not a missing property spelled with the marker's remaining
                                         // query. An absent right-hand value keeps the missing-property
-                                        // sentence.
-                                        let message = if refusal {
+                                        // sentence, the remaining query naming the key. The operand's
+                                        // own kind is what is read here (`names_a_refused_read`), as
+                                        // the left-hand arm reads it, never the record's flag: the one
+                                        // writer of an unresolved right-hand operand sets the flag from
+                                        // that kind today, and the sentence must not depend on how a
+                                        // writer sets the flag (the left-hand arm's absence record is
+                                        // flagged beside a refused read with the key still named).
+                                        let message = if names_a_refused_read(
+                                            to_unres,
+                                            message.as_ref(),
+                                        ) {
                                             format!(
                                                 "Check was not compliant as the value to compare to could not be read.{err}",
                                                 err=error_message

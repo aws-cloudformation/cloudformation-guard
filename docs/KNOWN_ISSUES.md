@@ -1533,3 +1533,35 @@ let api_gws = Resources.*[ Type == 'AWS::ApiGateway::RestApi' ]
     `{ team: '', tier: web }` passes at exit 0 (every scalar passed over, nothing selected) while `labels.*[ this !empty ] empty`
     is refused: under `.*`, adding a disjunct that names a key can select less. It is pinned as it reads, and written
     `labels.*[ env exists ] empty` when that is what is meant.
+
+18. <a name="second-refusal-behind-a-let-bound-selection"></a> A comparison that reads a `let`-bound selection holding a
+    refusal's marker is raised at the bare read of the binding, before any pair is compared, on that one refusal's
+    sentence alone, unnumbered. A second refusal the comparison would have met among its values does not reach the
+    raised text: `when some %names NOT IN %x` with `%names` a key filter's selection over map-shaped tags (the filter's
+    one marker, bound by `let`) and `%x` the keys a filter captured beside an own-key refusal's marker meets two
+    refusals, and the raise names the key filter's alone; the own-key refusal is registered by the walk that delivered
+    its marker and stands in that walk's records, in no error of this clause. Two refusals inside one binding (`when
+    Resources.B.Type IN %names` with two map-tagged functions, one marker each, and nothing resolved in `%names`) are
+    raised on the first note's text, and that one text is registered; the second refusal is unreported there. The
+    numbered raise that names both refusals in registration order (`(1) ... (2) ...`) is reached where two refusals
+    stand among one comparison's values, which a `let`-bound selection delivers inside a filter predicate (the same
+    two-refusal `%names` under `[ Properties.Tags[*] IN %names ] empty` compares nothing and is raised on both, with
+    both sentences registered) and never at a bare read outside one. Pinned as it reads by
+    eval_tests.rs:a_raise_beside_two_refusals_names_both_in_registration_order.
+
+19. <a name="not-in-with-a-marker-on-the-left"></a> A refusal to compare kinds beside a refusal's marker is a decided no
+    of its own kind under `!=`: `when Vals.Port != %x` with `Port: 22` and `%x` holding string keys beside the marker
+    refuses `22` against each key on kinds, the gate declines on that decided no, each refused pair's record carries the
+    kinds sentence as a refusal, and the refused-read line reads "was decided by a value of another kind". Under `NOT
+    IN` beside a marker on the RIGHT, a refusal of kinds is unknown by design: membership refuses a value only when no
+    entry can be compared with it, and the entry the marker hides may be the comparable one, so `22 NOT IN {'ssh', ?}`
+    is unknown where `22 NOT IN {'ssh'}` is decided. Under `NOT IN` with the marker on the LEFT, the kind arm does not
+    decide the shape at all: `%names NOT IN Haystack` with `%names` a key filter's selection over a bucket's list-shaped
+    tags (the tag map `{ Key: Env, Value: allowed }`) and a function's map-shaped tags (the filter's refusal marker),
+    against a string the document holds, is raised on the marker alone (as a `when` condition the rule fails closed;
+    asserted, the clause fails on the marker's pair), one refusal registered, no refused-read line in the kind wording
+    and none in either resolved wording (the two readings the rows take), and no kinds sentence recorded for the map
+    against the string. Whether the left-marker negated membership should be
+    decided by the kind refusal is open; the shape is pinned as it reads by the two `NOT IN` rows of
+    eval_tests.rs:a_refusal_to_compare_kinds_beside_a_marker_is_worded_as_its_own_refusal, which go red when the
+    reading changes.

@@ -268,7 +268,9 @@ pub(crate) struct ComparisonClauseCheck {
     pub(crate) status: Status,
     /// Whether `message` embeds a REFUSAL's reason: the record of a left-hand value the document lacks
     /// decided beside a refused `%name` among the right-hand values carries the retrieval's own reason
-    /// and the refusal's text beside it, and the record of a left-hand value paired with the refusal's
+    /// and the refusal's text beside it, the record of a refused `%name` on the left decided by a
+    /// right-hand side the document lacks carries that absence's reason and the refusal's text after it,
+    /// and the record of a left-hand value paired with the refusal's
     /// marker under a positive `IN` carries the refusal's text as its reason. Set where the record is
     /// written, from the marker's kind (`eval::refused_read_reason`), as [`ValueCheck::refusal`] is set
     /// from the error's; the reporters' `Messages::refusal` is copied from here, so the console prints
