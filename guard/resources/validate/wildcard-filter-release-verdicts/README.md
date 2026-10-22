@@ -5,10 +5,11 @@ filter straight after `[*]` or `.*` in [docs/CLAUSES.md](../../../../docs/CLAUSE
 callouts on a filter after `[*]` over one object and over a map of members, and the paragraph on a filter
 through a variable), [docs/KNOWN_ISSUES.md](../../../../docs/KNOWN_ISSUES.md) item 11 and the README's
 3.2 bullets. Each cell below is one rules file run over one document with `cfn-guard validate`. The
-`3.1.12`, `3.2.0` and `3.2.1` columns were read on binaries built from those releases' commits, the
-commits that bump the crate version to each release (`cargo build --release -p cfn-guard` at that
-commit, rustc 1.77); the upstream tags `3.1.12` and `3.1.2` both point at the commit whose manifest
-reads `3.1.2`, and `3.2.0` and `3.2.1` are upstream tags; the `now` column is the current engine,
+`3.1.12`, `3.2.0` and `3.2.1` columns were read on binaries built from the commits the upstream
+repository's tags of those names point at (`cargo build --release -p cfn-guard` at that commit, rustc
+1.77): the `3.2.0` and `3.2.1` tags name the commits that bump the crate version to each release, and the
+`3.1.12` tag names a commit whose manifest reads `3.1.2` and whose binary prints `cfn-guard 3.1.2` (the
+`3.1.2` tag names the same commit), so the `3.1.12` column is that binary; the `now` column is the current engine,
 asserted by the validate test `the_wildcard_filter_fixtures_draw_the_pinned_current_verdicts` in
 `guard/tests/validate.rs`, so a move away from it is deliberate. The release columns are recorded, not
 asserted. Exit codes: `PASS` and `SKIP` (the rule not applicable) exit 0, `FAIL` exits 19; "panic 101" is
@@ -22,9 +23,8 @@ struct or array int /spec/replicas`), reported as the rule's `FAIL` at exit 19. 
 same under the plain invocation, `--verbose` and `--show-summary all`. The table's last three rows are also
 the probe set behind the sentence on a refused read beside a value that does not match (the
 behavior-change entry on a marker among a comparison's right-hand values in docs/CLAUSES.md, and the
-README's bullet on it). The `3.1.12` column is the binary built at the commit the `3.1.12` tag names,
-whose manifest reads `3.1.2`, so that binary prints `cfn-guard 3.1.2` (docs/KNOWN_ISSUES.md records the
-same); no release column was re-measured for this table since it was written.
+README's bullet on it). docs/KNOWN_ISSUES.md records the same `3.1.12` reading; no release column was
+re-measured for this table since it was written.
 
 ## What the released trees show
 
