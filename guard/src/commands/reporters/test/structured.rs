@@ -245,6 +245,7 @@ impl TestCase {
                     messages: vec![Messages {
                         location: None,
                         refusal: false,
+                        parts: None,
                         custom_message: None,
                         error_message: Some(format!(
                             "Expected = {}, Evaluated = [{}]",

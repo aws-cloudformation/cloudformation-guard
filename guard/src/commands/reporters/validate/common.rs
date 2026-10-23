@@ -175,15 +175,16 @@ impl<'record, 'value: 'record> Rendered<'record, 'value> {
 /// a top-level property against a CloudFormation template exiting 19 saying nothing at all. That is the
 /// everyday shape of the very defect this section exists for, in block syntax.
 ///
-/// What it recovers is the evaluator's account and not the author's message. A block report's
-/// `custom_message` is always absent: three of the four constructors set it to
-/// `None` outright, and the fourth, `MissingBlockValue`, copies a field whose one producer at `eval.rs`
-/// sets `None` as well -- which is why the JSON for `block_query_at_the_document_root.guard` shows the empty
-/// string there rather than a message. `non_empty_message` drops it, so the arm below reads a half that is
-/// never there. Left in place rather than deleted: the block arm's shape is the clause arm's, and carrying
-/// an author's message through to it is a change to what the section prints for every block finding, so it
-/// wants its own commit and its own verification. A `<< >>` written on a clause inside the block is a
-/// different message again, recorded on that clause, and a block whose query fails never runs it.
+/// What it recovers is the evaluator's account, and the author's message where the record carries one. A
+/// block report's `custom_message` is the author's `<< >>` text on the CLAUSE whose record took the block
+/// shape (`BlockCheck::custom_message`: a `not` over a reference that failed closed, an access clause
+/// decided over an empty selection or whose query or comparison raised, a call whose argument could not be
+/// evaluated), and absent for a block, a `when`, a type block or a disjunction, which the grammar gives no
+/// message (`MissingBlockValue` copies a field whose one producer at `eval.rs` sets `None` as well, which is
+/// why the JSON for `block_query_at_the_document_root.guard` shows the empty string there). `non_empty_message`
+/// drops the absent half, so the arm below prints the author's half exactly where a clause wrote one. A
+/// `<< >>` written on a clause inside a block is a different message again, recorded on that clause, and a
+/// block whose query fails never runs it.
 ///
 /// Here rather than in one reporter because every reporter that groups findings by resource needs it, and
 /// for the same reason: a finding that belongs to no resource has no bucket to be rendered in, so a reporter
@@ -363,8 +364,10 @@ fn shortened(message: &str) -> String {
 /// kept whole and the marker a longer one carries), so no template decides its length and it is printed
 /// whole. This bound is only a backstop that keeps the line finite whatever a future refusal's sentence
 /// holds, and it is this reporter's own: every console line that prints a refusal's sentence goes
-/// through `bounded_for_the_console`, the unattributed section's explanation (`explanation_of`) and a
-/// retrieval error's `Error =` line under a resource (`refusal_sentence`) alike, so no line's length
+/// through `bounded_for_the_console`, the unattributed section's explanation (`explanation_of`), a
+/// retrieval error's two lines under a resource (`refusal_lines`), the `Error =` line of a block, a
+/// unary check and a decided comparison under a resource (`error_line_text`) and the two lines of a
+/// rule's own record under a rendered parent (`rule_line_texts`) alike, so no line's length
 /// rests on the evaluator having bounded the text. The one exception is the verbose tree
 /// (`console_reporter.rs`, the `ClauseCheck::Comparison` arm), which writes each record's message as
 /// recorded, bounded by nothing: it is the tree a reader asks for to see the records whole, and it is
@@ -390,6 +393,12 @@ const LONGEST_REFUSAL_MESSAGE: usize = 4096;
 const REFUSAL_CUT_MARKER: &str =
     "[explanation cut at 4096 characters; `-o json` carries the whole text]";
 
+/// What a `Reason =` line that is NO refusal's ends with when cut at the same backstop
+/// (`reason_backstop`): a retrieval's reason is no explanation of a refused read, so the marker names
+/// it as the reason it is. The refusal's marker on a plain reason called a retrieval error an
+/// explanation it never was.
+const REASON_CUT_MARKER: &str = "[reason cut at 4096 characters; `-o json` carries the whole text]";
+
 /// A recorded message, cut to the length its kind allows: a refusal explanation to
 /// `LONGEST_REFUSAL_MESSAGE`, anything else to `LONGEST_RECORDED_MESSAGE`.
 ///
@@ -403,18 +412,86 @@ const REFUSAL_CUT_MARKER: &str =
 /// thing read: a text that happens to carry a refusal's wrapper is cut like any other when the record
 /// does not say it is one, and a refusal is printed whole whatever words it uses (the tests under
 /// `explanation_tests` hold both). `LONGEST_REFUSAL_MESSAGE` says why the text was not enough.
+///
+/// A refusal's text takes the console's ONE pipeline for a refusal line (`reason_backstop`: collapsed
+/// onto one line, its remaining raw controls written as their escapes, cut on the printed width last,
+/// with the refusal's marker), so the `Error =` line of a block, a unary check and a decided comparison
+/// (`error_line_text`), the unattributed section's entries (`explanation_of`, the rule-level record) and
+/// the retrieval-error arm's lines (`refusal_lines`) are one pipeline. Cut here with no escape, those
+/// arms printed a raw ESC or a bidi override the evaluator had not bounded while the retrieval arm
+/// escaped it.
 fn bounded_for_the_console(message: &str, refusal: bool) -> String {
     if refusal {
-        let cut = cut_to(message, LONGEST_REFUSAL_MESSAGE);
-        // A refusal cut at its backstop says so: the ellipsis alone does not tell a reader the explanation
-        // was shortened by the reporter and that `-o json` carries the whole text.
-        if one_line(message).chars().count() > LONGEST_REFUSAL_MESSAGE {
-            format!("{cut} {REFUSAL_CUT_MARKER}")
-        } else {
-            cut
-        }
+        reason_backstop(message, REFUSAL_CUT_MARKER)
     } else {
         shortened(message)
+    }
+}
+
+/// `text` on one line and cut at the console's one backstop for a refusal's text or a reason,
+/// `LONGEST_REFUSAL_MESSAGE`, with `marker` after the ellipsis where something was cut
+/// (`REFUSAL_CUT_MARKER` for a refusal's explanation, `REASON_CUT_MARKER` for a reason that is no
+/// refusal's): the ellipsis alone does not tell a reader the text was shortened by the reporter and
+/// that `-o json` carries the whole text. The one cut `reason_backstop` takes, which every refusal
+/// line and every reason line reaches (`bounded_for_the_console`'s refusal branch goes through it),
+/// so the bound and the marker's place are spelled once; the caller names the marker, so the call says
+/// which kind of text it bounds. A cut that lands inside a `\u{..}` escape the text carries (the escapes
+/// `reason_backstop` writes for a raw control come before the cut, so the cut counts their characters)
+/// is moved back to the escape's start (`before_a_split_escape`): the fragment was no part of the
+/// author's text, and a line ending `\u{1... [explanation cut` read as a cut escape where nothing was
+/// cut but the reporter's own spelling.
+fn backstop(text: &str, marker: &str) -> String {
+    let cut = cut_to(text, LONGEST_REFUSAL_MESSAGE);
+    if one_line(text).chars().count() > LONGEST_REFUSAL_MESSAGE {
+        format!("{} {marker}", before_a_split_escape(&cut))
+    } else {
+        cut
+    }
+}
+
+/// `cut`, a `cut_to` result that ends in the ellipsis, with the cut moved back to the start of an
+/// escape it fell inside: when the tail of the kept text from its LAST backslash is a proper prefix of
+/// an escape `escaped_controls_for_display` writes (`\` alone, the first character of any escape; `\u`,
+/// `\u{`, `\u{` and up to six hex digits with no closing brace), the cut split an escape, so the kept
+/// text ends before that backslash (trailing whitespace trimmed, as `cut_to` trims) and the ellipsis
+/// follows. The tail is bounded by the longest escape without its brace, `\u{10ffff`, so the move back
+/// is at most nine characters: a literal backslash the author wrote anywhere earlier (a path, a key
+/// `a\users`) is no split escape, whatever follows it, and the text keeps every character up to the cut.
+/// A kept text whose last backslash opens a whole escape, or has none, is returned as it is; so is a
+/// text not cut at all (no ellipsis to strip). The one false positive left is a literal backslash, or a
+/// literal `\u` with a brace and hex digits after it, within those nine characters of the cut: a few
+/// characters fewer on a line already cut. Read from the last backslash, not the last `\u`: a cut that
+/// left the backslash of `\t` or of `\u{1b}` alone found the earlier, whole escape and kept the lone
+/// backslash; and read over the whole kept text, a literal `\u` thousands of characters back with no
+/// `}` after it cut the line back to there, remedy included, under a marker that claimed the bound.
+fn before_a_split_escape(cut: &str) -> String {
+    const LONGEST_SPLIT_ESCAPE: usize = "\\u{10ffff".len();
+    let Some(kept) = cut.strip_suffix("...") else {
+        return cut.to_string();
+    };
+    let Some(at) = kept.rfind('\\') else {
+        return cut.to_string();
+    };
+    let tail = &kept[at..];
+    if tail.len() > LONGEST_SPLIT_ESCAPE || !is_a_split_escape(tail) {
+        return cut.to_string();
+    }
+    format!("{}...", kept[..at].trim_end())
+}
+
+/// Whether `tail`, a text opening with a backslash, is a proper prefix of an escape and not a whole one:
+/// `\`, `\u`, `\u{`, or `\u{` followed by hex digits only (a whole `\u{..}` carries its brace; `\t`, `\r`
+/// and `\n` are whole at two characters, so their only split is the lone backslash).
+fn is_a_split_escape(tail: &str) -> bool {
+    let Some(rest) = tail.strip_prefix('\\') else {
+        return false;
+    };
+    match rest.strip_prefix('u') {
+        None => rest.is_empty(),
+        Some(after_u) => match after_u.strip_prefix('{') {
+            None => after_u.is_empty(),
+            Some(hex) => hex.chars().all(|c| c.is_ascii_hexdigit()),
+        },
     }
 }
 
@@ -446,8 +523,9 @@ fn cut_to(message: &str, limit: usize) -> String {
 /// `error_message`, so the author's message could never win and never appeared here at all, though the
 /// per-resource output prints both.
 ///
-/// The author's half arrives from a clause and never from a block, which records no `custom_message` on any
-/// of its four constructors. `collect_unattributed_explanations` says where that is decided.
+/// The author's half arrives from a clause: from its own value checks, and from the block-shaped records a
+/// clause that carries a `<< >>` message writes (`BlockCheck::custom_message`); a block, a `when`, a type
+/// block and a disjunction carry none. `collect_unattributed_explanations` says where that is decided.
 ///
 /// Bounded per message rather than over the join. The author's half is at most `LONGEST_RECORDED_MESSAGE`
 /// characters plus the ellipsis; the evaluator's half is the same unless the record says it is a refusal
@@ -847,11 +925,15 @@ pub(super) fn extract_name_info_from_record<'record>(
 
         // The block-level counterpart of the arms below: no path and no value, because the comparison
         // never ran against one. The explanation is all there is, and printing it beats printing
-        // nothing.
+        // nothing; the author's `<< >>` message rides with it where the record carries one (a `not`
+        // over a reference that failed closed), as it does on a dependent rule's record below.
         Some(RecordType::GuardClauseBlockCheck(BlockCheck {
-            message: Some(msg), ..
+            message: Some(msg),
+            custom_message,
+            ..
         })) => NameInfo {
             error: Some(msg.clone()),
+            message: custom_message.clone().unwrap_or_default(),
             rule: rule_name,
             ..Default::default()
         },
@@ -1609,60 +1691,234 @@ fn emit_messages(
     Ok(())
 }
 
-/// The sentence a retrieval error's finding prints on its `Error =` line: the record's own sentence when
-/// the record is a refusal's (`Messages::refusal`), on one line and bounded by this reporter
-/// (`bounded_for_the_console`: `LONGEST_REFUSAL_MESSAGE` and `REFUSAL_CUT_MARKER`), and nothing
-/// otherwise. A missing property's sentence restates the block's `MissingProperty` and `Reason` lines and
-/// is not printed, as released, while a refused read beside the absence is in the sentence alone, and a
-/// finding that dropped it left the refusal to stderr and the structured output.
+/// The two lines a retrieval error's finding prints for a REFUSAL record, decided from the record: the
+/// text of its `Error =` line, and the text of its `Reason =` line when one is written. Every text is
+/// one line and bounded by this reporter (`bounded_for_the_console`: `LONGEST_REFUSAL_MESSAGE` and
+/// `REFUSAL_CUT_MARKER`), whatever the evaluator wrote; a record that is no refusal's takes neither
+/// (`refusal_lines` is asked for refusal records alone; the plain finding prints its `Reason =` line
+/// through the same pipeline, on one line with its controls escaped and cut only at the 4096-character
+/// backstop, with its own marker, `reason_backstop`).
 ///
-/// Bounded here and not only by the evaluator. The evaluator cuts each template part of a refusal on its
-/// own, so a refusal's sentence is short in practice, but this line's length is this reporter's to hold:
-/// written raw, a sentence over the bound printed whole, and a sentence holding a line break printed its
-/// second line at whatever indentation the break left, inside the `Check = { }` block, where the
-/// unattributed section collapses and cuts the same sentence. `emit_messages` collapses nothing on its
-/// error half (`one_line` is the reporter's), so the collapse is done here, before the line is written.
+/// The record carries its sentence's parts as fields (`Messages::parts`: the report builder's `head`
+/// and the evaluator's `message`, which the recorded sentence wraps in `Error = [ ... ]` after the
+/// head), so this reporter joins fields and never parses the recorded sentence, in which a template
+/// value quoted in the head can hold `Error = [` as well. The unresolved value's `reason` stands in the
+/// message in one of the places the evaluator writes it, each read as a relation between the two
+/// fields:
 ///
-/// Opened, too (`opened_sentence`): the sentence as recorded carries the record's message in a bracketed
-/// `Error = [...]` tail, and this line is itself the finding's `Error =` line, so written as recorded it
-/// named its field twice, the second time inside the first.
-fn refusal_sentence(messages: &Messages) -> String {
-    match messages.refusal {
-        true => bounded_for_the_console(
-            &opened_sentence(messages.error_message.as_deref().unwrap_or("")),
-            true,
+/// - The message IS the reason (a refusal's marker on either side: a right-hand value the evaluator
+///   refused to read, a left-hand value that is a refusal's marker; a unary check refused over a value):
+///   the head is printed on `Error =` and the refusal on `Reason =`, each bounded on its own, so the
+///   refusal is printed exactly once however long it is. Printed whole on one `Error =` line, a refusal
+///   longer than the bound was cut inside its own text, and a `Reason =` test on the cut line could not
+///   find it and printed a second cut copy.
+/// - The message ENDS with the reason after `: ` (a left-hand marker beside a right-hand value the
+///   document lacks: the absence's lead, then the marker's reason): the head and the lead are printed on
+///   `Error =` and the refusal on `Reason =`, each bounded.
+/// - Otherwise the message LEADS with the reason: an absent value beside a refused read, whose message
+///   the evaluator writes as the retrieval's own reason, the template value it quotes bounded and
+///   escaped (`eval_context::marker_part` and `template_path`), then the refusal. That lead is the
+///   evaluator's to write, and
+///   this reporter does not rebuild it to compare: the three shapes above are every message a refusal
+///   record's unresolved value carries (its own refusal, the absence's lead ending in its refusal, the
+///   lead of its own reason), so a message that is neither of the first two is the third. The head and
+///   the message are printed joined on `Error =` when they fit the bound whole, with no `Reason =` line,
+///   since the reason is the first thing the message says; when they do not fit, the head goes on
+///   `Error =` and the message, the reason leading, bounded on `Reason =`, so the refusal in it is
+///   printed once and never cut away. Rebuilt and compared, a lead over the template-part bound, a lead
+///   quoting a long value, or a key holding a backslash missed the rebuilt text and fell to a fallback
+///   that printed the recorded sentence, its nested `Error = [` inside, and the reason again.
+/// - No parts (a record whose sentence carries no message, a producer that set none, a report read
+///   back): the sentence as recorded, bounded, on `Error =`, and the reason bounded on `Reason =`.
+///
+/// The head and the message joined by one space rather than the sentence as recorded: this line is
+/// itself the finding's `Error =` line, so the tail's own `Error = [` written inside it named the field
+/// twice. The structured outputs keep the sentence as recorded.
+fn refusal_lines(messages: &Messages, reason: &str) -> (String, Option<String>) {
+    // Every `Error =` text this function prints takes the one pipeline a `Reason =` line takes
+    // (`reason_backstop`: collapsed onto one line, then escaped, then cut on the PRINTED width with the
+    // refusal's marker): the evaluator writes the record's sentence with its template parts escaped, and
+    // this is the console's own defense for a sentence that reaches it with a raw control, so no branch
+    // below prints one. Escaped before the collapse, a raw line break became a literal `\n` where the
+    // pipeline joins the parts with `; `.
+    let bounded = |text: &str| reason_backstop(text, REFUSAL_CUT_MARKER);
+    let displayed_whole =
+        |text: &str| crate::utils::writer::escaped_controls_for_display(&one_line(text));
+    // The reason is stored as its builder wrote it (raw controls included) and printed through the
+    // console's one pipeline (`reason_backstop`): on one line, the controls escaped, cut on the printed
+    // width last. Every reason this function prints is a refusal's (the record is flagged one), so the
+    // cut, where it falls, carries the refusal's marker.
+    let reason_line = || match reason.is_empty() {
+        true => None,
+        false => Some(reason_backstop(reason, REFUSAL_CUT_MARKER)),
+    };
+    let Some(parts) = &messages.parts else {
+        let sentence = messages.error_message.as_deref().unwrap_or("");
+        return (bounded(sentence), reason_line());
+    };
+    let (head, message) = (parts.head.as_str(), parts.message.as_str());
+    let joined = format!("{head} {message}");
+    if reason.is_empty() {
+        return (bounded(&joined), None);
+    }
+    // The message is the reason.
+    if message == reason {
+        return (bounded(head), reason_line());
+    }
+    // The message ends with the reason: the lead before it stays with the head. The record writes the
+    // marker's reason ESCAPED (`eval::absence_beside_a_marker`: controls as their Rust escapes, never
+    // cut) while the record's unresolved value stores it as its builder wrote it, byte for byte (the
+    // registry matches a stored reason by exact text, so escaping is display, not storage), so the
+    // suffix to strip is the escaped form; the escape is idempotent, so a reason an older record stored
+    // escaped matches too. The `Reason =` line prints that same escaped form, one text with the record.
+    let displayed = crate::utils::writer::escaped_controls_for_display(reason);
+    if let Some(lead) = message.strip_suffix(&format!(": {displayed}")) {
+        return (
+            bounded(&format!("{head} {lead}:")),
+            Some(reason_backstop(reason, REFUSAL_CUT_MARKER)),
+        );
+    }
+    // The message leads with the reason, as the evaluator writes a lead: joined on `Error =` where the
+    // collapsed and ESCAPED line fits the bound (its printed width, as every line here is held to), else
+    // the head on `Error =` and the message on `Reason =` through the same pipeline as every other
+    // reason. Written `one_line(&joined)` and `bounded(message)` here, both branches printed a lead's
+    // controls raw and the under-the-bound branch read the raw width.
+    let opened = displayed_whole(&joined);
+    match opened.chars().count() <= LONGEST_REFUSAL_MESSAGE {
+        true => (opened, None),
+        false => (
+            bounded(head),
+            Some(reason_backstop(message, REFUSAL_CUT_MARKER)),
         ),
-        false => String::new(),
     }
 }
 
-/// The message a comparison record's sentence carries in its tail: the report builder appends the
-/// record's message to the sentence as ` Error = [<message>]` (the unresolved arms of
-/// `report_all_failed_clauses_for_rules`), so the text between that marker and the closing bracket is the
-/// message as the evaluator wrote it, a refusal's text whole. `None` for a sentence with no such tail, a
-/// message-less record's among them. The first ` Error = [` is the tail's: the sentence before it is the
-/// builder's own wording, which never holds one, while the message may.
-fn recorded_message(sentence: &str) -> Option<&str> {
-    let (_, tail) = sentence.split_once(" Error = [")?;
-    tail.strip_suffix(']')
+/// A record's stored reason as the console's `Reason =` line prints it, through the one pipeline every
+/// console line of a reason takes, whatever the record's kind, in this order: collapsed onto one line
+/// (`one_line`: the parts trimmed and joined by `; `, as the unattributed section collapses a sentence,
+/// so a line break the author put inside a reason cannot put a line at an indentation of its own inside
+/// the `Check = { }` block), then every remaining raw control written as its escape
+/// (`escaped_controls_for_display`, idempotent: an ESC or a bidi override; a line break is already
+/// `; `), and LAST the cut on the PRINTED width at the console's one backstop for a reason,
+/// `LONGEST_REFUSAL_MESSAGE`, with `marker` after it, named by the caller for the reason's KIND as the
+/// record says it (`Messages::refusal`, the one thing read, as `bounded_for_the_console` reads it): a
+/// refusal's cut names the explanation (`REFUSAL_CUT_MARKER`) and a plain reason's names the reason
+/// (`REASON_CUT_MARKER`). A reason that is no refusal's is held to the same backstop and never to the
+/// 320-character cut of a recorded message, so a retrieval reason keeps its trailing position, and no
+/// console line depends on the evaluator having bounded the text. The order matters twice: escaped
+/// before `one_line`, a raw line break became the two characters `\n` and nothing was left to join, so
+/// the line read the literal escape where the reporter's own cells pin the join; and cut before the
+/// escape, each raw control grew into a six-character escape after the cut, so a line of three ESCs near
+/// the bound printed past it. The store holds the builder's bytes; every escape is display. The cut is
+/// the one every bounded refusal text takes (`backstop`), so the kind reaches the marker: through
+/// `bounded_for_the_console(_, true)` a plain reason over the bound was marked as an explanation.
+fn reason_backstop(reason: &str, marker: &str) -> String {
+    backstop(
+        &crate::utils::writer::escaped_controls_for_display(&one_line(reason)),
+        marker,
+    )
 }
 
-/// The record's sentence with its bracketed message opened for the finding's `Error =` line: the sentence
-/// and the message joined by one space, the ` Error = [` and the closing `]` gone. The structured outputs
-/// keep the sentence as recorded. A sentence with no tail is returned as it is.
-fn opened_sentence(sentence: &str) -> String {
-    match (
-        sentence.split_once(" Error = ["),
-        recorded_message(sentence),
-    ) {
-        (Some((head, _)), Some(message)) => format!("{head} {message}"),
-        _ => sentence.to_string(),
+/// The text a per-resource arm prints on its `Error =` line for `messages`: the recorded sentence as
+/// released for a record that is no refusal's (`emit_messages` writes it as it is), and for a refusal's
+/// the console's one refusal pipeline (`bounded_for_the_console`, through `reason_backstop`: one line,
+/// the remaining raw controls escaped, cut on the printed width last), so no console line that prints a
+/// refusal's sentence rests on the evaluator having bounded or escaped the text. For the arms that print
+/// a resolved comparison, a block and a unary check; the retrieval-error arm decides its lines from the
+/// record (`refusal_lines`), through the same pipeline.
+fn error_line_text(messages: &Messages) -> String {
+    let error = messages.error_message.as_deref().unwrap_or("");
+    match messages.refusal {
+        true => bounded_for_the_console(error, true),
+        false => error.to_string(),
     }
 }
 
-/// `messages` is the record's: its custom message is printed as released, and its own sentence is printed
-/// on an `Error =` line before the property block, as a decided comparison's finding prints its sentence
-/// (`BinaryCheck::Resolved` below), for a refusal's record alone (`refusal_sentence`).
+/// The two texts the `Rule = { }` arm of the per-resource output prints for a rule's own record
+/// (`pprint_clauses`, the `ClauseReport::Rule` arm, through `emit_rule_messages`): its `Message` line's
+/// text, then its `Error` line's. A rule-level record carries the evaluator's sentence in the CUSTOM
+/// slot (a condition that raised a refusal across a rule boundary, `report_all_failed_clauses_for_rules`),
+/// so for a refusal's record BOTH slots take the console's one refusal pipeline (`bounded_for_the_console`,
+/// through `reason_backstop`: one line, the remaining raw controls escaped, cut on the printed width last,
+/// with the refusal's marker); for a record that is no refusal's the custom slot is collapsed onto one
+/// line, its raw controls escaped, and cut at the recorded-message bound (`LONGEST_RECORDED_MESSAGE`,
+/// `cut_to`'s ellipsis), the cut the unattributed section gives the same slot of the same record
+/// (`collect_unattributed_explanations`): the slot is the evaluator's sentence, which quotes a template
+/// value where a converter's error raised over one, and that bound exists for exactly such a value (a
+/// 2 KB string printed whole on one line before it); the error slot is printed as released, as
+/// `error_line_text` prints it. The arm is reached: it renders under a rendered parent with no
+/// resource-membership gate of its own and recurses into the rule's checks, so a nested rule's record
+/// whose condition raised a refusal, printed under an outer rule rendering per resource, reaches it;
+/// printed through `emit_messages` as released, that record was the one per-resource line that put the
+/// evaluator's sentence out with a raw ESC or a line break in it while the clause arms beside it escaped
+/// theirs, and the one line that printed a 2 KB template value whole where the unattributed section cut
+/// the same slot. The escape is this arm's own addition over the unattributed section's cut: a raw
+/// control in a line printed under a resource moves the cursor as it does anywhere.
+fn rule_line_texts(messages: &Messages) -> (String, String) {
+    let released = |slot: &Option<String>| slot.as_deref().unwrap_or("").to_string();
+    match messages.refusal {
+        true => (
+            bounded_for_the_console(&released(&messages.custom_message), true),
+            bounded_for_the_console(&released(&messages.error_message), true),
+        ),
+        false => (
+            cut_to(
+                &crate::utils::writer::escaped_controls_for_display(&one_line(&released(
+                    &messages.custom_message,
+                ))),
+                LONGEST_RECORDED_MESSAGE,
+            ),
+            released(&messages.error_message),
+        ),
+    }
+}
+
+/// The `Message` and `Error` lines of a rule's own record (`rule_line_texts`). A refusal's record has
+/// both texts on ONE line each already (collapsed, escaped and cut by the refusal pipeline), and they are
+/// written as one line each, `Message = ...` and `Error = ...`, never through `emit_messages`, which
+/// splits a message on every `;`: the collapse joins a line break as `; ` and the cut's marker holds a
+/// `;` too, so through it a cut refusal printed its marker across two lines and a collapsed sentence
+/// came apart at every join. A record that is no refusal's whose custom slot was CUT at the
+/// recorded-message bound is written as one `Message = ...` line too (the collapse's joins would come
+/// apart the same way); every other plain record is written as every other record's messages are
+/// (`emit_messages`), the author's `;` list included. Whether the slot was cut is read by comparing the
+/// line's text with the collapsed AND escaped slot (`rule_line_texts` escapes before it cuts): compared
+/// with the unescaped collapse, a short plain message holding a raw control (a tab, an ESC) read as cut
+/// and took the one-line form the doc reserves for a cut. The rule-level record's custom slot holds
+/// EITHER the evaluator's sentence OR an author's `<< >>` message copied onto a called rule by the
+/// evaluator, and the record does not say which, so an author's message over the bound on a rule
+/// reference is cut and collapsed here as the evaluator's sentence is, where the clause arms print an
+/// author's message whole; telling the two apart needs the record to carry the slot's kind, set where the
+/// evaluator copies the `<< >>` body, which is a change on the evaluator's side and not made here.
+fn emit_rule_messages(
+    writer: &mut dyn Write,
+    prefix: &str,
+    messages: &Messages,
+) -> crate::rules::Result<()> {
+    let (message, error) = rule_line_texts(messages);
+    if !messages.refusal {
+        let released = messages.custom_message.as_deref().unwrap_or("");
+        let cut =
+            message != crate::utils::writer::escaped_controls_for_display(&one_line(released));
+        if !cut {
+            return emit_messages(writer, prefix, &message, &error, 0);
+        }
+        writeln!(writer, "{prefix}Message = {message}")?;
+        return emit_messages(writer, prefix, "", &error, 0);
+    }
+    if !message.trim().is_empty() {
+        writeln!(writer, "{prefix}Message = {message}")?;
+    }
+    if !error.is_empty() {
+        writeln!(writer, "{prefix}Error = {error}")?;
+    }
+    Ok(())
+}
+
+/// `messages` is the record's: its custom message is printed as released, and for a refusal's record
+/// alone its sentence's head is printed on an `Error =` line before the property block, as a decided
+/// comparison's finding prints its sentence (`BinaryCheck::Resolved` below), with the refusal on the
+/// block's `Reason =` line or joined to the head, as the record decides (`refusal_lines`).
 fn emit_retrieval_error(
     writer: &mut dyn Write,
     prefix: &str,
@@ -1681,7 +1937,24 @@ fn emit_retrieval_error(
     let check_end = format!("{}}}", prefix);
     let prefix = format!("{}  ", prefix);
     let message = messages.custom_message.as_deref().unwrap_or("");
-    let sentence = refusal_sentence(messages);
+    // A refusal record's two lines, decided from the record (`refusal_lines`); a record that is no
+    // refusal's prints no sentence here, as released, and its `Reason =` line below is the reason through
+    // the console's one pipeline (`reason_backstop`: on one line, the remaining controls escaped, and cut
+    // only at the 4096-character backstop every Reason line shares, with the plain reason's own marker,
+    // never at the 320-character cut of a recorded message, so a retrieval reason keeps its trailing
+    // position), where it was printed as recorded and a raw line break in it printed a second console
+    // line.
+    let reason = vur.value.reason.as_ref().map_or("", String::as_str);
+    let (sentence, reason_line) = match messages.refusal {
+        true => refusal_lines(messages, reason),
+        false => (
+            String::new(),
+            match reason.is_empty() {
+                true => None,
+                false => Some(reason_backstop(reason, REASON_CUT_MARKER)),
+            },
+        ),
+    };
     emit_messages(writer, &prefix, message, &sentence, 0)?;
 
     // An unresolved result with nothing left of its query is a value that was found and that a
@@ -1695,12 +1968,13 @@ fn emit_retrieval_error(
     };
     writeln!(writer, "{prefix}{kind} {{", prefix = prefix)?;
     let rpe_end = format!("{}}}", prefix);
+    let inside_the_check = prefix.clone();
     let prefix = format!("{}  ", prefix);
     writeln!(
         writer,
         "{prefix}PropertyPath = {path}",
         prefix = prefix,
-        path = vur.value.traversed_to.self_path()
+        path = crate::rules::eval_context::template_path(vur.value.traversed_to.self_path())
     )?;
 
     if !value_found {
@@ -1712,29 +1986,11 @@ fn emit_retrieval_error(
         )?;
     }
 
-    // A refusal's record carries its unresolved value's reason inside the sentence the `Error =` line
-    // above prints: a refusal's marker on either side (a right-hand value the evaluator refused to read,
-    // kept as the pair's record beside a value no listed entry accepted under `IN`; a left-hand value
-    // that is a refusal's marker) has the refusal as its reason and the refusal as its message, and an
-    // absent value beside a refused read has the retrieval's own reason as its reason and leads its
-    // message with that reason before the refusal. So the `Reason =` line is not written where the
-    // printed line already carries the reason: written, the finding printed the reason twice, once per
-    // line, the refusal's marker its refusal twice up to the refusal bound each time.
-    //
-    // Read on the line as PRINTED, not on the sentence as recorded: the `Error =` line is the sentence
-    // bounded (`refusal_sentence`), and a sentence whose lead is long enough, a template value before
-    // the message, is cut at `LONGEST_REFUSAL_MESSAGE` before the reason, so the printed line does not
-    // carry the reason although the recorded sentence does. The `Reason =` line is then the reason's
-    // one appearance in the finding and is written, bounded the same way; left out on the recorded
-    // sentence alone, the finding printed a refusal zero times. A record that is no refusal's prints no
-    // sentence here at all, so its reason has only this line, written as released.
-    let reason = vur.value.reason.as_ref().map_or("", String::as_str);
-    let reason_is_printed_above = messages.refusal && sentence.contains(&one_line(reason));
-    if !reason.is_empty() && !reason_is_printed_above {
-        let reason = match messages.refusal {
-            true => bounded_for_the_console(reason, true),
-            false => reason.to_string(),
-        };
+    // The `Reason =` line as the record decided it above: for a refusal record, the refusal bounded on
+    // one line where the `Error =` line printed the head alone, and no line where the `Error =` line
+    // already leads with the reason (`refusal_lines`); for every other record, the reason through the same
+    // pipeline (`reason_backstop`, with the plain reason's own marker). Both arrive here finished.
+    if let Some(reason) = reason_line {
         writeln!(
             writer,
             "{prefix}Reason = {reason}",
@@ -1744,6 +2000,30 @@ fn emit_retrieval_error(
     }
     err_emitter.missing_property_msg(writer, clause, Some(&vur.value), &prefix)?;
     writeln!(writer, "{}", rpe_end)?;
+    // The operand the record was compared WITH, where the record carries one (`ValueUnResolved::to`: the
+    // absent right-hand value a left-hand marker was decided by, and nothing for any other record): its
+    // path and the key the document lacks, in a block of their own, so the finding names both operands
+    // where the block above is the marker's alone and the right side was named only in the prose of the
+    // `Error =` line's lead. Its reason is that lead and is not printed a second time. The path is
+    // written as the `Error =` lead writes it (`template_path`: bounded on its printed width, its
+    // controls escaped), never raw: a key holding a bidi override or a line feed would otherwise reach
+    // the console here as written.
+    if let Some(to) = &vur.to {
+        writeln!(writer, "{inside_the_check}ComparedWith {{")?;
+        writeln!(
+            writer,
+            "{inside_the_check}  PropertyPath = {path}",
+            path = crate::rules::eval_context::template_path(to.traversed_to.self_path())
+        )?;
+        if !to.remaining_query.is_empty() {
+            writeln!(
+                writer,
+                "{inside_the_check}  MissingProperty = {prop}",
+                prop = to.remaining_query
+            )?;
+        }
+        writeln!(writer, "{inside_the_check}}}")?;
+    }
     writeln!(writer, "{}", check_end)?;
     Ok(())
 }
@@ -1807,17 +2087,7 @@ pub(super) fn pprint_clauses<'report, 'value: 'report>(
             )?;
             let rule_end = format!("{}}}", prefix);
             let prefix = format!("{}  ", prefix);
-            let message = rr
-                .messages
-                .custom_message
-                .as_ref()
-                .map_or("", String::as_str);
-            let error = rr
-                .messages
-                .error_message
-                .as_ref()
-                .map_or("", String::as_str);
-            emit_messages(writer, &prefix, message, error, 0)?;
+            emit_rule_messages(writer, &prefix, &rr.messages)?;
             writeln!(writer, "{prefix}ALL {{", prefix = prefix)?;
             let all_end = format!("{}}}", prefix);
             let prefix = format!("{}  ", prefix);
@@ -1887,12 +2157,8 @@ pub(super) fn pprint_clauses<'report, 'value: 'report>(
                 .custom_message
                 .as_ref()
                 .map_or("", String::as_str);
-            let error = blk
-                .messages
-                .error_message
-                .as_ref()
-                .map_or("", String::as_str);
-            emit_messages(writer, &prefix, message, error, width)?;
+            let error = error_line_text(&blk.messages);
+            emit_messages(writer, &prefix, message, &error, width)?;
             writeln!(
                 writer,
                 "{}",
@@ -1943,12 +2209,8 @@ pub(super) fn pprint_clauses<'report, 'value: 'report>(
                             .custom_message
                             .as_ref()
                             .map_or("", String::as_str);
-                        let error = ur
-                            .messages
-                            .error_message
-                            .as_ref()
-                            .map_or("", String::as_str);
-                        emit_messages(writer, &prefix, message, error, width)?;
+                        let error = error_line_text(&ur.messages);
+                        emit_messages(writer, &prefix, message, &error, width)?;
                         writeln!(
                             writer,
                             "{}",
@@ -1997,12 +2259,8 @@ pub(super) fn pprint_clauses<'report, 'value: 'report>(
                             .custom_message
                             .as_ref()
                             .map_or("", String::as_str);
-                        let error = br
-                            .messages
-                            .error_message
-                            .as_ref()
-                            .map_or("", String::as_str);
-                        emit_messages(writer, &prefix, message, error, width)?;
+                        let error = error_line_text(&br.messages);
+                        emit_messages(writer, &prefix, message, &error, width)?;
                         writeln!(
                             writer,
                             "{}",
@@ -2040,12 +2298,8 @@ pub(super) fn pprint_clauses<'report, 'value: 'report>(
                             .custom_message
                             .as_ref()
                             .map_or("", String::as_str);
-                        let error = br
-                            .messages
-                            .error_message
-                            .as_ref()
-                            .map_or("", String::as_str);
-                        emit_messages(writer, &prefix, message, error, width)?;
+                        let error = error_line_text(&br.messages);
+                        emit_messages(writer, &prefix, message, &error, width)?;
                         writeln!(writer, "{}", ce_end)?;
                         writeln!(
                             writer,
@@ -2174,14 +2428,63 @@ mod retrieval_error_tests {
         emit_retrieval_error, one_line, ComparisonErrorWriter, LONGEST_REFUSAL_MESSAGE,
         REFUSAL_CUT_MARKER,
     };
+    use crate::rules::eval::left_marker_beside_an_absence;
     use crate::rules::eval_context::{
-        BinaryCheck, BinaryReport, ClauseReport, GuardClauseReport, Messages, ValueUnResolved,
+        marker_part, report_all_failed_clauses_for_rules, BinaryCheck, BinaryReport, ClauseReport,
+        EventRecord, GuardClauseReport, Messages, SentenceParts, ValueUnResolved,
     };
     use crate::rules::path_value::PathAwareValue;
     use crate::rules::values::CmpOperator;
-    use crate::rules::{UnResolved, UnResolvedKind};
+    use crate::rules::{
+        ClauseCheck, ComparisonClauseCheck, QueryResult, RecordType, Status, UnResolved,
+        UnResolvedKind,
+    };
     use std::convert::TryFrom;
     use std::rc::Rc;
+
+    /// The console summary's reading of a block check that carries the author's `<< >>` message (a `not`
+    /// over a reference that failed closed): `extract_name_info_from_record`, which every renderer of
+    /// `report_from_events` prints from, gives the author's text as the finding's `message` and the record's
+    /// sentence as its `error`, as it does for a dependent rule's record; a block check with no author's
+    /// message gives an empty `message`, as before.
+    #[test]
+    fn a_block_checks_authors_message_reaches_the_console_summarys_name_info() {
+        const AUTHORS: &str = "the author's own words on the reference";
+        const SENTENCE: &str = "the negated rule [check] failed only on reads it could not decide";
+        let record = |custom_message: Option<&str>, refusal: bool| EventRecord {
+            context: String::from("not check"),
+            container: Some(RecordType::GuardClauseBlockCheck(
+                crate::rules::BlockCheck {
+                    status: Status::FAIL,
+                    at_least_one_matches: false,
+                    message: Some(SENTENCE.to_string()),
+                    refusal,
+                    custom_message: custom_message.map(str::to_string),
+                },
+            )),
+            children: vec![],
+        };
+        // Flagged (the basis rests on a refusal) and unflagged (a budget-only basis) alike.
+        for refusal in [true, false] {
+            let with_record = record(Some(AUTHORS), refusal);
+            let with = super::extract_name_info_from_record("main", &with_record)
+                .expect("a block check is a finding the summary reads");
+            assert_eq!(
+                (AUTHORS, Some(SENTENCE.to_string()), "main"),
+                (with.message.as_str(), with.error.clone(), with.rule),
+                "the author's message is the finding's message, the sentence its error (refusal: {})",
+                refusal
+            );
+        }
+        let without_record = record(None, true);
+        let without = super::extract_name_info_from_record("main", &without_record)
+            .expect("a block check is a finding the summary reads");
+        assert_eq!(
+            ("", Some(SENTENCE.to_string())),
+            (without.message.as_str(), without.error.clone()),
+            "no author's message reads as the empty message, as before"
+        );
+    }
 
     /// The console reporter's code excerpt, which these cells do without: every line under test is one
     /// this file writes itself.
@@ -2216,19 +2519,40 @@ mod retrieval_error_tests {
                 kind,
             },
             comparison: (CmpOperator::In, false),
+            to: None,
+        }
+    }
+
+    /// The report builder's head for an unresolved right-hand value the evaluator refused to read.
+    const RHS_HEAD_TEXT: &str =
+        "Check was not compliant as the value to compare to could not be read.";
+    /// The report builder's head for an unresolved left-hand value the evaluator refused to read.
+    const LHS_HEAD_TEXT: &str =
+        "Check was not compliant as the value to compare from could not be read.";
+
+    /// The record's `Messages` as the report builder writes them for a clause record with the head
+    /// `head` and the evaluator's `message`: the joined sentence (`<head> Error = [<message>]`, the head
+    /// alone with no message) as `error_message`, the parts beside it, flagged `refusal`.
+    fn record(head: &str, message: Option<&str>, refusal: bool) -> Messages {
+        Messages {
+            custom_message: Some(String::new()),
+            error_message: Some(match message {
+                Some(message) => format!("{head} Error = [{message}]"),
+                None => head.to_string(),
+            }),
+            location: None,
+            refusal,
+            parts: message.map(|message| SentenceParts {
+                head: head.to_string(),
+                message: message.to_string(),
+            }),
         }
     }
 
     /// One retrieval error's finding as `pprint_clauses` writes it under a resource for the clause
-    /// `context`: the record's sentence `sentence`, flagged `refusal`, over the unresolved value `vur`.
-    /// Four spaces of prefix, the depth of a clause under `Rule = r { ALL { } }`.
-    fn finding(context: &str, sentence: &str, refusal: bool, vur: &ValueUnResolved) -> String {
-        let messages = Messages {
-            custom_message: Some(String::new()),
-            error_message: Some(sentence.to_string()),
-            location: None,
-            refusal,
-        };
+    /// `context`, over the unresolved value `vur`, for the record `messages`. Four spaces of prefix,
+    /// the depth of a clause under `Rule = r { ALL { } }`.
+    fn finding_of(context: &str, messages: Messages, vur: &ValueUnResolved) -> String {
         let clause = ClauseReport::Clause(GuardClauseReport::Binary(BinaryReport {
             context: context.to_string(),
             messages: messages.clone(),
@@ -2248,20 +2572,24 @@ mod retrieval_error_tests {
         String::from_utf8(written).expect("the output is UTF-8")
     }
 
-    /// The sentence the report builder writes for an unresolved right-hand value the evaluator refused
-    /// to read: the record's message, the refusal, in the bracketed tail.
-    fn rhs_marker_sentence(refusal: &str) -> String {
-        format!(
-            "Check was not compliant as the value to compare to could not be read. Error = [{refusal}]"
-        )
+    /// The finding of the record the report builder writes from `head` and `message`, flagged `refusal`.
+    fn finding(
+        context: &str,
+        head: &str,
+        message: Option<&str>,
+        refusal: bool,
+        vur: &ValueUnResolved,
+    ) -> String {
+        finding_of(context, record(head, message, refusal), vur)
     }
 
     /// The finding of a right-hand refused marker's record: the marker's reason is the refusal, and the
-    /// sentence quotes it.
+    /// record's message is the refusal.
     fn refused_marker_finding(refusal: &str) -> String {
         finding(
             RHS_CONTEXT,
-            &rhs_marker_sentence(refusal),
+            RHS_HEAD_TEXT,
+            Some(refusal),
             true,
             &unresolved(
                 refusal,
@@ -2293,33 +2621,557 @@ mod retrieval_error_tests {
         lines[0].to_string()
     }
 
-    /// A refusal's sentence holding a line break is one `Error =` line, collapsed as the unattributed
-    /// section collapses the same sentence (`one_line`: the parts trimmed and joined by `; `), so the
-    /// break cannot put a line at an indentation the author chose inside the `Check = { }` block, where
-    /// a line at the block's own depth reads as one of the block's lines. The sentence is a refusal's as
-    /// the evaluator writes one, its template parts escaped; a break is the one shape the escape does not
-    /// cover, and this line's shape is the reporter's to hold whatever a future sentence carries.
+    /// The `Reason =` line of a finding, the one line of it that carries the unresolved value's reason.
+    fn reason_line(finding: &str) -> String {
+        let lines: Vec<&str> = finding
+            .lines()
+            .filter(|line| line.trim_start().starts_with("Reason = "))
+            .collect();
+        assert_eq!(1, lines.len(), "one `Reason =` line:\n{}", finding);
+        lines[0].to_string()
+    }
+
+    /// The head of a right-hand refused marker's sentence, the `Error =` line of its block.
+    const RHS_HEAD: &str =
+        "      Error = Check was not compliant as the value to compare to could not be read.";
+    /// The head of a left-hand refused marker's sentence, the `Error =` line of its block.
+    const LHS_HEAD: &str =
+        "      Error = Check was not compliant as the value to compare from could not be read.";
+
+    /// A refusal holding a raw ESC AND a line break takes the console's one pipeline in its order
+    /// (`reason_backstop`): the break is collapsed to `; ` first and the ESC is written as its
+    /// escape after it, on one bounded `Reason =` line. Escaped before the collapse, the break became a
+    /// literal `\n` and nothing was joined.
     #[test]
-    fn a_refusal_sentence_holding_a_line_break_is_one_error_line() {
+    fn a_refusal_holding_an_escape_and_a_line_break_is_one_escaped_reason_line() {
+        let refusal = "the key `\u{1b}[31ma\nb\u{1b}[0m` could not be read\n  define `X` by hand";
+        let out = refused_marker_finding(refusal);
+
+        assert_eq!(RHS_HEAD, error_line(&out));
+        assert_eq!(
+            "        Reason = the key `\\u{1b}[31ma; b\\u{1b}[0m` could not be read; define `X` by hand",
+            reason_line(&out)
+        );
+        assert!(
+            !out.contains('\u{1b}') && !out.contains("\\n"),
+            "no raw ESC and no literal line-break escape reach the console:\n{}",
+            out
+        );
+    }
+
+    /// A refusal's `Reason =` line is cut on its PRINTED width: three raw ESCs in a reason a few characters
+    /// under `LONGEST_REFUSAL_MESSAGE` each grow into a six-character escape, so the escaped line passes
+    /// the bound and is cut with the marker, within the bound; cut before the escape, the reason read as
+    /// within the bound and the printed line ran past it. The control, the same reason with the ESCs
+    /// removed, is under the bound and prints whole with no marker. The raw text has to be UNDER the
+    /// bound for the cell to show the property: the filler is twenty under it and the three sequences are
+    /// four raw characters each (ESC, `[`, a digit, `m`), 4088 raw, and each ESC grows by five when
+    /// escaped, 4103 printed; a filler ten under the bound made the raw text 4098 and the cell failed its
+    /// own first assertion.
+    #[test]
+    fn a_refusals_reason_is_cut_on_its_printed_width_after_its_controls_are_escaped() {
+        let bound = super::LONGEST_REFUSAL_MESSAGE;
+        let filler = "x".repeat(bound - 20);
+        let with_escapes = format!("{filler}\u{1b}[1m\u{1b}[2m\u{1b}[0m");
+        assert!(with_escapes.chars().count() < bound);
+        assert!(
+            crate::utils::writer::escaped_controls_for_display(&with_escapes)
+                .chars()
+                .count()
+                > bound
+        );
+        let out = refused_marker_finding(&with_escapes);
+        let reason = reason_line(&out);
+        let printed = reason
+            .trim_start()
+            .strip_prefix("Reason = ")
+            .expect("the Reason line");
+        assert!(
+            printed.ends_with(super::REFUSAL_CUT_MARKER),
+            "the escaped line passed the bound and was cut with the marker:\n{}",
+            reason
+        );
+        let text = printed
+            .strip_suffix(super::REFUSAL_CUT_MARKER)
+            .expect("the marker")
+            .trim_end();
+        assert!(
+            text.chars().count() <= bound + 3 && text.ends_with("..."),
+            "the printed text is within the bound plus the ellipsis: {} characters",
+            text.chars().count()
+        );
+        assert!(!out.contains('\u{1b}'), "no raw ESC reaches the console");
+
+        let control = refused_marker_finding(&filler);
+        let control_reason = reason_line(&control);
+        assert!(
+            !control_reason.contains(super::REFUSAL_CUT_MARKER)
+                && control_reason.ends_with(&filler),
+            "the control under the bound prints whole:\n{}",
+            control_reason
+        );
+    }
+
+    /// A reason that is no refusal's takes the same pipeline and the same backstop: over the
+    /// recorded-message cut of 320 characters it prints whole (a retrieval reason keeps its trailing
+    /// position), and over `LONGEST_REFUSAL_MESSAGE` it is cut on its printed width with the plain
+    /// reason's OWN marker (`REASON_CUT_MARKER`), never the refusal's, so no console line depends on the
+    /// evaluator having bounded the text and no retrieval error is called an explanation. An earlier cut
+    /// of this cell pinned the refusal's marker on the plain reason, the one pipeline then reading every
+    /// reason as a refusal's.
+    #[test]
+    fn a_plain_reasons_line_is_held_to_the_backstop_with_its_own_marker() {
+        let bound = super::LONGEST_REFUSAL_MESSAGE;
+        let over_the_message_cut = format!(
+            "Could not find key Missing inside struct at path /Resources/R/Properties/Cfg {} [L:9,C:3]",
+            "x".repeat(super::LONGEST_RECORDED_MESSAGE)
+        );
+        let vur = unresolved(&over_the_message_cut, "Missing", UnResolvedKind::Absent);
+        let out = finding(
+            RHS_CONTEXT,
+            RHS_HEAD_TEXT,
+            Some("the sentence"),
+            false,
+            &vur,
+        );
+        let reason = reason_line(&out);
+        assert!(
+            reason.ends_with("[L:9,C:3]") && !reason.contains("..."),
+            "a plain reason over the recorded-message cut prints whole:\n{}",
+            reason
+        );
+
+        let over_the_backstop = "y".repeat(bound + 20);
+        let vur = unresolved(&over_the_backstop, "Missing", UnResolvedKind::Absent);
+        let out = finding(
+            RHS_CONTEXT,
+            RHS_HEAD_TEXT,
+            Some("the sentence"),
+            false,
+            &vur,
+        );
+        let reason = reason_line(&out);
+        let printed = reason
+            .trim_start()
+            .strip_prefix("Reason = ")
+            .expect("the Reason line");
+        assert!(
+            printed.ends_with(super::REASON_CUT_MARKER)
+                && !printed.contains(super::REFUSAL_CUT_MARKER)
+                && printed.chars().count() <= bound + 3 + 1 + super::REASON_CUT_MARKER.len(),
+            "a plain reason over the backstop is cut on its printed width with the plain reason's own marker:\n{}",
+            reason
+        );
+    }
+
+    /// A refusal record whose message LEADS with the reason (an absent value beside a refused read: the
+    /// retrieval's reason first, the refusal after it) and does not fit the `Error =` line whole goes on
+    /// `Reason =` through the one pipeline (`reason_backstop`): the raw ESC in the reason prints as its
+    /// escape and the line is cut on its printed width with the refusal's marker. Written through the
+    /// bare bound, that one branch printed the lead's controls raw. The evaluator writes a lead with its
+    /// template parts escaped; this cell and its under-the-bound twin pin the console's own defense for a
+    /// sentence that reaches it raw.
+    #[test]
+    fn a_lead_first_message_over_the_bound_prints_escaped_on_the_reason_line() {
+        let bound = super::LONGEST_REFUSAL_MESSAGE;
+        let reason =
+            "Could not find key \u{1b}[31mMissing\u{1b}[0m inside struct at path /Resources/R";
+        let message = format!("{reason}, then the refusal: {}", "r".repeat(bound));
+        let vur = unresolved(reason, "Missing", UnResolvedKind::Absent);
+        let out = finding(RHS_CONTEXT, RHS_HEAD_TEXT, Some(&message), true, &vur);
+        assert_eq!(RHS_HEAD, error_line(&out));
+        let line = reason_line(&out);
+        assert!(
+            line.contains("key \\u{1b}[31mMissing\\u{1b}[0m inside")
+                && !out.contains('\u{1b}')
+                && line.ends_with(super::REFUSAL_CUT_MARKER),
+            "the lead-first message prints escaped and cut with the marker on `Reason =`:\n{}",
+            out.escape_debug()
+        );
+    }
+
+    /// The under-the-bound twin: a lead-first message that fits is joined to the head on `Error =`
+    /// through the same pipeline, the raw line break in the reason joined as `; ` and the raw ESC printed
+    /// as its escape after it, with no `Reason =` line; its width taken and its text printed raw, that
+    /// branch put the control on the console while the over-the-bound branch escaped it, and escaped
+    /// before the collapse it would print the break as a literal `\n`.
+    #[test]
+    fn a_lead_first_message_under_the_bound_prints_escaped_on_the_error_line() {
+        let reason =
+            "Could not find key \u{1b}[31mMissing\u{1b}[0m\ninside struct at path /Resources/R";
+        let message = format!("{reason}, then the refusal");
+        let vur = unresolved(reason, "Missing", UnResolvedKind::Absent);
+        let out = finding(RHS_CONTEXT, RHS_HEAD_TEXT, Some(&message), true, &vur);
+        let error = error_line(&out);
+        assert!(
+            error.contains("key \\u{1b}[31mMissing\\u{1b}[0m; inside")
+                && error.ends_with(", then the refusal")
+                && !out.contains('\u{1b}')
+                && !out.contains("\\n")
+                && !out.lines().any(|line| line.trim_start().starts_with("Reason = ")),
+            "the lead-first message under the bound prints collapsed, escaped and whole on `Error =`, with no `Reason =` line:\n{}",
+            out.escape_debug()
+        );
+    }
+
+    /// The `Error =` line of a refusal record on the arms that print a block, a unary check and a decided
+    /// comparison (`error_line_text`, the one text those call sites print) takes the console's one
+    /// refusal pipeline: a raw line break in the recorded sentence is joined as `; ` first, a raw ESC is
+    /// written as its escape after it, and a sentence over the bound is cut on its PRINTED width with the
+    /// refusal's marker. Bounded with no escape, those arms printed the control raw while the
+    /// retrieval-error arm escaped it. The control: a record that is no refusal's prints its sentence as
+    /// released, controls and all, as `emit_messages` writes it.
+    #[test]
+    fn a_refusal_records_error_line_on_the_block_and_comparison_arms_is_escaped_and_bounded() {
+        let sentence = "the key `\u{1b}[31ma\nb\u{1b}[0m` could not be read";
+        let refusal = Messages {
+            custom_message: Some(String::new()),
+            error_message: Some(sentence.to_string()),
+            location: None,
+            refusal: true,
+            parts: None,
+        };
+        assert_eq!(
+            "the key `\\u{1b}[31ma; b\\u{1b}[0m` could not be read",
+            super::error_line_text(&refusal),
+            "the refusal's sentence is collapsed, then escaped"
+        );
+
+        let bound = super::LONGEST_REFUSAL_MESSAGE;
+        let over_the_bound = format!("{}\u{1b}[1m\u{1b}[2m\u{1b}[0m", "x".repeat(bound - 20));
+        let line = super::error_line_text(&Messages {
+            error_message: Some(over_the_bound),
+            ..refusal.clone()
+        });
+        assert!(
+            line.ends_with(super::REFUSAL_CUT_MARKER) && !line.contains('\u{1b}'),
+            "three ESCs under the raw bound pass the printed bound and the line is cut with the marker, no raw ESC left:\n{}",
+            line.escape_debug()
+        );
+        // The cut on the printed width lands inside the third escape (`bound - 20` x's, then 27
+        // characters of escapes: the first `bound` characters end in `\u`, the first two of the third
+        // escape's six), and is moved back to that escape's start: the kept text ends with the second
+        // escape's whole sequence, no `\u` fragment stands before the ellipsis, and every `\u` kept is a
+        // whole `\u{..}`. `a_cut_inside_an_escape_at_any_offset_is_moved_back_to_its_start` reads every
+        // other offset.
+        let kept = line
+            .strip_suffix(&format!("... {}", super::REFUSAL_CUT_MARKER))
+            .expect("the cut line ends with the ellipsis, a space and the marker");
+        assert!(
+            kept.ends_with("\\u{1b}[2m"),
+            "the cut is moved back to the start of the escape it split: {}",
+            kept.escape_debug()
+        );
+        assert!(
+            kept.match_indices("\\u")
+                .all(|(at, _)| kept[at..].starts_with("\\u{") && kept[at..].contains('}')),
+            "every `\\u` kept is a whole escape, none a fragment the cut left: {}",
+            kept.escape_debug()
+        );
+
+        let plain = Messages {
+            refusal: false,
+            ..refusal.clone()
+        };
+        assert_eq!(
+            sentence,
+            super::error_line_text(&plain),
+            "a record that is no refusal's prints its sentence as released"
+        );
+    }
+
+    /// A cut that lands INSIDE an escape, at any offset, is moved back to the escape's start, and a cut
+    /// that lands right after a whole escape keeps it: `bound - k` x's, one raw control and a `y` after
+    /// it (a trailing control alone would be trimmed by `one_line`, which trims each part, before any
+    /// escaping: a tab at the very end never reaches the escape), so the escape's first `k` characters
+    /// are the last `k` of the first `bound`; for a raw ESC (`\u{1b}`, six characters) k runs 1 to 5, the
+    /// kept text is the x's alone (the lone backslash, `\u`, `\u{`, `\u{1` and `\u{1b` all moved back),
+    /// and at k = 6 the escape ends exactly at the bound, so the cut drops the `y` alone and the whole
+    /// escape stands before the ellipsis; for a raw tab (`\t`, two characters) k = 1 leaves the lone
+    /// backslash, moved back, and k = 2 keeps the whole escape. A literal backslash the author wrote is no split
+    /// escape: `\users` at the head of an over-bound line, and `\u` followed by seven letters just before
+    /// the cut (a tail of nine, the longest an escape can be, that is no escape), each keep every
+    /// character up to the bound; reading the last `\u` of the whole kept text cut the first back to its
+    /// first character. The expected values are reasoned from the code.
+    #[test]
+    fn a_cut_inside_an_escape_at_any_offset_is_moved_back_to_its_start() {
+        let bound = super::LONGEST_REFUSAL_MESSAGE;
+        let marker = super::REFUSAL_CUT_MARKER;
+        for (control, escape) in [('\u{1b}', "\\u{1b}"), ('\t', "\\t")] {
+            for offset in 1..=escape.len() {
+                let xs = "x".repeat(bound - offset);
+                let line = super::reason_backstop(&format!("{xs}{control}y"), marker);
+                if offset == escape.len() {
+                    assert_eq!(
+                        format!("{xs}{escape}... {marker}"),
+                        line,
+                        "the whole escape ends exactly at the bound and stands before the cut (offset {offset} into `{escape}`)"
+                    );
+                    continue;
+                }
+                assert_eq!(
+                    format!("{xs}... {marker}"),
+                    line,
+                    "the cut at offset {offset} into `{escape}` is moved back to the escape's start"
+                );
+            }
+        }
+        for (label, raw) in [
+            (
+                "`\\users` at the head",
+                format!("\\users{}", "y".repeat(bound)),
+            ),
+            (
+                "`\\u` and seven letters just before the cut",
+                format!("{}\\uyyyyyyyz", "y".repeat(bound - 9)),
+            ),
+        ] {
+            let line = super::reason_backstop(&raw, marker);
+            let kept = line
+                .strip_suffix(&format!("... {marker}"))
+                .expect("the over-bound line is cut with the marker");
+            assert_eq!(
+                (bound, &raw[..bound]),
+                (kept.chars().count(), kept),
+                "{label}: a literal backslash is no split escape, so the text keeps every character up to the bound"
+            );
+        }
+    }
+
+    /// The `Rule = { }` arm's two lines for a rule's own record take the same pipeline when the record is
+    /// a refusal's (`rule_line_texts`): a rule-level record carries the evaluator's sentence in the custom
+    /// slot, so BOTH slots are collapsed, escaped and bounded, where the clause arms bound the error slot
+    /// alone; a record that is no refusal's has its custom slot collapsed onto one line, escaped and cut
+    /// at the recorded-message bound (the cut the unattributed section gives that slot: it is the
+    /// evaluator's sentence, which can quote a 2 KB template value), and its error slot as released. A
+    /// raw ESC and a line break in each slot: the refusal's are written as `\u{1b}` and `; `; the plain
+    /// record's custom slot is written the same way, its error slot stands; a plain custom slot of 4000
+    /// characters is cut at the bound with the ellipsis, and a control-free one reads as the unattributed
+    /// section reads the same record.
+    #[test]
+    fn a_refusal_rule_records_two_lines_are_escaped_and_bounded_and_a_plain_ones_are_released() {
+        let custom = "the condition `\u{1b}[31mgate\u{1b}[0m` could not be\nanswered";
+        let error = "the key `\u{1b}[31ma\nb\u{1b}[0m` could not be read";
+        let refusal = Messages {
+            custom_message: Some(custom.to_string()),
+            error_message: Some(error.to_string()),
+            location: None,
+            refusal: true,
+            parts: None,
+        };
+        assert_eq!(
+            (
+                "the condition `\\u{1b}[31mgate\\u{1b}[0m` could not be; answered".to_string(),
+                "the key `\\u{1b}[31ma; b\\u{1b}[0m` could not be read".to_string(),
+            ),
+            super::rule_line_texts(&refusal),
+            "a refusal's record: both slots collapsed, then escaped"
+        );
+
+        let bound = super::LONGEST_REFUSAL_MESSAGE;
+        let (message, _) = super::rule_line_texts(&Messages {
+            custom_message: Some(format!("{}\u{1b}[1m", "y".repeat(bound))),
+            ..refusal.clone()
+        });
+        assert!(
+            message.ends_with(super::REFUSAL_CUT_MARKER) && !message.contains('\u{1b}'),
+            "the custom slot over the bound is cut with the marker and no raw ESC is left:\n{}",
+            message.escape_debug()
+        );
+
+        let plain = Messages {
+            refusal: false,
+            ..refusal.clone()
+        };
+        assert_eq!(
+            (
+                "the condition `\\u{1b}[31mgate\\u{1b}[0m` could not be; answered".to_string(),
+                error.to_string()
+            ),
+            super::rule_line_texts(&plain),
+            "a record that is no refusal's: the custom slot collapsed and escaped, the error slot as released"
+        );
+        let long = format!("{} {}", "y".repeat(300), "z".repeat(3700));
+        let (long_custom, _) = super::rule_line_texts(&Messages {
+            custom_message: Some(long.clone()),
+            ..plain.clone()
+        });
+        assert_eq!(
+            format!("{}...", "y".repeat(300)),
+            long_custom,
+            "a plain record's custom slot of 4000 characters is cut at the recorded-message bound"
+        );
+        assert_eq!(
+            super::bounded_for_the_console(&long, false),
+            long_custom,
+            "a control-free plain custom slot reads as the unattributed section reads the same record"
+        );
+        assert_eq!(
+            (String::new(), String::new()),
+            super::rule_line_texts(&Messages::default()),
+            "an empty record prints nothing on either line"
+        );
+    }
+
+    /// The `Rule = { }` arm WRITES a refusal record's two texts as one line each (`emit_rule_messages`):
+    /// a custom slot over the bound, holding `;` throughout, prints as ONE `Message = ...` line ending
+    /// with the cut's marker, and an error slot with a line break as ONE `Error = ...` line with the break
+    /// joined, where `emit_messages` split the message on every `;` and so printed the marker, and every
+    /// join, across lines. The rule's record is rendered with no checks under it, so the output is the
+    /// rule's opening line, the two message lines, `ALL {`, and the two closing braces. A record that is no
+    /// refusal's still goes through `emit_messages`, so its `;` list prints as a `Message {` block.
+    #[test]
+    fn a_refusal_rule_records_two_lines_print_as_one_line_each() {
+        use super::{pprint_clauses, LocalResourceAggr};
+        use crate::rules::eval_context::RuleReport;
+        use std::collections::{BTreeSet, HashSet};
+        let bound = super::LONGEST_REFUSAL_MESSAGE;
+        let marker = super::REFUSAL_CUT_MARKER;
+        let resource = LocalResourceAggr {
+            name: "R".to_string(),
+            resource_type: "AWS::Example::Thing",
+            cdk_path: None,
+            clauses: HashSet::new(),
+            paths: BTreeSet::new(),
+        };
+        let render = |messages: Messages| -> Vec<String> {
+            let report = ClauseReport::Rule(RuleReport {
+                name: "nested",
+                messages,
+                ..Default::default()
+            });
+            let mut written: Vec<u8> = Vec::new();
+            pprint_clauses(
+                &mut written,
+                &report,
+                &resource,
+                "  ".to_string(),
+                &mut NoExcerpt,
+            )
+            .expect("writing to a Vec cannot fail");
+            String::from_utf8(written)
+                .expect("the output is UTF-8")
+                .lines()
+                .map(str::to_string)
+                .collect()
+        };
+
+        let lines = render(Messages {
+            custom_message: Some("word; ".repeat(bound / 3)),
+            error_message: Some("the key `a\nb` could not be read".to_string()),
+            location: None,
+            refusal: true,
+            parts: None,
+        });
+        let messages: Vec<&String> = lines
+            .iter()
+            .filter(|line| line.trim_start().starts_with("Message"))
+            .collect();
+        let errors: Vec<&String> = lines
+            .iter()
+            .filter(|line| line.trim_start().starts_with("Error"))
+            .collect();
+        assert_eq!(
+            (6, 1, 1),
+            (lines.len(), messages.len(), errors.len()),
+            "the rule's line, one Message line, one Error line, `ALL {{`, and the two closing braces:\n{}",
+            lines.join("\n")
+        );
+        assert!(
+            messages[0].starts_with("    Message = word; word;") && messages[0].ends_with(marker),
+            "the cut custom slot is one line ending with the marker: {}",
+            messages[0]
+        );
+        assert_eq!(
+            "    Error = the key `a; b` could not be read", errors[0],
+            "the error slot is one line with its break joined"
+        );
+
+        let lines = render(Messages {
+            custom_message: Some("one; two".to_string()),
+            error_message: None,
+            location: None,
+            refusal: false,
+            parts: None,
+        });
+        assert!(
+            lines.iter().any(|line| line.trim_start() == "Message {")
+                && lines.iter().any(|line| line.trim() == "one")
+                && lines.iter().any(|line| line.trim() == "two"),
+            "a plain record's `;` list prints as the message block it always did:\n{}",
+            lines.join("\n")
+        );
+
+        // A plain record's custom slot over the recorded-message bound: cut with the ellipsis and printed
+        // as ONE `Message = ...` line, the joins of the collapse never split into items. The long run
+        // carries spaces: `cut_to` backs off to the last whitespace inside the bound (`shortened`'s
+        // rule, so no word is split), and a run of 400 `z`s with no space in it would be dropped whole,
+        // the line reading `a; b;...` with nothing of the run kept.
+        let lines = render(Messages {
+            custom_message: Some(format!("a; b\n{}", "z ".repeat(200))),
+            error_message: None,
+            location: None,
+            refusal: false,
+            parts: None,
+        });
+        let messages: Vec<&String> = lines
+            .iter()
+            .filter(|line| line.trim_start().starts_with("Message"))
+            .collect();
+        assert!(
+            messages.len() == 1
+                && messages[0].starts_with("    Message = a; b; z z")
+                && messages[0].ends_with("...")
+                && !lines.iter().any(|line| line.trim() == "b"),
+            "a cut plain custom slot prints as one Message line ending with the ellipsis:\n{}",
+            lines.join("\n")
+        );
+
+        // A plain record's custom slot UNDER the bound that holds a raw control: the control is escaped
+        // and the message still prints as the `Message { }` block with its `;` items, since only a CUT
+        // slot takes the one-line form. Read against the unescaped collapse, the escaped text differed
+        // and every short plain message with a control took the one-line branch.
+        let lines = render(Messages {
+            custom_message: Some("one\u{1b}[1m; two".to_string()),
+            error_message: None,
+            location: None,
+            refusal: false,
+            parts: None,
+        });
+        assert!(
+            lines.iter().any(|line| line.trim() == "two")
+                && lines.iter().any(|line| line.contains("\\u{1b}[1m"))
+                && !lines.iter().any(|line| line.contains('\u{1b}'))
+                && !lines
+                    .iter()
+                    .any(|line| line.trim_start().starts_with("Message = ")),
+            "an uncut plain slot with a control prints as the message block, escaped:\n{}",
+            lines.join("\n")
+        );
+    }
+
+    /// A refusal holding a line break is one `Reason =` line, collapsed as the unattributed section
+    /// collapses a sentence (`one_line`: the parts trimmed and joined by `; `), so the break cannot put a
+    /// line at an indentation the author chose inside the `Check = { }` block, where a line at the block's
+    /// own depth reads as one of the block's lines. The refusal is the evaluator's, its template parts
+    /// escaped; a break is the one shape the escape does not cover, and the line's shape is the reporter's
+    /// to hold whatever a future refusal carries. The `Error =` line is the sentence's head.
+    #[test]
+    fn a_refusal_holding_a_line_break_is_one_reason_line() {
         let refusal = "the key `a\nb` could not be read as the predicate asks:\n  define `X` by hand\n  then compare it";
         let out = refused_marker_finding(refusal);
 
-        let line = error_line(&out);
+        assert_eq!(RHS_HEAD, error_line(&out));
+        let line = reason_line(&out);
         assert_eq!(
-            "      Error = Check was not compliant as the value to compare to could not be read. \
-             the key `a; b` could not be read as the predicate asks:; define `X` by hand; \
-             then compare it",
+            "        Reason = the key `a; b` could not be read as the predicate asks:; define `X` by \
+             hand; then compare it",
             line
         );
         assert_eq!(
-            format!(
-                "      Error = {}",
-                one_line(&format!(
-                    "Check was not compliant as the value to compare to could not be read. {refusal}"
-                ))
-            ),
+            format!("        Reason = {}", one_line(refusal)),
             line,
-            "collapsed exactly as the unattributed section collapses a sentence, the tail opened"
+            "collapsed exactly as the unattributed section collapses a sentence"
         );
         assert!(
             out.lines()
@@ -2329,20 +3181,23 @@ mod retrieval_error_tests {
         );
     }
 
-    /// A refusal's sentence over `LONGEST_REFUSAL_MESSAGE` characters is cut at the reporter's own bound
-    /// and ends with `REFUSAL_CUT_MARKER`, as the unattributed section cuts it: the line's length is this
-    /// reporter's, not the evaluator's, to hold.
+    /// A refusal over `LONGEST_REFUSAL_MESSAGE` characters is printed once, on the `Reason =` line, cut
+    /// at the reporter's own bound and ending with `REFUSAL_CUT_MARKER`, as the unattributed section cuts
+    /// it; the `Error =` line is the sentence's head. Printed whole on the `Error =` line, such a refusal
+    /// was cut inside its own text, a test of that cut line for the whole refusal failed, and the
+    /// `Reason =` line printed a second cut copy: two lines of the bound each.
     #[test]
-    fn a_refusal_sentence_over_the_bound_is_cut_with_the_marker() {
+    fn a_refusal_over_the_bound_is_cut_with_the_marker_once() {
         let refusal = "word ".repeat(1000).trim_end().to_string();
         assert!(refusal.chars().count() > LONGEST_REFUSAL_MESSAGE);
         let out = refused_marker_finding(&refusal);
 
-        let line = error_line(&out);
+        assert_eq!(RHS_HEAD, error_line(&out));
+        let line = reason_line(&out);
         let text = line
             .trim_start()
-            .strip_prefix("Error = ")
-            .expect("the line is the `Error =` line");
+            .strip_prefix("Reason = ")
+            .expect("the line is the `Reason =` line");
         assert!(
             text.ends_with(&format!("... {REFUSAL_CUT_MARKER}")),
             "the cut is marked, after the ellipsis: {}",
@@ -2355,9 +3210,73 @@ mod retrieval_error_tests {
             text.chars().count(),
             text
         );
+        assert_eq!(
+            1,
+            out.lines()
+                .filter(|line| line.contains("word word"))
+                .count(),
+            "the refusal is on exactly one line of the block:\n{}",
+            out
+        );
         assert!(
             !out.contains(&refusal),
-            "the sentence is never printed whole:\n{}",
+            "the refusal is never printed whole:\n{}",
+            out
+        );
+    }
+
+    /// A unary check refused over an undecidable marker has an EMPTY head (the report builder's unary
+    /// arm, `report_all_failed_clauses_for_rules`): the record's sentence is `Error = [<refusal>]` alone,
+    /// so the finding writes no `Error =` line of its own and the refusal once, on the `Reason =` line,
+    /// where a head that wrote the bracketed refusal too printed it twice. The record is built as the
+    /// builder builds it (`joined_sentence` with the unary arm's opener, no space before the bracket), so
+    /// the layout read here is the one a real unary record gets; a hand-built record with a space before
+    /// the opener was a sentence the builder never writes.
+    #[test]
+    fn a_unary_refusals_empty_head_writes_the_refusal_once_on_the_reason_line() {
+        let (error_message, parts) = crate::rules::eval_context::joined_sentence(
+            "",
+            Some(&REFUSAL.to_string()),
+            "Error = [",
+        );
+        assert_eq!(
+            format!("Error = [{REFUSAL}]"),
+            error_message,
+            "the builder's unary sentence opens with the bracket"
+        );
+        let messages = Messages {
+            custom_message: Some(String::new()),
+            error_message: Some(error_message),
+            location: None,
+            refusal: true,
+            parts,
+        };
+        let out = finding_of(
+            "Resources[ Cfg[*].Limits exists ] !empty",
+            messages,
+            &unresolved(
+                REFUSAL,
+                "",
+                UnResolvedKind::Undecidable {
+                    refusal: Some(crate::rules::errors::RefusalToken::minted(1)),
+                    carried: None,
+                },
+            ),
+        );
+        assert!(
+            out.lines()
+                .all(|line| !line.trim_start().starts_with("Error = ")),
+            "no `Error =` line for an empty head:\n{}",
+            out
+        );
+        assert_eq!(
+            format!("        Reason = {}", one_line(REFUSAL)),
+            reason_line(&out)
+        );
+        assert_eq!(
+            1,
+            out.matches(REFUSAL).count(),
+            "the refusal is printed once:\n{}",
             out
         );
     }
@@ -2389,11 +3308,12 @@ mod retrieval_error_tests {
     }
 
     /// A right-hand refused marker's record (`X IN %x` with the marker among listed keys, `X` accepted by
-    /// none): the block is the `Check = { }` block with the record's sentence on its `Error =` line, the
-    /// bracketed tail opened so the refusal follows the sentence and no second `Error =` is nested in the
-    /// first, and no `Reason =` line, whose text for such a marker is the refusal again. Written as
-    /// recorded, the line read `Error = ... Error = [<refusal>]` and the `Reason =` line repeated the
-    /// refusal word for word.
+    /// none): the record's message is the refusal, which is the unresolved value's reason, so the block is
+    /// the `Check = { }` block with the sentence's head on its `Error =` line and the refusal, once, on
+    /// its `Reason =` line, each bounded on its own; no second `Error =` is nested in the first. Written
+    /// as recorded, the line read `Error = ... Error = [<refusal>]` and the `Reason =` line repeated the
+    /// refusal; printed opened and whole on the `Error =` line, a refusal over the bound was cut inside
+    /// its text and a second cut copy followed on `Reason =`.
     #[test]
     fn a_right_hand_refused_markers_block_names_the_refusal_once() {
         let vur = unresolved(
@@ -2404,15 +3324,14 @@ mod retrieval_error_tests {
                 carried: None,
             },
         );
-        let out = finding(RHS_CONTEXT, &rhs_marker_sentence(REFUSAL), true, &vur);
+        let out = finding(RHS_CONTEXT, RHS_HEAD_TEXT, Some(REFUSAL), true, &vur);
         assert_eq!(
             block(&[
                 format!("    Check = {RHS_CONTEXT} {{"),
-                format!(
-                    "      Error = Check was not compliant as the value to compare to could not be read. {REFUSAL}"
-                ),
+                RHS_HEAD.to_string(),
                 "      NoAnswerError {".to_string(),
                 property_path_line(&vur),
+                format!("        Reason = {REFUSAL}"),
                 "      }".to_string(),
                 "    }".to_string(),
             ]),
@@ -2423,9 +3342,8 @@ mod retrieval_error_tests {
 
     /// A left-hand refused marker's record (`%x == 'k'` with the marker in `%x`, no marker on the right):
     /// the record carries the refusal's own text as its message, the sentence names the value compared
-    /// from as unread, and the block is the right-hand one's shape: the sentence with the refusal after
-    /// it on one `Error =` line, no `Reason =` line. Written as recorded, the refusal was printed twice
-    /// here too, on the nested `Error = [...]` and on the `Reason =` line.
+    /// from as unread, and the block is the right-hand one's shape: the head on `Error =`, the refusal
+    /// once on `Reason =`.
     #[test]
     fn a_left_hand_refused_markers_block_names_the_refusal_once() {
         let vur = unresolved(
@@ -2436,18 +3354,14 @@ mod retrieval_error_tests {
                 carried: None,
             },
         );
-        let sentence = format!(
-            "Check was not compliant as the value to compare from could not be read. Error = [{REFUSAL}]"
-        );
-        let out = finding(LHS_CONTEXT, &sentence, true, &vur);
+        let out = finding(LHS_CONTEXT, LHS_HEAD_TEXT, Some(REFUSAL), true, &vur);
         assert_eq!(
             block(&[
                 format!("    Check = {LHS_CONTEXT} {{"),
-                format!(
-                    "      Error = Check was not compliant as the value to compare from could not be read. {REFUSAL}"
-                ),
+                LHS_HEAD.to_string(),
                 "      NoAnswerError {".to_string(),
                 property_path_line(&vur),
+                format!("        Reason = {REFUSAL}"),
                 "      }".to_string(),
                 "    }".to_string(),
             ]),
@@ -2456,12 +3370,368 @@ mod retrieval_error_tests {
         once(&out);
     }
 
-    /// A refused marker's record whose sentence leads with a long template value: the `Error =` line is
-    /// cut at the bound before the message begins, so it does not carry the refusal, and the `Reason =`
-    /// line, the refusal bounded, is the refusal's one appearance in the block. Decided on the recorded
-    /// sentence alone, the `Reason =` line was left out because the recorded message was the reason, and
-    /// the block printed the refusal zero times. The control, the same record with a short lead, keeps the
-    /// refusal on the `Error =` line and no `Reason =` line.
+    /// The record of a left-hand refused marker beside an absence is split by the console on the
+    /// marker's reason (`refusal_lines` strips `: <reason>` off the message's end): the evaluator writes
+    /// that reason into the record ESCAPED and never cut (`absence_beside_a_marker`), the record's
+    /// unresolved value STORES it as its builder wrote it, byte for byte (the registry matches a stored
+    /// reason by exact text), and the console strips and prints the escaped form
+    /// (`escaped_controls_for_display`, idempotent), so the two meet whatever the stored bytes hold: a
+    /// refusal of about three thousand characters (rules-file text quoted as written runs past any lead
+    /// net) prints whole on `Reason =` and nowhere cut, and a refusal that holds a RAW line break and a
+    /// raw ESC, stored raw as the evaluator stores it, prints on one `Reason =` line through the console's
+    /// one pipeline (`reason_backstop`: the break collapsed to `; ` first, then the ESC as its
+    /// escape) and no raw control. A net on the marker's text at the record changed the
+    /// message's end, the split missed, the `Reason =` line vanished and the refusal printed on
+    /// `Error =` under the net's cut; a console that stripped the raw stored bytes off an escaped record
+    /// missed the same way for a reason holding a control.
+    #[test]
+    fn a_left_hand_refused_markers_long_or_broken_reason_prints_whole_on_its_reason_line() {
+        const CONTEXT: &str = "%x != Resources.R.Properties.Cfg.Missing";
+        let absent = unresolved(RETRIEVAL_REASON, "Missing", UnResolvedKind::Absent).value;
+        let long = format!("{REFUSAL}{}", " and more".repeat(320));
+        assert!(long.chars().count() > 2500 && long.chars().count() < 4096);
+        // Stored as the evaluator stores a reason, the controls raw; printed through the console's one
+        // pipeline, the break as `; ` and the ESC as its escape (`reason_backstop`'s order; an
+        // earlier cut of this cell expected the break escaped as `\n`, the order before the pipeline).
+        let broken = format!("{REFUSAL}\nthe remedy on a second line \u{1b}[0m");
+        let broken_displayed =
+            crate::utils::writer::escaped_controls_for_display(&one_line(&broken));
+        assert!(
+            !broken_displayed.contains('\n')
+                && !broken_displayed.contains("\\n")
+                && !broken_displayed.contains('\u{1b}')
+                && broken_displayed.contains("; the remedy")
+        );
+        for (label, reason, on_the_reason_line) in [
+            (
+                "a refusal of about three thousand characters",
+                long.clone(),
+                long.clone(),
+            ),
+            (
+                "a refusal holding a raw line break and a raw ESC, stored raw",
+                broken.clone(),
+                broken_displayed.clone(),
+            ),
+        ] {
+            let vur = unresolved(
+                &reason,
+                "",
+                UnResolvedKind::Undecidable {
+                    refusal: Some(crate::rules::errors::RefusalToken::minted(1)),
+                    carried: None,
+                },
+            );
+            // Two record shapes: the message ENDING with the reason (the absence's lead before it), and
+            // the message that IS the reason (a left-hand refused marker against a present value).
+            let ending_with = left_marker_beside_an_absence(&reason, absent.reason.as_deref());
+            for message in [ending_with, reason.clone()] {
+                let out = finding_of(CONTEXT, record(LHS_HEAD_TEXT, Some(&message), true), &vur);
+                assert!(
+                    out.lines().any(
+                        |line| line.contains("Reason = ") && line.contains(&on_the_reason_line)
+                    ),
+                    "{label}: the `Reason =` line carries the refusal whole:\n{}",
+                    out
+                );
+                assert!(
+                    !out.contains("more characters cut]"),
+                    "{label}: nothing is cut:\n{}",
+                    out
+                );
+                assert!(
+                    !out.contains('\u{1b}'),
+                    "{label}: no raw control reaches the console:\n{}",
+                    out.escape_debug()
+                );
+                assert_eq!(
+                    1,
+                    out.matches(REFUSAL).count(),
+                    "{label}: the refusal's head is printed once, on its own line:\n{}",
+                    out
+                );
+            }
+        }
+    }
+
+    /// The record of a left-hand refused marker beside a right-hand value the document lacks, built as
+    /// the evaluator and the report build it rather than from a hand-written copy of the text: the
+    /// message by the evaluator's own writer (`left_marker_beside_an_absence`: the absence's lead, named
+    /// with its side, then the marker's reason), and the report by the REPORT BUILDER itself
+    /// (`report_all_failed_clauses_for_rules`, over the evaluator's record), which puts the head of the
+    /// shared sentence builder (`unresolved_comparison_sentence`: the refused left-hand read first), the
+    /// sentence and its parts, the record's kind and the absent right-hand value as the value compared
+    /// with into the clause report the console reads. The block prints the head and the lead on `Error
+    /// =`, the refusal once on `Reason =` inside the marker's own block, and then the compared-with operand
+    /// as a `ComparedWith` block of its own: the absent value's path and the key the document lacks.
+    /// Before, the block printed the marker's lines alone, so a reader saw the right key named in the
+    /// `Error =` line's prose and no line that said where in the document it was missed; the cell beside
+    /// this one hand-builds its sentence, so a builder that changed its head would not have moved it; and
+    /// this cell once hand-built the report's `Messages` and `ValueUnResolved` from the builder's pieces,
+    /// so a builder that stopped carrying the compared-with value would have left it green.
+    #[test]
+    fn a_left_hand_refused_marker_beside_an_absence_prints_the_compared_with_operand() {
+        const CONTEXT: &str = "%x != Resources.R.Properties.Cfg.Missing";
+        let marker = unresolved(
+            REFUSAL,
+            "",
+            UnResolvedKind::Undecidable {
+                refusal: Some(crate::rules::errors::RefusalToken::minted(1)),
+                carried: None,
+            },
+        )
+        .value;
+        let absent = unresolved(RETRIEVAL_REASON, "Missing", UnResolvedKind::Absent).value;
+        let message = left_marker_beside_an_absence(REFUSAL, absent.reason.as_deref());
+        let record = EventRecord {
+            context: CONTEXT.to_string(),
+            container: Some(RecordType::ClauseValueCheck(ClauseCheck::Comparison(
+                ComparisonClauseCheck {
+                    comparison: (CmpOperator::Eq, true),
+                    from: QueryResult::UnResolved(marker.clone()),
+                    to: Some(QueryResult::UnResolved(absent.clone())),
+                    message: Some(message.clone()),
+                    custom_message: None,
+                    status: Status::FAIL,
+                    refusal: true,
+                },
+            ))),
+            children: vec![],
+        };
+        let clauses = report_all_failed_clauses_for_rules(&[record]);
+        let (messages, vur) = match clauses.as_slice() {
+            [ClauseReport::Clause(GuardClauseReport::Binary(BinaryReport {
+                messages,
+                check: BinaryCheck::UnResolved(vur),
+                ..
+            }))] => (messages.clone(), vur.clone()),
+            other => panic!(
+                "one binary clause report for one record, got {} report(s)",
+                other.len()
+            ),
+        };
+        assert!(messages.refusal, "the report keeps the record's kind");
+        let head = messages
+            .parts
+            .as_ref()
+            .map(|parts| parts.head.as_str())
+            .unwrap_or_default();
+        assert_eq!(
+            LHS_HEAD_TEXT, head,
+            "the builder names the refused left-hand read first"
+        );
+        assert_eq!(
+            Some(marker.traversed_to.self_path().1),
+            messages.location,
+            "and the operand the builder names (the record's location) is the marker's"
+        );
+        // The marker and the absent operand are built at one node, so the location alone cannot tell
+        // them apart: the operand the report carries is the MARKER by its own fields, the refusal's kind
+        // and no query left to walk, where the absent operand carries `Missing` and the `Absent` kind.
+        assert!(
+            vur.value.remaining_query.is_empty() && vur.value.kind.is_refusal(),
+            "the report's unresolved operand is the refused marker (no remaining query, the refusal's kind), not the absent value: {:?}",
+            vur.value
+        );
+        assert_eq!(
+            Some("Missing"),
+            vur.to.as_ref().map(|to| to.remaining_query.as_str()),
+            "the report carries the absent right-hand value as the value compared with"
+        );
+        let out = finding_of(CONTEXT, messages, &vur);
+        let lead = message
+            .strip_suffix(&format!(": {REFUSAL}"))
+            .expect("the evaluator's message ends with the marker's reason");
+        assert!(
+            lead.starts_with(&format!(
+                "The right-hand value is absent: {RETRIEVAL_REASON}"
+            )),
+            "the lead names the right side and the retrieval's reason:\n{}",
+            lead
+        );
+        assert_eq!(
+            block(&[
+                format!("    Check = {CONTEXT} {{"),
+                format!("{LHS_HEAD} {lead}:"),
+                "      NoAnswerError {".to_string(),
+                property_path_line(&vur),
+                format!("        Reason = {REFUSAL}"),
+                "      }".to_string(),
+                "      ComparedWith {".to_string(),
+                format!("        PropertyPath = {}", absent.traversed_to.self_path()),
+                "        MissingProperty = Missing".to_string(),
+                "      }".to_string(),
+                "    }".to_string(),
+            ]),
+            out
+        );
+        once(&out);
+    }
+
+    /// A left-hand refused marker's record beside a right-hand value the document lacks (`%x !=
+    /// Cfg.Mode.Ref.Missing` with the marker in `%x`): the record's message is the absence's lead, the
+    /// retrieval's own reason cut and control-escaped (the backslash kept) as the evaluator writes it,
+    /// then the marker's reason,
+    /// so the tail ends with the unresolved value's reason. The block prints the head and the lead on
+    /// `Error =` and the refusal, once, on `Reason =`. Printed opened and whole on the `Error =` line, the
+    /// refusal sat at the end of a line whose length the lead decided. The record is hand-built here with
+    /// no `to`, so no `ComparedWith` block follows the marker's; the cell above builds the same shape
+    /// through the evaluator's writer and the report's builder, `to` included.
+    #[test]
+    fn a_left_hand_refused_marker_beside_an_absence_prints_the_refusal_on_the_reason_line() {
+        let vur = unresolved(
+            REFUSAL,
+            "",
+            UnResolvedKind::Undecidable {
+                refusal: Some(crate::rules::errors::RefusalToken::minted(1)),
+                carried: None,
+            },
+        );
+        let lead =
+            "Attempting to retrieve from key Missing but type is not an struct type at path \
+                    /Resources/R/Properties/Cfg/Mode/Ref, Type = String, Value = ModeParam";
+        let message = format!(
+            "{lead} A refused or undecided selection stands among the left-hand values, reported here \
+             so it is not silent: {REFUSAL}"
+        );
+        let out = finding(
+            "%x != Resources.R.Properties.Cfg.Mode.Ref.Missing",
+            LHS_HEAD_TEXT,
+            Some(&message),
+            true,
+            &vur,
+        );
+        assert_eq!(
+            block(&[
+                "    Check = %x != Resources.R.Properties.Cfg.Mode.Ref.Missing {".to_string(),
+                format!(
+                    "{LHS_HEAD} {lead} A refused or undecided selection stands among the left-hand \
+                     values, reported here so it is not silent:"
+                ),
+                "      NoAnswerError {".to_string(),
+                property_path_line(&vur),
+                format!("        Reason = {REFUSAL}"),
+                "      }".to_string(),
+                "    }".to_string(),
+            ]),
+            out
+        );
+        once(&out);
+    }
+
+    /// A refusal record whose sentence has no bracketed tail, and whose reason holds a line break (a
+    /// refusal the evaluator wrote nowhere into the sentence): the sentence is printed bounded on
+    /// `Error =` and the reason bounded and collapsed on `Reason =`, because the record is a refusal's,
+    /// whatever the sentence holds. A reason written raw there put its second line inside the block at
+    /// the author's indentation.
+    #[test]
+    fn a_refusal_record_with_no_tail_prints_its_reason_bounded_on_the_reason_line() {
+        let refusal =
+            "the key `a\nb` could not be read as the predicate asks:\n  define `X` by hand";
+        let vur = unresolved(
+            refusal,
+            "",
+            UnResolvedKind::Undecidable {
+                refusal: Some(crate::rules::errors::RefusalToken::minted(1)),
+                carried: None,
+            },
+        );
+        let sentence =
+            "Check was not compliant as property [Ref] is missing. Value traversed to [{}].";
+        let out = finding(RHS_CONTEXT, sentence, None, true, &vur);
+        assert_eq!(
+            block(&[
+                format!("    Check = {RHS_CONTEXT} {{"),
+                format!("      Error = {sentence}"),
+                "      NoAnswerError {".to_string(),
+                property_path_line(&vur),
+                format!("        Reason = {}", one_line(refusal)),
+                "      }".to_string(),
+                "    }".to_string(),
+            ]),
+            out
+        );
+        assert!(
+            out.lines()
+                .all(|line| line.starts_with("    ") && !line.trim_start().starts_with("define")),
+            "no line of the block is the author's second line at its own indentation:\n{}",
+            out
+        );
+    }
+
+    /// An absent value's record beside a refused read whose traversed-to value holds `Error = [` itself
+    /// (a `Note` property quoting documentation): the tail is found by the record's own reason, from the
+    /// right, so the value stays in the head where the evaluator put it and the block prints the sentence
+    /// opened and whole on `Error =`, the refusal once. A split at the first `Error = [` landed inside the
+    /// value and printed the tail twice over.
+    #[test]
+    fn a_template_value_holding_the_tails_opener_stays_in_the_head() {
+        let vur = unresolved(RETRIEVAL_REASON, "Missing", UnResolvedKind::Absent);
+        let value = r#"{"Note":"see Error = [docs]","Mode":"fast"}"#;
+        let message = format!(
+            "{RETRIEVAL_REASON} A refused or undecided selection stands among the right-hand values, \
+             reported here so it is not silent: {REFUSAL}"
+        );
+        let head = format!(
+            "Check was not compliant as property [Missing] to compare from is missing. Value \
+             traversed to [{value}]."
+        );
+        let out = finding(ABSENCE_CONTEXT, &head, Some(&message), true, &vur);
+        assert_eq!(
+            block(&[
+                format!("    Check = {ABSENCE_CONTEXT} {{"),
+                format!("      Error = {head} {message}"),
+                "      RequiredPropertyError {".to_string(),
+                property_path_line(&vur),
+                "        MissingProperty = Missing".to_string(),
+                "      }".to_string(),
+                "    }".to_string(),
+            ]),
+            out
+        );
+        assert_eq!(
+            1,
+            out.lines().filter(|line| line.contains(REFUSAL)).count(),
+            "the refusal on one line:\n{}",
+            out
+        );
+    }
+
+    /// An absent value's record beside a refused read whose sentence does not fit the bound (a
+    /// traversed-to value the evaluator did not bound): the head is printed bounded on `Error =`, cut
+    /// with the marker, and the tail, the retrieval's reason leading and the refusal after it, bounded on
+    /// `Reason =`, so the refusal is printed once and never cut away. Printed opened on one line, the cut
+    /// fell before the refusal and a `Reason =` line restated the retrieval's reason alone: the refusal
+    /// was shown nowhere in the block.
+    #[test]
+    fn an_absent_values_block_that_does_not_fit_prints_its_tail_on_the_reason_line() {
+        let vur = unresolved(RETRIEVAL_REASON, "Missing", UnResolvedKind::Absent);
+        let message = format!(
+            "{RETRIEVAL_REASON} A refused or undecided selection stands among the right-hand values, \
+             reported here so it is not silent: {REFUSAL}"
+        );
+        let head = format!(
+            "Check was not compliant as property [Missing] to compare from is missing. Value \
+             traversed to [{}].",
+            "y".repeat(5000)
+        );
+        let out = finding(ABSENCE_CONTEXT, &head, Some(&message), true, &vur);
+        assert_eq!(format!("        Reason = {message}"), reason_line(&out));
+        let error = error_line(&out);
+        assert!(
+            error.ends_with(REFUSAL_CUT_MARKER) && !error.contains(REFUSAL),
+            "the `Error =` line is the head, cut at the bound before the tail:\n{}",
+            error
+        );
+        once(&out);
+    }
+
+    /// A refused marker's record whose sentence leads with a long template value: the head is cut at the
+    /// bound on the `Error =` line and the refusal is the `Reason =` line, whole, its one appearance in
+    /// the block, the layout decided from the record and not from what the cut left. Decided on the
+    /// recorded sentence, the `Reason =` line was left out because the recorded message was the reason,
+    /// and the block printed the refusal zero times. The control, the same record with a short lead,
+    /// prints the same two lines, the head whole.
     #[test]
     fn a_refusal_the_cut_dropped_from_the_error_line_is_printed_on_the_reason_line() {
         let vur = unresolved(
@@ -2477,12 +3747,7 @@ mod retrieval_error_tests {
              [{}].",
             "y".repeat(5000)
         );
-        let out = finding(
-            LHS_CONTEXT,
-            &format!("{lead} Error = [{REFUSAL}]"),
-            true,
-            &vur,
-        );
+        let out = finding(LHS_CONTEXT, &lead, Some(REFUSAL), true, &vur);
         let carrying: Vec<&str> = out.lines().filter(|l| l.contains(REFUSAL)).collect();
         assert_eq!(
             vec![format!("        Reason = {REFUSAL}")],
@@ -2498,15 +3763,17 @@ mod retrieval_error_tests {
         );
         assert_eq!(1, out.matches("Error = ").count(), "{}", out);
 
-        let out = finding(
-            LHS_CONTEXT,
-            &format!("Check was not compliant as the value to compare from could not be read. Error = [{REFUSAL}]"),
-            true,
-            &vur,
+        let out = finding(LHS_CONTEXT, LHS_HEAD_TEXT, Some(REFUSAL), true, &vur);
+        assert_eq!(
+            LHS_HEAD,
+            error_line(&out),
+            "with a short lead the head is printed whole:\n{}",
+            out
         );
-        assert!(
-            error_line(&out).contains(REFUSAL) && !out.contains("Reason = "),
-            "with a short lead the refusal stays on the `Error =` line alone:\n{}",
+        assert_eq!(
+            format!("        Reason = {REFUSAL}"),
+            reason_line(&out),
+            "and the refusal is the `Reason =` line, as with the long lead:\n{}",
             out
         );
     }
@@ -2526,18 +3793,14 @@ mod retrieval_error_tests {
             "{RETRIEVAL_REASON} A refused or undecided selection stands among the right-hand values, \
              reported here so it is not silent: {REFUSAL}"
         );
-        let sentence = format!(
+        let head =
             "Check was not compliant as property [Missing] to compare from is missing. Value \
-             traversed to [{{}}]. Error = [{message}]"
-        );
-        let out = finding(ABSENCE_CONTEXT, &sentence, true, &vur);
+                    traversed to [{}].";
+        let out = finding(ABSENCE_CONTEXT, head, Some(&message), true, &vur);
         assert_eq!(
             block(&[
                 format!("    Check = {ABSENCE_CONTEXT} {{"),
-                format!(
-                    "      Error = Check was not compliant as property [Missing] to compare from is missing. \
-                     Value traversed to [{{}}]. {message}"
-                ),
+                format!("      Error = {head} {message}"),
                 "      RequiredPropertyError {".to_string(),
                 property_path_line(&vur),
                 "        MissingProperty = Missing".to_string(),
@@ -2554,13 +3817,7 @@ mod retrieval_error_tests {
             out
         );
 
-        let out = finding(
-            ABSENCE_CONTEXT,
-            "Check was not compliant as property [Missing] to compare from is missing. Value \
-             traversed to [{}].",
-            false,
-            &vur,
-        );
+        let out = finding(ABSENCE_CONTEXT, head, None, false, &vur);
         assert_eq!(
             block(&[
                 format!("    Check = {ABSENCE_CONTEXT} {{"),
@@ -2574,6 +3831,253 @@ mod retrieval_error_tests {
             out,
             "a record that is no refusal's prints its reason and no sentence"
         );
+    }
+
+    /// A left-hand refused marker's record beside an absent right-hand value whose head quotes a
+    /// template value holding `Error = [` (the right-hand side's missing-property sentence, its
+    /// traversed-to value a `Note` quoting documentation): the layout is read from the record's parts,
+    /// so the value stays in the head where the report builder put it, the lead follows the head on
+    /// `Error =`, and the refusal is the `Reason =` line. Read by splitting the recorded sentence at its
+    /// first `Error = [`, the split landed inside the value: the head was cut short and the value's tail,
+    /// the opener inside it, was joined to the lead.
+    #[test]
+    fn a_template_value_holding_the_tails_opener_stays_in_the_head_beside_a_left_marker() {
+        let vur = unresolved(
+            REFUSAL,
+            "",
+            UnResolvedKind::Undecidable {
+                refusal: Some(crate::rules::errors::RefusalToken::minted(1)),
+                carried: None,
+            },
+        );
+        let head = r#"Check was not compliant as property [Missing] to compare to is missing. Value traversed to [{"Note":"see Error = [docs]"}]."#;
+        let lead =
+            "Attempting to retrieve from key Missing but type is not an struct type at path \
+                    /Resources/R/Properties/Cfg/Mode/Ref";
+        let message = format!(
+            "{lead} A refused or undecided selection stands among the left-hand values, reported here \
+             so it is not silent: {REFUSAL}"
+        );
+        let out = finding(
+            "%x != Resources.R.Properties.Cfg.Mode.Ref.Missing",
+            head,
+            Some(&message),
+            true,
+            &vur,
+        );
+        assert_eq!(
+            block(&[
+                "    Check = %x != Resources.R.Properties.Cfg.Mode.Ref.Missing {".to_string(),
+                format!(
+                    "      Error = {head} {lead} A refused or undecided selection stands among the \
+                     left-hand values, reported here so it is not silent:"
+                ),
+                "      NoAnswerError {".to_string(),
+                property_path_line(&vur),
+                format!("        Reason = {REFUSAL}"),
+                "      }".to_string(),
+                "    }".to_string(),
+            ]),
+            out
+        );
+        assert_eq!(
+            1,
+            out.lines().filter(|line| line.contains(REFUSAL)).count(),
+            "the refusal on one line:\n{}",
+            out
+        );
+    }
+
+    /// A refusal record with no parts (a producer that set none, a report read back from its serialized
+    /// form) falls back to the sentence as recorded: bounded on `Error =`, the bracketed tail as it was
+    /// written, and the reason bounded on `Reason =`. The parts are what let the console open the tail;
+    /// without them it prints what it has and parses nothing.
+    #[test]
+    fn a_refusal_record_with_no_parts_prints_its_sentence_as_recorded() {
+        let vur = unresolved(
+            REFUSAL,
+            "",
+            UnResolvedKind::Undecidable {
+                refusal: Some(crate::rules::errors::RefusalToken::minted(1)),
+                carried: None,
+            },
+        );
+        let sentence = format!("{RHS_HEAD_TEXT} Error = [{REFUSAL}]");
+        let messages = Messages {
+            custom_message: Some(String::new()),
+            error_message: Some(sentence.clone()),
+            location: None,
+            refusal: true,
+            parts: None,
+        };
+        let out = finding_of(RHS_CONTEXT, messages, &vur);
+        assert_eq!(
+            block(&[
+                format!("    Check = {RHS_CONTEXT} {{"),
+                format!("      Error = {sentence}"),
+                "      NoAnswerError {".to_string(),
+                property_path_line(&vur),
+                format!("        Reason = {REFUSAL}"),
+                "      }".to_string(),
+                "    }".to_string(),
+            ]),
+            out
+        );
+    }
+
+    /// The message the evaluator writes for an absent value beside a refused read: the retrieval's
+    /// reason as its lead, the template value it quotes (the text after `Value = `) bounded where the
+    /// retrieval wrote it (`marker_part`: cut at the part bound, controls escaped, the backslash kept),
+    /// the key and the path whole, then the refusal.
+    fn absence_message(reason: &str, side: &str) -> String {
+        let lead = match reason.split_once("Value = ") {
+            Some((prefix, value)) => format!("{prefix}Value = {}", marker_part(value)),
+            None => reason.to_string(),
+        };
+        format!(
+            "{lead} A refused or undecided selection stands among the {side}-hand values, reported \
+             here so it is not silent: {REFUSAL}"
+        )
+    }
+
+    /// The block of an absent value beside a refused read whose lead is `reason`, with the refusal
+    /// once on its `Error =` line and no `Reason =` line: the asserted shape of the three cells below.
+    fn absence_block_once(reason: &str) -> String {
+        let vur = unresolved(reason, "Missing", UnResolvedKind::Absent);
+        let head =
+            "Check was not compliant as property [Missing] to compare from is missing. Value \
+                    traversed to [{}].";
+        let message = absence_message(reason, "right");
+        let out = finding(ABSENCE_CONTEXT, head, Some(&message), true, &vur);
+        assert_eq!(
+            block(&[
+                format!("    Check = {ABSENCE_CONTEXT} {{"),
+                format!("      Error = {head} {message}"),
+                "      RequiredPropertyError {".to_string(),
+                property_path_line(&vur),
+                "        MissingProperty = Missing".to_string(),
+                "      }".to_string(),
+                "    }".to_string(),
+            ]),
+            out
+        );
+        assert!(
+            !out.contains("Error = ["),
+            "no nested `Error = [` on the console:\n{}",
+            out
+        );
+        once(&out);
+        out
+    }
+
+    /// An absent value beside a refused read whose retrieval reason runs past the template-part bound (a
+    /// path of about 330 characters, kept whole by the evaluator): the lead is the reason as written, and
+    /// the block prints the sentence with the lead and the refusal once on `Error =`, no nested
+    /// `Error = [`, no `Reason =` line. Laid out by rebuilding the lead as a bounded template part and
+    /// anchoring on it, the rebuilt text was cut at 256 characters, missed, and the block fell to the
+    /// recorded sentence, its nested opener inside, with the reason printed again on `Reason =`.
+    #[test]
+    fn an_absent_values_block_with_a_long_path_lead_prints_the_refusal_once() {
+        let reason = format!(
+            "Could not find key Missing inside struct at path /Resources/R/Properties/{}Deep",
+            "Cfg/".repeat(80)
+        );
+        assert!(reason.chars().count() > 256);
+        let out = absence_block_once(&reason);
+        assert_eq!(
+            1,
+            out.matches(&reason).count(),
+            "the whole reason, its path included, is printed once:\n{}",
+            out
+        );
+    }
+
+    /// An absent value beside a refused read whose key holds a backslash: the evaluator's lead keeps the
+    /// key as written (only a quoted value is escaped), and the block prints it as written with the
+    /// refusal once, no nested `Error = [`, no `Reason =` line. Laid out by anchoring on an escaped
+    /// rebuild of the reason, the rebuilt text carried the backslash's escape, missed, and the block
+    /// fell to the recorded sentence.
+    #[test]
+    fn an_absent_values_block_with_a_backslash_in_the_key_prints_the_refusal_once() {
+        let reason =
+            r"Could not find key C:\Temp inside struct at path /Resources/R/Properties/Cfg";
+        let out = absence_block_once(reason);
+        assert_eq!(1, out.matches(reason).count(), "{}", out);
+        assert!(
+            !out.contains(r"C:\\Temp"),
+            "the key is printed as written, not escaped twice:\n{}",
+            out
+        );
+    }
+
+    /// The mirror of the long-string cell for an absent value beside a refused read: a key read off a
+    /// 5000-character string, whose retrieval reason quotes the whole string after `Value = `. The
+    /// evaluator's lead cuts that value at the template-part bound with a marker; the block prints the
+    /// sentence with the cut lead and the refusal once on `Error =`, the string never whole, no nested
+    /// `Error = [`, no `Reason =` line. Laid out by anchoring on a rebuild cut at 256 characters of the
+    /// WHOLE reason, the block fell to the recorded sentence and printed the raw reason, up to 4096
+    /// characters of the string, on `Reason =`.
+    #[test]
+    fn an_absent_values_block_with_a_long_quoted_value_prints_the_refusal_once() {
+        let value = "y".repeat(5000);
+        let reason = format!(
+            "Attempting to retrieve from key Missing but type is not an struct type at path \
+             /Resources/R/Properties/Cfg/Mode/Ref, Type = String, Value = {value:?}"
+        );
+        let out = absence_block_once(&reason);
+        assert!(
+            !out.contains(&value) && out.contains(" more characters cut]"),
+            "the quoted value is printed cut with the evaluator's marker, never whole:\n{}",
+            out
+        );
+        assert!(
+            out.lines().all(|line| line.chars().count() < 1024),
+            "no line of the block carries the value:\n{}",
+            out
+        );
+    }
+
+    /// A unary check refused over a value the document lacks: the report builder joins its sentence with
+    /// no space before `Error = [`, unlike the comparison arms, and the record carries the parts all the
+    /// same, so the block is laid out from them: the head on `Error =`, the refusal once on `Reason =`.
+    /// Laid out by anchoring on the comparison arms' ` Error = [`, the unary sentence matched nothing and
+    /// kept its nested opener on the console.
+    #[test]
+    fn a_unary_refusal_record_prints_its_head_and_its_refusal_once() {
+        let vur = unresolved(
+            REFUSAL,
+            "Ref",
+            UnResolvedKind::Undecidable {
+                refusal: Some(crate::rules::errors::RefusalToken::minted(1)),
+                carried: None,
+            },
+        );
+        let head = "Check was not compliant as property [Ref] is missing. Value traversed to [{}].";
+        let messages = Messages {
+            custom_message: Some(String::new()),
+            error_message: Some(format!("{head}Error = [{REFUSAL}]")),
+            location: None,
+            refusal: true,
+            parts: Some(SentenceParts {
+                head: head.to_string(),
+                message: REFUSAL.to_string(),
+            }),
+        };
+        let out = finding_of("%x exists", messages, &vur);
+        assert_eq!(
+            block(&[
+                "    Check = %x exists {".to_string(),
+                format!("      Error = {head}"),
+                "      RequiredPropertyError {".to_string(),
+                property_path_line(&vur),
+                "        MissingProperty = Ref".to_string(),
+                format!("        Reason = {REFUSAL}"),
+                "      }".to_string(),
+                "    }".to_string(),
+            ]),
+            out
+        );
+        once(&out);
     }
 }
 
@@ -2661,6 +4165,7 @@ mod explanation_tests {
             error_message: Some(error.to_string()),
             location: None,
             refusal: false,
+            parts: None,
         }
     }
 
@@ -2670,6 +4175,24 @@ mod explanation_tests {
             refusal: true,
             ..messages("", error)
         }
+    }
+
+    /// The unattributed section's entry for a refusal record takes the console's one refusal pipeline
+    /// (`bounded_for_the_console` through `reason_backstop`): a raw line break in the evaluator's half
+    /// is joined as `; ` and a raw ESC is written as its escape after it, as the per-resource arms print
+    /// the same record. Bounded with no escape, the section printed the control raw. The author's half
+    /// is no refusal's and keeps its own cap; this cell pins the evaluator's half alone.
+    #[test]
+    fn a_refusals_explanation_in_the_section_is_collapsed_and_escaped() {
+        let line = explanation_of(&refusal(
+            "the key `\u{1b}[31ma\nb\u{1b}[0m` could not be read",
+        ));
+
+        assert_eq!(
+            "the key `\\u{1b}[31ma; b\\u{1b}[0m` could not be read",
+            line
+        );
+        assert!(!line.contains('\u{1b}'), "no raw ESC reaches the section");
     }
 
     /// The cap bounds one message, so a line carrying two reaches twice it plus the space between them.

@@ -1137,13 +1137,18 @@ fn flattened<U>(query_results: &[QueryResult], c: U) -> Vec<Rc<PathAwareValue>>
 where
     U: FnMut(&UnResolved),
 {
-    // TODO: this can probably be improved with less clones..
-    selected(query_results, c, |into, p| match &*p {
-        PathAwareValue::List((_, list)) => {
-            into.extend(list.iter().cloned().map(Rc::new).collect::<Vec<_>>());
+    // A list is expanded into its elements, each boxed ONCE here so every result filed for the element,
+    // the marker's pair included, carries that element's own `Rc`; every other value is carried as the
+    // operand's own `Rc`: the identity contract `ComparisonResult` states. Re-boxed per value, no left
+    // value the orderings answered was the operand's by address, so the readers of a result's left value
+    // by address (`eval::compared_left_values`, `eval::accepted_left_values`, the marker's pair for an
+    // empty list) never found it.
+    selected(query_results, c, |into, p| {
+        if let PathAwareValue::List((_, list)) = &*p {
+            into.extend(list.iter().cloned().map(Rc::new));
+        } else {
+            into.push(p);
         }
-
-        rest => into.push(Rc::new(rest.clone())),
     })
 }
 
@@ -2191,28 +2196,31 @@ fn contained_in(lhs_value: Rc<PathAwareValue>, rhs_value: Rc<PathAwareValue>) ->
                     }
                 }
 
+                // The pair's left value is the operand's own `Rc` (`rest` is the whole left value, not an
+                // element), the identity contract `ComparisonResult` states; re-boxed, the value a listed
+                // entry accepted was never found among the accepted by address (`marker_pair_under_in`).
                 match (found, unanswerable) {
                     (true, _) => ValueEvalResult::ComparisonResult(ComparisonResult::Success(
                         Compare::ValueIn(LhsRhsPair::new(
-                            Rc::new(rest.clone()),
+                            Rc::clone(&lhs_value),
                             Rc::clone(&rhs_value),
                         )),
                     )),
 
                     (false, Some(reason)) => {
-                        not_comparable_because(Rc::new(rest.clone()), Rc::clone(&rhs_value), reason)
+                        not_comparable_because(Rc::clone(&lhs_value), Rc::clone(&rhs_value), reason)
                     }
 
                     (false, None) => {
                         ValueEvalResult::ComparisonResult(ComparisonResult::Fail(Compare::ValueIn(
-                            LhsRhsPair::new(Rc::new(rest.clone()), Rc::clone(&rhs_value)),
+                            LhsRhsPair::new(Rc::clone(&lhs_value), Rc::clone(&rhs_value)),
                         )))
                     }
                 }
             }
 
             rhs_rest => match_value(
-                Rc::new(rest.clone()),
+                Rc::clone(&lhs_value),
                 Rc::new(rhs_rest.clone()),
                 compare_eq_for_membership,
             ),
@@ -2543,7 +2551,9 @@ impl Comparator for InOperation {
                                 }
                             }
 
-                            rest => results.push(string_in(Rc::new(rest.clone()), Rc::clone(&r))),
+                            // The whole left value, carried as the operand's own `Rc` (the identity
+                            // contract `ComparisonResult` states); the elements above are fresh boxes.
+                            _ => results.push(string_in(Rc::clone(&l), Rc::clone(&r))),
                         },
 
                         rest => results.push(contained_in(l, Rc::new(rest.clone()))),

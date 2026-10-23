@@ -104,7 +104,59 @@ impl CellFailures {
         }
     }
 
-    fn assert_all_agreed(self) {
+    /// `check` with a diagnostic (a record dump, say) built ONLY when the cell disagrees, so an agreeing
+    /// table formats nothing and a red cell still names what it read.
+    fn check_with<T: PartialEq + std::fmt::Debug>(
+        &mut self,
+        label: &str,
+        expected: T,
+        actual: T,
+        diagnostic: impl FnOnce() -> String,
+    ) {
+        self.seen += 1;
+        if expected != actual {
+            self.disagreed.push(format!(
+                "{label}: wanted {expected:?}, got {actual:?}; {}",
+                diagnostic()
+            ));
+        }
+    }
+
+    /// A table that is always concluded: `f` fills it, and whatever `f` returns the helper notes pending
+    /// at its end (`HELPER_NOTES`) are read into the verdict. An `Ok` runs `assert_all_agreed`, so a
+    /// pending note fails the test; an `Err` surfaces as it is, the notes printed beside it, so an early
+    /// `?` return never hides its own error behind the notes. The one shape a table needs so that no
+    /// exit skips its conclusion; a table built with `CellFailures::default` relies on its author calling
+    /// `assert_all_agreed` (the `Drop` guard only prints what such a table left).
+    fn table(f: impl FnOnce(&mut CellFailures) -> Result<()>) -> Result<()> {
+        let mut cells = CellFailures::default();
+        match f(&mut cells) {
+            Ok(()) => {
+                cells.assert_all_agreed();
+                Ok(())
+            }
+            Err(error) => {
+                let noted = HELPER_NOTES.with(|notes| std::mem::take(&mut *notes.borrow_mut()));
+                if !noted.is_empty() {
+                    eprintln!(
+                        "the table returned an error with helper notes pending:\n  {}",
+                        noted.join("\n  ")
+                    );
+                }
+                Err(error)
+            }
+        }
+    }
+
+    fn assert_all_agreed(mut self) {
+        // The defects the test's helpers noted while the table was filled (`HELPER_NOTES`), each one a
+        // disagreeing cell of this table: a helper called from a closure the rows call has no handle on
+        // the table, and asserting there aborted the test at its first call with every other cell hidden.
+        let noted = HELPER_NOTES.with(|notes| std::mem::take(&mut *notes.borrow_mut()));
+        for defect in noted {
+            self.seen += 1;
+            self.disagreed.push(format!("a helper noted: {defect}"));
+        }
         // Arguments spelled out rather than captured inline, for the edition-2018 reason given on the
         // skip-reason tests below: a lone literal handed to `assert!` becomes the payload verbatim.
         assert!(
@@ -113,6 +165,30 @@ impl CellFailures {
             self.disagreed.len(),
             self.seen,
             self.disagreed.join("\n  ")
+        );
+    }
+}
+
+/// A table dropped with helper notes still pending (`HELPER_NOTES`) prints them to stderr instead of
+/// letting a reworded bind line go unread, and lets the test's own result surface: the one way a table
+/// is dropped before `assert_all_agreed` reads it is an early `?` return, whose `Err` the harness
+/// reports, and a panic here replaced that error with the notes, hiding what failed. Not during an
+/// unwind, where a second panic would abort the test binary. A `Drop` cannot tell an early `Err` from a
+/// function that returned `Ok` without concluding its table, so the notes are printed in both cases and
+/// never asserted here; a table that reaches `assert_all_agreed` takes them into its own verdict.
+impl Drop for CellFailures {
+    fn drop(&mut self) {
+        if std::thread::panicking() {
+            return;
+        }
+        let pending = HELPER_NOTES.with(|notes| std::mem::take(&mut *notes.borrow_mut()));
+        if pending.is_empty() {
+            return;
+        }
+        eprintln!(
+            "a cell table was dropped with helper notes no table read (the test returned before \
+             `assert_all_agreed`; its own error, if any, follows):\n  {}",
+            pending.join("\n  ")
         );
     }
 }
@@ -429,15 +505,28 @@ fn query_empty_and_non_empty() -> Result<()> {
         refusal_frames: RefusalFrames::default(),
     };
 
-    let query = AccessQuery::try_from("Resources.*[ Type == /Bucket/ ]")?;
+    // The clause's text and position as the frame of absorbed raises would name them: nothing here
+    // raises beside a refused read, so neither is read.
+    let site = FileLocation {
+        file_name: "",
+        line: 1,
+        column: 1,
+    };
+    let GuardClause::Clause(bucket) =
+        GuardClause::try_from("Resources.*[ Type == /Bucket/ ] !empty")?
+    else {
+        panic!("not an access clause");
+    };
     let status = unary_operation(
-        &query,
+        &bucket.access_clause.query,
         (CmpOperator::Empty, true),
         false,
         "".to_string(),
         None,
         &mut eval,
         ClauseRole::Assertion,
+        &bucket,
+        &site,
     )?;
     match status {
         EvaluationResult::QueryValueResult(expected) => {
@@ -454,15 +543,21 @@ fn query_empty_and_non_empty() -> Result<()> {
         EvaluationResult::EmptyQueryResult(..) => unreachable!(),
     }
 
-    let query = AccessQuery::try_from("Resources.*[ Type == /Broker/ ]")?;
+    let GuardClause::Clause(broker) =
+        GuardClause::try_from("Resources.*[ Type == /Broker/ ] !empty")?
+    else {
+        panic!("not an access clause");
+    };
     let status = unary_operation(
-        &query,
+        &broker.access_clause.query,
         (CmpOperator::Empty, true),
         false,
         "".to_string(),
         None,
         &mut eval,
         ClauseRole::Assertion,
+        &broker,
+        &site,
     )?;
     match status {
         EvaluationResult::QueryValueResult(_) => unreachable!(),
@@ -547,7 +642,8 @@ enum Fold {
     &[KeyPairOutcome::Unfinished {
         reason: "gave up".to_string(),
         token: None,
-        register: false
+        register: false,
+        recovered: None
     }],
     Fold::Undecidable
 )]
@@ -558,7 +654,8 @@ enum Fold {
         KeyPairOutcome::Unfinished {
         reason: "gave up".to_string(),
         token: None,
-        register: false
+        register: false,
+        recovered: None
     }
     ],
     Fold::Selected
@@ -569,7 +666,8 @@ enum Fold {
         KeyPairOutcome::Unfinished {
         reason: "gave up".to_string(),
         token: None,
-        register: false
+        register: false,
+        recovered: None
     },
         KeyPairOutcome::Equal(true)
     ],
@@ -582,7 +680,8 @@ enum Fold {
         KeyPairOutcome::Unfinished {
         reason: "gave up".to_string(),
         token: None,
-        register: false
+        register: false,
+        recovered: None
     }
     ],
     Fold::Undecidable
@@ -594,7 +693,8 @@ enum Fold {
         KeyPairOutcome::Unfinished {
         reason: "gave up".to_string(),
         token: None,
-        register: false
+        register: false,
+        recovered: None
     }
     ],
     Fold::NotSelected
@@ -605,7 +705,8 @@ enum Fold {
         KeyPairOutcome::Unfinished {
         reason: "gave up".to_string(),
         token: None,
-        register: false
+        register: false,
+        recovered: None
     },
         KeyPairOutcome::Equal(true)
     ],
@@ -618,7 +719,8 @@ enum Fold {
         KeyPairOutcome::Unfinished {
         reason: "gave up".to_string(),
         token: None,
-        register: false
+        register: false,
+        recovered: None
     }
     ],
     Fold::Undecidable
@@ -630,7 +732,8 @@ enum Fold {
         KeyPairOutcome::Unfinished {
         reason: "gave up".to_string(),
         token: None,
-        register: false
+        register: false,
+        recovered: None
     }
     ],
     Fold::Undecidable
@@ -646,6 +749,69 @@ fn key_selected_from_folds_classified_outcomes(
         Err(key_filter::KeptPairing { .. }) => Fold::Undecidable,
     };
     assert_eq!(actual, expected, "{:?} over {:?}", cmp, outcomes);
+}
+
+#[rstest::rstest]
+#[case::refused_pairing_first(
+    &[
+        KeyPairOutcome::Unfinished {
+            reason: "refused".to_string(),
+            token: Some(crate::rules::errors::RefusalToken::minted(1)),
+            register: true,
+            recovered: None
+        },
+        KeyPairOutcome::Unfinished {
+            reason: "gave up".to_string(),
+            token: None,
+            register: false,
+            recovered: None
+        }
+    ],
+    "refused"
+)]
+#[case::refused_pairing_last(
+    &[
+        KeyPairOutcome::Unfinished {
+            reason: "gave up".to_string(),
+            token: None,
+            register: false,
+            recovered: None
+        },
+        KeyPairOutcome::Unfinished {
+            reason: "refused".to_string(),
+            token: Some(crate::rules::errors::RefusalToken::minted(1)),
+            register: true,
+            recovered: None
+        }
+    ],
+    "refused"
+)]
+fn key_selected_from_carries_a_refused_pairings_flag_in_either_order(
+    #[case] outcomes: &[KeyPairOutcome],
+    #[case] first_reason: &str,
+) {
+    for cmp in [
+        MapKeyComparator::Eq,
+        MapKeyComparator::NotEq,
+        MapKeyComparator::In,
+        MapKeyComparator::NotIn,
+    ] {
+        match key_filter::key_selected_from(cmp, outcomes, &no_frame_ranking) {
+            Err(key_filter::KeptPairing {
+                reason,
+                timing,
+                register,
+            }) => {
+                assert_eq!(reason, first_reason, "{:?} over {:?}", cmp, outcomes);
+                assert!(timing.own().is_some(), "{:?} over {:?}", cmp, outcomes);
+                assert!(register, "{:?} over {:?}", cmp, outcomes);
+            }
+            other => panic!(
+                "expected UndecidableComparison for {:?}; got {:?}",
+                cmp, other
+            ),
+        }
+    }
 }
 
 /// `select_key` hands back the comparisons it folded, one per right-hand value, naming the pair.
@@ -781,10 +947,11 @@ fn select_key_returns_the_comparisons_it_folded() -> Result<()> {
     assert!(
         selection
             .undecided
-            .as_deref()
+            .as_ref()
             .is_some_and(|reason| reason.contains("did not resolve")
-                && reason.contains("Parameters.missing")),
-        "the selection is undecided, with a reason naming the query the retrieval could not walk: {:?}",
+                && reason.contains("Parameters.missing"))
+            && selection.timing.token().is_none(),
+        "the selection is undecided, with a reason naming the query the retrieval could not walk, and no refused read beside it: {:?}",
         selection.undecided
     );
     assert_eq!(selection.evidence.len(), 3);
@@ -7705,7 +7872,7 @@ fn a_document_level_binding_is_resolved_once_for_every_enumeration_a_probe_reads
 }
 
 /// A probe that runs inside a block `let`'s resolution files nothing in the root's memo for the
-/// evaluation (`BlockScope::resolving_a_binding` reads the block's `resolving_let` as the root reads its
+/// evaluation (`BlockScope::resolving_binding` reads the block's `resolving_let` as the root reads its
 /// `resolving_assignments`): `rule r { let sel = Resources.*.Properties[ Foo !exists or this exists or
 /// Kind IN %kinds ]  %sel !empty }` resolves the block's `let sel`, and the kept-scalar check inside that
 /// filter reads the file-level `%kinds` quietly on each property; the verdict is the refusal every such
@@ -10353,13 +10520,23 @@ fn every_recorded_explanation_has_a_rendering_path() {
         + source.matches("message: gnc.custom_message").count()
         + source
             .matches("message: self.call_rule.named_rule.custom_message")
+            .count()
+        // The clause's own `custom_message` field, cloned onto the block-shaped records of an access
+        // clause and of a call's argument failure (`custom_message: <clause>.custom_message.clone()`),
+        // which the count above reads as `message: <clause>.custom_message...`: the author's text, not
+        // an explanation the evaluator generated, and rendered by the reporters' `custom_message` path.
+        + source
+            .matches("custom_message: gac.access_clause.custom_message")
+            .count()
+        + source
+            .matches("custom_message: call_rule.named_rule.custom_message")
             .count();
     let sites = total - empty - declarations - custom;
 
     // Evaluator-generated explanations, by the record variant each lands on:
     //
     //   ClauseValueCheck        8   leaf value checks; rendered by the clause arms already
-    //   GuardClauseBlockCheck   8   rendered: falls back to the message when no children report
+    //   GuardClauseBlockCheck  10   rendered: falls back to the message when no children report
     //   BlockGuardCheck         3   rendered: uses the record's message, not a hardcoded sentence
     //   WhenCheck               2   rendered: same fallback as GuardClauseBlockCheck
     //   TypeCheck               4   two failures, plus the two skip sites below
@@ -10514,9 +10691,38 @@ fn every_recorded_explanation_has_a_rendering_path() {
     // `an_unmatched_value_beside_a_refusal_under_a_positive_in_records_the_refusal_whole` assert the
     // records, and the validate tests of the same names the console.
     //
+    // The ninth GuardClauseBlockCheck is the fail-closed `not`'s own record (`record_fail_closed_negation`,
+    // one shape for `not r` and `not r()`): the sentence naming the negated rule and the refused reads its
+    // FAIL rests on. Confirmed rendered: the console prints it whole under the refusal layout, and the "J"
+    // row of `an_authors_message_travels_on_every_record_whose_clause_carries_one` reads it in `-o json`.
+    //
+    // The tenth GuardClauseBlockCheck is the block clause's per-value record for a refused one-object
+    // selection met beside sibling values (`eval_guard_block_clause`, the fold after its loop), a child of
+    // the block's own record with no children of its own, so both reporters print it through the same
+    // fallback as the sixth, seventh and eighth. ONE site serves both roles and carries the sentence in the
+    // assertion role only (`message: role.is_strict().then_some(sentence)`): a gate's per-value records are
+    // never rendered (the failing children of a `when` condition that did not open its block are not
+    // printed), so the gate's carries `None`, as `fold_refused_body`'s does in the same context. Confirmed
+    // rendered: `a_refused_values_record_beside_a_sibling_reaches_the_structured_output` reads the
+    // sentence exactly once in `-o json` for the "SP" shape of
+    // `a_blocks_refused_read_over_the_empty_selection_is_judged_with_its_bodys_basis`, whose rows read it
+    // on the record; the block's own record for the same refusal standing alone is the third
+    // BlockGuardCheck above, whose rendering
+    // `every_delivery_path_of_a_body_read_refuses_as_the_inline_spelling_does` asserts.
+    //
+    // The per-value record the block clause's settle-before-an-exit method writes
+    // (`HeldForTheFold::settle_before_an_exit`: a refused one-object selection kept for the fold after the
+    // loop whose block returns BEFORE that fold) carries `message: None` on purpose and is not a site
+    // here. It was recorded with the tenth site's sentence in the assertion role, and the one run that
+    // read it (`-o json` for a refused map beside a second one-object selection whose body's converter
+    // error exits the block, asserted) listed NO check under the failing rule: the sentence reached no
+    // reader, and this census does not admit a message it cannot show rendered. The record's refusal flag
+    // and the block's own exit record are what a reader of that run has. A later change that shows the
+    // settled record rendered may give it the sentence back, with the proof, and raise this number.
+    //
     // If this total changes, find the new site, note which variant it records against, and confirm
     // it reaches rendered output before updating the number.
-    const SITES_EXPECTED: usize = 27;
+    const SITES_EXPECTED: usize = 29;
 
     assert_eq!(
         sites, SITES_EXPECTED,
@@ -12146,7 +12352,13 @@ fn a_filter_selects_among_a_collection_and_tests_a_member() -> Result<()> {
         eval_rules_file(&rules_file, &mut root, None)?;
         let warned: Vec<String> = root.warnings().cloned().collect();
         let deprecated: Vec<String> = root.deprecations().cloned().collect();
-        cells.check(&format!("{label}: warnings"), warnings, warned.len());
+        // The texts travel with a disagreement: a count alone cannot say which second line a row met.
+        cells.check_with(
+            &format!("{label}: warnings"),
+            warnings,
+            warned.len(),
+            || format!("the warnings read: {warned:?}"),
+        );
         cells.check(
             &format!("{label}: deprecations"),
             deprecations,
@@ -12282,7 +12494,11 @@ fn a_filter_selects_among_a_collection_and_tests_a_member() -> Result<()> {
 /// fails closed on (exit 19), one level down a stack and two levels down the deny idiom alike. The
 /// markers are counted at every path the record holds them: the inner key filter's own record under
 /// the entry, the entry itself, and the enclosing entry where a predicate handed it up. No shape
-/// writes a warning or a stderr notice.
+/// writes a stderr notice; one shape writes a warning: `f2`, the gate a decided mismatch settles beside
+/// the marker, reports the refused read it did not raise (the marker's reason is the key filter's wrap
+/// of the string-filter refusal; the refusal inside is registered, the wrap is registered by nobody and
+/// travels as the marker's `beside_a_refusal` flag, which the left-hand read collects), and no other row
+/// is decided beside it.
 #[test]
 fn the_hand_up_reading_of_an_undecidable_value_inside_a_unary_filter_is_pinned() -> Result<()> {
     const DOC_RESOURCES: &str = r#"{
@@ -12322,9 +12538,11 @@ fn the_hand_up_reading_of_an_undecidable_value_inside_a_unary_filter_is_pinned()
     const BODY: &str = "Resources.A.Type == 'Y'";
     const C_MARKERS: &[&str] = &["/Resources/C/Properties/M", "/Resources/C"];
     let mut cells = CellFailures::default();
-    for (label, rules, doc, expected, marker_paths) in [
+    // The second element of each row is the number of refused-read lines the row owes (one shape, `f2`).
+    for (label, lines, rules, doc, expected, marker_paths) in [
         (
             "a: a when gate under !empty fails its rule closed on the marker beside the kept entry",
+            0,
             format!("rule a when Resources.*[ {PRED} ] !empty {{ {BODY} }}"),
             DOC_RESOURCES,
             Status::FAIL,
@@ -12332,6 +12550,7 @@ fn the_hand_up_reading_of_an_undecidable_value_inside_a_unary_filter_is_pinned()
         ),
         (
             "b: a unary predicate hands the marker up to the stack, whose empty fails closed on it",
+            0,
             format!("rule b {{ Stacks.*[ Resources.*[ {PRED} ] !empty ] empty }}"),
             DOC_STACKS,
             Status::FAIL,
@@ -12343,6 +12562,7 @@ fn the_hand_up_reading_of_an_undecidable_value_inside_a_unary_filter_is_pinned()
         ),
         (
             "c1: the exists twin of a fails its rule closed",
+            0,
             format!("rule c1 when Resources.*[ {PRED} ] exists {{ {BODY} }}"),
             DOC_RESOURCES,
             Status::FAIL,
@@ -12350,6 +12570,7 @@ fn the_hand_up_reading_of_an_undecidable_value_inside_a_unary_filter_is_pinned()
         ),
         (
             "c2: the !exists twin of a fails its rule closed",
+            0,
             format!("rule c2 when Resources.*[ {PRED} ] !exists {{ {BODY} }}"),
             DOC_RESOURCES,
             Status::FAIL,
@@ -12357,6 +12578,7 @@ fn the_hand_up_reading_of_an_undecidable_value_inside_a_unary_filter_is_pinned()
         ),
         (
             "d: the deny idiom over rules holding one undecidable and one decided entry fails closed",
+            0,
             "rule d { Resources.*[ Properties.Groups[*].Rules[ M[ keys == to_upper(Tags[ Key == 'Env' ].Value) ] !empty ] !empty ] empty }".to_string(),
             DOC_GROUPS,
             Status::FAIL,
@@ -12368,6 +12590,7 @@ fn the_hand_up_reading_of_an_undecidable_value_inside_a_unary_filter_is_pinned()
         ),
         (
             "e: a match_all !empty assertion fails on the marker beside the decided sibling",
+            0,
             format!("rule e {{ Resources.*[ {PRED} ] !empty }}"),
             DOC_RESOURCES,
             Status::FAIL,
@@ -12375,6 +12598,7 @@ fn the_hand_up_reading_of_an_undecidable_value_inside_a_unary_filter_is_pinned()
         ),
         (
             "f1: the comparison twin of a, the kept entry passing it, fails its rule closed",
+            0,
             format!("rule f1 when Resources.*[ {PRED} ].Type == 'Y' {{ {BODY} }}"),
             DOC_RESOURCES,
             Status::FAIL,
@@ -12382,6 +12606,7 @@ fn the_hand_up_reading_of_an_undecidable_value_inside_a_unary_filter_is_pinned()
         ),
         (
             "f2: the comparison twin of a, the kept entry failing it, is settled and not applicable",
+            1,
             format!("rule f2 when Resources.*[ {PRED} ].Type == 'X' {{ {BODY} }}"),
             DOC_RESOURCES,
             Status::SKIP,
@@ -12392,12 +12617,31 @@ fn the_hand_up_reading_of_an_undecidable_value_inside_a_unary_filter_is_pinned()
         let mut root = root_scope(&rules_file, Rc::new(PathAwareValue::try_from(doc)?));
         let status = eval_rules_file(&rules_file, &mut root, None)?;
         cells.check(label, expected, status);
+        // One row writes a line: f2's gate is DECIDED by a value that does not match (`C`'s `Type` is not
+        // `'X'`), beside the entry marker whose reason is the key filter's wrap of the string-filter
+        // refusal. The refusal inside the predicate is registered; the wrap of it is registered by nobody
+        // and travels as the marker's `beside_a_refusal` flag, so the comparison reads the LEFT-hand
+        // marker as a refused read by its flag alone (`refused_read_with_registration`) and the decided
+        // comparison reports the read it did not raise, once, on the warning channel; read by kind or by
+        // registered text alone, the flag-only left marker was in no collection and the row wrote no
+        // line. Every other row raises on the marker or fails on it, and a raised refusal owes no line.
         let warned: Vec<String> = root.warnings().cloned().collect();
         cells.check(
             &format!("{label}: warnings written, among {warned:?}"),
-            0,
+            lines,
             warned.len(),
         );
+        if lines == 1 {
+            // The line names the refused read the gate did not raise by the sentence the marker carries,
+            // which embeds the string-filter refusal the inner marker was minted with.
+            cells.check(
+                &format!("{label}: the line names the string-filter refusal, among {warned:?}"),
+                true,
+                warned
+                    .iter()
+                    .all(|line| line.contains("filters the entries of a String")),
+            );
+        }
         let notices: Vec<String> = root.deprecations().cloned().collect();
         cells.check(
             &format!("{label}: stderr notices written, among {notices:?}"),
@@ -12450,9 +12694,17 @@ fn an_undecidable_entry_is_decided_past_by_a_sibling_that_settles_the_clause() -
     let mut cells = CellFailures::default();
     // The last element names a body clause, as the record spells it, and whether the record holds it:
     // whether the gate before it opened.
-    for (label, rules, expected, warnings, body_clause) in [
+    // The second element of each row is the number of refused-read lines the row owes: NONE in every
+    // row. The entry's refused read is the unbound capture's refusal, which the capture's own notice
+    // announced once per clause (`announce_unbound_capture`), and the refused-read writer leaves an
+    // announced refusal out (`RootScope::record_unraised_refusal`, one filter for every writer), so a
+    // clause DECIDED beside the entry's marker without raising it (the body `some` a sibling passes, the
+    // `when` a mismatch settles, the two comparison gates a passing sibling opens) reports the refusal by
+    // the notice alone, as a clause that fails on the marker's pair or raises on it does.
+    for (label, lines, rules, expected, warnings, body_clause) in [
         (
             "some over the marker: the passing sibling decides the clause",
+            0,
             "rule r { some Resources.*[ Properties.Rules[0][ r | Action == 'allow' ] exists ].Type == 'AWS::S3::Bucket' }",
             Status::PASS,
             1,
@@ -12460,6 +12712,7 @@ fn an_undecidable_entry_is_decided_past_by_a_sibling_that_settles_the_clause() -
         ),
         (
             "the same clause as match_all: nothing settles it, it fails closed on the marker",
+            0,
             "rule r { Resources.*[ Properties.Rules[0][ r | Action == 'allow' ] exists ].Type == 'AWS::S3::Bucket' }",
             Status::FAIL,
             1,
@@ -12467,6 +12720,7 @@ fn an_undecidable_entry_is_decided_past_by_a_sibling_that_settles_the_clause() -
         ),
         (
             "a when gate over the marker: the decided failure settles the gate, the rule is not applicable",
+            0,
             "rule r when Resources.*[ Properties.Rules[0][ r | Action == 'allow' ] exists ].Type == 'AWS::SQS::Queue' { Resources.Other.Type == 'AWS::SQS::Queue' }",
             Status::SKIP,
             1,
@@ -12484,6 +12738,7 @@ fn an_undecidable_entry_is_decided_past_by_a_sibling_that_settles_the_clause() -
         // row alone read as "a `some` gate fails closed" until the comparison rows were measured).
         (
             "a some gate over the marker under !empty whose body reads the capture: the gate fails closed and the body is never reached",
+            0,
             "rule r when some Resources[ id | Properties.Rules[0][ r | Action == 'allow' ] exists ] !empty { Resources.%id.Type == 'AWS::S3::Bucket' }",
             Status::FAIL,
             1,
@@ -12495,6 +12750,7 @@ fn an_undecidable_entry_is_decided_past_by_a_sibling_that_settles_the_clause() -
         // the body stays absent from the record under all four.
         (
             "a some gate over the marker under empty: the gate fails closed and the body is never reached",
+            0,
             "rule r when some Resources[ id | Properties.Rules[0][ r | Action == 'allow' ] exists ] empty { Resources.%id.Type == 'AWS::S3::Bucket' }",
             Status::FAIL,
             1,
@@ -12502,6 +12758,7 @@ fn an_undecidable_entry_is_decided_past_by_a_sibling_that_settles_the_clause() -
         ),
         (
             "a some gate over the marker under !exists: the gate fails closed and the body is never reached",
+            0,
             "rule r when some Resources[ id | Properties.Rules[0][ r | Action == 'allow' ] exists ] !exists { Resources.%id.Type == 'AWS::S3::Bucket' }",
             Status::FAIL,
             1,
@@ -12509,6 +12766,7 @@ fn an_undecidable_entry_is_decided_past_by_a_sibling_that_settles_the_clause() -
         ),
         (
             "a some gate over the marker under exists: the gate fails closed and the body is never reached",
+            0,
             "rule r when some Resources[ id | Properties.Rules[0][ r | Action == 'allow' ] exists ] exists { Resources.%id.Type == 'AWS::S3::Bucket' }",
             Status::FAIL,
             1,
@@ -12518,6 +12776,7 @@ fn an_undecidable_entry_is_decided_past_by_a_sibling_that_settles_the_clause() -
         // resource: the FAIL is the body's, and the record holds its clause.
         (
             "a some gate over the marker under a comparison whose body reads the capture: the passing sibling opens the gate, the body fails closed on the capture's marker",
+            0,
             "rule r when some Resources[ id | Properties.Rules[0][ r | Action == 'allow' ] exists ].Type == 'AWS::S3::Bucket' { Resources.%id.Type == 'AWS::S3::Bucket' }",
             Status::FAIL,
             1,
@@ -12525,6 +12784,7 @@ fn an_undecidable_entry_is_decided_past_by_a_sibling_that_settles_the_clause() -
         ),
         (
             "a some gate over the marker under a comparison: the passing sibling opens the gate and the body runs",
+            0,
             "rule r when some Resources.*[ Properties.Rules[0][ r | Action == 'allow' ] exists ].Type == 'AWS::S3::Bucket' { Resources.Other.Type == 'AWS::SQS::Queue' }",
             Status::PASS,
             1,
@@ -12536,6 +12796,7 @@ fn an_undecidable_entry_is_decided_past_by_a_sibling_that_settles_the_clause() -
         // list-first bucket failed the comparison on its own and the row could not tell the two apart.
         (
             "a block clause inside the predicate over the undecidable member: the clause fails closed",
+            0,
             "rule r { Resources.*[ Properties.Rules[0] { this[ r | Action == 'allow' ] exists } ].Type == 'AWS::S3::Bucket' }",
             Status::FAIL,
             1,
@@ -12543,6 +12804,7 @@ fn an_undecidable_entry_is_decided_past_by_a_sibling_that_settles_the_clause() -
         ),
         (
             "control: a clause beside them that reads no marker",
+            0,
             "rule r { Resources.Other.Type == 'AWS::SQS::Queue' }",
             Status::PASS,
             0,
@@ -12553,18 +12815,38 @@ fn an_undecidable_entry_is_decided_past_by_a_sibling_that_settles_the_clause() -
         let mut root = root_scope(&rules_file, Rc::new(PathAwareValue::try_from(DOC)?));
         let status = eval_rules_file(&rules_file, &mut root, None)?;
         cells.check(label, expected, status);
+        // One warning is written per clause, the capture's own notice; where the clause is DECIDED beside
+        // the entry's marker (a sibling passes it or a resolved value fails it) and so never raises the
+        // marker, the refused read it did not raise is the capture's refusal the notice announced, and
+        // the refused-read writer leaves an announced refusal out, so no second line names it. The count
+        // below is the capture's warnings; every other warning would be that line, and there is none.
         let warned: Vec<String> = root.warnings().cloned().collect();
+        let (capture_warnings, other_warnings): (Vec<&String>, Vec<&String>) = warned
+            .iter()
+            .partition(|w| !w.contains("reported here instead"));
         cells.check(
-            &format!("{label}: warnings written, among {warned:?}"),
+            &format!("{label}: the capture's warnings written, among {warned:?}"),
             warnings,
-            warned.len(),
+            capture_warnings.len(),
         );
         cells.check(
-            &format!("{label}: every warning says a sibling can settle the clause"),
+            &format!("{label}: every capture warning says a sibling can settle the clause"),
             true,
-            warned
+            capture_warnings
                 .iter()
                 .all(|w| w.contains("or is decided past by a sibling that settles the clause")),
+        );
+        cells.check(
+            &format!("{label}: refused-read lines written, among {warned:?}"),
+            lines,
+            other_warnings.len(),
+        );
+        cells.check(
+            &format!("{label}: every other warning is the refused-read line naming the capture, among {warned:?}"),
+            true,
+            other_warnings
+                .iter()
+                .all(|w| w.contains("declares the capture `r` after")),
         );
         if let Some((clause, reached)) = body_clause {
             let record = root.reset_recorder().extract();
@@ -12604,11 +12886,18 @@ fn a_refused_capture_inside_a_predicate_fails_the_enclosing_clause_closed() -> R
     }"#;
 
     let mut cells = CellFailures::default();
-    for (label, rules, expected, capture, unresolved_at, predicate_worded) in [
+    // The second element of each row is the number of refused-read lines the row owes: NONE in every row.
+    // The refused read is the capture's refusal, announced once per clause by the capture's own notice,
+    // and the refused-read writer leaves an announced refusal out (`RootScope::record_unraised_refusal`),
+    // so the clause over the queue type, where the list-first bucket's mismatch decides the clause beside
+    // the map-first marker, reports the refusal by the notice alone, as the rows that fail on the marker's
+    // pair or raise the refusal at the clause do.
+    for (label, lines, rules, expected, capture, unresolved_at, predicate_worded) in [
         // The list-first resource binds and would have passed the clause over the bucket type; the
         // map-first one cannot bind, and the clause that uses the filter fails closed on it.
         (
             "capture after an index in a predicate: the clause fails closed on the map-first resource",
+            0,
             "rule r { Resources.*[ Properties.Rules[0][ r | Action == 'allow' ] exists ].Type == 'AWS::S3::Bucket' }",
             Status::FAIL,
             "r",
@@ -12617,6 +12906,7 @@ fn a_refused_capture_inside_a_predicate_fails_the_enclosing_clause_closed() -> R
         ),
         (
             "capture after an index in a predicate, the clause over the queue type: the same refusal",
+            0,
             "rule r { Resources.*[ Properties.Rules[0][ r | Action == 'allow' ] exists ].Type == 'AWS::SQS::Queue' }",
             Status::FAIL,
             "r",
@@ -12628,6 +12918,7 @@ fn a_refused_capture_inside_a_predicate_fails_the_enclosing_clause_closed() -> R
         // not hold, so the clause fails closed on the first of them.
         (
             "capture after this in a predicate with an or sibling: an entry whose sibling does not hold raises",
+            0,
             "rule r { Resources.*[ this[ nm | Nope exists ] exists or Type == 'AWS::SQS::Queue' ].Type == 'AWS::SQS::Queue' }",
             Status::FAIL,
             "nm",
@@ -12640,6 +12931,7 @@ fn a_refused_capture_inside_a_predicate_fails_the_enclosing_clause_closed() -> R
         // refusal's text must not appear.
         (
             "capture after this in a predicate whose key the member holds: the capture is refused, not the filter",
+            0,
             "rule r { Resources.*[ this[ nm | Type exists ] exists or Type == 'AWS::SQS::Queue' ].Type == 'AWS::SQS::Queue' }",
             Status::FAIL,
             "nm",
@@ -12655,6 +12947,7 @@ fn a_refused_capture_inside_a_predicate_fails_the_enclosing_clause_closed() -> R
         // and the clause fails closed whatever the operator (no sibling settles these rows).
         (
             "capture after an index in a predicate under !exists: the clause fails closed, the entry is not selected",
+            0,
             "rule r { Resources.*[ Properties.Rules[0][ r | Action == 'allow' ] !exists ].Type == 'AWS::SQS::Queue' }",
             Status::FAIL,
             "r",
@@ -12663,6 +12956,7 @@ fn a_refused_capture_inside_a_predicate_fails_the_enclosing_clause_closed() -> R
         ),
         (
             "capture after an index in a predicate under empty: the clause fails closed, the entry is not selected",
+            0,
             "rule r { Resources.*[ Properties.Rules[0][ r | Action == 'allow' ] empty ].Type == 'AWS::SQS::Queue' }",
             Status::FAIL,
             "r",
@@ -12671,6 +12965,7 @@ fn a_refused_capture_inside_a_predicate_fails_the_enclosing_clause_closed() -> R
         ),
         (
             "capture after this in a predicate under !exists with an or sibling: the clause fails closed",
+            0,
             "rule r { Resources.*[ this[ nm | Nope exists ] !exists or Type == 'AWS::SQS::Queue' ].Type == 'AWS::SQS::Queue' }",
             Status::FAIL,
             "nm",
@@ -12679,6 +12974,7 @@ fn a_refused_capture_inside_a_predicate_fails_the_enclosing_clause_closed() -> R
         ),
         (
             "outside a predicate the capture is refused and the clause is held",
+            0,
             "rule r { Resources.MapFirst.Properties.Rules[0][ r | Action == 'allow' ] exists }",
             Status::FAIL,
             "r",
@@ -12711,18 +13007,44 @@ fn a_refused_capture_inside_a_predicate_fails_the_enclosing_clause_closed() -> R
             false,
             record.contains("selected nothing among"),
         );
-        cells.check(&format!("{label}: one warning"), 1, warned.len());
+        // The capture's warning is written once per clause. Where a resolved sibling DECIDES the
+        // clause beside the entry's marker (a mismatch fails `match_all` on its own) the clause never
+        // raises the marker, and the refused read it did not raise is the capture's refusal the notice
+        // announced, which the refused-read writer leaves out, so no second line is written for it. The
+        // count is the capture's warnings; every other warning would be that line, and there is none.
+        let (capture_warnings, other_warnings): (Vec<&String>, Vec<&String>) = warned
+            .iter()
+            .partition(|w| !w.contains("reported here instead"));
+        cells.check(
+            &format!("{label}: one capture warning, among {warned:?}"),
+            1,
+            capture_warnings.len(),
+        );
         cells.check(
             &format!("{label}: the warning says what happens to the clause"),
             predicate_worded,
-            warned.iter().all(|w| {
+            capture_warnings.iter().all(|w| {
                 w.contains("or is decided past by a sibling that settles the clause")
             }),
         );
         cells.check(
             &format!("{label}: the warning says the clause fails only outside a predicate"),
             !predicate_worded,
-            warned.iter().all(|w| w.contains("The clause fails")),
+            capture_warnings
+                .iter()
+                .all(|w| w.contains("The clause fails")),
+        );
+        cells.check(
+            &format!("{label}: refused-read lines written, among {warned:?}"),
+            lines,
+            other_warnings.len(),
+        );
+        cells.check(
+            &format!("{label}: every other warning is the refused-read line naming the capture, among {warned:?}"),
+            true,
+            other_warnings
+                .iter()
+                .all(|w| w.contains(&format!("declares the capture `{capture}` after"))),
         );
     }
 
@@ -12730,7 +13052,8 @@ fn a_refused_capture_inside_a_predicate_fails_the_enclosing_clause_closed() -> R
     // after an index included: the entry whose first hole is an empty map and the entry whose first
     // hole is `null` each leave the undecidable result, the predicate's clause raises on each of them
     // and the filter loop answers each entry alone, so both are named in the record, the clause that
-    // uses the filter fails closed, and one warning is written for the clause.
+    // uses the filter fails closed, and the capture's warning is written once for the clause and is its
+    // one report (no refused-read line, read per row below).
     const HOLES: &str = r#"{
         "Resources": {
             "EmptyHole": { "Type": "AWS::S3::Bucket", "Properties": { "Holes": [ {} ] } },
@@ -12738,14 +13061,23 @@ fn a_refused_capture_inside_a_predicate_fails_the_enclosing_clause_closed() -> R
             "ListHole":  { "Type": "AWS::SQS::Queue",  "Properties": { "Holes": [ [ { "Nope": 1 } ] ] } }
         }
     }"#;
-    for (label, rules, expected) in [
+    // The second element of each row is the number of refused-read lines the row owes: NONE in either
+    // row. Over the queue type the list hole passes while the clause fails on the two holes' markers'
+    // pairs, nothing decided past; over the bucket type the list hole's queue type is a mismatch that
+    // DECIDES the clause beside the two markers, the shape the refused-read line is written for, and the
+    // read it would name is the capture's refusal, announced once by the capture's own notice, which the
+    // writer leaves out (`RootScope::record_unraised_refusal`, the announced-capture filter), so the
+    // notice is the one report of that row too. The row read 1 while the filter was not yet in place.
+    for (label, lines, rules, expected) in [
         (
             "an empty map and a null after an index in a predicate: the clause fails closed",
+            0,
             "rule r { Resources.*[ Properties.Holes[0][ nm | Key !exists ] exists ].Type == 'AWS::SQS::Queue' }",
             Status::FAIL,
         ),
         (
-            "the same, the clause over the bucket type",
+            "the same, the clause over the bucket type: decided by the list hole's mismatch, the capture's refusal reported by its notice alone",
+            0,
             "rule r { Resources.*[ Properties.Holes[0][ nm | Key !exists ] exists ].Type == 'AWS::S3::Bucket' }",
             Status::FAIL,
         ),
@@ -12770,15 +13102,80 @@ fn a_refused_capture_inside_a_predicate_fails_the_enclosing_clause_closed() -> R
             true,
             record.contains("/Resources/NullHole/Properties/Holes/0"),
         );
-        cells.check(&format!("{label}: one warning"), 1, warned.len());
+        // As above: the capture's warning once, and no refused-read line even where a resolved sibling
+        // decides the clause beside the holes' markers (the announced refusal is left off the line).
+        let (capture_warnings, other_warnings): (Vec<&String>, Vec<&String>) = warned
+            .iter()
+            .partition(|w| !w.contains("reported here instead"));
+        cells.check(
+            &format!("{label}: one capture warning, among {warned:?}"),
+            1,
+            capture_warnings.len(),
+        );
         cells.check(
             &format!("{label}: the warning is worded for the predicate"),
             true,
-            warned.iter().all(|w| {
+            capture_warnings.iter().all(|w| {
                 w.contains("or is decided past by a sibling that settles the clause")
             }),
         );
+        cells.check(
+            &format!("{label}: refused-read lines written, among {warned:?}"),
+            lines,
+            other_warnings.len(),
+        );
+        cells.check(
+            &format!("{label}: every other warning is the refused-read line naming the capture, among {warned:?}"),
+            true,
+            other_warnings
+                .iter()
+                .all(|w| w.contains("declares the capture `nm` after")),
+        );
     }
+
+    // The POSITIVE control for the lines column above: a refused read that is NOT a capture's, decided
+    // past by a sibling clause, IS written as a refused-read line, exactly one, at the refused clause's
+    // own position (README's and CLAUSES.md's promise of the line; the rows above owe none only because
+    // the capture's notice already reports theirs). `Tags[ Key == 'Env' ]` over a string `Tags` is
+    // refused (the string-filter refusal), the `or` sibling `Type exists` holds, so the rule PASSES
+    // with one line reading "passed by a sibling clause that holds", opening with the refused clause,
+    // naming the refusal and the clause's position on line 1, and no capture notice beside it.
+    {
+        const STRING_TAGS: &str = r#"{ "Resources": { "Q": { "Type": "AWS::SQS::Queue", "Properties": { "Tags": "x" } } } }"#;
+        let rules = "rule r { Resources.Q.Properties.Tags[ Key == 'Env' ] exists or Resources.Q.Type exists }";
+        let rules_file = RulesFile::try_from(rules)?;
+        let mut root = root_scope(&rules_file, Rc::new(PathAwareValue::try_from(STRING_TAGS)?));
+        let status = eval_rules_file(&rules_file, &mut root, None);
+        let warned: Vec<String> = root.warnings().cloned().collect();
+        let (capture_warnings, refused_read_lines): (Vec<&String>, Vec<&String>) = warned
+            .iter()
+            .partition(|w| !w.contains("reported here instead"));
+        cells.check(
+            &format!("the positive control, a refused walk decided past by an `or` sibling: PASS, no capture notice, exactly ONE refused-read line opening with the refused clause, \"passed by a sibling clause that holds\", naming the string-filter refusal at line 1, among {warned:?}"),
+            (true, 0, 1, true, true, true, true),
+            (
+                matches!(status, Ok(Status::PASS)),
+                capture_warnings.len(),
+                refused_read_lines.len(),
+                refused_read_lines
+                    .iter()
+                    .all(|line| line_opens_with(line, "Resources.Q.Properties.Tags[")),
+                refused_read_lines
+                    .iter()
+                    .all(|line| line.contains("passed by a sibling clause that holds")),
+                refused_read_lines
+                    .iter()
+                    .all(|line| line.contains("filters the entries of a String")),
+                refused_read_lines
+                    .iter()
+                    .all(|line| line.contains("line:1")),
+            ),
+        );
+    }
+
+    // The LIST twin of the positive control (a refused walk raised whole inside a list member's
+    // predicate) has its own test, with the two-member rows that tell the mechanism apart:
+    // `a_refusal_raised_inside_a_list_members_predicate_is_noted_at_the_outer_clause`.
 
     // The same two holes under `empty`. Without the capture the predicate `Key exists` holds on
     // neither the empty map nor the null, the inner filter selects nothing in them, and an empty
@@ -20787,22 +21184,30 @@ fn a_variable_root_reads_as_its_literal_spelling() -> Result<()> {
     Ok(())
 }
 
-/// A scalar met under a key inside a filter predicate deselects that entry; met by a clause over the
-/// value itself, it is refused.
+/// A scalar met under a key inside a filter predicate is that member's REFUSAL, carried as an undecided
+/// member of the selection, and a clause over the selection that no kept member decides fails closed on
+/// it; met by a clause over the value itself, it is refused the same way.
 ///
 /// `Resources.*[ Properties.Tags[ Key == 'Env' ] exists ]` asks of each resource whether it carries an
 /// `Env` tag. For a resource whose `Tags` holds a string there are no entries to select among, and the
-/// predicate's query reports that as an unresolved result, as it did before the collection rule:
-/// `exists` does not hold, the resource is deselected, and the clause decides on the resources that
-/// remain. For a while the refusal of a filter over a scalar reached in here too, and one such resource
-/// then errored the whole selection: every other resource's verdict was lost, and a `when` condition
-/// over the selection failed its block where it had been not applicable.
+/// predicate's query refuses that as the member's own marker: `exists` cannot be decided, the resource is
+/// neither deselected nor selected, and a comparison, a gate or an `!empty` over the selection fails
+/// closed on the undecided member while the resources beside it are still read, whatever the kept members
+/// hold (the kept-member pass-over under `!empty` is withdrawn, pinned by
+/// `an_undecided_member_fails_not_empty_closed_beside_any_kept_member`). Each such clause writes ONE
+/// deprecation notice naming the reading it replaces, once its verdict is known (pinned by
+/// `a_scalar_filter_inside_a_predicate_announces_the_reading_it_replaces_once`). Two
+/// earlier readings are history: for a while the refusal errored the whole selection (every other
+/// resource's verdict lost), and after that the scalar was read as an ABSENCE to the predicate (the
+/// resource deselected under `exists`, selected under `!exists`, nothing reported), which an earlier cut
+/// of this test pinned as PASS with no notice; re-pinned to the refusal reading.
 ///
 /// Outside a predicate the refusal stands. `Resources.C.Properties.Tags[ Key == 'Env' ] !exists` is a
 /// claim about the string itself, and an unresolved result there is the PASS the refusal closed. A
 /// `when` condition written directly over the string fails its block the same way.
 #[test]
-fn a_scalar_met_inside_a_filter_predicate_deselects_the_entry() -> Result<()> {
+fn a_scalar_met_inside_a_filter_predicate_is_the_members_refusal_and_the_clause_fails_closed(
+) -> Result<()> {
     const TWO_RESOURCES: &str = r#"{
         "Resources": {
             "A": { "Type": "X", "Properties": { "Tags": [ { "Key": "Env", "Value": "prod" } ] } },
@@ -20814,36 +21219,43 @@ fn a_scalar_met_inside_a_filter_predicate_deselects_the_entry() -> Result<()> {
     }"#;
 
     let mut cells = CellFailures::default();
-    for (label, rules, doc, expected) in [
+    for (label, rules, doc, expected, notices_expected) in [
         (
-            "selection: the string-tagged resource is deselected and the list-tagged one is tested",
+            "selection: the string-tagged resource is undecided and the comparison fails closed on it beside the list-tagged one",
             "rule r { Resources.*[ Properties.Tags[ Key == 'Env' ] exists ].Type == 'X' }",
             TWO_RESOURCES,
-            Status::PASS,
+            Status::FAIL,
+            1,
         ),
+        // A decided no fails the clause whatever the undecided resource holds (its FAIL is decided, not
+        // resting on the undecidable), so the verdict did not move and no notice is owed; re-pinned from 1.
         (
-            "selection: the clause decides on the resource that remains",
+            "selection: the clause fails on the resource that remains and on the undecided one",
             "rule r { Resources.*[ Properties.Tags[ Key == 'Env' ] exists ].Type == 'Y' }",
             TWO_RESOURCES,
             Status::FAIL,
+            0,
         ),
         (
-            "selection: a negated predicate selects the string-tagged resource, as it selects one with no tags",
+            "selection: a negated predicate cannot decide the string-tagged resource either, and the comparison fails closed",
             "rule r { Resources.*[ Properties.Tags[ Key == 'Env' ] !exists ].Type == 'X' }",
             TWO_RESOURCES,
-            Status::PASS,
+            Status::FAIL,
+            1,
         ),
         (
-            "gate: a selection the string-tagged resource dropped out of is decided on the rest",
+            "gate: a comparison over the selection raises on the undecided resource and the rule fails closed",
             "rule r when Resources.*[ Properties.Tags[ Key == 'Env' ] exists ].Type == 'X' { Resources.A.Type == 'X' }",
             TWO_RESOURCES,
-            Status::PASS,
+            Status::FAIL,
+            1,
         ),
         (
-            "gate: a selection with nothing left is not applicable",
+            "gate: the undecided resource alone fails the rule closed",
             "rule r when Resources.*[ Properties.Tags[ Key == 'Env' ] exists ].Type == 'X' { Resources.C.Type == 'Y' }",
             THE_STRING_ALONE,
-            Status::SKIP,
+            Status::FAIL,
+            1,
         ),
         // Control, not a cell that moves: `[*]` over the string passes it through, `.Key` on a string is
         // unresolved, the comparison does not hold and the predicate deselects C. This spelling never
@@ -20853,13 +21265,14 @@ fn a_scalar_met_inside_a_filter_predicate_deselects_the_entry() -> Result<()> {
             "rule r { Resources.*[ Properties.Tags[*].Key == 'Env' ] !empty }",
             TWO_RESOURCES,
             Status::PASS,
+            0,
         ),
     ] {
         let (status, notices) = deprecations_for_rules(rules, doc)?;
         cells.check(label, expected, status);
         cells.check(
-            &format!("{label}: a deselection owes no notice"),
-            0,
+            &format!("{label}: the notices owed, one per clause site whose verdict moved: {notices:?}"),
+            notices_expected,
             notices.len(),
         );
     }
@@ -20966,15 +21379,19 @@ fn the_notice_for_a_filter_refused_over_a_scalar_names_the_shape_whatever_opens_
 }
 
 /// Inside a filter predicate a scalar under a key is read under the predicate flag, whatever spelling put
-/// the predicate there: it deselects, or leaves a key filter undecidable; in a clause's own query, before
-/// or after a filter, it is refused and announced.
+/// the predicate there: it is the member's own refusal, carried as an undecided member a comparison over
+/// the selection fails closed on (with ONE notice per clause site), or it leaves a key filter undecidable
+/// (no notice: the key filter already failed the clause closed); in a clause's own query, before or after
+/// a filter, it is refused and announced.
 ///
 /// The predicate flag is set once, where a predicate opens, and carried through everything a predicate's
 /// query can reach: a key filter's right-hand side, a wildcard's members, a block clause written inside
 /// the predicate, a parameterized rule's body called from it. One flag read at one place, so the
-/// predicate spellings below cannot disagree on where the flag is read: nine of them deselect the
-/// string-tagged entry, the key-filter row reads the scalar under the same flag and fails closed for a
-/// reason of its own (below), and the three refusal rows beside them show the clause's own query keeping
+/// predicate spellings below cannot disagree on where the flag is read: nine of them refuse the
+/// string-tagged entry as an undecided member the comparison fails closed on, each with one notice (an
+/// earlier cut of this test pinned them as a deselection, PASS with no notice, the absence reading the
+/// refusal replaced; re-pinned), the key-filter row reads the scalar under the same flag and fails closed
+/// for a reason of its own (below), and the three refusal rows beside them show the clause's own query keeping
 /// its refusal. The key-filter row is the one that did disagree: the right-hand side of
 /// `Properties.M[ keys == Allowed[ this == 'a' ] ]` was begun as a fresh query, lost the predicate, and
 /// one resource whose `M.Allowed` holds a string errored the whole selection. That row reads FAIL today
@@ -21016,22 +21433,22 @@ fn a_scalar_under_a_key_is_read_under_the_predicate_flag_in_every_spelling_and_i
             "map filter: Resources[ P ]",
             "rule r { Resources[ Properties.Tags[ Key == 'Env' ] exists ].Type == 'X' }",
             DOC,
-            Status::PASS,
-            0,
+            Status::FAIL,
+            1,
         ),
         (
             "list filter: Items[ P ]",
             "rule r { Items[ Properties.Tags[ Key == 'Env' ] exists ].Type == 'X' }",
             DOC,
-            Status::PASS,
-            0,
+            Status::FAIL,
+            1,
         ),
         (
-            "index then filter: Only[0][ P ] deselects the one element, nothing selected",
+            "index then filter: Only[0][ P ] leaves the one element undecided, and `!empty` fails closed on it",
             "rule r { Only[0][ Properties.Tags[ Key == 'Env' ] exists ] !empty }",
             DOC,
             Status::FAIL,
-            0,
+            1,
         ),
         (
             "index then the clause's own query: Only[0].P is refused",
@@ -21044,36 +21461,36 @@ fn a_scalar_under_a_key_is_read_under_the_predicate_flag_in_every_spelling_and_i
             "wildcard then filter: TagSets[*][ Values[ this == 'a' ] exists ]",
             "rule r { TagSets[*][ Values[ this == 'a' ] exists ].Key == 'Env' }",
             DOC,
-            Status::PASS,
-            0,
+            Status::FAIL,
+            1,
         ),
         (
             "wildcard then filter over the map: Resources[*][ P ]",
             "rule r { Resources[*][ Properties.Tags[ Key == 'Env' ] exists ].Type == 'X' }",
             DOC,
-            Status::PASS,
-            0,
+            Status::FAIL,
+            1,
         ),
         (
             "projected capture: %b[ n | P ]",
             "let b = Resources.*[ Type == 'X' ]\nrule r { %b[ n | Properties.Tags[ Key == 'Env' ] exists ].Type == 'X' }",
             DOC,
-            Status::PASS,
-            0,
+            Status::FAIL,
+            1,
         ),
         (
             "a block clause inside the predicate",
             "rule r { Resources.*[ Properties { Tags[ Key == 'Env' ] exists } ].Type == 'X' }",
             DOC,
-            Status::PASS,
-            0,
+            Status::FAIL,
+            1,
         ),
         (
             "a parameterized body called from the predicate",
             "rule p(x) { %x.Tags[ Key == 'Env' ] exists }\nrule r { Resources.*[ p(Properties) ].Type == 'X' }",
             DOC,
-            Status::PASS,
-            0,
+            Status::FAIL,
+            1,
         ),
         (
             "a key filter's right-hand side inside the predicate: the scalar leaves the key filter undecidable, and the clause fails closed",
@@ -23425,11 +23842,45 @@ fn a_capture_of_an_own_key_filter_holds_no_entry_held_without_grounding_beside_a
     /// read a refusal through an interpolation name this constant, so the one rule for both read sites
     /// moves one value here.
     const INTERPOLATED_READ_KEEPS_A_REFUSAL: bool = true;
+    /// Whether the marker a key filter leaves for a map whose RIGHT-hand query stopped at a value that is
+    /// not a map, with the retrieval's own reason a REGISTERED refusal (`Tags[ Key == 'Env' ].Value` over
+    /// a string `Tags`: the filter over a scalar is refused and registered), is itself a refusal. It is:
+    /// the right-hand marker's own reason is a registered sentence, so it is a refused read by the one
+    /// predicate every reader asks (`eval::is_refused_read`), the kept pairing's wrap is registered under
+    /// the refusal's recovered token (`KeySelection::register`, `ensure_registered_wrap`) and the map's
+    /// marker travels as a refused read, the rule `a_scalar_filter_refused_inside_a_predicate_is_registered_
+    /// as_the_outside_one_is` pins for the function arm. The rows over `UNDECIDED_BESIDE_UNGROUNDED` read
+    /// `false` on the tree they were first written against, where a pairing's wrap was registered by its
+    /// own fresh mint and the marker read plain; they read `true` since the wrap took the refusal's token.
+    /// The four rows that name this constant run the own-key predicate `FILTER` (`Mode exists or M[ keys
+    /// == to_upper(Tags[ Key == 'Env' ].Value) ] !empty or Ref !exists`), whose key filter's right-hand
+    /// query reads `Tags[ Key == 'Env' ].Value` off `A`'s string `Tags` inside a function call, over
+    /// `UNDECIDED_BESIDE_UNGROUNDED` (the `INNER_UNDECIDABLE_TAGS_A_STRING` rows run the bare query, with
+    /// no function around it, and pin no refusal). The flip from `false` to `true` re-pinned rows that
+    /// were red against the engine as it stood, with no engine change beside the flip: the engine had
+    /// taken the refusal's token for the wrap one change earlier, and the rows still said `false`. With
+    /// `true`, every marker at or under `/Cfg/A` that carries the hint is judged, the capture's own
+    /// refusal marker and the marker the interpolated read builds alike
+    /// (`INTERPOLATED_READ_KEEPS_A_REFUSAL`), and each is a refusal by kind. The bit is read from the
+    /// ENTRY markers at `/Cfg/A` (the read-built "the entry captured in `%x` at /Cfg/A ..." marker, whose
+    /// reason embeds the key filter's sentence after the hint), judged by `kind.is_refusal()`; the key
+    /// filter's own map marker under `A`'s `M` is not what these rows judge. The
+    /// `INNER_UNDECIDABLE_TAGS_A_STRING` row asserts the opposite bit over what reads as the same shape,
+    /// and is not: its key filter `M[ keys == Tags[ Key == 'Env' ].Value ]` is rooted at the map it
+    /// filters (`M`, which holds no `Tags`), so its right-hand query is an ABSENCE (a key the map lacks),
+    /// not the string-filter refusal, and its map marker is rightly no refusal; the resource-level
+    /// string `Tags` its label names is never read by that filter. Here `A`'s `M` holds `Tags: 'x'`, the
+    /// filter over the string is refused and registered, and the marker is a refusal. The two arms do not
+    /// diverge; the rows differ in where `Tags` sits.
+    const A_KEY_FILTERS_WRAP_OF_A_REGISTERED_REFUSAL_IS_REFUSED: bool = true;
     // (sibling clause pinned, label, rules, doc, expected status, a marker at or under this path carries
     // `reason`, no marker under this path)
     for (sibling, label, rules, doc, expected, marker_at, reason, none_under) in [
         (
-            Sibling::Reads { capture: "%x", refused: false },
+            Sibling::Reads {
+                capture: "%x",
+                refused: A_KEY_FILTERS_WRAP_OF_A_REGISTERED_REFUSAL_IS_REFUSED,
+            },
             "[*]: the marker `%x` holds stands under `A` and carries the own-key advice; nothing under `B`",
             star("some Cfg.%x.Kind == 'k'"),
             UNDECIDED_BESIDE_UNGROUNDED,
@@ -23439,7 +23890,10 @@ fn a_capture_of_an_own_key_filter_holds_no_entry_held_without_grounding_beside_a
             "/Cfg/B",
         ),
         (
-            Sibling::Reads { capture: "%x", refused: false },
+            Sibling::Reads {
+                capture: "%x",
+                refused: A_KEY_FILTERS_WRAP_OF_A_REGISTERED_REFUSAL_IS_REFUSED,
+            },
             ".*: the same marker, the same advice, nothing under `B`",
             dot("some Cfg.%x.Kind == 'k'"),
             UNDECIDED_BESIDE_UNGROUNDED,
@@ -23449,7 +23903,10 @@ fn a_capture_of_an_own_key_filter_holds_no_entry_held_without_grounding_beside_a
             "/Cfg/B",
         ),
         (
-            Sibling::Reads { capture: "%x", refused: false },
+            Sibling::Reads {
+                capture: "%x",
+                refused: A_KEY_FILTERS_WRAP_OF_A_REGISTERED_REFUSAL_IS_REFUSED,
+            },
             "[*]: match_all through the capture fails closed on the hinted marker alone",
             star("Cfg.%x.Kind == 'k'"),
             UNDECIDED_BESIDE_UNGROUNDED,
@@ -23509,7 +23966,10 @@ fn a_capture_of_an_own_key_filter_holds_no_entry_held_without_grounding_beside_a
             "",
         ),
         (
-            Sibling::Reads { capture: "%x", refused: false },
+            Sibling::Reads {
+                capture: "%x",
+                refused: A_KEY_FILTERS_WRAP_OF_A_REGISTERED_REFUSAL_IS_REFUSED,
+            },
             ".*: match_all through the capture fails closed on the hinted marker alone",
             dot("Cfg.%x.Kind == 'k'"),
             UNDECIDED_BESIDE_UNGROUNDED,
@@ -23640,6 +24100,10 @@ fn a_capture_of_an_own_key_filter_holds_no_entry_held_without_grounding_beside_a
             "",
             "",
         ),
+        // The key filter's right-hand query is rooted at the map it filters (`M`), which holds no
+        // `Tags`: the right-hand side is an absence, a key the map lacks, and the resource-level string
+        // `Tags` the label names is never read by it, which is why this marker is no refusal where the
+        // rows over `UNDECIDED_BESIDE_UNGROUNDED` (`Tags: 'x'` inside `A`'s `M`) read a refused one.
         (
             Sibling::UndecidedNoRefusal("/Resources/R1"),
             "the same with the key filter's right-hand side a filter over a `Tags` that is a string under one resource (`M[ keys == Tags[ Key == 'Env' ].Value ]`): the member is neither kept nor deselected, the marker is no refusal, and `%x` keeps every key the clause bound",
@@ -23857,6 +24321,18 @@ fn a_capture_of_an_own_key_filter_holds_no_entry_held_without_grounding_beside_a
                 // whose reason opens with the capture and the entry; the record under the clause also
                 // holds the capture's own refusal marker, which keeps its bit.
                 let built_by_the_read = format!("the entry captured in {capture} at ");
+                // An INTERPOLATED read of the capture (`Cfg.%x.Kind`) builds a marker of its own,
+                // whatever bit it carries: pinned here whether or not `refused` admits every marker to
+                // the judgment below, so the read-built marker's existence does not rest on that bit.
+                if rules.contains(&format!(".{capture}.")) {
+                    cells.check(
+                        &format!("{label}: the interpolated read of `{capture}` builds its own marker, opening with the capture and the entry, among {at_the_placement:?}"),
+                        true,
+                        at_the_placement
+                            .iter()
+                            .any(|(_, why, _)| why.starts_with(&built_by_the_read)),
+                    );
+                }
                 let judged: Vec<_> = at_the_placement
                     .iter()
                     .filter(|(_, why, _)| refused || why.starts_with(&built_by_the_read))
@@ -39081,13 +39557,18 @@ fn the_member_notice_probes_the_clauses_it_can_read() -> Result<()> {
             0usize,
             1usize,
         ),
+        // The string-tagged `TableC` is an UNDECIDED member beside the kept `BucketA` (the scalar filter
+        // `Tags[ Key == 'Env' ]` over its `Tags: 'prod'` is refused, and the member is never deselected), and
+        // a refused member fails `!empty` closed whatever a kept sibling holds, so the clause FAILs where the
+        // deselect reading passed it; the one other notice is the scalar filter's own, written because the
+        // verdict moved for that member (deselected and passing before, failing closed now).
         (
-            "a function conjunct that keeps a member: probed, the notice goes out once at the kept site",
+            "a function conjunct that keeps a member: probed, the notice goes out once at the kept site; the string-tagged sibling is undecided and fails the clause closed",
             "rule r { Resources[*][ BucketA !exists  Tags[ Key == 'Env' ].Value == to_lower('DEV') ] !empty }",
             RESOURCES_WITH_A_KEPT_LIST_TAGGED_BUCKETA,
-            Status::PASS,
+            Status::FAIL,
             1usize,
-            0usize,
+            1usize,
             1usize,
         ),
         (
@@ -39141,6 +39622,18 @@ fn the_member_notice_probes_the_clauses_it_can_read() -> Result<()> {
             other_notices,
             other.len(),
         );
+        if other_notices > 0 {
+            // The one other notice a row owes is the scalar filter's own, about the string-tagged member
+            // the clause now fails closed on.
+            cells.check(
+                &format!("{label}: every other notice is the scalar filter's, among {other:?}"),
+                true,
+                other.iter().all(|notice| {
+                    notice.starts_with("DEPRECATION:")
+                        && notice.contains("the filter `[ Key == 'Env' ]` follows the key `Tags`")
+                }),
+            );
+        }
         cells.check(&format!("{label}: whole-map probes"), probes, probed);
     }
     // The assumed hold's notice says the selection MAY have moved, in words about the clause the probe
@@ -49426,11 +49919,16 @@ fn a_refusal_beside_an_absent_operand_is_reported_with_the_decided_comparison() 
 /// cannot read, as the sibling test above binds it) the comparison against it is a pair nobody decided:
 /// the filter predicate `Resources.*[ Type == 'AWS::S3::Bucket' ][ Properties.Tags[ Key == 'Owner' ].Value
 /// == %names ] empty` FAILS (the predicate's clause is raised and the clause that uses the filter fails
-/// closed), and the `when` gate written the same way fails its rule closed (FAIL), where each deselected
-/// or stayed not applicable at exit 0 with nothing naming the refusal. In both the refusal's text is
-/// REGISTERED once (`eval_context::registered_refusals`), carried whole in the raised clause's record,
-/// and NO refused-read line is written: the line reports a refusal a decided clause left unraised, and
-/// this one is raised. The controls, the same two shapes with `%names` a plain list of strings, keep the
+/// closed), where it deselected every bucket at exit 0 with nothing naming the refusal; the `when` gate
+/// written the same way fails its rule closed (FAIL) too, but by another door: outside a filter predicate
+/// the bare read of the `let`-bound `%names` is the clause's own error (`LacksKeysNote::refuse_bare_read`),
+/// raised at the right-hand resolution before any pair is compared, so the gate row pins that held
+/// refusal and not the empty-selection arm (the gate's path through that arm, with a marker a CAPTURE
+/// holds as a value, is pinned by the `when ... == %x` rows of
+/// `an_asserted_empty_left_selection_beside_a_refusal_fails_with_refusal_recorded`). In both the
+/// refusal's text is REGISTERED once (`eval_context::registered_refusals`), carried whole in the raised
+/// clause's record, and NO refused-read line is written: the line reports a refusal a decided clause left
+/// unraised, and this one is raised. The controls, the same two shapes with `%names` a plain list of strings, keep the
 /// empty selection's answers (`empty` PASSES over the deselected buckets, the gate leaves its rule not
 /// applicable), register nothing and write no line. An empty selection beside the marker read as its
 /// no-marker self (not applicable, deselected) was the one shape that registered the refusal and said
@@ -49454,7 +49952,7 @@ fn an_empty_left_selection_beside_a_refusal_is_raised() -> Result<()> {
     const PLAIN_LETS: &str = "let names = ['allowed', 'other']";
     const THE_TWIN_REFUSAL: &str = "a name bound outside the predicate";
     // The sentence every refused-read line carries, whatever its verdict's wording.
-    const THE_LINE: &str = "reported here instead";
+    const THE_LINE: &str = THE_REFUSED_READ_MARKER;
     const FILTER: &str = "rule r { Resources.*[ Type == 'AWS::S3::Bucket' ][ Properties.Tags[ Key == 'Owner' ].Value == %names ] empty }";
     const GATE: &str = "rule r when Resources.*[ Type == 'AWS::S3::Bucket' ].Properties.Tags[ Key == 'Owner' ].Value == %names { Resources.B.Type == 'AWS::S3::Bucket' }";
     // (status; the refusal's texts in the registry; the refused-read lines; the records carry the
@@ -49515,6 +50013,26 @@ fn an_empty_left_selection_beside_a_refusal_is_raised() -> Result<()> {
     Ok(())
 }
 
+/// The one `Cfg` fragment the capture cells' documents share, a JSON object member without its enclosing
+/// braces: `Cfg[ x | Kind == 'k' ]` captures the keys of the entries holding `Kind: k` (`Fallback`, `A`,
+/// `B`), and the refused walk `Cfg[*][ x | Mode exists or Kind == 'k' ].Sub[*][ s | R1 !exists ]` is
+/// refused for `A` and `B`, whose `Sub` maps hold the own key `R1` the continuation names. Expanded into
+/// `CAPTURED_KEYS_AND_A_REFUSAL` (the fragment alone) and into the document of
+/// `an_asserted_empty_left_selection_beside_a_refusal_fails_with_refusal_recorded` and of
+/// `an_absent_left_value_beside_the_captures_refusal_takes_the_absence_arm` (the fragment beside `Cfg2`
+/// and `Resources`), so the three documents cannot drift apart; a macro rather than a `const`, since
+/// `concat!` joins literals alone.
+macro_rules! captured_cfg_fragment {
+    () => {
+        r#""Cfg": {
+        "Mode": { "Ref": "ModeParam" },
+        "Fallback": { "Kind": "k" },
+        "A": { "Kind": "k", "Sub": { "R1": { "Ref": "P" }, "P": { "Kind": "k" }, "Q": { "Kind": "k" } } },
+        "B": { "Kind": "k", "Sub": { "R1": { "Ref": "P" }, "P": { "Kind": "k" }, "Q": { "Kind": "k" } } }
+    }"#
+    };
+}
+
 /// The ASSERTION half of the raise the sibling test above pins. An EMPTY LEFT-HAND SELECTION beside a
 /// REFUSAL's marker among the right-hand values reaches `binary_operation`'s `operators::EvalResult::Skip`
 /// arm, which reads `rhs_refused` before either empty-selection reading; under a strict role that arm's
@@ -49562,15 +50080,13 @@ fn an_empty_left_selection_beside_a_refusal_is_raised() -> Result<()> {
 /// text and no line in every raised row (two texts for the two walks), none in the controls.
 #[test]
 fn an_asserted_empty_left_selection_beside_a_refusal_fails_with_refusal_recorded() -> Result<()> {
-    // The capture cells' `Cfg` (`CAPTURED_KEYS_AND_A_REFUSAL`) and its twin `Cfg2` (read by the second
-    // walk alone), with a bucket whose tag LIST holds no `Owner` key beside them; no resource is a queue.
-    const DOCUMENT: &str = r#"{
-        "Cfg": {
-            "Mode": { "Ref": "ModeParam" },
-            "Fallback": { "Kind": "k" },
-            "A": { "Kind": "k", "Sub": { "R1": { "Ref": "P" }, "P": { "Kind": "k" }, "Q": { "Kind": "k" } } },
-            "B": { "Kind": "k", "Sub": { "R1": { "Ref": "P" }, "P": { "Kind": "k" }, "Q": { "Kind": "k" } } }
-        },
+    // The capture cells' `Cfg` (the one fragment `CAPTURED_KEYS_AND_A_REFUSAL` is built from,
+    // `captured_cfg_fragment!`) and its twin `Cfg2` (read by the second walk alone), with a bucket whose
+    // tag LIST holds no `Owner` key beside them; no resource is a queue.
+    const DOCUMENT: &str = concat!(
+        "{\n        ",
+        captured_cfg_fragment!(),
+        r#",
         "Cfg2": {
             "Mode": { "Ref": "ModeParam" },
             "Other": { "Kind": "k" },
@@ -49580,19 +50096,17 @@ fn an_asserted_empty_left_selection_beside_a_refusal_fails_with_refusal_recorded
         "Resources": {
             "B": { "Type": "AWS::S3::Bucket", "Properties": { "Tags": [ { "Key": "Env", "Value": "x" } ] } }
         }
-    }"#;
+    }"#
+    );
     // The capture: the keys of the entries holding `Kind: k`; with the refused walk beside it, the
     // own-key refusal's marker stands among them.
-    const CAPTURE: &str = "Cfg[ x | Kind == 'k' ] !empty";
-    // A second refused walk into the SAME capture, over `Cfg2`: its own-key refusal's marker joins `%x`
-    // beside the first's, so two distinct refusals stand among the right-hand values.
-    const SECOND_WALK_INTO_X: &str = "Cfg2[*][ x | Mode exists or Kind == 'k' ].Sub[*][ s | R1 !exists ] !empty or Cfg2.Other exists";
+    const CAPTURE: &str = CAPTURE_X;
     // A `let` that selects nothing: no resource of the document is a queue.
     const EMPTY_Y: &str = "let y = Resources.*[ Type == 'AWS::SQS::Queue' ].Properties.QueueName";
     // The sentence `empty_lhs_message()` carries, the lone-variable path's own text.
     const THE_EMPTY_LEFT_TEXT: &str = "the variable on the left-hand side resolved to no values";
     // The sentence every refused-read line carries, whatever its verdict's wording.
-    const THE_LINE: &str = "reported here instead";
+    const THE_LINE: &str = THE_REFUSED_READ_MARKER;
     const FILTERED: &str =
         "Resources.*[ Type == 'AWS::S3::Bucket' ].Properties.Tags[ Key == 'Owner' ].Value == %x";
     const GATE: &str = "when Resources.*[ Type == 'AWS::S3::Bucket' ].Properties.Tags[ Key == 'Owner' ].Value == %x { Cfg exists }";
@@ -49626,10 +50140,14 @@ fn an_asserted_empty_left_selection_beside_a_refusal_fails_with_refusal_recorded
             .iter()
             .filter(|text| text.contains("(1) "))
             .count();
-        let lines = root
-            .warnings()
-            .filter(|line| line.contains(THE_LINE))
-            .count();
+        // The clause's own lines: the refused walks' lines at their own sites are left out.
+        let lines = without_the_refused_walks_line(
+            root.warnings()
+                .filter(|line| line.contains(THE_LINE))
+                .cloned()
+                .collect(),
+        )
+        .len();
         let record = root.reset_recorder().extract();
         let clause = clause_block_reading(&record, "%x");
         let block = match clause.map(|clause| &clause.container) {
@@ -49653,7 +50171,13 @@ fn an_asserted_empty_left_selection_beside_a_refusal_fails_with_refusal_recorded
     };
     let two_walks = format!("{REFUSED_WALK_INTO_X}  {SECOND_WALK_INTO_X}");
     let mut cells = CellFailures::default();
-    let cases: [_; 6] = [
+    let cases: [_; 7] = [
+        (
+            "the GATE's control, the keys alone in `%x` (no walk): the arm's no-marker path leaves the condition not applicable (SKIP) on the selection's own reason and the rule passes on its other clauses; the block record reads SKIP, `refusal: false`, carrying neither the refusal's text nor the lone-variable text; nothing registered, no line",
+            "",
+            GATE,
+            (Status::PASS, Some(Status::SKIP), Some(false), false, false, false, 0, 0, 0),
+        ),
         (
             "the filtered query `Resources.*[ ... ].Properties.Tags[ Key == 'Owner' ].Value == %x` asserted over a bucket with no `Owner` tag, the refusal's marker in `%x`: the strict branch raises the refusal, the clause FAILS; its block record reads FAIL with the refusal's text, unnumbered, and `refusal: true`; one own-key text registered, nothing numbered, no line",
             REFUSED_WALK_INTO_X,
@@ -49699,6 +50223,63 @@ fn an_asserted_empty_left_selection_beside_a_refusal_fails_with_refusal_recorded
     Ok(())
 }
 
+/// The guard that tells the empty-selection arm's raise from a raise on a RESOLVED left-hand read beside
+/// the same capture: `Cfg.Missing == %x` asserted over the asserted cell's document with the refused walk
+/// into `x` compares a left-hand value the document lacks, not an empty selection, so it takes the
+/// absence arm (`LhsUnresolved`, decided by the absence whatever the marker hides) and its records name
+/// the missing key, `Could not find key Missing`, with the refusal's sentence beside it (the shape
+/// `an_absent_left_value_beside_a_refusal_records_the_absence_and_the_refusal_whole` pins over the
+/// fragment alone); the empty-selection rows carry no such key in any record, since they compared
+/// nothing. The control without the walk, the keys alone in `%x`, fails on the same absence with the key
+/// named and no refusal's sentence anywhere. Green on both sides of the empty-selection arm's change: a
+/// control for the branch, not a pin of it.
+#[test]
+fn an_absent_left_value_beside_the_captures_refusal_takes_the_absence_arm() -> Result<()> {
+    const DOCUMENT: &str = concat!(
+        "{\n        ",
+        captured_cfg_fragment!(),
+        r#",
+        "Resources": {
+            "B": { "Type": "AWS::S3::Bucket", "Properties": { "Tags": [ { "Key": "Env", "Value": "x" } ] } }
+        }
+    }"#
+    );
+    const CAPTURE: &str = CAPTURE_X;
+    const THE_MISSING_KEY: &str = "Could not find key Missing";
+    // (status; the records name the missing key; the records carry the own-key refusal's sentence)
+    let run = |walk: &str| -> Result<(Status, bool, bool)> {
+        let rules = format!("rule r {{ {CAPTURE}  {walk}  Cfg.Missing == %x }}");
+        let rules_file = RulesFile::try_from(rules.as_str())?;
+        let mut root = root_scope(&rules_file, Rc::new(PathAwareValue::try_from(DOCUMENT)?));
+        let status = eval_rules_file(&rules_file, &mut root, None)?;
+        let records = format!("{:?}", root.reset_recorder().extract());
+        Ok((
+            status,
+            records.contains(THE_MISSING_KEY),
+            records.contains(THE_OWN_KEY_REFUSAL),
+        ))
+    };
+    let mut cells = CellFailures::default();
+    let cases: [_; 2] = [
+        (
+            "`Cfg.Missing == %x` asserted beside the refused walk: FAIL on the absence through the absence arm, the records naming the missing key and carrying the refusal's sentence beside it",
+            REFUSED_WALK_INTO_X,
+            (Status::FAIL, true, true),
+        ),
+        (
+            "the control, the keys alone in `%x`: FAIL on the same absence, the key named, no refusal's sentence anywhere",
+            "",
+            (Status::FAIL, true, false),
+        ),
+    ];
+    for (label, walk, wanted) in &cases {
+        cells.check(label, *wanted, run(walk)?);
+    }
+    assert_eq!(cells.seen, cases.len());
+    cells.assert_all_agreed();
+    Ok(())
+}
+
 /// A KEY FILTER's marker beside an EMPTY LEFT-HAND SELECTION leaves the selection's own answer, where a
 /// REFUSAL's marker beside it is raised (the sibling test above). Over a template with no bucket and an
 /// unrelated `AWS::IAM::Role` whose `Maps` hold one key the regex engine cannot be run over (thirty `a`
@@ -49729,8 +50310,14 @@ fn an_asserted_empty_left_selection_beside_a_refusal_fails_with_refusal_recorded
 /// one the marker hides, so the gate is raised and the rule fails closed (FAIL); and the filter predicate
 /// over a bucket whose `Owner` tag reads `o1`, where the value differs from the listed `x` and may equal
 /// the hidden one, so the predicate is raised and `empty` fails closed (FAIL), and with no marker in sight
-/// the value passes, the bucket is kept and `empty` FAILS on it. A present `Owner` cannot PASS, so the
-/// PASS of the no-`Owner` cells is the empty selection's own.
+/// the value passes, the bucket is kept and `empty` FAILS on it. That `NOT IN` pair reads FAIL on both
+/// sides (raised beside the marker, kept without it), so the pair that tells the marker apart is the
+/// positive `IN` over the same bucket: `[ ... Value IN %cfg ] empty` with `o1` among no listed value is
+/// raised beside the marker (`empty` FAILS) and deselects the bucket without it (`empty` PASSES). A present
+/// `Owner` cannot PASS under `NOT IN`, so the PASS of the no-`Owner` cells is the empty selection's own.
+/// The gate spelled over `Resources.*.Properties.Maps` (the queue lacking `Maps`, an absent reference
+/// among the right-hand values beside the marker) reads not applicable over no bucket too: the empty
+/// selection decides before any absence on the right is read.
 #[test]
 fn an_empty_left_selection_beside_a_key_filters_marker_keeps_its_answer() -> Result<()> {
     let spends_the_budget = "a".repeat(30);
@@ -49755,8 +50342,14 @@ fn an_empty_left_selection_beside_a_key_filters_marker_keeps_its_answer() -> Res
     // The planted positive's gate, over the kept entries themselves.
     const GATE_OVER_THE_ROLE: &str = "rule r when Resources.*[ Type == 'AWS::S3::Bucket' ].Properties.BucketName NOT IN Resources.R.Properties.Maps.*[ keys == /(?!x)((a+)+)b/ ] { Resources.R.Type == 'AWS::IAM::Role' }";
     const FILTER: &str = "let cfg = Resources.R.Properties.Maps.*[ keys == /(?!x)((a+)+)b/ ].*\nrule r { Resources.*[ Type == 'AWS::S3::Bucket' ][ Properties.Tags[ Key == 'Owner' ].Value NOT IN %cfg ] empty }";
+    // The positive membership over the same bucket: `o1` is among no listed value, so beside the marker
+    // the predicate is raised (the hidden entry may be `o1`) and without it the bucket deselects.
+    const FILTER_IN: &str = "let cfg = Resources.R.Properties.Maps.*[ keys == /(?!x)((a+)+)b/ ].*\nrule r { Resources.*[ Type == 'AWS::S3::Bucket' ][ Properties.Tags[ Key == 'Owner' ].Value IN %cfg ] empty }";
+    // The gate spelled over every resource's `Maps`: the queue lacks `Maps`, so a reference the document
+    // lacks stands among the right-hand values beside the marker.
+    const GATE_OVER_ALL: &str = "rule r when Resources.*[ Type == 'AWS::S3::Bucket' ].Properties.BucketName NOT IN Resources.*.Properties.Maps.*[ keys == /(?!x)((a+)+)b/ ].* { Resources.R.Type == 'AWS::IAM::Role' }";
     // The sentence every refused-read line carries, whatever its verdict's wording.
-    const THE_LINE: &str = "reported here instead";
+    const THE_LINE: &str = THE_REFUSED_READ_MARKER;
     // (status; the texts in the refusal registry; the refused-read lines; a record reads `refusal: true`)
     let run = |rules: &str, input: &str| -> Result<(Status, usize, usize, bool)> {
         let rules_file = RulesFile::try_from(rules)?;
@@ -49805,6 +50398,21 @@ fn an_empty_left_selection_beside_a_key_filters_marker_keeps_its_answer() -> Res
         cells.check(label, *wanted, run(rules, &document(resources, m1_key))?);
     }
     assert_eq!(cells.seen, cases.len());
+    // The empty left selection decides before any comparator is asked (`nothing_to_compare` answers
+    // SKIP ahead of the comparison), so the gate reads not applicable under `==` and under an ordering as
+    // it does under `NOT IN`, the key filter's marker among the right-hand values or not.
+    const GATE_EQ: &str = "rule r when Resources.*[ Type == 'AWS::S3::Bucket' ].Properties.BucketName == Resources.R.Properties.Maps.*[ keys == /(?!x)((a+)+)b/ ].* { Resources.R.Type == 'AWS::IAM::Role' }";
+    const GATE_GT: &str = "rule r when Resources.*[ Type == 'AWS::S3::Bucket' ].Properties.BucketName > Resources.R.Properties.Maps.*[ keys == /(?!x)((a+)+)b/ ].* { Resources.R.Type == 'AWS::IAM::Role' }";
+    for (label, rules) in [
+        ("the gate under `==` over a template with no bucket, the marker among the right-hand values: not applicable (SKIP); nothing registered, no line, no refusal in the records", GATE_EQ),
+        ("the gate under `>` over a template with no bucket, the marker among the right-hand values: not applicable (SKIP); nothing registered, no line, no refusal in the records", GATE_GT),
+    ] {
+        cells.check(
+            label,
+            (Status::SKIP, 0, 0, false),
+            run(rules, &document(NO_BUCKET, spends_the_budget.as_str()))?,
+        );
+    }
     cells.check(
         "the planted positive, a bucket named `b1` against the role's maps alone (the value under `aab` and the marker): the one left-hand value passes against the listed value and may equal the hidden one, the gate is raised, the rule fails closed (FAIL); nothing registered, no line, no refusal in the records (the marker is no refusal)",
         (Status::FAIL, 0, 0, false),
@@ -49825,6 +50433,24 @@ fn an_empty_left_selection_beside_a_key_filters_marker_keeps_its_answer() -> Res
         "the same bucket with no marker in `%cfg`: `o1` passes against `x` alone, the bucket is kept and `empty` FAILS on it; nothing registered, no line, no refusal in the records",
         (Status::FAIL, 0, 0, false),
         run(FILTER, &document(A_BUCKET_WITH_AN_OWNER, "c"))?,
+    );
+    cells.check(
+        "the positive membership `[ Properties.Tags[ Key == 'Owner' ].Value IN %cfg ] empty` over the same bucket, the marker in `%cfg`: `o1` is among no listed value and may be the hidden one, the predicate is raised and `empty` fails closed (FAIL); nothing registered, no line, no refusal in the records",
+        (Status::FAIL, 0, 0, false),
+        run(
+            FILTER_IN,
+            &document(A_BUCKET_WITH_AN_OWNER, spends_the_budget.as_str()),
+        )?,
+    );
+    cells.check(
+        "the same positive membership with no marker in `%cfg`: `o1` is among no listed value, the bucket deselects and `empty` PASSES, the answer the marker's row cannot read; nothing registered, no line",
+        (Status::PASS, 0, 0, false),
+        run(FILTER_IN, &document(A_BUCKET_WITH_AN_OWNER, "c"))?,
+    );
+    cells.check(
+        "the gate spelled over `Resources.*.Properties.Maps` over no bucket, the queue lacking `Maps` beside the marker: the empty selection decides first, not applicable (SKIP); nothing registered, no line, no refusal in the records",
+        (Status::SKIP, 0, 0, false),
+        run(GATE_OVER_ALL, &document(NO_BUCKET, spends_the_budget.as_str()))?,
     );
     cells.assert_all_agreed();
     Ok(())
@@ -49852,7 +50478,17 @@ fn an_empty_left_selection_beside_a_key_filters_marker_keeps_its_answer() -> Res
 /// unset): the assertion was not applicable, the gate left its rule not applicable, and the registered
 /// refusal was reported nowhere.
 ///
-/// Two controls keep the decided answers. The budget marker, the sibling test's shape (`keys ==
+/// The filter over a STRING is the second registered shape (`keys == Tags[ Key == 'Env' ].Value` over
+/// `Tags: 'x'`, the shape `a_refused_right_hand_side_reaches_the_capture_and_reads_as_every_marker_does`
+/// pins the marker's sentence for): the scalar-filter refusal ("filters the entries of a String") is
+/// raised through `refuse` and registered, so beside the empty left selection it is raised as the
+/// one-object refusal is, asserted (FAIL, `refusal: true`, the sentence in the record, the wrapped
+/// sentence registered) and as a gate (FAIL). Raised as a plain `Unevaluatable` that nobody registered,
+/// the commonest real shape of a refused right-hand query kept the budget marker's answers (SKIP) with
+/// the refusal said nowhere, where the documentation promised a refusal met inside a filter is never
+/// silent.
+///
+/// The control keeps the decided answers: the budget marker, the sibling test's shape (`keys ==
 /// /(?!x)((a+)+)b/` over a map with a thirty-`a` key): nothing registered, the assertion and the gate
 /// NOT APPLICABLE (SKIP), no record reads `refusal: true`. And the filter over a STRING (`keys == Tags[
 /// Key == 'Env' ].Value` over `Tags: 'x'`, the shape `a_refused_right_hand_side_reaches_the_capture_and_reads_
@@ -49886,8 +50522,8 @@ fn an_empty_left_selection_beside_a_key_filter_whose_right_hand_query_is_refused
 ) -> Result<()> {
     // No bucket, so the left-hand selection is empty. `M.Statement` is a one-object statement of
     // strings, so `Statement[ Effect == 'Allow' ]` inside the key filter's right-hand query is refused;
-    // `M.Tags` is a string, so `Tags[ Key == 'Env' ]` there is held unevaluatable and registered by
-    // nobody; `PROD` is a key either query would have named.
+    // `M.Tags` is a string, so `Tags[ Key == 'Env' ]` there is refused as a filter over a scalar; `PROD`
+    // is a key either query would have named.
     const QUEUE: &str = r#"
     {
         Resources: {
@@ -49906,17 +50542,23 @@ fn an_empty_left_selection_beside_a_key_filter_whose_right_hand_query_is_refused
     const STRING_RHS: &str = "Resources.*.Properties.M[ keys == Tags[ Key == 'Env' ].Value ]";
     const BUDGET_RHS: &str = "Resources.*.Properties.M[ keys == /(?!x)((a+)+)b/ ]";
     const BODY: &str = "{ Resources.Q.Type == 'AWS::SQS::Queue' }";
-    // The one-object refusal's own sentence, and the sentence the key-filter arm wraps a reason in.
+    // The one-object refusal's own sentence, the scalar-filter refusal's, and the sentence the
+    // key-filter arm wraps a reason in.
     const THE_REFUSAL: &str = "selected nothing among the map's own entries";
+    const THE_STRING_REFUSAL: &str = "filters the entries of a String";
     const THE_WRAP: &str = "the right-hand side of the key filter could not be evaluated";
     struct Run {
         status: Status,
-        // The registry holds the refusal's own sentence, and the wrapped one beside it.
+        // The registry holds the one-object refusal's own sentence, the scalar-filter refusal's, and
+        // the wrapped one beside it.
         registered_refusal: bool,
+        registered_string: bool,
         registered_wrap: bool,
-        // A record reads `refusal: true`; the records carry the refusal's sentence.
+        // A record reads `refusal: true`; the records carry the one-object refusal's sentence, or the
+        // scalar-filter refusal's.
         flagged: bool,
         in_records: bool,
+        string_in_records: bool,
     }
     let run = |rules: &str, input: &str| -> Result<Run> {
         let rules_file = RulesFile::try_from(rules)?;
@@ -49927,9 +50569,13 @@ fn an_empty_left_selection_beside_a_key_filter_whose_right_hand_query_is_refused
         Ok(Run {
             status,
             registered_refusal: registered.iter().any(|text| text.contains(THE_REFUSAL)),
+            registered_string: registered
+                .iter()
+                .any(|text| text.contains(THE_STRING_REFUSAL)),
             registered_wrap: registered.iter().any(|text| text.contains(THE_WRAP)),
             flagged: records.contains("refusal: true"),
             in_records: records.contains(THE_REFUSAL),
+            string_in_records: records.contains(THE_STRING_REFUSAL),
         })
     };
     let mut cells = CellFailures::default();
@@ -49964,36 +50610,7390 @@ fn an_empty_left_selection_beside_a_key_filter_whose_right_hand_query_is_refused
             ),
         );
     }
-    for (label, rhs, input) in [
+    // The second registered shape: the filter over a string.
+    let string_asserted = run(&format!("rule r {{ {LEFT} NOT IN {STRING_RHS} }}"), QUEUE)?;
+    cells.check(
+        "the filter over a string, asserted `NOT IN`: the scalar-filter refusal and the wrapped sentence registered, the clause FAILS with `refusal: true` and the sentence in its record",
+        (Status::FAIL, true, true, true, true),
         (
-            "the budget control: a key the regex engine cannot be run over",
-            BUDGET_RHS,
-            budget_queue.as_str(),
+            string_asserted.status,
+            string_asserted.registered_string,
+            string_asserted.registered_wrap,
+            string_asserted.flagged,
+            string_asserted.string_in_records,
         ),
+    );
+    let string_gate = run(
+        &format!("rule r when {LEFT} NOT IN {STRING_RHS} {BODY}"),
+        QUEUE,
+    )?;
+    cells.check(
+        "the filter over a string, the gate: the rule fails closed (FAIL), the refusal registered and in the record",
+        (Status::FAIL, true, true, true),
         (
-            "the string control: a filter over a string, held unevaluatable and registered by nobody",
-            STRING_RHS,
-            QUEUE,
+            string_gate.status,
+            string_gate.registered_string,
+            string_gate.registered_wrap,
+            string_gate.string_in_records,
         ),
+    );
+    // The control: the budget marker, a key the regex engine cannot be run over.
+    let budget_asserted = run(
+        &format!("rule r {{ {LEFT} NOT IN {BUDGET_RHS} }}"),
+        budget_queue.as_str(),
+    )?;
+    cells.check(
+        "the budget control, asserted `NOT IN`: NOT APPLICABLE (SKIP), nothing registered, no record reads `refusal: true`",
+        (Status::SKIP, false, false, false, false),
+        (
+            budget_asserted.status,
+            budget_asserted.registered_refusal,
+            budget_asserted.registered_string,
+            budget_asserted.registered_wrap,
+            budget_asserted.flagged,
+        ),
+    );
+    let budget_gate = run(
+        &format!("rule r when {LEFT} NOT IN {BUDGET_RHS} {BODY}"),
+        budget_queue.as_str(),
+    )?;
+    cells.check(
+        "the budget control, the gate: the rule is NOT APPLICABLE (SKIP), nothing registered",
+        (Status::SKIP, false, false, false),
+        (
+            budget_gate.status,
+            budget_gate.registered_refusal,
+            budget_gate.registered_string,
+            budget_gate.registered_wrap,
+        ),
+    );
+    cells.assert_all_agreed();
+    Ok(())
+}
+
+/// The scalar-filter refusal is registered by BOTH producers of its sentence: outside a predicate
+/// (`refuse`, the cells above) and INSIDE one, where the sentence was the unregistered reason of the
+/// marker it left, so a key filter whose right-hand query met a string `Tags` inside a predicate
+/// (`Cfg[*][ x | ... M[ keys == to_upper(Tags[ Key == 'Env' ].Value) ] !empty ... ]`, the promotion
+/// cells' `%x`) left a marker the comparison arms read as plain: the empty left selection compared `NOT
+/// IN %x` was not applicable at exit 0 with the refusal silent, the mechanism the outside producer's
+/// cells close one producer over. Registered, the key filter's wrap of the sentence is registered too
+/// (`rhs_undecided`), so `%x`'s marker is a refused read to every arm: the gate fails closed (FAIL) with
+/// the sentence registered and in the clause's block record, the assertion FAILs with `refusal: true`.
+/// The control, the budget marker (a key the regex engine cannot be run over) in the same capture shape,
+/// keeps its answer: not applicable (SKIP) as a gate, nothing registered, no record flagged.
+#[test]
+fn a_scalar_filter_refused_inside_a_predicate_is_registered_as_the_outside_one_is() -> Result<()> {
+    const DOCUMENT: &str = r#"{
+    "Cfg": {
+        "Mode": { "Ref": "ModeParam" },
+        "A": { "Kind": "k", "Ref": "r", "M": { "PROD": 1, "Tags": "x" } },
+        "B": { "Kind": "k", "Ref": "r", "Flag": "y", "M": { "PROD": 1, "Tags": [ { "Key": "Env", "Value": "dev" } ] } }
+    },
+    "Resources": { "Q": { "Type": "AWS::SQS::Queue" } }
+}"#;
+    // The control's document: `A` holds the key the regex engine gives up on, so its entry is undecided
+    // by the budget marker; `B` is grounded (`Flag: y` holds), so a key stands in `%x` beside the marker,
+    // the shape the row's `%x` has.
+    let spends_the_budget = "a".repeat(30);
+    let budget_document = format!(
+        r#"{{ "Cfg": {{ "A": {{ "Kind": "k", "Ref": "r", "M": {{ "{spends_the_budget}": 1, "PROD": 1 }} }}, "B": {{ "Kind": "k", "Ref": "r", "Flag": "y", "M": {{ "PROD": 1 }} }} }}, "Resources": {{ "Q": {{ "Type": "AWS::SQS::Queue" }} }} }}"#
+    );
+    const STRING_WALK_INTO_X: &str = "Cfg[*][ x | Mode exists or M[ keys == to_upper(Tags[ Key == 'Env' ].Value) ] !empty or Ref !exists or Flag == 'y' ] !empty";
+    // The control compares the empty selection against the budget marker DIRECTLY (the right-hand query
+    // written in the clause): the capture shape of the row raises on its own `!empty` over the undecided
+    // entry's marker, which fails the rule before the membership clause is read and measures nothing of
+    // it, and `some` on that bind does not drop an undecidable marker (measured: the bind still FAILED),
+    // so the direct shape is the control that reaches the arm.
+    const BUDGET_RHS: &str = "Cfg.*.M[ keys == /(?!x)((a+)+)b/ ]";
+    const EMPTY_LEFT: &str = "Resources.*[ Type == 'AWS::S3::Bucket' ].Properties.BucketName";
+    const BODY: &str = "{ Resources.Q.Type == 'AWS::SQS::Queue' }";
+    const THE_STRING_REFUSAL: &str = "filters the entries of a String";
+    // (status; the registry holds the scalar-filter sentence; the empty-left clause's BLOCK record carries
+    // it and reads `refusal: true`, `None` when no such record is found; the registry is EMPTY, the
+    // control's "nothing registered")
+    type Seen = (Status, bool, Option<bool>, Option<bool>, bool);
+    let run = |rules: &str, input: &str| -> Result<Seen> {
+        let rules_file = RulesFile::try_from(rules)?;
+        let mut root = root_scope(&rules_file, Rc::new(PathAwareValue::try_from(input)?));
+        let status = eval_rules_file(&rules_file, &mut root, None)?;
+        let registry = crate::rules::eval_context::registered_refusals();
+        let registered = registry
+            .iter()
+            .any(|text| text.contains(THE_STRING_REFUSAL));
+        let extracted = root.reset_recorder().extract();
+        let mut under_the_clause = Vec::new();
+        record_containers_list(&extracted, "BucketName", &mut under_the_clause);
+        let block_record = under_the_clause
+            .iter()
+            .find(|record| record.contains("GuardClauseBlockCheck"));
+        Ok((
+            status,
+            registered,
+            block_record.map(|record| record.contains(THE_STRING_REFUSAL)),
+            block_record.map(|record| record.contains("refusal: true")),
+            registry.is_empty(),
+        ))
+    };
+    let mut cells = CellFailures::default();
+    cells.check(
+        "the string's marker in `%x`, as a `when` gate over the empty left selection `NOT IN %x`: raised, the rule fails closed (FAIL), the sentence registered and in the clause's block record",
+        (Status::FAIL, true, Some(true), false),
+        {
+            let (status, registered, carries, _, empty) = run(
+                &format!("rule r when {STRING_WALK_INTO_X}  {EMPTY_LEFT} NOT IN %x {BODY}"),
+                DOCUMENT,
+            )?;
+            (status, registered, carries, empty)
+        },
+    );
+    cells.check(
+        "the same, asserted: FAIL with the sentence in the clause's block record, `refusal: true`, registered",
+        (Status::FAIL, true, Some(true), Some(true), false),
+        run(
+            &format!("rule r {{ {STRING_WALK_INTO_X}  {EMPTY_LEFT} NOT IN %x }}"),
+            DOCUMENT,
+        )?,
+    );
+    cells.check(
+        "the control, the budget marker as the right-hand query, as a `when` gate: a plain marker, the empty selection keeps its answer (not applicable, SKIP), the registry empty",
+        (Status::SKIP, false, true),
+        {
+            let (status, registered, _, _, empty) = run(
+                &format!("rule r when {EMPTY_LEFT} NOT IN {BUDGET_RHS} {BODY}"),
+                &budget_document,
+            )?;
+            (status, registered, empty)
+        },
+    );
+    cells.check(
+        "the control, asserted: the empty selection keeps its answer (SKIP), the registry empty, no record flagged",
+        (Status::SKIP, false, false, true),
+        {
+            let (status, registered, _, flagged, empty) = run(
+                &format!("rule r {{ {EMPTY_LEFT} NOT IN {BUDGET_RHS} }}"),
+                &budget_document,
+            )?;
+            (status, registered, flagged == Some(true), empty)
+        },
+    );
+    cells.assert_all_agreed();
+    Ok(())
+}
+
+/// A filter over a SCALAR is a registered refusal in every clause, not only inside a key filter's
+/// right-hand query: `Resources.*.Properties.Tags[ Key == 'Env' ] exists`, `!empty` and `.Value ==
+/// 'prod'` over a string `Tags` each FAIL asserted with `refusal: true` and the sentence in the record,
+/// and each fails its rule closed as a `when` gate (FAIL, not "not applicable"), the sentence registered.
+/// The control over list-shaped tags is a decided clause: no refusal registered, no record flagged.
+#[test]
+fn a_filter_over_a_string_is_a_registered_refusal_in_every_clause() -> Result<()> {
+    const STRING_TAGS: &str =
+        r#"{ Resources: { Q: { Type: 'AWS::SQS::Queue', Properties: { Tags: 'x' } } } }"#;
+    const LIST_TAGS: &str = r#"{ Resources: { Q: { Type: 'AWS::SQS::Queue', Properties: { Tags: [ { Key: 'Env', Value: 'prod' } ] } } } }"#;
+    const BODY: &str = "{ Resources.Q.Type == 'AWS::SQS::Queue' }";
+    const THE_STRING_REFUSAL: &str = "filters the entries of a String";
+    // (status; the registry holds the sentence; a record reads `refusal: true`; the records carry the
+    // sentence)
+    let run = |rules: &str, input: &str| -> Result<(Status, bool, bool, bool)> {
+        let rules_file = RulesFile::try_from(rules)?;
+        let mut root = root_scope(&rules_file, Rc::new(PathAwareValue::try_from(input)?));
+        let status = eval_rules_file(&rules_file, &mut root, None)?;
+        let registered = crate::rules::eval_context::registered_refusals()
+            .iter()
+            .any(|text| text.contains(THE_STRING_REFUSAL));
+        let records = format!("{:?}", root.reset_recorder().extract());
+        Ok((
+            status,
+            registered,
+            records.contains("refusal: true"),
+            records.contains(THE_STRING_REFUSAL),
+        ))
+    };
+    let mut cells = CellFailures::default();
+    for clause in [
+        "Resources.*.Properties.Tags[ Key == 'Env' ] exists",
+        "Resources.*.Properties.Tags[ Key == 'Env' ] !empty",
+        "Resources.*.Properties.Tags[ Key == 'Env' ].Value == 'prod'",
     ] {
-        let asserted = run(&format!("rule r {{ {LEFT} NOT IN {rhs} }}"), input)?;
         cells.check(
-            &format!("{label}, asserted `NOT IN`: NOT APPLICABLE (SKIP), nothing registered, no record reads `refusal: true`"),
-            (Status::SKIP, false, false, false),
-            (
-                asserted.status,
-                asserted.registered_refusal,
-                asserted.registered_wrap,
-                asserted.flagged,
-            ),
+            &format!("`{clause}` asserted over a string `Tags`: FAIL, the refusal registered, the record flagged and carrying the sentence"),
+            (Status::FAIL, true, true, true),
+            run(&format!("rule r {{ {clause} }}"), STRING_TAGS)?,
         );
-        let gate = run(&format!("rule r when {LEFT} NOT IN {rhs} {BODY}"), input)?;
         cells.check(
-            &format!("{label}, the gate: the rule is NOT APPLICABLE (SKIP), nothing registered"),
-            (Status::SKIP, false, false),
-            (gate.status, gate.registered_refusal, gate.registered_wrap),
+            &format!("`when {clause}` over a string `Tags`: the rule fails closed (FAIL), the refusal registered and in the record"),
+            (Status::FAIL, true, true),
+            {
+                let (status, registered, _, carries) =
+                    run(&format!("rule r when {clause} {BODY}"), STRING_TAGS)?;
+                (status, registered, carries)
+            },
+        );
+        cells.check(
+            &format!("the control, `{clause}` asserted over list-shaped tags: decided (PASS), nothing registered, no record flagged"),
+            (Status::PASS, false, false),
+            {
+                let (status, registered, flagged, _) =
+                    run(&format!("rule r {{ {clause} }}"), LIST_TAGS)?;
+                (status, registered, flagged)
+            },
         );
     }
+    for clause in [
+        "Properties.Tags[ Key == 'Env' ] exists",
+        "Properties.Tags[ Key == 'Env' ] !empty",
+        "Properties.Tags[ Key == 'Env' ].Value == 'prod'",
+    ] {
+        cells.check(
+            &format!("`Resources.* {{ {clause} }}` asserted over a string `Tags`: FAIL, the refusal registered, the record flagged and carrying the sentence"),
+            (Status::FAIL, true, true, true),
+            run(&format!("rule r {{ Resources.* {{ {clause} }} }}"), STRING_TAGS)?,
+        );
+    }
+    // The direct in-predicate shape with NO capture, in both polarities: inside a predicate the scalar is
+    // the REFUSAL it is outside one, delivered as the entry's marker, so the entry is UNDECIDED in both
+    // polarities (never selected as tagless under `!exists`, never dropped as decided under `exists`), the
+    // sentence is registered, and the clause over the selection, holding the marker alone, fails closed
+    // with its record flagged. The earlier reading, the scalar as an ABSENCE to the predicate (selected
+    // under `!exists`, dropped under `exists`, nothing flagged), let a refused read decide a selection
+    // in silence; these rows were re-pinned from that reading.
+    cells.check(
+        "`Resources.*[ Properties.Tags[ Key == 'Env' ] !exists ] !empty` asserted over a string `Tags`: the entry is undecided, not selected as tagless, so the clause fails closed (FAIL), the sentence registered, the record flagged",
+        (Status::FAIL, true, true),
+        {
+            let (status, registered, flagged, _) = run(
+                "rule r { Resources.*[ Properties.Tags[ Key == 'Env' ] !exists ] !empty }",
+                STRING_TAGS,
+            )?;
+            (status, registered, flagged)
+        },
+    );
+    cells.check(
+        "`Resources.*[ Properties.Tags[ Key == 'Env' ] exists ] !empty` asserted over a string `Tags`: the entry is undecided, not dropped, so the clause fails closed on it (FAIL), the sentence registered, the record flagged",
+        (Status::FAIL, true, true),
+        {
+            let (status, registered, flagged, _) = run(
+                "rule r { Resources.*[ Properties.Tags[ Key == 'Env' ] exists ] !empty }",
+                STRING_TAGS,
+            )?;
+            (status, registered, flagged)
+        },
+    );
+    // A string-tagged resource beside a list-tagged one under `!exists`: the string entry is undecided
+    // and the list entry, whose tags hold `Env`, is dropped as decided; the siblings are tested on their
+    // own, and the selection holds the marker alone, so the clause fails closed.
+    const MIXED_TAGS: &str = r#"{ Resources: { Q: { Type: 'AWS::SQS::Queue', Properties: { Tags: 'x' } }, R: { Type: 'AWS::SQS::Queue', Properties: { Tags: [ { Key: 'Env', Value: 'prod' } ] } } } }"#;
+    cells.check(
+        "`Resources.*[ Properties.Tags[ Key == 'Env' ] !exists ] !empty` over a string-tagged resource beside a list-tagged one: the string entry undecided, the list entry decided and dropped, the clause fails closed on the marker alone (FAIL), the sentence registered, the record flagged",
+        (Status::FAIL, true, true),
+        {
+            let (status, registered, flagged, _) = run(
+                "rule r { Resources.*[ Properties.Tags[ Key == 'Env' ] !exists ] !empty }",
+                MIXED_TAGS,
+            )?;
+            (status, registered, flagged)
+        },
+    );
+    cells.check(
+        "the control, `Resources.*[ Properties.Tags[ Key == 'Env' ] exists ] !empty` asserted over list-shaped tags: the entry is kept (PASS), nothing registered, no record flagged",
+        (Status::PASS, false, false),
+        {
+            let (status, registered, flagged, _) = run(
+                "rule r { Resources.*[ Properties.Tags[ Key == 'Env' ] exists ] !empty }",
+                LIST_TAGS,
+            )?;
+            (status, registered, flagged)
+        },
+    );
+    cells.check(
+        "the control, `Resources.*[ Properties.Tags[ Key == 'Env' ] !exists ] !empty` asserted over list-shaped tags: the entry is dropped and the selection is empty (FAIL, decided), nothing registered, no record flagged",
+        (Status::FAIL, false, false),
+        {
+            let (status, registered, flagged, _) = run(
+                "rule r { Resources.*[ Properties.Tags[ Key == 'Env' ] !exists ] !empty }",
+                LIST_TAGS,
+            )?;
+            (status, registered, flagged)
+        },
+    );
+    cells.assert_all_agreed();
+    Ok(())
+}
+
+/// The scalar-filter refusal's sentence quotes the value's PATH cut in its middle at the template-part
+/// bound with the leaf and the location kept (`template_path`), as every refusal quotes a path: over a
+/// resource named by five thousand characters the registered sentence stays well inside the console's
+/// bound and still names `Properties/Tags` and ends with "which has none", where the raw path put the
+/// whole name in the sentence and the leaf and the tail past the cut. The control, a short name, is
+/// quoted whole.
+#[test]
+fn a_scalar_filter_refusals_path_is_bounded_with_its_leaf_kept() -> Result<()> {
+    const THE_STRING_REFUSAL: &str = "filters the entries of a String";
+    const RULE: &str = "rule r { Resources.*.Properties.Tags[ Key == 'Env' ] exists }";
+    // (status; the registered sentence: found, under 1024 characters, names the leaf, carries the tail)
+    let run = |name: &str| -> Result<(Status, bool, bool, bool, bool)> {
+        let input = format!(
+            "{{ Resources: {{ {name}: {{ Type: 'AWS::SQS::Queue', Properties: {{ Tags: 'x' }} }} }} }}"
+        );
+        let rules_file = RulesFile::try_from(RULE)?;
+        let mut root = root_scope(
+            &rules_file,
+            Rc::new(PathAwareValue::try_from(input.as_str())?),
+        );
+        let status = eval_rules_file(&rules_file, &mut root, None)?;
+        let sentence = crate::rules::eval_context::registered_refusals()
+            .into_iter()
+            .find(|text| text.contains(THE_STRING_REFUSAL));
+        let sentence = sentence.as_deref();
+        Ok((
+            status,
+            sentence.is_some(),
+            sentence.is_some_and(|text| text.chars().count() < 1024),
+            sentence.is_some_and(|text| text.contains("Properties/Tags")),
+            sentence.is_some_and(|text| text.contains("which has none")),
+        ))
+    };
+    let long_name = "a".repeat(5000);
+    let mut cells = CellFailures::default();
+    cells.check(
+        "a resource named by five thousand characters: FAIL on the refusal, whose registered sentence is bounded, names the leaf and keeps its tail",
+        (Status::FAIL, true, true, true, true),
+        run(&long_name)?,
+    );
+    cells.check(
+        "the control, a short name: the same shape, the path whole",
+        (Status::FAIL, true, true, true, true),
+        run("Q")?,
+    );
+    cells.assert_all_agreed();
+    Ok(())
+}
+
+/// A refusal first met INSIDE a filter predicate, where the evaluator's probes read the predicate quietly
+/// before the real run, is still registered when the real run meets the marker that carries its wrapped
+/// text: the refusal registry is one set per live evaluation (`RefusalRegistryGuard`), a quiet probe
+/// registers into that same set, and the key-filter arm's wrap of the sentence is registered beside it,
+/// so `Resources.*[ Properties.M[ keys == Tags[ Key == 'Env' ].Value ] !empty ] !empty` over a string
+/// `Tags` is raised as the refusal it is: FAIL with `refusal: true`, the sentence registered and in the
+/// records. Were a probe's registration taken back with its memo, the real run met an unregistered marker
+/// and failed plain; the fix for a red here is probe-side, never in the comparison arms. The control
+/// over list-shaped tags is decided with nothing registered. The entry's MARKER is read as well: the
+/// unary `!empty` over the map's marker raises it with the token the key-filter arm recovered from the
+/// registry for the refused right-hand query (the refusal arrived as an error with no token of its own;
+/// the wrap is registered under the recovered token and the marker carries it), minted inside the run,
+/// so the entry `/Resources/Q` is REFUSED by its kind, as a comparison that reads the wrap by text through
+/// the registry reads it; a marker rebuilt with no token read PLAIN there while `.. NOT IN` the same wrap
+/// read REFUSED.
+#[test]
+fn a_refusal_first_met_inside_a_predicate_probe_stays_registered_for_the_real_run() -> Result<()> {
+    const STRING_TAGS: &str = r#"{ Resources: { Q: { Type: 'AWS::SQS::Queue', Properties: { M: { PROD: 1, Tags: 'x' } } } } }"#;
+    const LIST_TAGS: &str = r#"{ Resources: { Q: { Type: 'AWS::SQS::Queue', Properties: { M: { PROD: 1, Tags: [ { Key: 'Env', Value: 'PROD' } ] } } } } }"#;
+    const RULE: &str =
+        "rule r { Resources.*[ Properties.M[ keys == Tags[ Key == 'Env' ].Value ] !empty ] !empty }";
+    const THE_STRING_REFUSAL: &str = "filters the entries of a String";
+    let run = |input: &str| -> Result<(Status, bool, bool, bool, Option<bool>)> {
+        let rules_file = RulesFile::try_from(RULE)?;
+        let mut root = root_scope(&rules_file, Rc::new(PathAwareValue::try_from(input)?));
+        let status = eval_rules_file(&rules_file, &mut root, None)?;
+        let registered = crate::rules::eval_context::registered_refusals()
+            .iter()
+            .any(|text| text.contains(THE_STRING_REFUSAL));
+        let tree = root.reset_recorder().extract();
+        // The entry's marker by its kind: `Some(true)` REFUSED, `Some(false)` PLAIN, `None` for no marker.
+        let mut markers = Vec::new();
+        undecidable_markers_with_kinds(&tree, &mut markers);
+        let entry_refused = markers
+            .iter()
+            .find(|(path, _, _)| path == "/Resources/Q")
+            .map(|(_, _, kind)| kind.is_refusal());
+        let records = format!("{tree:?}");
+        Ok((
+            status,
+            registered,
+            records.contains("refusal: true"),
+            records.contains(THE_STRING_REFUSAL),
+            entry_refused,
+        ))
+    };
+    let mut cells = CellFailures::default();
+    cells.check(
+        "the string `Tags` met inside the predicate: raised as the refusal (FAIL, `refusal: true`), registered and in the records, and the entry /Resources/Q REFUSED by its marker's token (the unary raise over the wrap carries the recovered token)",
+        (Status::FAIL, true, true, true, Some(true)),
+        run(STRING_TAGS)?,
+    );
+    cells.check(
+        "the control, list-shaped tags: decided (PASS), nothing registered, no record flagged, no marker",
+        (Status::PASS, false, false, None),
+        {
+            let (status, registered, flagged, _, entry) = run(LIST_TAGS)?;
+            (status, registered, flagged, entry)
+        },
+    );
+    cells.assert_all_agreed();
+    Ok(())
+}
+
+/// A filter predicate's plain raise becomes the ENTRY's marker reason, and that reason is read by text
+/// against the registry wherever the entry is compared later, so the predicate's raise beside a refusal
+/// and a key filter's marker carries the refusal ALONE: given the key filter's reason as a numbered
+/// second part, the entry's marker read as unregistered, and the empty-selection arm beside it answered
+/// not applicable where it must raise. The shape: `%x` holds `A`'s key filter marker beside the key `B`
+/// and `%y` the refused own-key walk's marker beside the keys of `Cfg2` (the fixture of the promotion
+/// cells); the predicate `Items.*[ some %y NOT IN %x ]` raises on every entry (the plain raise of the
+/// mirror shape), so each entry of `Items` becomes a marker whose reason is that raise's text; and a `when`
+/// over a template with no bucket compares the EMPTY left selection `NOT IN` those markers. Raised
+/// (FAIL): the markers' reason is the registered refusal, the empty-selection arm reads it registered
+/// (`rhs_refused_read`) and raises it, the rule fails closed, and the refusal is in the records; the
+/// asserted shape fails with the record flagged `refusal: true`. Red before the raise was cut back: the
+/// numbered text was no registered refusal's, the arm took its decided branch, the gate read not
+/// applicable (SKIP) and the asserted record carried no refusal. The control, a predicate whose raise is
+/// the refusal alone with no key filter's marker beside it (`Items.*[ %y NOT IN 'zzz' ]`), reads the same
+/// on both sides. No refused-read line is written in either shape: the clause raises, and the line is for
+/// a refusal a decided clause never raised.
+#[test]
+fn a_predicate_raised_beside_a_refusal_and_a_marker_leaves_a_registered_marker() -> Result<()> {
+    const DOCUMENT: &str = r#"{
+    "Cfg": {
+        "Mode": { "Ref": "ModeParam" },
+        "A": { "Kind": "k", "Ref": "r", "M": { "PROD": 1, "Tags": "x" } },
+        "B": { "Kind": "k", "Ref": "r", "Flag": "y", "M": { "PROD": 1, "Tags": [ { "Key": "Env", "Value": "dev" } ] } }
+    },
+    "Cfg2": {
+        "Mode": { "Ref": "ModeParam" },
+        "Other": { "Kind": "k" },
+        "C": { "Kind": "k", "Sub": { "R1": { "Ref": "P" }, "P": { "Kind": "k" }, "Q": { "Kind": "k" } } },
+        "D": { "Kind": "k", "Sub": { "R1": { "Ref": "P" }, "P": { "Kind": "k" }, "Q": { "Kind": "k" } } }
+    },
+    "Items": { "I1": { "Name": "n1" }, "I2": { "Name": "n2" } },
+    "Resources": { "Q": { "Type": "AWS::SQS::Queue" } }
+}"#;
+    const UNDECIDED_WALK_INTO_X: &str = "Cfg[*][ x | Mode exists or M[ keys == to_upper(Tags[ Key == 'Env' ].Value) ] !empty or Ref !exists or Flag == 'y' ] !empty";
+    const REFUSED_WALK_INTO_Y: &str =
+        "Cfg2[*][ y | Mode exists or Kind == 'k' ].Sub[*][ s | R1 !exists ] !empty or Cfg2.Other exists";
+    const EMPTY_LEFT: &str = "Resources.*[ Type == 'AWS::S3::Bucket' ].Properties.BucketName";
+    // The predicate whose plain raise meets the refusal and the key filter's marker (the mirror shape),
+    // and the control's, whose raise is the refusal alone.
+    const NUMBERED_PREDICATE: &str = "Items.*[ some %y NOT IN %x ]";
+    const REFUSAL_ALONE_PREDICATE: &str = "Items.*[ %y NOT IN 'zzz' ]";
+    const BODY: &str = "{ Resources.Q.Type == 'AWS::SQS::Queue' }";
+    // (status; the registry holds the own-key refusal; the empty-left clause's BLOCK record (the one
+    // `GuardClauseBlockCheck` under the clause, as `Debug` spells it) carries the refusal's sentence, and
+    // reads `refusal: true`, `None` when no such record is found; the refused-read lines). The block
+    // record is read rather than the whole tree: the predicate's own comparison records inside the
+    // entries carry the refusal in both shapes, and the question is what the EMPTY-LEFT clause raised.
+    type Seen = (Status, bool, Option<bool>, Option<bool>, usize);
+    let run = |rules: &str| -> Result<Seen> {
+        let rules_file = RulesFile::try_from(rules)?;
+        let mut root = root_scope(&rules_file, Rc::new(PathAwareValue::try_from(DOCUMENT)?));
+        let status = eval_rules_file(&rules_file, &mut root, None)?;
+        let registered = crate::rules::eval_context::registered_refusals()
+            .iter()
+            .any(|text| text.contains(THE_OWN_KEY_REFUSAL));
+        // The clause's own lines: the refused walk's line at its own site is left out.
+        let lines = without_the_refused_walks_line(
+            root.warnings()
+                .filter(|line| line.contains("reported here instead"))
+                .cloned()
+                .collect(),
+        )
+        .len();
+        let extracted = root.reset_recorder().extract();
+        let mut under_the_clause = Vec::new();
+        record_containers_list(&extracted, "BucketName", &mut under_the_clause);
+        let block_record = under_the_clause
+            .iter()
+            .find(|record| record.contains("GuardClauseBlockCheck"));
+        Ok((
+            status,
+            registered,
+            block_record.map(|record| record.contains(THE_OWN_KEY_REFUSAL)),
+            block_record.map(|record| record.contains("refusal: true")),
+            lines,
+        ))
+    };
+    let binds =
+        format!("{UNDECIDED_WALK_INTO_X}  Cfg2[ y | Kind == 'k' ] !empty  {REFUSED_WALK_INTO_Y}");
+    let mut cells = CellFailures::default();
+    for (label, predicate) in [
+        (
+            "the predicate raised beside the refusal and the key filter's marker",
+            NUMBERED_PREDICATE,
+        ),
+        (
+            "the control, the predicate raised on the refusal alone",
+            REFUSAL_ALONE_PREDICATE,
+        ),
+    ] {
+        cells.check(
+            &format!("{label}, as a `when` gate over the empty left selection `NOT IN` the entries: the markers' reason is the registered refusal, raised, the rule fails closed (FAIL); the refusal registered and in the clause's block record; no line"),
+            (Status::FAIL, true, Some(true), 0),
+            {
+                let (status, registered, carries, _, lines) =
+                    run(&format!("rule r when {binds}  {EMPTY_LEFT} NOT IN {predicate} {BODY}"))?;
+                (status, registered, carries, lines)
+            },
+        );
+        cells.check(
+            &format!("{label}, asserted: FAIL with the refusal in the clause's block record, `refusal: true`; registered; no line"),
+            (Status::FAIL, true, Some(true), Some(true), 0),
+            run(&format!("rule r {{ {binds}  {EMPTY_LEFT} NOT IN {predicate} }}"))?,
+        );
+    }
+    cells.assert_all_agreed();
+    Ok(())
+}
+
+/// A refused WALK's marker handed to a key filter as its right-hand value INSIDE a predicate is a refused
+/// read to the comparison that meets the entry later, by the marker's KIND, where by text alone it was a
+/// plain marker. `Statement[ Effect == 'Allow' ].Action` over a one-object `Statement` of strings is
+/// refused; inside the predicate `Resources.*[ Properties.M[ keys == <that query> ] !empty ]` the refusal
+/// is delivered as a marker (`to_refusal_result`, `refused` set) that REGISTERS NOTHING, the key filter's
+/// right-hand query hands it on as the map's right-hand value, the fold wraps it ("a value nobody could
+/// decide", `did_not_resolve_reason`) and the entry becomes a marker whose reason is that wrap. Read by
+/// text, no layer of it was registered, so an EMPTY left selection compared `NOT IN` the entries' markers
+/// was not applicable at exit 0 with the refusal silent. Read by kind, the wrap carries the refusal as a
+/// flag (`UnResolvedKind::Undecidable::beside_a_refusal`) through every layer, so the comparison raises
+/// (FAIL in both roles), the clause's block record is flagged `refusal: true` and names the refused
+/// query, and the registry still holds no text naming it (the flag, not a registration, carried it). The
+/// control, a spent regex budget inside the same wrap, is a plain marker: not applicable (SKIP) in both
+/// roles, no record flagged. The own-key refusal's marker held by a capture and read bare as the key
+/// filter's right-hand side (`Cfg.*.M[ keys IN %x ]`) is NOT pinned here: measured on a document whose
+/// `Cfg` maps hold `M`, the clause over it read not applicable and the rule PASSED on its other clauses,
+/// so the bare capture's marker does not reach the key filter's fold in that shape (the right-hand values
+/// of a bare capture are normalized before the keys are compared); whether that is a second producer or
+/// no producer is a reading for a diagnostic leg, not a pin.
+#[test]
+fn a_refused_walks_marker_wrapped_by_a_key_filter_inside_a_predicate_is_a_refused_read(
+) -> Result<()> {
+    const REFUSED_STATEMENT: &str = r#"{ "Resources": { "R": { "Type": "AWS::SQS::Queue", "Properties": { "Name": "n", "M": { "PROD": 1, "Statement": { "Effect": "Allow", "Action": "PROD" } } } } } }"#;
+    let spends_the_budget = "a".repeat(30);
+    let budget_document = format!(
+        r#"{{ "Resources": {{ "R": {{ "Type": "AWS::SQS::Queue", "Properties": {{ "Name": "n", "M": {{ "{spends_the_budget}": 1, "PROD": 1 }} }} }} }} }}"#
+    );
+    const REFUSED_SEL: &str = "let sel = Resources.*[ Properties.M[ keys == Statement[ Effect == 'Allow' ].Action ] !empty ].Properties.Name";
+    const BUDGET_SEL: &str =
+        "let sel = Resources.*[ Properties.M[ keys == /(?!x)((a+)+)b/ ] !empty ].Properties.Name";
+    const EMPTY_LEFT: &str = "Resources.*[ Type == 'AWS::S3::Bucket' ].Properties.BucketName";
+    const BODY: &str = "{ Resources.*.Type == 'AWS::SQS::Queue' }";
+    // (status; the clause's BLOCK record (the comparison's, found by its right-hand name) reads
+    // `refusal: true`; it names `Statement`; `None` when no block record is found). The registry is not
+    // read here: the one-object refusal is registered where it is minted whether or not it travels as a
+    // marker, so the registry cannot tell the kind path from the text path; the flag's own cells are
+    // the numbered-wrap cell below (a text no registry holds, still raised) and the rows of this cell.
+    type Seen = (Status, Option<bool>, Option<bool>);
+    let run = |rules: &str, input: &str| -> Result<Seen> {
+        let rules_file = RulesFile::try_from(rules)?;
+        let mut root = root_scope(&rules_file, Rc::new(PathAwareValue::try_from(input)?));
+        let status = eval_rules_file(&rules_file, &mut root, None)?;
+        let extracted = root.reset_recorder().extract();
+        let mut under_the_clause = Vec::new();
+        record_containers_list(&extracted, "%sel", &mut under_the_clause);
+        let block_record = under_the_clause
+            .iter()
+            .find(|record| record.contains("GuardClauseBlockCheck"));
+        Ok((
+            status,
+            block_record.map(|record| record.contains("refusal: true")),
+            block_record.map(|record| record.contains("Statement")),
+        ))
+    };
+    let mut cells = CellFailures::default();
+    cells.check(
+        "the refused walk's marker inside the predicate, the empty selection `NOT IN %sel` as a `when` gate: raised, the rule fails closed (FAIL); the block record flagged and naming the refused query",
+        (Status::FAIL, Some(true), Some(true)),
+        run(
+            &format!("{REFUSED_SEL}\nrule r when {EMPTY_LEFT} NOT IN %sel {BODY}"),
+            REFUSED_STATEMENT,
+        )?,
+    );
+    cells.check(
+        "the same, asserted: FAIL, the block record flagged and naming the refused query",
+        (Status::FAIL, Some(true), Some(true)),
+        run(
+            &format!("{REFUSED_SEL}\nrule r {{ {EMPTY_LEFT} NOT IN %sel }}"),
+            REFUSED_STATEMENT,
+        )?,
+    );
+    cells.check(
+        "the control, a spent regex budget inside the same wrap, as a `when` gate: a plain marker, the empty selection keeps its answer (SKIP), no record flagged",
+        (Status::SKIP, Some(false)),
+        {
+            let (status, flagged, _) = run(
+                &format!("{BUDGET_SEL}\nrule r when {EMPTY_LEFT} NOT IN %sel {BODY}"),
+                &budget_document,
+            )?;
+            (status, flagged)
+        },
+    );
+    cells.check(
+        "the control, asserted: the clause is not applicable (SKIP), no record flagged",
+        (Status::SKIP, Some(false)),
+        {
+            let (status, flagged, _) = run(
+                &format!("{BUDGET_SEL}\nrule r {{ {EMPTY_LEFT} NOT IN %sel }}"),
+                &budget_document,
+            )?;
+            (status, flagged)
+        },
+    );
+    cells.assert_all_agreed();
+    Ok(())
+}
+
+/// A key filter's wrap of a marker whose reason is a NUMBERED text of registered parts (a predicate's
+/// raise beside two refused reads, `(1) <Cfg's own-key refusal> (2) <Cfg2's>`, handed on as the entry's
+/// marker and held by the predicate's capture) registers NOTHING: the registry holds the two sentences
+/// and no text holding `(1) `, since a joined text is no refusal's own sentence and a wrap of one is not
+/// either; the refusal travels on the marker's kind instead, so the clause over the wrapped marker is
+/// still raised (FAIL) with its record flagged `refusal: true` and carrying the numbered text inside the
+/// wrap. Registering the wrap by its inner TEXT (which the refusal test accepts part by part) would have
+/// put a text with `(1) ` into the registry, the invariant `the_raised_text_numbers_a_leading_reason_and_
+/// several_reads_and_keeps_one_text_as_it_is` and `an_asserted_empty_left_selection_beside_a_refusal_fails_
+/// with_refusal_recorded` hold.
+#[test]
+fn a_wrap_of_a_numbered_marker_registers_nothing_and_still_travels_as_a_refusal() -> Result<()> {
+    const DOCUMENT: &str = NUMBERED_WRAP_DOCUMENT;
+    const CAPTURE: &str = CAPTURE_X;
+    // Each cell's root scope is dropped before the next is made: the refusal test (`is_refusal_text`)
+    // reads EVERY registry set alive on the thread while `registered_refusals()` reads the newest, so a
+    // root kept alive by shadowing would let one cell's registration make the next cell's text read as
+    // registered, and the cells would not pin what they say.
+    // The predicate's clause `Name NOT IN %x` is raised beside the two refusals in `%x`, numbered; the
+    // entry's marker carries that text and is filed under `i`; `some` drops it from this clause's own
+    // answer so the bind is decided (FAIL on the empty selection) rather than raised.
+    const NUMBERED_INTO_I: &str = "some Items.*[ i | Name NOT IN %x ] !empty";
+    const WRAPS_I: &str = "Maps.M[ keys IN %i ] !empty";
+    let rules = format!(
+        "rule r {{ {CAPTURE}  {REFUSED_WALK_INTO_X}  {SECOND_WALK_INTO_X}  {NUMBERED_INTO_I}  {WRAPS_I} }}"
+    );
+    let rules_file = RulesFile::try_from(rules.as_str())?;
+    let mut root = root_scope(&rules_file, Rc::new(PathAwareValue::try_from(DOCUMENT)?));
+    let status = eval_rules_file(&rules_file, &mut root, None)?;
+    let registered = crate::rules::eval_context::registered_refusals();
+    let own_key_registered = registered
+        .iter()
+        .filter(|text| text.contains(THE_OWN_KEY_REFUSAL))
+        .count();
+    let numbered_registered = registered
+        .iter()
+        .filter(|text| text.contains("(1) "))
+        .count();
+    let extracted = root.reset_recorder().extract();
+    let mut under_the_clause = Vec::new();
+    // The comparison's record names the capture `%i`; the bind clause names `i |`, never `%i`.
+    record_containers_list(&extracted, "%i", &mut under_the_clause);
+    let block_record = under_the_clause
+        .iter()
+        .find(|record| record.contains("GuardClauseBlockCheck"));
+    let mut cells = CellFailures::default();
+    cells.check(
+        "the clause over the wrapped numbered marker: FAIL; the registry holds the two own-key sentences and no text with `(1) `; the block record flagged `refusal: true` and carrying the numbered text inside the wrap",
+        (Status::FAIL, 2, 0, Some(true), Some(true)),
+        (
+            status,
+            own_key_registered,
+            numbered_registered,
+            block_record.map(|record| record.contains("refusal: true")),
+            block_record.map(|record| record.contains("(1) ") && record.contains(" (2) ")),
+        ),
+    );
+    // The same wrapped marker (a refused read by its flag alone: the wrap's text is registered by nobody)
+    // among the RIGHT-hand values of a comparison with nothing on its left to compare, the empty selection
+    // `NOT IN Maps.M[ keys IN %i ]` asserted (`binary_operation`'s `Skip` arm): raised on the flag, FAIL,
+    // the block record flagged, and the registry still holds no text of the key filter's wrap; raised
+    // through `refuse`, the wrap's sentence (a text with `(1) ` inside it) was registered as a refusal's own.
+    const EMPTY_LEFT: &str = "Resources.*[ Type == 'AWS::S3::Bucket' ].Properties.BucketName";
+    let rules = format!(
+        "rule r {{ {CAPTURE}  {REFUSED_WALK_INTO_X}  {SECOND_WALK_INTO_X}  {NUMBERED_INTO_I}  {EMPTY_LEFT} NOT IN Maps.M[ keys IN %i ] }}"
+    );
+    drop(root);
+    let rules_file = RulesFile::try_from(rules.as_str())?;
+    let mut root = root_scope(&rules_file, Rc::new(PathAwareValue::try_from(DOCUMENT)?));
+    let status = eval_rules_file(&rules_file, &mut root, None)?;
+    // The wrap's text holds the numbered text inside it, so the `(1) ` filter the first cell uses reads
+    // the registry for it.
+    let wrap_registered = crate::rules::eval_context::registered_refusals()
+        .iter()
+        .filter(|text| text.contains("(1) "))
+        .count();
+    let extracted = root.reset_recorder().extract();
+    let mut under_the_clause = Vec::new();
+    record_containers_list(&extracted, "BucketName", &mut under_the_clause);
+    let block_record = under_the_clause
+        .iter()
+        .find(|record| record.contains("GuardClauseBlockCheck"));
+    cells.check(
+        "the empty selection `NOT IN` the wrapped numbered marker, asserted: FAIL on the flag; the registry holds no text of the key filter's wrap; the block record flagged `refusal: true`",
+        (Status::FAIL, 0, Some(true)),
+        (
+            status,
+            wrap_registered,
+            block_record.map(|record| record.contains("refusal: true")),
+        ),
+    );
+    // The same wrapped marker among the right-hand values of a comparison with a RESOLVED left-hand
+    // value (`some Items.*.Name NOT IN Maps.M[ keys IN %i ]`, asserted): the marker's pair is undecided
+    // and `some` beside a negated comparator is raised by the gate on the wrap's text, the one refused
+    // read met. Raised as the plain error carrying the refusal bit (`raised_refusal`: a refused read by
+    // its flag alone), FAIL, the block record flagged, and the registry still holds no text with `(1) `;
+    // raised through `refuse` as one registered read, the wrap's text went into the registry.
+    const RESOLVED_LEFT: &str = "some Items.*.Name NOT IN Maps.M[ keys IN %i ]";
+    let rules = format!(
+        "rule r {{ {CAPTURE}  {REFUSED_WALK_INTO_X}  {SECOND_WALK_INTO_X}  {NUMBERED_INTO_I}  {RESOLVED_LEFT} }}"
+    );
+    drop(root);
+    let rules_file = RulesFile::try_from(rules.as_str())?;
+    let mut root = root_scope(&rules_file, Rc::new(PathAwareValue::try_from(DOCUMENT)?));
+    let status = eval_rules_file(&rules_file, &mut root, None)?;
+    let wrap_registered = crate::rules::eval_context::registered_refusals()
+        .iter()
+        .filter(|text| text.contains("(1) "))
+        .count();
+    let extracted = root.reset_recorder().extract();
+    let mut under_the_clause = Vec::new();
+    record_containers_list(&extracted, "%i", &mut under_the_clause);
+    let block_record = under_the_clause
+        .iter()
+        .find(|record| record.contains("GuardClauseBlockCheck"));
+    cells.check(
+        "a resolved value `NOT IN` the wrapped numbered marker, asserted under `some`: FAIL on the flag; the registry holds no text with `(1) `; the block record flagged `refusal: true`",
+        (Status::FAIL, 0, Some(true)),
+        (
+            status,
+            wrap_registered,
+            block_record.map(|record| record.contains("refusal: true")),
+        ),
+    );
+    // The MIXED set: refusals' markers by kind among the LEFT-hand values (`%x`, the two refused walks')
+    // and the wrapped numbered marker, a refused read by its flag alone, on the right (`some %x NOT IN
+    // Maps.M[ keys IN %i ]`, asserted). The collection holds registered reads beside an unregistered
+    // one, so the raise is the plain error carrying the refusal bit with every read numbered in its
+    // text, FAIL, and the block record is flagged; raised as an `Unevaluatable` whose numbered text held
+    // the wrap's unregistered part, the refusal test rejected the whole and the record read `refusal:
+    // false` with the refusals inside it.
+    const MIXED: &str = "some %x NOT IN Maps.M[ keys IN %i ]";
+    let rules = format!(
+        "rule r {{ {CAPTURE}  {REFUSED_WALK_INTO_X}  {SECOND_WALK_INTO_X}  {NUMBERED_INTO_I}  {MIXED} }}"
+    );
+    drop(root);
+    let rules_file = RulesFile::try_from(rules.as_str())?;
+    let mut root = root_scope(&rules_file, Rc::new(PathAwareValue::try_from(DOCUMENT)?));
+    let status = eval_rules_file(&rules_file, &mut root, None)?;
+    let numbered_registered = crate::rules::eval_context::registered_refusals()
+        .iter()
+        .filter(|text| text.contains("(1) "))
+        .count();
+    let extracted = root.reset_recorder().extract();
+    let mut under_the_clause = Vec::new();
+    record_containers_list(&extracted, "%i", &mut under_the_clause);
+    let block_record = under_the_clause
+        .iter()
+        .find(|record| record.contains("GuardClauseBlockCheck"));
+    cells.check(
+        "the refusals' markers on the left `NOT IN` the wrapped numbered marker, asserted under `some`: FAIL; the block record flagged `refusal: true` and numbering the three reads, `(1) .. (2) .. (3) ..`; nothing with `(1) ` registered",
+        (Status::FAIL, Some(true), Some(true), 0),
+        (
+            status,
+            block_record.map(|record| record.contains("refusal: true")),
+            block_record.map(|record| {
+                record.contains("(1) ") && record.contains(" (2) ") && record.contains(" (3) ")
+            }),
+            numbered_registered,
+        ),
+    );
+    cells.assert_all_agreed();
+    Ok(())
+}
+
+/// A LEFT-hand marker that is a refused read by its `beside_a_refusal` flag alone (the key filter's wrap
+/// of the numbered entry marker, `Maps.M[ keys IN %i ]`, as the left-hand query or held by a capture)
+/// is read on the left as it is on the right: kept in the refused-read collection with its text
+/// registered by nobody, so a record of the clause is flagged (the pair's where the clause is decided on
+/// the marker's own pair, the clause's block record where it is raised), the refused-read line is
+/// written where the clause is decided past it by a mismatch or an absence, a gate's raise carries the
+/// refusal bit, and a predicate's raise hands the entry a marker flagged beside a refusal. Read by kind
+/// or by registered text alone,
+/// the flag-only left marker left the collection: no line, the gate's raise `refusal: false`, the entry a
+/// plain marker (the right-hand mirror of each shape read as a refused read, so one clause recorded
+/// different flags by the side the marker stood on), while the pair's own record still read `refusal:
+/// true` through `refused_read_text`, so the record and the raise disagreed. Each cell has a
+/// control with a REGISTERED marker in the same position (a refused walk's own marker, refused by
+/// kind, held by `%c`), which reads the same outcomes: the flag-only read is a refused read, not a
+/// third kind. The binds pass on a fallback disjunct (`or Items.I1 exists`): a decided FAIL in the
+/// conjunction outranks a held raise (`eval_conjunction_clauses` answers FAIL before it returns the held
+/// error), which would hide the gate's raise behind the bind's own verdict. The last two cells put a
+/// MIXED set (the refused walk's marker and the wrap in one capture) on the RIGHT of the two arms that
+/// hand their raise to the collection's read (the empty left selection `NOT IN`, and a positive `IN`
+/// that compared nothing): each is raised as the plain error carrying the refusal bit, FAIL, flagged,
+/// and the registry holds no text with `(1) ` (an `Unevaluatable` whose numbered text held the wrap's
+/// unregistered part read `refusal: false`).
+///
+/// Three spellings put the wrap on the left, and each reads it through a different path: a `let w =
+/// Maps.M[ keys IN %i ]` standing INSIDE the rule's block, the one shape a predicate can read as a
+/// variable (a `let`'s query is run in the scope the `let` stands in, so a file-level `let` cannot see
+/// `%i`, a capture bound inside the rule's block: `lookup` reaches the file scope's `variable_queries`
+/// and exits with "Could not resolve variable by name i across scopes"; placed in the block, the query
+/// is run there, lazily, after the bind filled `%i`, and a rule-level `when` condition admits no `let`,
+/// so the gate role reads the block's `%w` through a named rule and through a `when` block nested in the
+/// rule's block); the INLINE query `Maps.M[ keys IN %i ]` written as
+/// the clause's left operand, the query path, in the asserted, `when` and named-rule-gate roles (`rule
+/// gate { .. }` referenced by `rule r when gate`, where the gate-role run of `gate` is recorded under
+/// `r`); and a CAPTURE over the key filter, `some Maps.M[ v | keys IN %i ] !empty`, which files the key
+/// filter's marker under `%v`.
+///
+/// Two readings the cells rest on. ASSERTED, `some <marker> NOT IN ['x']` is not raised: the marker is
+/// the one left-hand value, its pair keeps its failing status under `NOT IN`, no pass is unknown and
+/// `undecided_under_some` is not set (the marker's pair is undecided, but it carries the FAIL status that
+/// fails the assertion closed), so the strict table does not raise and the clause is decided FAIL on the
+/// pair; the clause's own
+/// block record is then written `refusal: false` by the status fold and the flag sits on the PAIR's
+/// record, which the asserted cells read (any flagged record under the clause), and no refused-read line
+/// is owed (a FAIL on the marker's own pair is none of the decided verdicts the line is written for). In
+/// the GATE role the same comparison is raised (the non-strict table asks only whether anything decided
+/// the clause), so the gate cells read the clause's block record flagged. And a record's context is the
+/// clause as RENDERED: a key filter renders its name and `(map-key-filter-clauses)`, never its clauses,
+/// so the inline cells find their records by `Maps.M (map-key-filter-clauses)`, not by `%i`. The asserted
+/// cells also pin that the clause's block record carries NO raise message: a raise that lost its refusal
+/// bit would read `refusal: false` on the block record as a decision does, and the pair's record flagged
+/// as a decision's is, so without this read the original defect (a raise with the bit missing) and the
+/// decided shape were one and the same to every value the cells compare.
+#[test]
+fn a_left_hand_marker_refused_by_its_flag_alone_is_a_refused_read_in_every_role() -> Result<()> {
+    const DOCUMENT: &str = NUMBERED_WRAP_DOCUMENT;
+    const CAPTURE: &str = CAPTURE_X;
+    // The second control's marker, a key filter's PLAIN marker (no refused read of any kind): the regex
+    // spends its budget on `Budget`'s one key, held by `%b`. It reads no line, no flag, a plain entry.
+    const BUDGET_INTO_B: &str = "let b = Budget[ keys == /(?!x)((a+)+)b/ ]";
+    // The predicate's raise beside the two refusals in `%x` files each entry's numbered marker under
+    // `i`; the fallback disjunct keeps the bind from failing the conjunction.
+    const NUMBERED_INTO_I: &str = "some Items.*[ i | Name NOT IN %x ] !empty or Items.I1 exists";
+    // The wrap, held by a `let` so it stands on the LEFT as a variable: the key filter over `M` whose
+    // right-hand values are `%i`'s markers leaves the flag-only marker as its one value. The `let` stands
+    // in rule `r`'s block beside the binds (a file-level `let` is run in the file scope, where `%i` is
+    // unbound), and the `block` parser lets an assignment follow a clause.
+    const WRAP_INTO_W: &str = "let w = Maps.M[ keys IN %i ]";
+    // The control's marker: a refused walk over `Cfg` into its own capture `%c`, which holds the walk's
+    // refusal marker alone (refused by kind, registered by the collection), in the same positions.
+    const REFUSED_WALK_INTO_C: &str = "Cfg[*][ c | Mode exists or Kind == 'k' ].Sub[*][ s | R1 !exists ] !empty or Cfg.Fallback exists";
+    // The MIXED set: the refused walk's marker and the wrap in one capture `%m`.
+    const REFUSED_WALK_INTO_M: &str = "Cfg[*][ m | Mode exists or Kind == 'k' ].Sub[*][ s | R1 !exists ] !empty or Cfg.Fallback exists";
+    const WRAP_INTO_M: &str = "some Maps.M[ m | keys IN %i ] !empty or Items.I1 exists";
+    const EMPTY_LEFT: &str = "Resources.*[ Type == 'AWS::S3::Bucket' ].Properties.BucketName";
+    const THE_LINE: &str = THE_REFUSED_READ_MARKER;
+    const BODY: &str = "{ Items.I1.Name == 'n1' }";
+    let binds = format!(
+        "{CAPTURE}  {REFUSED_WALK_INTO_X}  {SECOND_WALK_INTO_X}  {NUMBERED_INTO_I}  {REFUSED_WALK_INTO_C}"
+    );
+    /// What a run shows, read on rule `r`'s OWN record (the `when` forms are decided there), by name so
+    /// a destructure cannot swap two same-typed slots silently. One evaluation per cell: every field
+    /// comes from the same run.
+    struct LeftMarkerSeen {
+        /// `r`'s status.
+        status: Status,
+        /// The refused-read lines naming the clause under test (the one holding `needle`: the binds' own
+        /// `or` disjuncts decide beside markers too, and their lines are not this clause's).
+        lines: usize,
+        /// The registered texts holding `(1) ` (the wrap's text does, and it is to be registered by
+        /// nobody).
+        numbered: usize,
+        /// Whether the block record whose context holds `needle` reads `refusal: true` (`None` when
+        /// there is none).
+        block_flagged: Option<bool>,
+        /// Whether that block record carries a message at all (`None` when there is no record): a clause
+        /// decided on the marker's pair writes `message: None`, and a raise writes `clause_error_message`,
+        /// so a raise whose record lost its refusal kind (the defect these cells close) reads `Some(true)`
+        /// here where the flag alone would read the same as a decision. Read as the presence of
+        /// `message: Some(` in the record's debug text, not as the raise's wording, so a rewording of the
+        /// raise message cannot turn the check off; the decided shape reads `Some(false)`.
+        block_raised: Option<bool>,
+        /// Whether a PAIR record under that context (`ClauseValueCheck(Comparison(..))`, the pair's own
+        /// record, for a clause decided without a raise) reads `refusal: true`.
+        pair_flagged: bool,
+        /// Whether the entry marker at `/Items2/J1` carries the refusal flag (`None` when the record holds
+        /// none): `Items2` is a collection no bind touches, where the binds leave `Items`' entry a flagged
+        /// marker of their own.
+        entry_flag: Option<bool>,
+        /// The records under the clause, one Debug string per record joined by ` | `, for a red cell's
+        /// label.
+        records: String,
+        /// Whether EVERY nested `when` block's own record (`WhenCheck`, context `RuleClause`, written by
+        /// `eval_when_condition_block`'s Err arm with `refusal: is_refusal(&e)`) reads `refusal: true`
+        /// (`None` when the file has none).
+        when_flagged: Option<bool>,
+    }
+    let run = |rules: &str, needle: &str| -> Result<LeftMarkerSeen> {
+        let rules_file = RulesFile::try_from(rules)?;
+        let mut root = root_scope(&rules_file, Rc::new(PathAwareValue::try_from(DOCUMENT)?));
+        eval_rules_file(&rules_file, &mut root, None)?;
+        let numbered_registered = crate::rules::eval_context::registered_refusals()
+            .iter()
+            .filter(|text| text.contains("(1) "))
+            .count();
+        let lines = root
+            .warnings()
+            .filter(|line| line.contains(THE_LINE) && line.contains(needle))
+            .count();
+        let top = root.reset_recorder().extract();
+        let (status, own) = rule_record(&top, "r");
+        let mut under_the_clause = Vec::new();
+        record_containers_list(own, needle, &mut under_the_clause);
+        let block_record = under_the_clause
+            .iter()
+            .find(|record| record.contains("GuardClauseBlockCheck"));
+        let block_flagged = block_record.map(|record| record.contains("refusal: true"));
+        let block_raised = block_record.map(|record| record.contains("message: Some("));
+        // The PAIR's record by its container kind (`ClauseValueCheck(Comparison(ComparisonClauseCheck {
+        // .. refusal }))`), not any record under the clause, so a flag on the clause's own block record
+        // cannot stand in for the pair's.
+        let pair_flagged = under_the_clause.iter().any(|record| {
+            record.contains("Comparison(ComparisonClauseCheck") && record.contains("refusal: true")
+        });
+        let mut markers = Vec::new();
+        undecidable_markers_with_kinds(own, &mut markers);
+        let entry_flag = markers
+            .iter()
+            .find(|(path, _, _)| path == "/Items2/J1")
+            .map(|(_, _, kind)| kind.refusal().is_some());
+        // EVERY `WhenCheck` record under `r`, not the first met: `Some(true)` only when each is flagged.
+        let mut when_blocks = Vec::new();
+        record_containers_list(own, "RuleClause", &mut when_blocks);
+        let when_checks: Vec<&String> = when_blocks
+            .iter()
+            .filter(|record| record.contains("WhenCheck"))
+            .collect();
+        let when_flagged = (!when_checks.is_empty()).then(|| {
+            when_checks
+                .iter()
+                .all(|record| record.contains("refusal: true"))
+        });
+        Ok(LeftMarkerSeen {
+            status,
+            lines,
+            numbered: numbered_registered,
+            block_flagged,
+            block_raised,
+            pair_flagged,
+            entry_flag,
+            records: under_the_clause.join(" | "),
+            when_flagged,
+        })
+    };
+    let mut cells = CellFailures::default();
+
+    // Asserted, `some %w NOT IN ['x']`: the marker is the clause's one left-hand value, and under `NOT IN`
+    // its pair keeps its FAILING status (no pass is unknown and `undecided_under_some` is not set; the
+    // pair is undecided but carries the FAIL status), so the strict table raises nothing and the clause is
+    // DECIDED FAIL on the marker's pair, where the gate role
+    // raises the same comparison (its table asks only whether anything decided the clause). A decided
+    // clause's own block record is written `refusal: false` by the status fold; the flag is on the
+    // PAIR's record (`refusal = message.is_some() && left_refusal.is_some()`), so the cell pins THREE
+    // things: the clause's block record `refusal: false` (which alone proves nothing, since a raise
+    // that lost its refusal bit writes the same flag), that record carrying NO message (`block_raised`
+    // `Some(false)`: a decided clause writes `message: None`, a raise writes `clause_error_message`),
+    // and a flagged record under the clause (the pair's). No line: a FAIL on the marker's own pair
+    // is none of the decided verdicts the refused-read line is written for (a mismatch, an absence, a
+    // listed value, a `some` that passed elsewhere). Nothing with `(1) ` registered. The control, the
+    // refused walk's REGISTERED marker in `%c`, reads the same shape. Whether the two roles should read
+    // one way is settled: the two readings by role ARE the design (the strict `some` raise reads right-hand
+    // unknowns alone; a left-hand marker's pair stays undecided but already carries the FAIL status that
+    // fails the assertion closed, so the strict arm does not raise, while the gate's table raises on that
+    // one undecided pair; both fail closed), so these cells pin the design, not a provisional reading.
+    let LeftMarkerSeen {
+        status,
+        lines,
+        numbered,
+        block_flagged,
+        block_raised,
+        pair_flagged,
+        records,
+        ..
+    } = run(
+        &format!("rule r {{ {binds}\n{WRAP_INTO_W}\nsome %w NOT IN ['x'] }}"),
+        "%w",
+    )?;
+    cells.check_with(
+        "the wrap in `%w` on the left, `some %w NOT IN ['x']` asserted: FAIL on the marker's pair, no raise (the clause's block record `refusal: false` and carrying no raise message); the pair's record flagged `refusal: true`; no line; nothing with `(1) ` registered",
+        (Status::FAIL, 0, 0, Some(false), Some(false), true),
+        (
+            status,
+            lines,
+            numbered,
+            block_flagged,
+            block_raised,
+            pair_flagged,
+        ),
+        || format!("records under the clause: {records}"),
+    );
+    let LeftMarkerSeen {
+        status,
+        lines,
+        block_flagged,
+        block_raised,
+        pair_flagged,
+        records,
+        ..
+    } = run(&format!("rule r {{ {binds}  some %c NOT IN ['x'] }}"), "%c")?;
+    cells.check_with(
+        "the control, the refused walk's marker in `%c` on the left, asserted: FAIL on the marker's pair, no raise (the clause's block record `refusal: false` and carrying no raise message); the pair's record flagged `refusal: true`; no line",
+        (Status::FAIL, 0, Some(false), Some(false), true),
+        (status, lines, block_flagged, block_raised, pair_flagged),
+        || format!("records under the clause: {records}"),
+    );
+
+    // In the gate role: the plain raise carries the refusal bit (`UndecidableComparison(_, true)`), so
+    // rule `r` fails closed and the gate's block record is flagged. A rule-level `when` condition admits
+    // no `let`, so the `%w` cells read the gate role two ways the block's `let` is visible from: through
+    // a named rule holding the `let` (`rule gate { .. }`, `rule r when gate`; the gate-role run of `gate`
+    // is recorded under `r`, `eval_when_condition`'s `NamedRule` arm), and through a `when` BLOCK nested
+    // in the rule's own block (`rule r { .. let w .. when some %w NOT IN ['x'] { .. } }`, whose condition
+    // runs through the same `eval_when_clause` conjunction a rule-level `when` does, and whose raise
+    // `eval_when_condition_block` records as a flagged `WhenCheck` and answers FAIL in the assertion
+    // role). Each has its `%c` control in the same shape, and the rule-level `when` keeps a `%c` control.
+    let LeftMarkerSeen {
+        status,
+        lines,
+        numbered,
+        block_flagged,
+        block_raised,
+        ..
+    } = run(
+        &format!(
+            "rule gate {{ {binds}\n{WRAP_INTO_W}\nsome %w NOT IN ['x'] }}\nrule r when gate {BODY}"
+        ),
+        "%w",
+    )?;
+    cells.check(
+        "the wrap in `%w` on the left in a named-rule gate (`some %w NOT IN ['x']` in `gate`, `rule r when gate`): rule `r` fails closed (FAIL); the gate's block record under `r` flagged `refusal: true` and carrying the raise message; no line; nothing with `(1) ` registered",
+        (Status::FAIL, 0, 0, Some(true), Some(true)),
+        (status, lines, numbered, block_flagged, block_raised),
+    );
+    let LeftMarkerSeen {
+        status,
+        lines,
+        block_flagged,
+        block_raised,
+        ..
+    } = run(
+        &format!("rule gate {{ {binds}  some %c NOT IN ['x'] }}\nrule r when gate {BODY}"),
+        "%c",
+    )?;
+    cells.check(
+        "the control, `some %c NOT IN ['x']` in a named-rule gate: rule `r` fails closed (FAIL); the gate's block record under `r` flagged `refusal: true` and carrying the raise message; no line",
+        (Status::FAIL, 0, Some(true), Some(true)),
+        (status, lines, block_flagged, block_raised),
+    );
+    // The nested `when` block's OWN record (`WhenCheck`, context `RuleClause`, written by
+    // `eval_when_condition_block`'s Err arm with `refusal: is_refusal(&e)`) is read beside the condition
+    // clause's block record (`block_flagged`, the clause's own context), so the cells pin both the raise's
+    // record and the block's.
+    let nested_w = format!(
+        "rule r {{ {binds}\n{WRAP_INTO_W}\nwhen some %w NOT IN ['x'] {{ Items.I1.Name == 'n1' }} }}"
+    );
+    let LeftMarkerSeen {
+        status,
+        lines,
+        numbered,
+        block_flagged,
+        block_raised,
+        when_flagged,
+        ..
+    } = run(&nested_w, "%w")?;
+    cells.check(
+        "the wrap in `%w` on the left as a nested `when` block's condition: rule `r` fails closed (FAIL); the condition's block record flagged `refusal: true` and carrying the raise message, and the `when` block's own record flagged too; no line; nothing with `(1) ` registered",
+        (Status::FAIL, 0, 0, Some(true), Some(true), Some(true)),
+        (
+            status,
+            lines,
+            numbered,
+            block_flagged,
+            block_raised,
+            when_flagged,
+        ),
+    );
+    let nested_c =
+        format!("rule r {{ {binds}\nwhen some %c NOT IN ['x'] {{ Items.I1.Name == 'n1' }} }}");
+    let LeftMarkerSeen {
+        status,
+        lines,
+        block_flagged,
+        block_raised,
+        when_flagged,
+        ..
+    } = run(&nested_c, "%c")?;
+    cells.check(
+        "the control, `when some %c NOT IN ['x'] { .. }` nested in the rule's block: rule `r` fails closed (FAIL); the condition's block record flagged `refusal: true` and carrying the raise message, and the `when` block's own record flagged too; no line",
+        (Status::FAIL, 0, Some(true), Some(true), Some(true)),
+        (status, lines, block_flagged, block_raised, when_flagged),
+    );
+    let LeftMarkerSeen {
+        status,
+        lines,
+        block_flagged,
+        block_raised,
+        ..
+    } = run(
+        &format!("rule r when {binds}  some %c NOT IN ['x'] {BODY}"),
+        "%c",
+    )?;
+    cells.check(
+        "the control, `when some %c NOT IN ['x']` at rule level: rule `r` fails closed (FAIL); the gate's block record flagged `refusal: true` and carrying the raise message; no line",
+        (Status::FAIL, 0, Some(true), Some(true)),
+        (status, lines, block_flagged, block_raised),
+    );
+
+    // Decided without a raise (asserted against a right-hand side absent as a whole): the clause fails
+    // on the absence, the pair's record is flagged, and the refused-read line is written for the read
+    // the clause did not raise.
+    let LeftMarkerSeen {
+        status,
+        lines,
+        numbered,
+        pair_flagged,
+        ..
+    } = run(
+        &format!("rule r {{ {binds}\n{WRAP_INTO_W}\n%w == Items.I1.Missing }}"),
+        "Missing",
+    )?;
+    cells.check(
+        "the wrap in `%w` on the left against an absent right-hand side, asserted: FAIL on the absence; the pair's record flagged `refusal: true`; one refused-read line; nothing with `(1) ` registered",
+        (Status::FAIL, 1, 0, true),
+        (status, lines, numbered, pair_flagged),
+    );
+    let LeftMarkerSeen {
+        status,
+        lines,
+        pair_flagged,
+        ..
+    } = run(
+        &format!("rule r {{ {binds}  %c == Items.I1.Missing }}"),
+        "Missing",
+    )?;
+    cells.check(
+        "the control, `%c == Items.I1.Missing` asserted: FAIL on the absence; the pair's record flagged `refusal: true`; one refused-read line",
+        (Status::FAIL, 1, true),
+        (status, lines, pair_flagged),
+    );
+
+    // Inside a filter predicate over a collection no bind touches: the clause `%w != 'zzz'` is raised
+    // beside the flag-only marker, so the entry's own marker carries the flag and the unary clause over
+    // the selection is raised flagged.
+    let LeftMarkerSeen {
+        status,
+        numbered,
+        block_flagged,
+        entry_flag,
+        ..
+    } = run(
+        &format!("rule r {{ {binds}\n{WRAP_INTO_W}\nItems2.*[ %w != 'zzz' ] !empty }}"),
+        "%w",
+    )?;
+    cells.check(
+        "the wrap in `%w` on the left inside the predicate: FAIL; the entry's marker carries the refusal flag; the selection's block record flagged `refusal: true`; nothing with `(1) ` registered",
+        (Status::FAIL, Some(true), Some(true), 0),
+        (status, entry_flag, block_flagged, numbered),
+    );
+    let LeftMarkerSeen {
+        status,
+        block_flagged,
+        entry_flag,
+        ..
+    } = run(
+        &format!("rule r {{ {binds}  Items2.*[ %c != 'zzz' ] !empty }}"),
+        "%c",
+    )?;
+    cells.check(
+        "the control, `Items2.*[ %c != 'zzz' ] !empty`: FAIL; the entry's marker carries the refusal flag; the selection's block record flagged `refusal: true`",
+        (Status::FAIL, Some(true), Some(true)),
+        (status, entry_flag, block_flagged),
+    );
+
+    // The INLINE query as the left operand, the query path rather than a variable's: asserted (decided
+    // on the marker's pair, the flag on the pair's record, as the `let` cell is), as a `when`, and as a
+    // named-rule gate (`rule gate { .. }` referenced by `rule r when gate`, whose gate-role run of
+    // `gate` is recorded under `r`, where `gate`'s own top-level run is the assertion role's), the two
+    // gate forms raised and flagged on the clause's block record as the `let` cells are; the named-rule
+    // gate has its `%c` control. The records are found by the clause's RENDERED context: a key filter
+    // renders as `Maps.M (map-key-filter-clauses)` (`QueryPart::MapKeyFilter`'s Display writes the name
+    // and a parenthetical, never the filter's clauses), so `%i` is in no record's context and the
+    // needle is the rendered part, which no bind holds.
+    const INLINE_WRAP: &str = "Maps.M[ keys IN %i ]";
+    const INLINE_WRAP_RENDERED: &str = "Maps.M (map-key-filter-clauses)";
+    let LeftMarkerSeen {
+        status,
+        lines,
+        numbered,
+        block_flagged,
+        block_raised,
+        pair_flagged,
+        records,
+        ..
+    } = run(
+        &format!("rule r {{ {binds}  some {INLINE_WRAP} NOT IN ['x'] }}"),
+        INLINE_WRAP_RENDERED,
+    )?;
+    cells.check_with(
+        "the inline wrap on the left, `some Maps.M[ keys IN %i ] NOT IN ['x']` asserted: FAIL on the marker's pair, no raise (the clause's block record `refusal: false` and carrying no raise message); the pair's record flagged `refusal: true`; no line; nothing with `(1) ` registered",
+        (Status::FAIL, 0, 0, Some(false), Some(false), true),
+        (
+            status,
+            lines,
+            numbered,
+            block_flagged,
+            block_raised,
+            pair_flagged,
+        ),
+        || format!("records under the clause: {records}"),
+    );
+    let LeftMarkerSeen {
+        status,
+        lines,
+        numbered,
+        block_flagged,
+        block_raised,
+        records,
+        ..
+    } = run(
+        &format!("rule r when {binds}  some {INLINE_WRAP} NOT IN ['x'] {BODY}"),
+        INLINE_WRAP_RENDERED,
+    )?;
+    cells.check_with(
+        "the inline wrap on the left, `when some Maps.M[ keys IN %i ] NOT IN ['x']`: rule `r` fails closed (FAIL); the gate's block record flagged `refusal: true` and carrying the raise message; no line; nothing with `(1) ` registered",
+        (Status::FAIL, 0, 0, Some(true), Some(true)),
+        (status, lines, numbered, block_flagged, block_raised),
+        || format!("records under the clause: {records}"),
+    );
+    let LeftMarkerSeen {
+        status,
+        numbered,
+        block_flagged,
+        block_raised,
+        records,
+        ..
+    } = run(
+        &format!("rule gate {{ {binds}  {INLINE_WRAP} != 'zzz' }}\nrule r when gate {BODY}"),
+        INLINE_WRAP_RENDERED,
+    )?;
+    cells.check_with(
+        "the inline wrap on the left in a named-rule gate (`Maps.M[ keys IN %i ] != 'zzz'` in `gate`, `rule r when gate`): rule `r` fails closed (FAIL); the clause's block record under `r` flagged `refusal: true` and carrying the raise message; nothing with `(1) ` registered",
+        (Status::FAIL, Some(true), Some(true), 0),
+        (status, block_flagged, block_raised, numbered),
+        || format!("records under the clause: {records}"),
+    );
+    let LeftMarkerSeen {
+        status,
+        block_flagged,
+        block_raised,
+        ..
+    } = run(
+        &format!("rule gate {{ {binds}  %c != 'zzz' }}\nrule r when gate {BODY}"),
+        "%c",
+    )?;
+    cells.check(
+        "the control, `%c != 'zzz'` in a named-rule gate: rule `r` fails closed (FAIL); the clause's block record under `r` flagged `refusal: true` and carrying the raise message",
+        (Status::FAIL, Some(true), Some(true)),
+        (status, block_flagged, block_raised),
+    );
+
+    // A CAPTURE over the key filter files the key filter's marker under `%v` (the shape every capture
+    // over an undecided key filter takes), the third left-hand path, read inside the predicate.
+    const WRAP_INTO_V: &str = "some Maps.M[ v | keys IN %i ] !empty or Items.I1 exists";
+    let LeftMarkerSeen {
+        status,
+        numbered,
+        block_flagged,
+        entry_flag,
+        ..
+    } = run(
+        &format!("rule r {{ {binds}  {WRAP_INTO_V}  Items2.*[ %v != 'zzz' ] !empty }}"),
+        "%v",
+    )?;
+    cells.check(
+        "the wrap held by the capture `%v` on the left inside the predicate: FAIL; the entry's marker carries the refusal flag; the selection's block record flagged `refusal: true`; nothing with `(1) ` registered",
+        (Status::FAIL, Some(true), Some(true), 0),
+        (status, entry_flag, block_flagged, numbered),
+    );
+
+    // The second control in each role, a key filter's PLAIN marker in `%b` (a spent regex budget, no
+    // refused read): no line, no flag on the record or the raise, a plain entry marker. The clause still
+    // fails or is raised on the marker, so the status reads FAIL in every role; what the refused read
+    // adds is the flag and the line.
+    let LeftMarkerSeen {
+        status,
+        lines,
+        block_flagged,
+        pair_flagged,
+        ..
+    } = run(
+        &format!("{BUDGET_INTO_B}\nrule r {{ {binds}  %b == Items.I1.Missing }}"),
+        "Missing",
+    )?;
+    cells.check(
+        "the budget control, `%b == Items.I1.Missing` asserted: FAIL on the absence; neither the clause's block record nor the pair's flagged; no line",
+        (Status::FAIL, 0, Some(false), false),
+        (status, lines, block_flagged, pair_flagged),
+    );
+    let LeftMarkerSeen {
+        status,
+        lines,
+        block_flagged,
+        ..
+    } = run(
+        &format!("{BUDGET_INTO_B}\nrule r when {binds}  some %b NOT IN ['x'] {BODY}"),
+        "%b",
+    )?;
+    cells.check(
+        "the budget control, `when some %b NOT IN ['x']`: rule `r` fails closed (FAIL) on the plain raise; the gate's block record `refusal: false`; no line",
+        (Status::FAIL, 0, Some(false)),
+        (status, lines, block_flagged),
+    );
+    let LeftMarkerSeen {
+        status,
+        block_flagged,
+        entry_flag,
+        ..
+    } = run(
+        &format!("{BUDGET_INTO_B}\nrule r {{ {binds}  Items2.*[ %b != 'zzz' ] !empty }}"),
+        "%b",
+    )?;
+    cells.check(
+        "the budget control, `Items2.*[ %b != 'zzz' ] !empty`: FAIL; the entry's marker carries no refusal flag; the selection's block record `refusal: false`",
+        (Status::FAIL, Some(false), Some(false)),
+        (status, entry_flag, block_flagged),
+    );
+
+    // The mixed set on the RIGHT of the two arms that hand their raise to the collection's read: the
+    // empty left selection `NOT IN %m` (the empty-selection arm) and `some Items.*.Name IN %m` (a
+    // positive `IN` that compared nothing: every pair is the markers'). Each raises the plain error
+    // carrying the bit, FAIL, flagged, and the registry holds no text with `(1) `.
+    let mixed_binds = format!(
+        "{CAPTURE}  {REFUSED_WALK_INTO_X}  {SECOND_WALK_INTO_X}  {NUMBERED_INTO_I}  {REFUSED_WALK_INTO_M}  {WRAP_INTO_M}"
+    );
+    let LeftMarkerSeen {
+        status,
+        numbered,
+        block_flagged,
+        ..
+    } = run(
+        &format!("rule r {{ {mixed_binds}  {EMPTY_LEFT} NOT IN %m }}"),
+        "BucketName",
+    )?;
+    cells.check(
+        "the empty left selection `NOT IN %m`, the refused walk's marker and the wrap in `%m`, asserted: FAIL; the block record flagged `refusal: true`; nothing with `(1) ` registered",
+        (Status::FAIL, Some(true), 0),
+        (status, block_flagged, numbered),
+    );
+    let LeftMarkerSeen {
+        status,
+        numbered,
+        block_flagged,
+        ..
+    } = run(
+        &format!("rule r {{ {mixed_binds}  some Items.*.Name IN %m }}"),
+        "%m",
+    )?;
+    cells.check(
+        "`some Items.*.Name IN %m`, the refused walk's marker and the wrap in `%m`, asserted: FAIL on the compared-nothing raise; the block record flagged `refusal: true`; nothing with `(1) ` registered",
+        (Status::FAIL, Some(true), 0),
+        (status, block_flagged, numbered),
+    );
+    cells.assert_all_agreed();
+    Ok(())
+}
+
+/// A STRICT clause nested in a filter predicate (a block body `[ this { %y != /re/ } ]`) that meets a
+/// refused read is raised as an `UndecidableComparison` carrying the refusal flag, which the filter
+/// answers per entry: each entry of `Items` gets a marker of its own flagged as beside a refusal, the
+/// siblings are tested on their own, the clause over the selection fails closed on the refusal, and its
+/// record is flagged.
+#[test]
+fn a_strict_clause_nested_in_a_predicate_marks_each_entry_as_a_refusal() -> Result<()> {
+    const DOCUMENT: &str = r#"{
+    "Cfg2": {
+        "Mode": { "Ref": "ModeParam" },
+        "Other": { "Kind": "k" },
+        "C": { "Kind": "k", "Sub": { "R1": { "Ref": "P" }, "P": { "Kind": "k" }, "Q": { "Kind": "k" } } },
+        "D": { "Kind": "k", "Sub": { "R1": { "Ref": "P" }, "P": { "Kind": "k" }, "Q": { "Kind": "k" } } }
+    },
+    "Items": { "I1": { "Name": "n1" }, "I2": { "Name": "n2" } }
+}"#;
+    const REFUSED_WALK_INTO_Y: &str =
+        "Cfg2[*][ y | Mode exists or Kind == 'k' ].Sub[*][ s | R1 !exists ] !empty or Cfg2.Other exists";
+    const BLOCK_BODY: &str = "Items.*[ this { %y != /(?!x)((a+)+)b/ } ] !empty";
+    let rules =
+        format!("rule r {{ Cfg2[ y | Kind == 'k' ] !empty  {REFUSED_WALK_INTO_Y}  {BLOCK_BODY} }}");
+    let rules_file = RulesFile::try_from(rules.as_str())?;
+    let mut root = root_scope(&rules_file, Rc::new(PathAwareValue::try_from(DOCUMENT)?));
+    let status = eval_rules_file(&rules_file, &mut root, None)?;
+    let extracted = root.reset_recorder().extract();
+    let mut markers = Vec::new();
+    undecidable_markers(&extracted, &mut markers);
+    let mut entry_markers: Vec<&str> = markers
+        .iter()
+        .filter(|(path, _)| path.starts_with("/Items/"))
+        .map(|(path, _)| path.as_str())
+        .collect();
+    entry_markers.sort_unstable();
+    let records = format!("{:?}", extracted);
+    let mut cells = CellFailures::default();
+    cells.check(
+        "the block body nested in the predicate meets the refusal: FAIL; each entry of `Items` is answered with a marker of its own, carrying the refusal flag; a record of the run is flagged `refusal: true` and carries the refusal",
+        (Status::FAIL, vec!["/Items/I1", "/Items/I2"], true, true),
+        (
+            status,
+            entry_markers,
+            records.contains("refusal: true"),
+            records.contains(THE_OWN_KEY_REFUSAL),
+        ),
+    );
+    cells.assert_all_agreed();
+    Ok(())
+}
+
+/// The refused walk of the gate-role test: the own-key marker lands in `%y`.
+const GATE_ROLE_REFUSED_WALK_INTO_Y: &str =
+    "Cfg2[*][ y | Mode exists or Kind == 'k' ].Sub[*][ s | R1 !exists ] !empty or Cfg2.Other exists";
+const GATE_ROLE_BODY: &str = "{ Items.I1.Name == 'n1' }";
+/// The budget marker on the RIGHT, bound at rule level: `Maps.M[ keys == /re/ ]` written inside
+/// `Items.* { .. }` is a query relative to each entry (`/Items/I1`), where `Maps` is absent, and an
+/// absent right-hand side decides the comparison (FAIL on the absence, no raise), so the body would
+/// never meet the marker and the gate-role run would read a decided block; the `let` stands in the
+/// rule block (assignments interleave with clauses) and `%m` carries the marker into the body.
+const GATE_ROLE_BUDGET_INTO_M: &str = "let m = Maps.M[ keys == /(?!x)((a+)+)b/ ]";
+/// TWO entries, the raise reaching ONE of them: the body guards the refused comparison with a per-entry
+/// `when` (`when Name == 'n1' { some %y NOT IN %m }`), so I1 alone raises beside the refusal and I2 is a
+/// DECIDED failure of `Name == 'n1'` that never meets the marker (`%y` is bound at rule level, so an
+/// unguarded comparison would raise for I2 too and a cell would read the same under either rule). The
+/// comparison stands on its own line (line 5 of the rules `gate_role_block` builds; the block opens on
+/// line 3 and the `when` with its condition on line 4), so a refused-read line's position tells the
+/// comparison's from the block's and from the `when`'s.
+const GATE_ROLE_GUARDED_REFUSAL_BODY: &str =
+    "Items.* {\n when Name == 'n1' {\n some %y NOT IN %m }\n Name == 'n1' }";
+/// The control's binds: the keys alone in `%k`, no refused read.
+const GATE_ROLE_PLAIN_BINDS: &str = "Cfg2[ k | Kind == 'k' ] !empty";
+
+/// The refusal's binds: the keys in `%y` and the refused walk's marker beside them.
+fn gate_role_refused_binds() -> String {
+    format!("Cfg2[ y | Kind == 'k' ] !empty  {GATE_ROLE_REFUSED_WALK_INTO_Y}")
+}
+
+/// One gate rule text for every cell and control: `header` (`rule gate`, or `rule gate(p)` for the
+/// parameterized form), `binds`, the rule-level budget `let`, and `body`.
+fn gate_role_block(header: &str, binds: &str, body: &str) -> String {
+    format!("{header} {{ {binds}\n{GATE_ROLE_BUDGET_INTO_M}\n{body} }}")
+}
+
+/// The gate rule and the rule that references it as a `when` gate, the shape the cells read.
+fn gate_role_rules(binds: &str, body: &str) -> String {
+    format!(
+        "{}\nrule r when gate {GATE_ROLE_BODY}",
+        gate_role_block("rule gate", binds, body)
+    )
+}
+
+/// The gate-role test's document, and the same with a second `Items` entry (`I2`, `Name: n2`).
+fn gate_role_documents() -> (String, String) {
+    let spends_the_budget = "a".repeat(30);
+    let document = format!(
+        r#"{{
+    "Cfg2": {{
+        "Mode": {{ "Ref": "ModeParam" }},
+        "Other": {{ "Kind": "k" }},
+        "C": {{ "Kind": "k", "Sub": {{ "R1": {{ "Ref": "P" }}, "P": {{ "Kind": "k" }}, "Q": {{ "Kind": "k" }} }} }},
+        "D": {{ "Kind": "k", "Sub": {{ "R1": {{ "Ref": "P" }}, "P": {{ "Kind": "k" }}, "Q": {{ "Kind": "k" }} }} }}
+    }},
+    "Items": {{ "I1": {{ "Name": "n1" }} }},
+    "Maps": {{ "M": {{ "{spends_the_budget}": 1, "PROD": 1 }} }}
+}}"#
+    );
+    let document_two = document.replace(
+        r#""Items": { "I1": { "Name": "n1" } }"#,
+        r#""Items": { "I1": { "Name": "n1" }, "I2": { "Name": "n2" } }"#,
+    );
+    assert_ne!(
+        document_two, document,
+        "the two-entry document holds a second item"
+    );
+    (document, document_two)
+}
+
+/// The first `RuleCheck` record named `rule_name` under `record`, itself included.
+fn nested_rule<'r, 'v>(
+    record: &'r EventRecord<'v>,
+    rule_name: &str,
+) -> Option<&'r EventRecord<'v>> {
+    if matches!(
+        &record.container,
+        Some(RecordType::RuleCheck(NamedStatus { name, .. })) if *name == rule_name
+    ) {
+        return Some(record);
+    }
+    record
+        .children
+        .iter()
+        .find_map(|child| nested_rule(child, rule_name))
+}
+
+/// What a gate-role run shows, by name (a tuple of four bools accepted a swapped destructure silently).
+struct GateRoleSeen {
+    /// Rule `r`'s status, read on its own record.
+    status: Status,
+    /// Whether any record under `r` reads `refusal: true` (the whole dump of `r`, which holds the nested
+    /// gate run's bind, itself the own-key refused walk, so this reads `true` with or without the raise).
+    flagged: bool,
+    /// Whether `r`'s records carry the own-key refusal's text (the whole dump of `r`, as above).
+    carries: bool,
+    /// `gate`'s TOP-LEVEL status (the assertion-role run, under its own record).
+    gate_status: Status,
+    /// Whether `gate`'s top-level record reads `refusal: true`.
+    gate_top_flagged: bool,
+    /// The diagnostic of the gate-role run under `r`, printed by a red cell.
+    diagnostic: String,
+    /// The refused-read lines on stderr ("reported here instead") naming the `capture`, the whole run's
+    /// (both roles).
+    lines: usize,
+    /// Those lines' text, joined by ` | `, so a cell can pin the verdict's exact wording and the clause the
+    /// line names, not a count alone.
+    line_text: String,
+    /// Whether a `GuardClauseBlockCheck` record whose context names the `capture` (the body
+    /// comparison's own records under `r`, not the whole dump) reads `refusal: true`: the one flag that
+    /// fails when the fold stops recording the raise.
+    body_flagged: bool,
+    /// The same read under `gate`'s TOP-LEVEL record (the assertion-role run): `gate_top_flagged` reads
+    /// the whole dump, which the refused-walk bind flags whatever the body does, so this is the flag
+    /// that fails when the assertion-role arm stops recording the raised value.
+    gate_top_body_flagged: bool,
+}
+
+/// Runs `rules` (a `rule gate { .. }` referenced by `rule r when gate { .. }`) over `doc` and reads it
+/// three ways. Rule `r`'s OWN status and records: `gate` is a top-level rule as well, evaluated in the
+/// assertion role under its own record, and that run fails closed on the same refusal whatever the gate
+/// role does; the gate-role run is the one `r`'s `when gate` makes, recorded under `r`, so a cell reads
+/// that subtree alone and isolates the gate role. Beside `r`'s own reading: `gate`'s own TOP-LEVEL
+/// record (the assertion-role run) and a DIAGNOSTIC of the gate-role run under `r` (the nested
+/// `RuleCheck` named `gate` with its status and records, the `capture` block's own records, and `r`'s
+/// When record), printed with a red cell so the run names the arm that turned the gate-role raise into
+/// a status: a flagged block record under the nested `gate` says the body raised and the block fold
+/// answered a status; none says the comparison was decided silently in the gate role.
+fn gate_role_run(rules: &str, capture: &str, doc: &str) -> Result<GateRoleSeen> {
+    let rules_file = RulesFile::try_from(rules)?;
+    let mut root = root_scope(&rules_file, Rc::new(PathAwareValue::try_from(doc)?));
+    eval_rules_file(&rules_file, &mut root, None)?;
+    let matching: Vec<String> = refused_read_lines(&root)
+        .into_iter()
+        .filter(|line| line.contains(capture))
+        .collect();
+    let lines = matching.len();
+    let line_text = matching.join(" | ");
+    let top = root.reset_recorder().extract();
+    let (status, own) = rule_record(&top, "r");
+    let records = format!("{:?}", own);
+    let (gate_status, gate_top) = rule_record(&top, "gate");
+    let gate_top_flagged = format!("{:?}", gate_top).contains("refusal: true");
+    let nested_gate = nested_rule(own, "gate")
+        .map(|record| format!("{:?}", record))
+        .unwrap_or_else(|| "no RuleCheck named gate under r".to_string());
+    let mut block_records = Vec::new();
+    record_containers_list(own, capture, &mut block_records);
+    let flagged_block_check = |record: &String| {
+        record.contains("GuardClauseBlockCheck") && record.contains("refusal: true")
+    };
+    let block_flagged = block_records.iter().any(flagged_block_check);
+    let mut gate_top_records = Vec::new();
+    record_containers_list(gate_top, capture, &mut gate_top_records);
+    let gate_top_body_flagged = gate_top_records.iter().any(flagged_block_check);
+    let when_record = own
+        .children
+        .iter()
+        .find(|child| child.context.ends_with("/When"))
+        .map(|child| format!("{:?}", child.container))
+        .unwrap_or_else(|| "no When record under r".to_string());
+    let diagnostic = format!(
+        "gate under r: {nested_gate}; the {capture} block's records under r: {block_records:?}; r's When record: {when_record}"
+    );
+    Ok(GateRoleSeen {
+        status,
+        flagged: records.contains("refusal: true"),
+        carries: records.contains(THE_OWN_KEY_REFUSAL),
+        gate_status,
+        gate_top_flagged,
+        diagnostic,
+        lines,
+        line_text,
+        body_flagged: block_flagged,
+        gate_top_body_flagged,
+    })
+}
+
+/// Whether ONE refused-read line opens with `clause`, the position the renderer gives the clause as the
+/// evaluator renders it (`Warning: <clause> <verdict>, so ...`; `clause_as_written` spells membership
+/// `in` / `not in` whatever case the author typed), so a line that names the block around a comparison
+/// instead (its text begins `Items.*` or `some Items.*`) reads false for the comparison where a
+/// `contains` of it would read true of both. `clause` ends with the space that separates it from the
+/// verdict where a shorter clause is a prefix of a longer one (`%y not in %m` and `some %y not in %m` are
+/// told apart by their opening, so the space matters for neither; `Stmt` opens the block's text alone).
+fn line_opens_with(line_text: &str, clause: &str) -> bool {
+    matches!(
+        line_text.strip_prefix("Warning: "),
+        Some(rest) if rest.starts_with(clause)
+    )
+}
+
+/// `line_opens_with` for the gate-role test's body comparison, `some %y NOT IN %m`, as the line renders it
+/// (`clause_as_written` spells membership `in` / `not in` whatever case the author typed, and the frame
+/// carries that rendering: `some %y not in %m`); the text `gate_role_run` joins is one line when it
+/// counted one.
+fn line_opens_with_the_comparison(line_text: &str) -> bool {
+    line_opens_with(line_text, "some %y not in %m ")
+}
+
+/// The clause part of ONE refused-read line: the text between the `Warning: ` head and the verdict that
+/// follows it (" passed by " or " was decided by ", whichever comes first), `None` for a line of another
+/// shape. An EXACT compare of it tells the comparison from the block around it and from any text joined to
+/// it, where a `contains` or a `starts_with` reads true of a longer text too.
+fn clause_part(line_text: &str) -> Option<&str> {
+    let rest = line_text.strip_prefix("Warning: ")?;
+    let end = [" passed by ", " was decided by "]
+        .iter()
+        .filter_map(|verdict| rest.find(verdict))
+        .min()?;
+    Some(&rest[..end])
+}
+
+/// The words every refused-read line carries (`unraised_refusal_notice`'s "the refusal is reported here
+/// instead" / "they are reported here instead"), the one marker the cells count such lines by.
+const THE_REFUSED_READ_MARKER: &str = "reported here instead";
+
+/// Every refused-read line a run wrote (`THE_REFUSED_READ_MARKER`), in the order written, as owned text.
+fn refused_read_lines(root: &crate::rules::eval_context::RootScope<'_, '_>) -> Vec<String> {
+    root.warnings()
+        .filter(|line| line.contains(THE_REFUSED_READ_MARKER))
+        .map(|line| line.to_string())
+        .collect()
+}
+
+/// Whether a refused-read line is the REFUSED WALK's own. The bind the cells share, in its spellings
+/// (`Cfg[*][ x | Mode exists or Kind == 'k' ].Sub[*][ s | R1 !exists ] !empty or Cfg.Fallback exists`;
+/// the `Cfg2`, `%y` and `Resources.*.Properties.Cfg` forms), raises the own-key refusal in its first
+/// disjunct and is decided past by its `or` sibling, so the disjunction writes the walk's refusal at the
+/// BIND's own site, "passed by a sibling clause that holds", with the clause part the bind's text up to
+/// `!empty`. That is the designed line (the disjunction's earlier disjunct's entry written at the
+/// disjunction's site), pinned by the cells where the bind is the clause under test. A cell that counts
+/// the lines of ANOTHER clause of the same rule leaves it out by its clause part: counting every line of
+/// the run, such a cell read the bind's line as the other clause's and pinned one line too few.
+fn is_the_refused_walks_own_line(line: &str) -> bool {
+    clause_part(line).is_some_and(|clause| clause.ends_with("].Sub[*][ s | R1 !exists ] !empty"))
+}
+
+/// `lines` without the refused walk's own line (`is_the_refused_walks_own_line`), for a cell that counts
+/// the lines of another clause bound through that walk. The bind's line is PINNED here as its own fact
+/// before it is left out, never filtered blind: every line left out carries "passed by a sibling clause
+/// that holds" and the own-key refusal (a reworded bind line is a defect here, not a silent count), and
+/// there is at most one per bind, told apart by its clause part (two binds, `Cfg` and `Cfg2`, give two
+/// lines with two clause parts; a doubled line gives two with one). A defect is NOTED, never asserted
+/// here: the callers run inside `CellFailures` tables, often from a closure that holds no handle on the
+/// table, and an `assert!` at the first call aborted the whole test and hid every other cell; the note
+/// is returned into the test's cells by `CellFailures::assert_all_agreed`, which reads
+/// `HELPER_NOTES` beside its own disagreements, so a reworded or doubled bind line reads as one more
+/// disagreeing cell beside the rest. A DROPPED bind line is not noted here (with no line matching,
+/// `walks` is empty and every check over the empty list holds); a cell that knows how many binds its
+/// rule makes calls `without_the_refused_walks_lines_of` with that count, which notes a line that stopped
+/// being written. The line is the designed disjunction line (an earlier disjunct's entry written at the
+/// disjunction's site when a later disjunct passes), pinned on its own by
+/// `the_refused_walks_own_line_is_written_once_at_the_binds_site`.
+fn without_the_refused_walks_line(lines: Vec<String>) -> Vec<String> {
+    let (walks, others): (Vec<String>, Vec<String>) = lines
+        .into_iter()
+        .partition(|line| is_the_refused_walks_own_line(line));
+    let mut parts: Vec<&str> = walks.iter().filter_map(|line| clause_part(line)).collect();
+    parts.sort_unstable();
+    parts.dedup();
+    if parts.len() != walks.len() {
+        note_helper_defect(format!(
+            "the refused walk's own line is written once per bind, never doubled: {walks:?}"
+        ));
+    }
+    if !walks.iter().all(|line| {
+        line.contains("passed by a sibling clause that holds") && line.contains(THE_OWN_KEY_REFUSAL)
+    }) {
+        note_helper_defect(format!(
+            "the refused walk's own line is the bind's disjunction reporting the own-key refusal its first disjunct raised, decided past by the `or` sibling: {walks:?}"
+        ));
+    }
+    others
+}
+
+/// `without_the_refused_walks_line` for a cell whose rule binds a KNOWN number of refused walks: the
+/// lines left out are counted and a count other than `expected_binds` is noted as a defect, so a bind
+/// that stops writing its line is seen. The plain helper pins a doubled or a reworded bind line and
+/// nothing about a DROPPED one: with no line matching, `walks` is empty and every check over the empty
+/// list holds, so a cell whose comment said the two binds' lines were pinned stayed green with neither
+/// written.
+fn without_the_refused_walks_lines_of(lines: Vec<String>, expected_binds: usize) -> Vec<String> {
+    let before = lines.len();
+    let others = without_the_refused_walks_line(lines);
+    let left_out = before - others.len();
+    if left_out != expected_binds {
+        note_helper_defect(format!(
+            "the refused walks' own lines are written once per bind: {expected_binds} bind(s), {left_out} line(s) left out"
+        ));
+    }
+    others
+}
+
+thread_local! {
+    /// Defects a test helper met while a cell table was being filled (`note_helper_defect`), read into
+    /// the table by `CellFailures::assert_all_agreed` on the thread the test runs on: a helper that
+    /// cannot reach the table (called from a closure the table's rows call) still reports into it,
+    /// and never aborts the test ahead of the other cells. A test runs on one thread and reads the
+    /// notes at its end, so a note belongs to the test that was filling its table when it was made.
+    static HELPER_NOTES: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Note a defect a test helper met, for the cell table being filled (`HELPER_NOTES`).
+fn note_helper_defect(defect: String) {
+    HELPER_NOTES.with(|notes| notes.borrow_mut().push(defect));
+}
+
+/// What a run of `rules` over `doc` shows for the refused-read lines holding `needle` (`""` for every
+/// line): rule `r`'s status on its own record and each such line's text, in the order written. The
+/// gate-role cells build `rules` as a parameterized `gate(p)` referenced by `rule r when gate(1)`, never
+/// evaluated at top level, so the lines the FOLD writes are the gate-role fold's alone (the reading the
+/// `gate(p)` controls of `a_gate_role_block_body_raised_beside_a_refusal_is_recorded_as_a_refusal` rest
+/// on); a line the comparison's own writer contributes to (a comparison decided past the refused read for
+/// another entry) is counted too, under the same position.
+fn gate_role_lines(rules: &str, doc: &str, needle: &str) -> Result<(Status, Vec<String>)> {
+    rule_lines(rules, doc, "r", &|line| line.contains(needle))
+}
+
+/// The one reader the lines cells share: a run of `rules` over `doc`, rule `rule_name`'s status on its
+/// own record and every refused-read line `keep` admits, in the order written. `gate_role_lines` is this
+/// over rule `r` keeping the lines that hold a needle; the cells that read another rule or select a line
+/// by its clause part (`clause_part`) call it directly.
+fn rule_lines(
+    rules: &str,
+    doc: &str,
+    rule_name: &str,
+    keep: &dyn Fn(&str) -> bool,
+) -> Result<(Status, Vec<String>)> {
+    let rules_file = RulesFile::try_from(rules)?;
+    let mut root = root_scope(&rules_file, Rc::new(PathAwareValue::try_from(doc)?));
+    eval_rules_file(&rules_file, &mut root, None)?;
+    let lines: Vec<String> = refused_read_lines(&root)
+        .into_iter()
+        .filter(|line| keep(line))
+        .collect();
+    let top = root.reset_recorder().extract();
+    let (status, _) = rule_record(&top, rule_name);
+    Ok((status, lines))
+}
+
+/// A GATE-role block body (`Items.* { some %y NOT IN %m }` over a rule-level `let m = Maps.M[ keys ==
+/// /re/ ]`, held by a named rule that a `when` condition references, the shape the grammar admits a
+/// block body in a gate through; the rule reference is evaluated in the gate role, `eval_when_condition`'s
+/// `NamedRule` arm; the key filter is bound at rule level because a query written inside the block body
+/// is resolved relative to each entry, where `Maps` is absent, so the comparison would be decided by the
+/// absence and no marker would reach the body)
+/// whose comparison is raised beside a refused read (the own-key walk's marker in `%y`) is recorded as a
+/// refusal's: the per-value raise carries its bit into the block's fold (`fold_refused_body`), which
+/// writes it on the mark beneath the block and on the block's own undecided error, so the gate fails
+/// closed with a record flagged `refusal: true` and the console prints the remedy whole; written `false`
+/// in the fold and discarded by its callers, the bit was lost in this one fold and the console cut the
+/// remedy at the recorded-message bound. The control, the keys alone in `%k` beside the same budget
+/// marker: the body is raised on the marker's own reason, no refusal met, so the gate fails closed on
+/// an undecided body with no record flagged.
+///
+/// Rule `r` is read on its OWN record, and `gate`'s top-level record (the assertion role) beside it in the
+/// same run; a red cell prints a diagnostic of the gate-role run under `r` (the nested `gate` record, the
+/// block's own records, `r`'s When record), so a run that disagrees names the arm that turned the raise
+/// into a status.
+///
+/// The two-entry cells read a decided sibling beside a raise, under the invariant that both forms of a body,
+/// the comparison form and the block form, read ONE table, `undecided_gate`'s: an undecided value raises
+/// only where nothing decided the clause, and the block fold applies the same table after its loop
+/// (`decided = match_all ? decided_fails > 0 : passes > 0`; a decided block answers its status, an
+/// undecided one raises). Under `match_all` AND(FAIL, unknown) is FAIL whatever the refused read hides,
+/// so a sibling's decided FAIL is the gate's true answer and `r`'s not-applicable its true consequence
+/// (SKIP, as a comparison over a filtered selection is settled by a decided sibling in the `when` row of
+/// `an_undecidable_entry_is_decided_past_by_a_sibling_that_settles_the_clause`); a raise instead would
+/// blame a refusal for a condition false on its own evidence, and fail-closed forbids a refusal
+/// manufacturing a PASS or a not-applicable, which a decided FAIL cannot. Under `some` the same table
+/// reads the other way: OR(FAIL, unknown) stays unknown, so a decided sibling FAIL settles nothing and
+/// the block keeps its raise (`r` fails closed), while a sibling PASS settles it (`r`'s gate passes and
+/// its body is checked). The refusal is never silent: in the RECORDS the fold records the raised value's
+/// block check flagged `refusal: true` before it answers, which the body-record flag reads; on STDERR a
+/// raise the fold hands up owes no line, since the raise itself reports it, and a raise the fold absorbs
+/// into a decided status is reported by the fold's decided branch as a refused read decided without
+/// raising, one line naming the clause, as the comparison form writes for a refused read it decided past
+/// ("passed by a sibling entry that holds" for a `some` block a sibling PASS settled, "was decided by a
+/// sibling entry's failure" for an every-entry block a sibling FAIL settled), at the comparison's own
+/// position, which the two text cells read (the comparison stands on its own line of the rules so its
+/// position tells it from the block's). ASSERTED, the strict raise is a refusal the access clause turns
+/// into FAIL at the leaf; the fold keeps that leaf FAIL's entry and writes the same "passed by a sibling
+/// entry that holds" where a `some` block passes on another entry (the pass swallowed the refusal), and
+/// writes nothing where the leaf FAIL is the block's own FAIL (an every-entry block, a `some` block that
+/// did not pass: the leaf's flagged record is the report, the gate-alone `match_all` control's 0 lines).
+/// The line counts are pinned so: 0 where the raise is handed up (the one-entry cells, the `some` cell
+/// beside a decided FAIL), 1 where the fold absorbs it (the `match_all` two-entry cell, the `some` cell
+/// beside a sibling PASS, in either role), 0 beside the plain marker, which is no refused read. A total
+/// count cannot say which ROLE wrote a line, since `gate` runs in both, so two controls split it: the same
+/// `gate` alone (no referencing rule, the assertion role only) and a parameterized `gate(p)` referenced by
+/// `rule r when gate(1)` (never evaluated at top level, the gate role only); the line read with `r` under
+/// either quantifier merges the two roles' writes at one site under one way, so it carries no count.
+#[test]
+fn a_gate_role_block_body_raised_beside_a_refusal_is_recorded_as_a_refusal() -> Result<()> {
+    let (document, document_two) = gate_role_documents();
+    let mut cells = CellFailures::default();
+    let GateRoleSeen {
+        status,
+        flagged,
+        carries,
+        gate_status,
+        gate_top_flagged,
+        diagnostic,
+        lines,
+        body_flagged,
+        gate_top_body_flagged,
+        line_text: _,
+    } = gate_role_run(
+        &gate_role_rules(&gate_role_refused_binds(), "Items.* { some %y NOT IN %m }"),
+        "%y",
+        document.as_str(),
+    )?;
+    cells.check(
+        &format!("the gate-role block body raised beside the refusal: rule `r` fails closed (FAIL), a record under it is flagged `refusal: true` and its records carry the refusal, the body comparison's own block record (the one naming `%y`) is the flagged one, no refused-read line (the raise is handed up); diagnostic of the gate-role run: {diagnostic}"),
+        (Status::FAIL, true, true, 0, true),
+        (status, flagged, carries, lines, body_flagged),
+    );
+    cells.check(
+        "the same run, `gate`'s own top-level record (the assertion role): FAIL, flagged `refusal: true`, the body comparison's own block record among the flagged",
+        (Status::FAIL, true, true),
+        (gate_status, gate_top_flagged, gate_top_body_flagged),
+    );
+    let GateRoleSeen {
+        status,
+        flagged,
+        carries,
+        gate_status,
+        gate_top_flagged,
+        diagnostic,
+        lines,
+        body_flagged,
+        gate_top_body_flagged,
+        line_text: _,
+    } = gate_role_run(
+        &gate_role_rules(GATE_ROLE_PLAIN_BINDS, "Items.* { some %k NOT IN %m }"),
+        "%k",
+        document.as_str(),
+    )?;
+    cells.check(
+        &format!("the control, the keys alone in `%k` beside the budget marker: the body is raised on the marker's own reason, rule `r` fails closed (FAIL), no record under it flagged, no refusal in its records, the body comparison's own block record unflagged, no line; diagnostic of the gate-role run: {diagnostic}"),
+        (Status::FAIL, false, false, 0, false),
+        (status, flagged, carries, lines, body_flagged),
+    );
+    cells.check(
+        "the control's run, `gate`'s own top-level record (the assertion role): FAIL, no record flagged, the body comparison's own block record unflagged",
+        (Status::FAIL, false, false),
+        (gate_status, gate_top_flagged, gate_top_body_flagged),
+    );
+
+    // TWO entries, the raise reaching ONE of them (`GATE_ROLE_GUARDED_REFUSAL_BODY`: I1 raises beside
+    // the refusal under a per-entry `when`, I2 is a decided failure of `Name == 'n1'` that never meets
+    // the marker), under `match_all`: the decided FAIL settles the block (the docstring's invariant),
+    // `gate` reads FAIL in the gate role and `r` is not applicable; the absorbed raise leaves its flagged
+    // body record and ONE refused-read line, written by the fold's decided branch ("was decided by a
+    // sibling entry's failure"), as the comparison form writes a line for a refused read it decided past.
+    // The control puts the PLAIN budget marker alone in the body (the keys in `%k`, no refused read):
+    // settled the same way, nothing flagged, no line (a plain marker's reason names no refusal).
+    const GUARDED_PLAIN_BODY: &str =
+        "Items.* { when Name == 'n1' { some %k NOT IN %m }  Name == 'n1' }";
+    let GateRoleSeen {
+        status,
+        flagged,
+        carries,
+        gate_status,
+        gate_top_flagged,
+        diagnostic,
+        lines,
+        body_flagged,
+        gate_top_body_flagged,
+        line_text,
+    } = gate_role_run(
+        &gate_role_rules(&gate_role_refused_binds(), GATE_ROLE_GUARDED_REFUSAL_BODY),
+        "%y",
+        &document_two,
+    )?;
+    cells.check(
+        &format!("two entries, one raised beside the refusal and one a decided failure that never meets the marker: the decided failure settles the block and the gate, rule `r` is not applicable (SKIP), a record under it flagged `refusal: true` and carrying the refusal, the body comparison's own block record (the one naming `%y`) among the flagged (the raise was recorded before the fold answered), one refused-read line naming `%y` (the fold's, for the absorbed raise); diagnostic: {diagnostic}"),
+        (Status::SKIP, true, true, 1, true),
+        (status, flagged, carries, lines, body_flagged),
+    );
+    cells.check(
+        "the two-entry run, `gate`'s own top-level record (the assertion role): FAIL, flagged `refusal: true`, the body comparison's own block record among the flagged",
+        (Status::FAIL, true, true),
+        (gate_status, gate_top_flagged, gate_top_body_flagged),
+    );
+    cells.check_with(
+        "the two-entry run's line: the fold's verdict wording for an every-entry block a sibling FAIL settled, the one way met (so no ` on <n> evaluation` count), the clause part EXACTLY the comparison the raise named as the line renders it (`some %y not in %m`, none of the block's own text), the own-key refusal, and the position the comparison's own (line 5 of the rules, not the `when`'s line 4 or the block's line 3)",
+        (true, true, true, false, true, false),
+        (
+            line_text.contains("was decided by a sibling entry's failure"),
+            clause_part(&line_text) == Some("some %y not in %m"),
+            line_text.contains(THE_OWN_KEY_REFUSAL),
+            line_text.contains(" evaluation"),
+            line_text.contains("line:5"),
+            line_text.contains("line:4") || line_text.contains("line:3"),
+        ),
+        || format!("the line(s) read: {line_text}"),
+    );
+    let GateRoleSeen {
+        status,
+        flagged,
+        carries,
+        gate_status,
+        gate_top_flagged,
+        diagnostic,
+        lines,
+        body_flagged,
+        gate_top_body_flagged,
+        line_text: _,
+    } = gate_role_run(
+        &gate_role_rules(GATE_ROLE_PLAIN_BINDS, GUARDED_PLAIN_BODY),
+        "%k",
+        &document_two,
+    )?;
+    cells.check(
+        &format!("the control, two entries with the plain budget marker alone: the decided failure settles the block and the gate, rule `r` is not applicable (SKIP), no record under it flagged, no refusal in its records, the body comparison's own block record unflagged, no refused-read line; diagnostic: {diagnostic}"),
+        (Status::SKIP, false, false, 0, false),
+        (status, flagged, carries, lines, body_flagged),
+    );
+    cells.check(
+        "the control's two-entry run, `gate`'s own top-level record (the assertion role): FAIL, no record flagged, the body comparison's own block record unflagged",
+        (Status::FAIL, false, false),
+        (gate_status, gate_top_flagged, gate_top_body_flagged),
+    );
+
+    // The same two entries under `some` (`some Items.* { .. }` is a block clause whose query carries the
+    // modifier: `access_clause_or_block` parses the query through `access`, which takes `some`, and
+    // `block_clause_with_query` builds the block on it, so the fold reads `match_all == false`). Beside
+    // the decided FAIL of I2 the table reads OR(FAIL, unknown), undecided: the block keeps I1's raise
+    // and hands it up, `gate` errs in the gate role and `r` fails closed, no line (the raise reports
+    // itself). Beside a sibling PASS (the body's second clause `Name exists`, which I2 passes with its
+    // `when` not applicable) the table reads OR(PASS, unknown) = PASS: `gate` passes in the gate role, `r`'s
+    // body is checked and passes, the absorbed raise leaves its flagged body record and one line. At top
+    // level (the assertion role) the raised value is a decided failure of its own, flagged, so `gate`
+    // reads FAIL beside I2's FAIL and PASS beside I2's PASS, flagged both ways.
+    const SOME_GUARDED_REFUSAL_BODY: &str =
+        "some Items.* { when Name == 'n1' { some %y NOT IN %m }  Name == 'n1' }";
+    const SOME_GUARDED_REFUSAL_BESIDE_A_PASS: &str =
+        "some Items.* {\n when Name == 'n1' {\n some %y NOT IN %m }\n Name exists }";
+    let GateRoleSeen {
+        status,
+        flagged,
+        carries,
+        gate_status,
+        gate_top_flagged,
+        diagnostic,
+        lines,
+        body_flagged,
+        gate_top_body_flagged,
+        line_text: _,
+    } = gate_role_run(
+        &gate_role_rules(&gate_role_refused_binds(), SOME_GUARDED_REFUSAL_BODY),
+        "%y",
+        &document_two,
+    )?;
+    cells.check(
+        &format!("`some` over the two entries, one raised beside the refusal and one a decided failure: nothing settles the block, it hands the raise up, rule `r` fails closed (FAIL), a record under it flagged `refusal: true` and carrying the refusal, the body comparison's own block record flagged, no refused-read line; diagnostic: {diagnostic}"),
+        (Status::FAIL, true, true, 0, true),
+        (status, flagged, carries, lines, body_flagged),
+    );
+    cells.check(
+        "the `some` run, `gate`'s own top-level record (the assertion role): FAIL (the raised value a decided failure of its own beside the failed sibling), flagged `refusal: true`, the body comparison's own block record among the flagged",
+        (Status::FAIL, true, true),
+        (gate_status, gate_top_flagged, gate_top_body_flagged),
+    );
+    let GateRoleSeen {
+        status,
+        flagged,
+        carries,
+        gate_status,
+        gate_top_flagged,
+        diagnostic,
+        lines,
+        body_flagged,
+        gate_top_body_flagged,
+        line_text,
+    } = gate_role_run(
+        &gate_role_rules(
+            &gate_role_refused_binds(),
+            SOME_GUARDED_REFUSAL_BESIDE_A_PASS,
+        ),
+        "%y",
+        &document_two,
+    )?;
+    cells.check(
+        &format!("`some` over the two entries, one raised beside the refusal and one a sibling PASS: the pass settles the block, `gate` passes in the gate role and rule `r`'s body is checked and passes (PASS), a record under it flagged `refusal: true` and carrying the refusal, the body comparison's own block record flagged, one refused-read line naming `%y`; diagnostic: {diagnostic}"),
+        (Status::PASS, true, true, 1, true),
+        (status, flagged, carries, lines, body_flagged),
+    );
+    cells.check(
+        "the `some` run beside a sibling PASS, `gate`'s own top-level record (the assertion role): PASS on the passing sibling, flagged `refusal: true` by the raised value's own failure, the body comparison's own block record among the flagged",
+        (Status::PASS, true, true),
+        (gate_status, gate_top_flagged, gate_top_body_flagged),
+    );
+    cells.check_with(
+        "the `some` run's line: the fold's wording for a `some` block a sibling PASS settled (the gate-role fold's absorbed raise and the assertion-role fold's swallowed leaf FAIL, one way at one site, so no ` on <n> evaluation` count), the clause part EXACTLY the comparison the raise named as the line renders it (`some %y not in %m`, none of the block's own text), the own-key refusal, and the position the comparison's own (line 5 of the rules, not the `when`'s line 4 or the block's line 3)",
+        (true, true, true, false, true, false),
+        (
+            line_text.contains("passed by a sibling entry that holds"),
+            clause_part(&line_text) == Some("some %y not in %m"),
+            line_text.contains(THE_OWN_KEY_REFUSAL),
+            line_text.contains(" evaluation"),
+            line_text.contains("line:5"),
+            line_text.contains("line:4") || line_text.contains("line:3"),
+        ),
+        || format!("the line(s) read: {line_text}"),
+    );
+
+    // The same `rule gate { .. }` ALONE, no `rule r when gate`, so only the assertion-role run happens.
+    // Asserted, the raise is a FAIL at the comparison's own leaf, noted into the body's frame all the
+    // same: under `match_all` that FAIL is the block's own and the rule's, shown by the leaf's flagged
+    // record (the `gate_top_body_flagged` cells above), so no line is written; under `some` beside a
+    // sibling PASS the pass swallows it, and the fold writes the line for the refused read the swallowed
+    // FAIL stood on, at the comparison's own position, in the `some` wording. The line read WITH `r`
+    // merges this write and the gate-role fold's at one site under one way.
+    let gate_alone = |body: &str, doc: &str| -> Result<(Status, Vec<String>)> {
+        let rules = gate_role_block("rule gate", &gate_role_refused_binds(), body);
+        let rules_file = RulesFile::try_from(rules.as_str())?;
+        let mut root = root_scope(&rules_file, Rc::new(PathAwareValue::try_from(doc)?));
+        eval_rules_file(&rules_file, &mut root, None)?;
+        let lines: Vec<String> = refused_read_lines(&root)
+            .into_iter()
+            .filter(|line| line.contains("%y"))
+            .collect();
+        let top = root.reset_recorder().extract();
+        let (status, _) = rule_record(&top, "gate");
+        Ok((status, lines))
+    };
+    let (status, lines) = gate_alone(GATE_ROLE_GUARDED_REFUSAL_BODY, &document_two)?;
+    cells.check_with(
+        "the `match_all` two-entry body in `gate` alone (no referencing rule, the assertion role only): FAIL on the failed sibling and the raised value's own leaf FAIL, which is the block's own failure, so no refused-read line naming `%y`",
+        (Status::FAIL, 0),
+        (status, lines.len()),
+        || format!("the lines read: {lines:?}"),
+    );
+    let (status, lines) = gate_alone(SOME_GUARDED_REFUSAL_BESIDE_A_PASS, &document_two)?;
+    cells.check_with(
+        "the `some` body beside a sibling PASS in `gate` alone (the assertion role only): PASS on the passing sibling, ONE refused-read line naming `%y`, the fold's for the leaf FAIL the pass swallowed, worded \"passed by a sibling entry that holds\" with no count, its clause part exactly the comparison as rendered, at the comparison's own position (line 5), naming the own-key refusal",
+        (Status::PASS, 1, true, true, false, true, true),
+        (
+            status,
+            lines.len(),
+            lines
+                .iter()
+                .all(|line| line.contains("passed by a sibling entry that holds")),
+            lines
+                .iter()
+                .all(|line| clause_part(line) == Some("some %y not in %m")),
+            lines.iter().any(|line| line.contains(" evaluation")),
+            lines.iter().all(|line| line.contains("line:5")),
+            lines.iter().all(|line| line.contains(THE_OWN_KEY_REFUSAL)),
+        ),
+        || format!("the lines read: {lines:?}"),
+    );
+
+    // The GATE role alone: a PARAMETERIZED rule is never evaluated at top level (the parser files it
+    // under `parameterized_rules`, which `eval_rules_file` does not walk), so `rule gate(p) { .. }` runs
+    // only through `rule r when gate(1)` (`eval_parameterized_rule_call` in the gate role), and its
+    // refused-read lines are the gate-role fold's alone. A line read here is the gate-role fold's: one for
+    // the every-entry body ("was decided by a sibling entry's failure", where the assertion role writes
+    // none) and one for the `some` body beside a sibling PASS ("passed by a sibling entry that holds",
+    // the same wording the assertion role writes for the swallowed leaf FAIL, so the two roles' lines
+    // merge at one site with `r` and the total stays 1). `r`'s status and the `%y`
+    // block's flagged record are read beside the count, so the line is tied to an ABSORBED raise (`r`
+    // not applicable or passing on the sibling, the raised value's record flagged) and not to one handed
+    // up, which a count alone cannot tell. The last slot reads the line's text: every line counted
+    // carries the `verdict` wording the fold writes for the shape and opens with the comparison as
+    // written, not the block (false when no line was counted).
+    let gate_role_only =
+        |body: &str, doc: &str, verdict: &str| -> Result<(Status, bool, usize, bool)> {
+            let rules = format!(
+                "{}\nrule r when gate(1) {GATE_ROLE_BODY}",
+                gate_role_block("rule gate(p)", &gate_role_refused_binds(), body)
+            );
+            let rules_file = RulesFile::try_from(rules.as_str())?;
+            let mut root = root_scope(&rules_file, Rc::new(PathAwareValue::try_from(doc)?));
+            eval_rules_file(&rules_file, &mut root, None)?;
+            let matching: Vec<String> = refused_read_lines(&root)
+                .into_iter()
+                .filter(|line| line.contains("%y"))
+                .collect();
+            let lines = matching.len();
+            let worded = !matching.is_empty()
+                && matching
+                    .iter()
+                    .all(|line| line.contains(verdict) && line_opens_with_the_comparison(line));
+            let top = root.reset_recorder().extract();
+            let (status, own) = rule_record(&top, "r");
+            let mut block_records = Vec::new();
+            record_containers_list(own, "%y", &mut block_records);
+            let body_flagged = block_records.iter().any(|record| {
+                record.contains("GuardClauseBlockCheck") && record.contains("refusal: true")
+            });
+            Ok((status, body_flagged, lines, worded))
+        };
+    cells.check(
+        "the `match_all` two-entry body in a parameterized `gate(p)` referenced by `rule r when gate(1)` (the gate role alone): `r` not applicable on the sibling's FAIL, the raised value's block record flagged, one refused-read line naming `%y`, the fold's, worded \"was decided by a sibling entry's failure\" and opening with the comparison",
+        (Status::SKIP, true, 1, true),
+        gate_role_only(
+            GATE_ROLE_GUARDED_REFUSAL_BODY,
+            &document_two,
+            "was decided by a sibling entry's failure",
+        )?,
+    );
+    cells.check(
+        "the `some` body beside a sibling PASS in a parameterized `gate(p)` referenced by `rule r when gate(1)` (the gate role alone): `r` passes on the sibling's PASS, the raised value's block record flagged, one refused-read line naming `%y`, the fold's, worded \"passed by a sibling entry that holds\" and opening with the comparison",
+        (Status::PASS, true, 1, true),
+        gate_role_only(
+            SOME_GUARDED_REFUSAL_BESIDE_A_PASS,
+            &document_two,
+            "passed by a sibling entry that holds",
+        )?,
+    );
+    cells.assert_all_agreed();
+    Ok(())
+}
+
+/// A block body's raise beside a refused read is reported by the fold that absorbs it as the raising
+/// comparison's own line: at the comparison's position (the store keys a line by position), under the
+/// comparison's text, with the reads the raise met, whichever value of the block raised it and however
+/// deep the block that raised it sits. The gate-role test pins the position on its two text cells; the
+/// cells here read the shapes a position-keyed line tells apart: one comparison absorbed under one entry
+/// and decided past (by an absence) under another is ONE line carrying both verdicts; two comparisons
+/// absorbed by one block are TWO lines, each under its own text; a nested block that could not decide
+/// hands what it collected up, so an outer sibling's decision reports every read beneath it; two rules
+/// whose comparisons raise beside the one refused marker each report their own text (the raise is
+/// attributed by the frame around the body it was made in, not by its text, which the two share); the
+/// block is named, at its own position, where the block itself is the raising clause (a nested block
+/// over a one-object filter whose discovery raised), under `match_all` and under `some`; and the
+/// discovery's own raise, made under the quiet scope, is noted nowhere, so no line names the comparison
+/// the discovery ran. The deciding sites write what they decide past, at the raising clause's own
+/// position: a raise an `or` decided (a sibling disjunct passed) is the conjunction fold's line, "passed
+/// by a sibling clause that holds", and a raise a filter predicate turned into an entry's marker leaves
+/// no note behind (the predicate's frame is dropped), so the fold around it reports neither as decided by
+/// a sibling entry; a unary clause's raise over a refused read is noted at its own position as a
+/// comparison's is, so the line names the unary clause and never the block for it; and the fold keeps
+/// every entry of its frame whatever the kind of the first raise the body held (a plain raise held first
+/// does not drop the flagged one noted after it). Every rule is a parameterized
+/// `gate(p)` referenced by `rule r when gate(1)`, the gate role alone, over the gate-role test's document
+/// with a second entry and the I1 entry extended per cell, and with a second refused map `Cfg` where a
+/// cell tells two refusals apart.
+#[test]
+fn an_absorbed_raise_is_reported_at_its_own_clause_whatever_entry_or_depth_raised_it() -> Result<()>
+{
+    let (_, document_two) = gate_role_documents();
+    const I1: &str = r#""I1": { "Name": "n1" }"#;
+    let with_i1 = |extra: &str| -> String {
+        let document = document_two.replace(I1, &format!(r#""I1": {{ "Name": "n1", {extra} }}"#));
+        assert_ne!(
+            document, document_two,
+            "the document holds the added I1 entry"
+        );
+        document
+    };
+    let gate_rules = |body: &str| -> String {
+        format!(
+            "{}\nrule r when gate(1) {GATE_ROLE_BODY}",
+            gate_role_block("rule gate(p)", &gate_role_refused_binds(), body)
+        )
+    };
+    // How many of `lines` carry EXACTLY `clause` as their clause part (`clause_part`): the comparisons'
+    // cells, where the rendered text is known (`clause_as_written` spells membership `not in`).
+    let naming = |lines: &[String], clause: &str| -> usize {
+        lines
+            .iter()
+            .filter(|line| clause_part(line) == Some(clause))
+            .count()
+    };
+    // How many of `lines` OPEN with `clause`: the blocks' cells, where the block's rendering is its
+    // query followed by its body and the query's spelling is the fixed part.
+    let opening = |lines: &[String], clause: &str| -> usize {
+        lines
+            .iter()
+            .filter(|line| line_opens_with(line, clause))
+            .count()
+    };
+    let mut cells = CellFailures::default();
+
+    // ONE comparison, two entries, two verdicts: `%y NOT IN Deny` (every key in `%y` passes against I1's
+    // `Deny: ["x"]`, the marker's pair stays undecided, so the gate role raises for I1 beside the refused
+    // read) is decided for I2 by the ABSENCE of `Deny` (the comparison form's own line, "was decided by a
+    // value the document lacks"), and I2's decided FAIL settles the every-entry block, so I1's absorbed
+    // raise is written by the fold at the SAME position: one line, the absence verdict before the sibling
+    // verdict in the renderer's fixed order, each with its count.
+    let (status, lines) = gate_role_lines(
+        &gate_rules("Items.* {\n %y NOT IN Deny }"),
+        &with_i1(r#""Deny": ["x"]"#),
+        "%y",
+    )?;
+    cells.check_with(
+        "one comparison absorbed under I1 and decided by an absence under I2: `r` not applicable on the sibling's FAIL, ONE line, its clause part exactly the comparison as rendered, carrying both verdicts with their counts and the own-key refusal",
+        (Status::SKIP, 1, 1, true, true),
+        (
+            status,
+            lines.len(),
+            naming(&lines, "%y not in Deny"),
+            lines.iter().any(|line| {
+                line.contains(
+                    "was decided by a value the document lacks on 1 evaluation and was decided by a sibling entry's failure on 1 evaluation",
+                )
+            }),
+            lines.iter().any(|line| line.contains(THE_OWN_KEY_REFUSAL)),
+        ),
+        || format!("the lines read: {lines:?}"),
+    );
+
+    // TWO comparisons under one entry, each raised beside the refused read (`some %y NOT IN %m` and
+    // `%y NOT IN %m`, both against the budget marker), the conjunction holding the first raise and going
+    // on to the second: both are noted into I1's frame, I2's decided FAIL settles the block, and the fold
+    // writes two lines, one per comparison under its own text at its own position.
+    let (status, lines) = gate_role_lines(
+        &gate_rules(
+            "Items.* {\n when Name == 'n1' {\n some %y NOT IN %m\n %y NOT IN %m }\n Name == 'n1' }",
+        ),
+        &document_two,
+        "%y",
+    )?;
+    cells.check_with(
+        "two comparisons absorbed under I1: `r` not applicable, TWO lines, one whose clause part is exactly each comparison as rendered, each carrying the own-key refusal",
+        (Status::SKIP, 2, 1, 1, true),
+        (
+            status,
+            lines.len(),
+            naming(&lines, "some %y not in %m"),
+            naming(&lines, "%y not in %m"),
+            lines.iter().all(|line| line.contains(THE_OWN_KEY_REFUSAL)),
+        ),
+        || format!("the lines read: {lines:?}"),
+    );
+
+    // NESTED: I1's body holds a `match_all` block over `Sub.*` (one entry, `A`) whose body raises the same
+    // two comparisons; the nested fold has no decided sibling, so it hands both entries up into I1's frame
+    // and raises; the outer fold absorbs them when I2's FAIL settles the outer block, and writes the two
+    // lines at the nested comparisons' own positions.
+    let (status, lines) = gate_role_lines(
+        &gate_rules(
+            "Items.* {\n when Name == 'n1' {\n Sub.* {\n some %y NOT IN %m\n %y NOT IN %m } }\n Name == 'n1' }",
+        ),
+        &with_i1(r#""Sub": { "A": { "K": 1 } }"#),
+        "%y",
+    )?;
+    cells.check_with(
+        "two comparisons raised inside a nested block that could not decide, under an outer sibling FAIL: `r` not applicable, TWO lines, one whose clause part is exactly each nested comparison",
+        (Status::SKIP, 2, 1, 1),
+        (
+            status,
+            lines.len(),
+            naming(&lines, "some %y not in %m"),
+            naming(&lines, "%y not in %m"),
+        ),
+        || format!("the lines read: {lines:?}"),
+    );
+
+    // CROSS-RULE: two gate rules meet the one refused marker, each with its own binds, and their body
+    // comparisons raise with the SAME text (the refusal's sentence joined with the budget marker's reason)
+    // under different spellings: each rule's line is its own comparison. The two rules run one after the
+    // other, so this cell tells a frame from a text-keyed reader that keeps the FIRST writer, not from one
+    // that keeps the last; the two-comparison cell above (one body, two raises of one text) is the cell
+    // that tells the frame from either.
+    let (status, lines) = gate_role_lines(
+        &format!(
+            "{}\n{}\nrule r when gate(1) {GATE_ROLE_BODY}\nrule r2 when gate2(1) {GATE_ROLE_BODY}",
+            gate_role_block(
+                "rule gate(p)",
+                &gate_role_refused_binds(),
+                "Items.* {\n when Name == 'n1' { some %y NOT IN %m }\n Name == 'n1' }",
+            ),
+            gate_role_block(
+                "rule gate2(p)",
+                &gate_role_refused_binds(),
+                "Items.* {\n when Name == 'n1' { %y NOT IN %m }\n Name == 'n1' }",
+            ),
+        ),
+        &document_two,
+        "%y",
+    )?;
+    cells.check_with(
+        "two rules raising the same text under two spellings: `r` not applicable, TWO lines, one whose clause part is exactly each rule's own comparison",
+        (Status::SKIP, 2, 1, 1),
+        (
+            status,
+            lines.len(),
+            naming(&lines, "some %y not in %m"),
+            naming(&lines, "%y not in %m"),
+        ),
+        || format!("the lines read: {lines:?}"),
+    );
+
+    // THE BLOCK AS THE RAISING CLAUSE, and the quiet discovery: I1's body holds a nested block over a
+    // one-object filter (`Stmt[*][ Principal == '*' ]` over `Stmt: { Effect: Allow }`, an object holding
+    // no `Principal`), so the nested block's selection is empty and its body runs as a quiet discovery,
+    // where `some %y NOT IN %m` raises beside the refused read; the discovery's raise is noted nowhere (the
+    // quiet scope drops it), the nested fold keeps the BLOCK as the raising clause with the raise's text,
+    // cannot decide, hands that entry up, and the outer sibling's decision writes ONE line opening with
+    // the block's own text at the block's position: no line opens with the comparison the discovery ran.
+    // Under `match_all` I2's FAIL decides ("was decided by a sibling entry's failure"); under `some` I2's
+    // PASS decides ("passed by a sibling entry that holds") and `r`'s own body is checked.
+    // The nested block opens on line 5 of the rules and its comparison stands on line 6, so the line's
+    // position tells the block's from the comparison's; the raise's text joins the own-key refusal with
+    // the budget marker's reason, and the block's entry keeps the registered part alone, so the line
+    // names the refusal and no numbered text.
+    const ONE_OBJECT_STMT: &str = r#""Stmt": { "Effect": "Allow" }"#;
+    const NESTED_OVER_THE_FILTER: &str = "Stmt[*][ Principal == '*' ] {\n some %y NOT IN %m }";
+    for (label, body, expected_status, verdict) in [
+        (
+            "under `match_all`, I2's decided FAIL",
+            format!("Items.* {{\n when Name == 'n1' {{\n {NESTED_OVER_THE_FILTER} }}\n Name == 'n1' }}"),
+            Status::SKIP,
+            "was decided by a sibling entry's failure",
+        ),
+        (
+            "under `some`, I2's PASS",
+            format!("some Items.* {{\n when Name == 'n1' {{\n {NESTED_OVER_THE_FILTER} }}\n Name exists }}"),
+            Status::PASS,
+            "passed by a sibling entry that holds",
+        ),
+    ] {
+        let (status, all_lines) = gate_role_lines(&gate_rules(&body), &with_i1(ONE_OBJECT_STMT), "")?;
+        let naming_the_block: Vec<String> = all_lines
+            .iter()
+            .filter(|line| line.contains("Stmt"))
+            .cloned()
+            .collect();
+        let naming_the_capture: Vec<String> = all_lines
+            .iter()
+            .filter(|line| line.contains("%y"))
+            .cloned()
+            .collect();
+        cells.check_with(
+            &format!("a nested block over a one-object filter whose discovery raised, {label}: `r`'s status the sibling's, ONE line naming the block, opening with the block's text at the block's position (line 5, not the comparison's line 6), worded by the sibling's verdict, naming the own-key refusal and no numbered text (the budget marker's reason is no refusal and is not listed), and no line whose clause part is the comparison the discovery ran"),
+            (expected_status, 1, 1, true, true, true, false, 0),
+            (
+                status,
+                naming_the_block.len(),
+                opening(&naming_the_block, "Stmt"),
+                naming_the_block.iter().all(|line| line.contains("line:5") && !line.contains("line:6")),
+                naming_the_block.iter().all(|line| line.contains(verdict)),
+                naming_the_block.iter().all(|line| line.contains(THE_OWN_KEY_REFUSAL)),
+                naming_the_block.iter().any(|line| line.contains("(1) ")),
+                naming(&naming_the_capture, "some %y not in %m"),
+            ),
+            || format!("the lines naming the block: {naming_the_block:?}; the lines naming the capture: {naming_the_capture:?}"),
+        );
+    }
+
+    // A SECOND refused marker, in `%c`, from a second map `Cfg` shaped like `Cfg2` and the same binds over
+    // it: its own-key refusal is a second registered sentence (it names `Cfg`, never `Cfg2`), so a line can
+    // be told to carry `%c`'s refusal or `%y`'s.
+    const CFG_LIKE_CFG2: &str = r#""Cfg": {
+        "Mode": { "Ref": "ModeParam" },
+        "Other": { "Kind": "k" },
+        "C": { "Kind": "k", "Sub": { "R1": { "Ref": "P" }, "P": { "Kind": "k" }, "Q": { "Kind": "k" } } },
+        "D": { "Kind": "k", "Sub": { "R1": { "Ref": "P" }, "P": { "Kind": "k" }, "Q": { "Kind": "k" } } }
+    },"#;
+    const REFUSED_WALK_INTO_C: &str = "Cfg[ c | Kind == 'k' ] !empty  Cfg[*][ c | Mode exists or Kind == 'k' ].Sub[*][ s | R1 !exists ] !empty or Cfg.Other exists";
+    let document_cfg = document_two.replacen(
+        r#""Cfg2": {"#,
+        &format!("{CFG_LIKE_CFG2}\n    \"Cfg2\": {{"),
+        1,
+    );
+    assert_ne!(
+        document_cfg, document_two,
+        "the document holds the second map"
+    );
+    let gate_rules_with_c = |body: &str| -> String {
+        format!(
+            "{}\nrule r when gate(1) {GATE_ROLE_BODY}",
+            gate_role_block(
+                "rule gate(p)",
+                &format!("{}  {REFUSED_WALK_INTO_C}", gate_role_refused_binds()),
+                body,
+            )
+        )
+    };
+    let block_lines = |lines: &[String]| -> Vec<String> {
+        lines
+            .iter()
+            .filter(|line| line_opens_with(line, "Items.*"))
+            .cloned()
+            .collect()
+    };
+
+    // A UNARY RAISE beside a comparison's, in one body. The unary `%c !empty` raises on `%c`'s marker
+    // through the unary path and `some %y NOT IN %m` through the comparison's; each is noted at its own
+    // clause, whichever the conjunction holds (it holds the FIRST raise and runs on, so both clauses
+    // raise and both note), and the conjunction hands both entries up when nothing decides it; the fold
+    // writes two lines under I2's FAIL, the unary's naming `Cfg`'s refusal and the comparison's naming
+    // `Cfg2`'s, in either order, and names the BLOCK for neither (a frame that read the unary's raise
+    // nowhere named the block for its reason, or lost the second raise when the comparison came first).
+    for (label, body) in [
+        (
+            "the unary first",
+            "Items.* {\n when Name == 'n1' {\n %c !empty\n some %y NOT IN %m }\n Name == 'n1' }",
+        ),
+        (
+            "the comparison first",
+            "Items.* {\n when Name == 'n1' {\n some %y NOT IN %m\n %c !empty }\n Name == 'n1' }",
+        ),
+    ] {
+        let (status, lines) = gate_role_lines(&gate_rules_with_c(body), &document_cfg, "")?;
+        // The two binds (`Cfg2`'s and `Cfg`'s) each write their own line at the bind's site, decided
+        // past by their `or` fallback: pinned at TWO by the helper and left out of this clause's count
+        // (counted whole, the two bind lines read as the body's and the count was four; left out with
+        // no count, a dropped bind line went unseen).
+        let lines = without_the_refused_walks_lines_of(lines, 2);
+        let the_blocks = block_lines(&lines);
+        cells.check_with(
+            &format!("a unary raise over `%c` beside the comparison over `%y`, {label}: `r` not applicable, TWO lines, the comparison's own naming `Cfg2`'s refusal and the unary clause's own (`%c !empty`) naming `Cfg`'s, each \"was decided by a sibling entry's failure\", and no line naming the block"),
+            (Status::SKIP, 2, 1, true, 1, true, 0),
+            (
+                status,
+                lines.len(),
+                naming(&lines, "some %y not in %m"),
+                lines
+                    .iter()
+                    .filter(|line| clause_part(line) == Some("some %y not in %m"))
+                    .all(|line| line.contains("Cfg2")),
+                naming(&lines, "%c !empty"),
+                lines
+                    .iter()
+                    .filter(|line| clause_part(line) == Some("%c !empty"))
+                    .all(|line| {
+                        line.contains(THE_OWN_KEY_REFUSAL)
+                            && !line.contains("Cfg2")
+                            && line.contains("was decided by a sibling entry's failure")
+                    }),
+                the_blocks.len(),
+            ),
+            || format!("the lines read: {lines:?}"),
+        );
+    }
+
+    // A RAISE AN `or` DECIDED PAST: `some %y NOT IN %m or Name exists` is decided by `Name exists`, and the
+    // disjunction takes the hold's note and writes it as decided past by the passing disjunct, "passed by
+    // a sibling clause that holds", at the comparison's own position (two entries, one way, no count);
+    // `%c !empty` then raises, noted at its own clause, and the fold absorbs it under I2's FAIL: two
+    // lines, neither naming the block (a frame that kept the dropped note reported it as decided by a
+    // sibling entry; one that dropped it silently reported nothing for the comparison).
+    let (status, lines) = gate_role_lines(
+        &gate_rules_with_c(
+            "Items.* {\n when Name == 'n1' {\n some %y NOT IN %m or Name exists\n %c !empty }\n Name == 'n1' }",
+        ),
+        &document_cfg,
+        "",
+    )?;
+    // The two binds' own lines, pinned at two and left out as above.
+    let lines = without_the_refused_walks_lines_of(lines, 2);
+    let the_blocks = block_lines(&lines);
+    cells.check_with(
+        "a comparison's raise an `or` decided past, beside a unary raise the fold absorbs: `r` not applicable, the comparison's own line worded \"passed by a sibling clause that holds\" with no count and naming `Cfg2`'s refusal, the unary clause's own line for `Cfg`'s refusal worded \"was decided by a sibling entry's failure\", and no block line",
+        (Status::SKIP, 2, 1, true, 1, true, 0),
+        (
+            status,
+            lines.len(),
+            naming(&lines, "some %y not in %m"),
+            lines
+                .iter()
+                .filter(|line| clause_part(line) == Some("some %y not in %m"))
+                .all(|line| {
+                    line.contains("passed by a sibling clause that holds")
+                        && !line.contains(" evaluation")
+                        && line.contains("Cfg2")
+                }),
+            naming(&lines, "%c !empty"),
+            lines
+                .iter()
+                .filter(|line| clause_part(line) == Some("%c !empty"))
+                .all(|line| {
+                    line.contains("was decided by a sibling entry's failure")
+                        && line.contains(THE_OWN_KEY_REFUSAL)
+                        && !line.contains("Cfg2")
+                }),
+            the_blocks.len(),
+        ),
+        || format!("the lines read: {lines:?}"),
+    );
+
+    // A RAISE A FILTER PREDICATE TURNED INTO A MARKER: `%cfg[ %y NOT IN ['x'] ] !empty` over `Cfg2`'s four
+    // entries raises the comparison once per entry inside the predicate (noted into the predicate's own
+    // frame, dropped with the predicate's answer), each entry becoming a marker; the unary over the
+    // markers raises with the marker's reason, the comparison's registered text, noted at the unary
+    // clause's own position, and the fold writes that line under I2's FAIL: one line, the unary's, and
+    // none at the predicate comparison's own position (which the four notes would have written as one line
+    // counting four evaluations) and none naming the block.
+    let (status, lines) = gate_role_lines(
+        &format!(
+            "{}\nrule r when gate(1) {GATE_ROLE_BODY}",
+            gate_role_block(
+                "rule gate(p)",
+                &format!("{}\nlet cfg = Cfg2", gate_role_refused_binds()),
+                "Items.* {\n when Name == 'n1' {\n %cfg[ %y NOT IN ['x'] ] !empty }\n Name == 'n1' }",
+            )
+        ),
+        &document_two,
+        "%y",
+    )?;
+    cells.check_with(
+        "a comparison raised inside a filter predicate and turned into the entries' markers, the clause over them absorbed under I2's FAIL: `r` not applicable, ONE line, the unary clause's own (opening `%cfg[`), naming the own-key refusal, and none whose clause part is the predicate's comparison and none naming the block",
+        (Status::SKIP, 1, 1, true, 0, 0),
+        (
+            status,
+            lines.len(),
+            opening(&lines, "%cfg["),
+            lines.iter().all(|line| line.contains(THE_OWN_KEY_REFUSAL)),
+            lines
+                .iter()
+                .filter(|line| matches!(clause_part(line), Some(part) if part.starts_with("%y not in")))
+                .count(),
+            opening(&lines, "Items.*"),
+        ),
+        || format!("the lines read: {lines:?}"),
+    );
+
+    // A PLAIN RAISE HELD FIRST beside a flagged one noted after it: `%m exists` raises on the budget
+    // marker (plain, no refusal, unnoted) and `some %y NOT IN %m` raises beside the refused read (noted);
+    // whichever the conjunction holds, the fold keeps every entry of the frame, so the comparison's line is
+    // written under I2's FAIL in either order (a fold that read the frame only beside a flagged first
+    // error lost it when the plain raise came first).
+    for (label, body) in [
+        (
+            "the plain raise first",
+            "Items.* {\n when Name == 'n1' {\n %m exists\n some %y NOT IN %m }\n Name == 'n1' }",
+        ),
+        (
+            "the flagged raise first",
+            "Items.* {\n when Name == 'n1' {\n some %y NOT IN %m\n %m exists }\n Name == 'n1' }",
+        ),
+    ] {
+        let (status, lines) = gate_role_lines(&gate_rules(body), &document_two, "%y")?;
+        cells.check_with(
+            &format!("a plain raise beside a flagged one in one body, {label}: `r` not applicable, ONE line, the comparison's, naming the own-key refusal"),
+            (Status::SKIP, 1, 1, true),
+            (
+                status,
+                lines.len(),
+                naming(&lines, "some %y not in %m"),
+                lines.iter().all(|line| line.contains(THE_OWN_KEY_REFUSAL)),
+            ),
+            || format!("the lines read: {lines:?}"),
+        );
+    }
+
+    // THE UNARY RAISE SITE: the unary `%y !empty` under I1's when-guard reads the marker in `%y` beside
+    // the keys and raises on it in the gate role through the unary path, which notes the raise at the
+    // unary clause's own position with the refused reads among its values (the own-key refusal the
+    // marker stands for), so I2's FAIL writes the line under the unary clause's text, `%y !empty`, and not
+    // the block's (the block fold has no text fallback: a raise no inner site noted is netted at its
+    // clause's own exit, `judge_clause_exit`, and a selection's refusal, the block's own, is noted at the
+    // block where it is raised). A red here reads at the unary path's note (its reads, its clause text) or
+    // at the unary path (it decided instead of raising).
+    let (status, lines) = gate_role_lines(
+        &gate_rules("Items.* {\n when Name == 'n1' { %y !empty }\n Name == 'n1' }"),
+        &document_two,
+        "%y",
+    )?;
+    cells.check_with(
+        "a unary raise under an outer sibling FAIL: `r` not applicable, ONE line naming `%y`, its clause part EXACTLY the unary clause as rendered (`%y !empty`, none of the block's text) and carrying the own-key refusal, worded by the sibling entry's failure",
+        (Status::SKIP, 1, 1, 0, true, true),
+        (
+            status,
+            lines.len(),
+            naming(&lines, "%y !empty"),
+            opening(&lines, "Items.*"),
+            lines.iter().all(|line| line.contains(THE_OWN_KEY_REFUSAL)),
+            lines
+                .iter()
+                .all(|line| line.contains("was decided by a sibling entry's failure")),
+        ),
+        || format!("the lines read: {lines:?}"),
+    );
+    cells.assert_all_agreed();
+    Ok(())
+}
+
+/// Every frame entry carries its KIND (`RaiseKind`: a strict leaf's own FAIL, or a raise a fold may decide
+/// past), every fold decides by it, an entry that reaches a deciding site is written or handed up and never
+/// dropped, and a referenced or called rule runs in a frame of its own. Rows, each with its control:
+/// (K1) asserted `some %y !empty` alone PASSES on the keys past the refused marker's FAILed value, and the
+/// disjunct arm writes the clause's OWN entry "passed by a value that holds" (the second mark splits the
+/// passing disjunct's own entries from its siblings'); the every-value `%y !empty` FAILs with no line (its
+/// leaf FAIL reaches the top). (K2) `some %y !empty or Maps exists`: one line, the own phrase and never
+/// "passed by a sibling clause"; the passing disjunct first: no raise, no line. (K3) the gate role's
+/// `Items.* { some %y NOT IN %m  Name == 'n1' }`: unchanged, both sibling phrases (`Raised` entries still take
+/// the conjunction's and the block's verdicts). (K4) asserted `{ Items.* { some %y NOT IN %m }  Maps exists
+/// }` FAILs with no line (a leaf FAIL handed up to the top). (N1) an own-query refusal through `?` (a filter
+/// over a string `Tags`) decided past by an `or` is netted at its clause's own site in the clause's error
+/// arm and written "passed by a sibling clause that holds", as a `when` gate and asserted; the passing
+/// disjunct first: no line. (N2) a `when` condition that re-raises a `let`-bound registered refusal inside
+/// a block body is netted at the CONDITION's clause (`%sel exists`, physical line 4 of the rules text, the
+/// line after `Items.* {` opens on line 3), so the block's decided sibling writes the line under that clause
+/// and never under the block (the block fold's text fallback is gone; a block's OWN marker still names the
+/// block, pinned by the one-object-filter row of
+/// `an_absorbed_raise_is_reported_at_its_own_clause_whatever_entry_or_depth_raised_it`). (N3) the net does
+/// not double a precisely noted raise: the two-entry `match_all` row still writes ONE line. (R1) `rule main
+/// { not check(1) }` with `check` failing at its leaf on the refusal ALONE: `main` FAILS closed and NO line
+/// is written (a pass there would be a verdict the refusal manufactured; the `not`'s own FAIL record names
+/// the refusal, and failing closed is acting on it, so no "was not raised" line is owed; the control with a
+/// decided no beside the leaf FAIL, which PASSES, is in
+/// `a_negated_reference_fails_closed_on_a_refusal_only_fail`); without the `not`, `main` FAILs with no
+/// line. (R2) `rule r { gate or Maps exists }` with `gate` a plain rule failing at its leaf, declared before
+/// and after `r`: both orders write ONE line at `gate`'s comparison site, "passed by a sibling clause that
+/// holds", `r` PASSES and the top-level `gate` FAILs. (R3) `rule a { not check(1) }  rule b { check(1) or
+/// Maps exists }`: ONE line at `check`'s site reading "passed by a sibling clause that holds" alone, the
+/// `or` passed and the `not` that failed closed contributed no phrase; the control without `not` and `or`:
+/// two FAILs, no line; the named twin is in the test named above. (S1)
+/// asserted `some Items.* { when Name == 'n1' { Sub.* { some %y NOT IN %m } } Name
+/// exists }`: the inner every-entry block hands its leaf FAIL up through the `when` body to the outer
+/// `some`, which passes on `I2` and writes "passed by a sibling entry that holds" at the inner comparison's
+/// site; under `Items.*` the FAIL reaches the top: no line. (S2) asserted `Items.* { some %y NOT IN %m } or
+/// Maps exists`: PASS, one line, "passed by a sibling clause that holds" (an accepted reading, recorded
+/// here: a disjunct's pass swallows a nested block's leaf FAIL as it swallows a clause's raise, and the
+/// line is the block's leaf's). (A1) an unbound capture's refusal
+/// decided past by an `or` writes no refused-read line (its capture notice is its one report; the filter
+/// sits in the root's one writer); a one-object filter's refusal in the same shape writes one. (H1) the
+/// clause text is rendered only where a note or a line is made: a rules file of unary clauses over
+/// resources meeting no refusal renders none; the K1 run renders no more than its clauses.
+#[test]
+fn frame_entries_decide_by_kind_and_a_rule_call_runs_in_its_own_frame() -> Result<()> {
+    use crate::rules::eval::CLAUSE_TEXT_RENDERS;
+    let (_, document_two) = gate_role_documents();
+    const STRING_TAGS_WITH_ITEMS: &str = r#"{ Resources: { Q: { Type: 'AWS::SQS::Queue', Properties: { Tags: 'x' } } }, Items: { I1: { Name: 'n1' }, I2: { Name: 'n2' } } }"#;
+    const THE_STRING_REFUSAL: &str = "filters the entries of a String";
+    const A_STRING_TAG: &str = r#"{ Resources: { R1: { Tags: { Name: 'alpha' } } } }"#;
+    const ONE_OBJECT_STATEMENT: &str = r#"{ Resources: { R1: { Tags: { Name: 'alpha' }, Properties: { Statement: { Effect: 'Allow', Action: '*', Resource: '*' } } } } }"#;
+    /// A run of `rules` over `doc`: rule `rule_name`'s status on its own record and every refused-read
+    /// line whose clause part is EXACTLY `clause` (`clause_part`), or every line when `clause` is empty
+    /// (`rule_lines`, the shared reader).
+    fn run(rules: &str, doc: &str, rule_name: &str, clause: &str) -> Result<(Status, Vec<String>)> {
+        rule_lines(rules, doc, rule_name, &|line| {
+            clause.is_empty() || clause_part(line) == Some(clause)
+        })
+    }
+    let asserted = |body: &str| gate_role_block("rule gate", &gate_role_refused_binds(), body);
+    let gate_rules = |body: &str| -> String {
+        format!(
+            "{}\nrule r when gate(1) {GATE_ROLE_BODY}",
+            gate_role_block("rule gate(p)", &gate_role_refused_binds(), body)
+        )
+    };
+    let phrase = |lines: &[String], phrase: &str| lines.iter().all(|line| line.contains(phrase));
+    let none_say = |lines: &[String], phrase: &str| !lines.iter().any(|line| line.contains(phrase));
+    let mut cells = CellFailures::default();
+
+    // (K1)
+    let (status, lines) = run(
+        &asserted("some %y !empty"),
+        &document_two,
+        "gate",
+        "some %y !empty",
+    )?;
+    cells.check_with(
+        "(K1) asserted `some %y !empty` alone: PASS on the keys, ONE line at the unary clause, \"passed by a value that holds\", never a sibling's phrase",
+        (Status::PASS, 1, true, true),
+        (
+            status,
+            lines.len(),
+            phrase(&lines, "passed by a value that holds"),
+            none_say(&lines, "sibling"),
+        ),
+        || format!("the lines read: {lines:?}"),
+    );
+    let (status, lines) = run(&asserted("%y !empty"), &document_two, "gate", "%y !empty")?;
+    cells.check_with(
+        "(K1) the control, every-value `%y !empty`: FAIL on the marker's value, no line (the leaf FAIL reaches the top)",
+        (Status::FAIL, 0),
+        (status, lines.len()),
+        || format!("the lines read: {lines:?}"),
+    );
+    // (K2)
+    let (status, lines) = run(
+        &asserted("some %y !empty or Maps exists"),
+        &document_two,
+        "gate",
+        "some %y !empty",
+    )?;
+    cells.check_with(
+        "(K2) `some %y !empty or Maps exists`: PASS, ONE line, the clause's own phrase and not a sibling clause's",
+        (Status::PASS, 1, true, true),
+        (
+            status,
+            lines.len(),
+            phrase(&lines, "passed by a value that holds"),
+            none_say(&lines, "passed by a sibling clause"),
+        ),
+        || format!("the lines read: {lines:?}"),
+    );
+    let (status, lines) = run(
+        &asserted("Maps exists or some %y !empty"),
+        &document_two,
+        "gate",
+        "some %y !empty",
+    )?;
+    cells.check_with(
+        "(K2) the control, the passing disjunct first: PASS, no line (the comparison never ran)",
+        (Status::PASS, 0),
+        (status, lines.len()),
+        || format!("the lines read: {lines:?}"),
+    );
+    // (K3) The gate role's two sibling verdicts on one line (`r` not applicable, ONE line carrying both
+    // phrases) is the first cell of `the_conjunction_fold_reports_the_raises_its_own_clauses_decided_past`
+    // ("a sibling clause's failure past one entry's raise and a sibling entry's failure past the
+    // other's"), over the same body and document; it is not repeated here.
+    // (K4)
+    let (status, lines) = run(
+        &asserted("Items.* {\n some %y NOT IN %m }\nMaps exists"),
+        &document_two,
+        "gate",
+        "",
+    )?;
+    cells.check_with(
+        "(K4) asserted every-entry block failing at its leaves beside a passing sibling clause: FAIL, no line naming the comparison (the leaf FAILs reach the top)",
+        (Status::FAIL, 0),
+        (
+            status,
+            lines
+                .iter()
+                .filter(|line| clause_part(line) == Some("some %y not in %m"))
+                .count(),
+        ),
+        || format!("the lines read: {lines:?}"),
+    );
+    // (N1)
+    for (label, rules, expected) in [
+        (
+            "as a `when` gate",
+            "rule r when Resources.Q.Properties.Tags[ Key == 'Env' ] exists or Resources.Q.Type exists { Resources.Q.Type exists }",
+            Status::PASS,
+        ),
+        (
+            "asserted",
+            "rule r { Resources.Q.Properties.Tags[ Key == 'Env' ] exists or Resources.Q.Type exists }",
+            Status::PASS,
+        ),
+    ] {
+        let (status, lines) = run(rules, STRING_TAGS_WITH_ITEMS, "r", "")?;
+        let named: Vec<&String> = lines
+            .iter()
+            .filter(|line| line_opens_with(line, "Resources.Q.Properties.Tags["))
+            .collect();
+        cells.check_with(
+            &format!("(N1) an own-query refusal decided past by an `or`, {label}: `r` passes, ONE line at the refused clause's own site, \"passed by a sibling clause that holds\", naming the string-filter refusal"),
+            (expected, 1, 1, true, true),
+            (
+                status,
+                lines.len(),
+                named.len(),
+                named
+                    .iter()
+                    .all(|line| line.contains("passed by a sibling clause that holds")),
+                named.iter().all(|line| line.contains(THE_STRING_REFUSAL)),
+            ),
+            || format!("the lines read: {lines:?}"),
+        );
+    }
+    let (status, lines) = run(
+        "rule r { Resources.Q.Type exists or Resources.Q.Properties.Tags[ Key == 'Env' ] exists }",
+        STRING_TAGS_WITH_ITEMS,
+        "r",
+        "",
+    )?;
+    cells.check_with(
+        "(N1) the control, the passing disjunct first: PASS, no line",
+        (Status::PASS, 0),
+        (status, lines.len()),
+        || format!("the lines read: {lines:?}"),
+    );
+    // (N2)
+    let n2_rules = "let sel = Resources.Q.Properties.Tags[ Key == 'Env' ].Value\nrule a { %sel exists }\nrule gate(p) { Items.* {\n when %sel exists { Name exists }\n Name == 'n1' } }\nrule r when gate(1) { Resources.Q.Type exists }";
+    // The condition's own line, read off the rules text (the line after the block opens), so the
+    // expectation moves with the fixture.
+    let the_conditions_line = format!(
+        "line:{}",
+        n2_rules
+            .lines()
+            .position(|line| line.contains("when %sel exists"))
+            .map_or(0, |index| index + 1)
+    );
+    let (status, lines) = run(n2_rules, STRING_TAGS_WITH_ITEMS, "r", "")?;
+    let condition_lines: Vec<&String> = lines
+        .iter()
+        .filter(|line| clause_part(line) == Some("%sel exists"))
+        .collect();
+    cells.check_with(
+        &format!("(N2) a `when` condition re-raising a `let`-bound registered refusal inside a block body: `r` not applicable, ONE line, its clause part the condition's clause at the condition's own line ({the_conditions_line}, the line after the block opens), both sibling phrases, the string-filter refusal named, and no line opening with the block"),
+        (Status::SKIP, 1, 1, true, true, true, true, 0),
+        (
+            status,
+            lines.len(),
+            condition_lines.len(),
+            condition_lines
+                .iter()
+                .all(|line| line.contains(the_conditions_line.as_str())),
+            condition_lines
+                .iter()
+                .all(|line| line.contains("was decided by a sibling entry's failure")),
+            condition_lines
+                .iter()
+                .all(|line| line.contains("was decided by a sibling clause's failure")),
+            condition_lines.iter().all(|line| line.contains(THE_STRING_REFUSAL)),
+            lines
+                .iter()
+                .filter(|line| line_opens_with(line, "Items.*"))
+                .count(),
+        ),
+        || format!("the lines read: {lines:?}"),
+    );
+    // (N3)
+    let (status, lines) = gate_role_lines(
+        &gate_rules("Items.* {\n when Name == 'n1' {\n some %y NOT IN %m }\n Name == 'n1' }"),
+        &document_two,
+        "%y",
+    )?;
+    cells.check_with(
+        "(N3) the net does not double a precisely noted raise: `r` not applicable, ONE line, the comparison's",
+        (Status::SKIP, 1, 1),
+        (
+            status,
+            lines.len(),
+            lines
+                .iter()
+                .filter(|line| clause_part(line) == Some("some %y not in %m"))
+                .count(),
+        ),
+        || format!("the lines read: {lines:?}"),
+    );
+    // (R1)
+    let check = gate_role_block(
+        "rule check(p)",
+        &gate_role_refused_binds(),
+        "some %y NOT IN %m",
+    );
+    let (status, lines) = run(
+        &format!("{check}\nrule main {{ not check(1) }}"),
+        &document_two,
+        "main",
+        "some %y not in %m",
+    )?;
+    cells.check_with(
+        "(R1) `rule main { not check(1) }` over a `check` failing at its leaf on the refusal alone: `main` FAILS closed and NO refused-read line is written (the `not`'s own record names the refusal)",
+        (Status::FAIL, 0),
+        (status, lines.len()),
+        || format!("the lines read: {lines:?}"),
+    );
+    let (status, lines) = run(
+        &format!("{check}\nrule main {{ check(1) }}"),
+        &document_two,
+        "main",
+        "some %y not in %m",
+    )?;
+    cells.check_with(
+        "(R1) the control, `rule main { check(1) }`: `main` FAILs, no line",
+        (Status::FAIL, 0),
+        (status, lines.len()),
+        || format!("the lines read: {lines:?}"),
+    );
+    // (R2)
+    let gate = gate_role_block(
+        "rule gate",
+        &gate_role_refused_binds(),
+        "Maps exists\nsome %y NOT IN %m",
+    );
+    for (label, rules) in [
+        (
+            "`r` declared before `gate`",
+            format!("rule r {{ gate or Maps exists }}\n{gate}"),
+        ),
+        (
+            "`r` declared after `gate`",
+            format!("{gate}\nrule r {{ gate or Maps exists }}"),
+        ),
+    ] {
+        let (status, lines) = run(&rules, &document_two, "r", "some %y not in %m")?;
+        let (gate_status, _) = run(&rules, &document_two, "gate", "")?;
+        cells.check_with(
+            &format!("(R2) {label}: `r` PASSES, the top-level `gate` FAILs, ONE line at `gate`'s comparison, \"passed by a sibling clause that holds\""),
+            (Status::PASS, Status::FAIL, 1, true),
+            (
+                status,
+                gate_status,
+                lines.len(),
+                phrase(&lines, "passed by a sibling clause that holds"),
+            ),
+            || format!("the lines read: {lines:?}"),
+        );
+    }
+    // (R3)
+    let (status, lines) = run(
+        &format!("{check}\nrule a {{ not check(1) }}\nrule b {{ check(1) or Maps exists }}"),
+        &document_two,
+        "b",
+        "some %y not in %m",
+    )?;
+    cells.check_with(
+        "(R3) two references judging one leaf FAIL two ways: ONE line at `check`'s clause reading \"passed by a sibling clause that holds\" alone, with no count (a line decided one way carries none) and no \"failed closed\" phrase (the `not` that failed closed writes none and is not tallied)",
+        (Status::PASS, 1, true, false, false),
+        (
+            status,
+            lines.len(),
+            lines
+                .iter()
+                .all(|line| line.contains("passed by a sibling clause that holds")),
+            lines.iter().any(|line| line.contains(" evaluation")),
+            lines.iter().any(|line| line.contains("failed closed")),
+        ),
+        || format!("the lines read: {lines:?}"),
+    );
+    let (status, lines) = run(
+        &format!("{check}\nrule a {{ check(1) }}\nrule b {{ check(1) }}"),
+        &document_two,
+        "b",
+        "some %y not in %m",
+    )?;
+    cells.check_with(
+        "(R3) the control, two plain references: both FAIL, no line",
+        (Status::FAIL, 0),
+        (status, lines.len()),
+        || format!("the lines read: {lines:?}"),
+    );
+    // (S1)
+    let with_sub = document_two.replace(
+        r#""I1": { "Name": "n1" }"#,
+        r#""I1": { "Name": "n1", "Sub": { "A": { "K": 1 } } }"#,
+    );
+    assert_ne!(with_sub, document_two, "the document holds I1's `Sub`");
+    let (status, lines) = run(
+        &asserted("some Items.* {\n when Name == 'n1' {\n Sub.* {\n some %y NOT IN %m } }\n Name exists }"),
+        &with_sub,
+        "gate",
+        "some %y not in %m",
+    )?;
+    cells.check_with(
+        "(S1) a nested every-entry block's leaf FAIL handed up to an outer `some` that passes on `I2`: PASS, ONE line at the inner comparison, \"passed by a sibling entry that holds\"",
+        (Status::PASS, 1, true),
+        (
+            status,
+            lines.len(),
+            phrase(&lines, "passed by a sibling entry that holds"),
+        ),
+        || format!("the lines read: {lines:?}"),
+    );
+    let (status, lines) = run(
+        &asserted(
+            "Items.* {\n when Name == 'n1' {\n Sub.* {\n some %y NOT IN %m } }\n Name exists }",
+        ),
+        &with_sub,
+        "gate",
+        "some %y not in %m",
+    )?;
+    cells.check_with(
+        "(S1) the control under `Items.*`: FAIL, no line (the FAIL reaches the top)",
+        (Status::FAIL, 0),
+        (status, lines.len()),
+        || format!("the lines read: {lines:?}"),
+    );
+    // (S2)
+    let (status, lines) = run(
+        &asserted("Items.* {\n some %y NOT IN %m } or Maps exists"),
+        &document_two,
+        "gate",
+        "some %y not in %m",
+    )?;
+    cells.check_with(
+        "(S2) asserted `Items.* { some %y NOT IN %m } or Maps exists`: PASS, ONE line, \"passed by a sibling clause that holds\"",
+        (Status::PASS, 1, true),
+        (
+            status,
+            lines.len(),
+            phrase(&lines, "passed by a sibling clause that holds"),
+        ),
+        || format!("the lines read: {lines:?}"),
+    );
+    // (A1) Read with every warning the run wrote, so the row asserts the capture's notice IS written,
+    // exactly once, beside the absence of the line.
+    let a1_rules = RulesFile::try_from(
+        "rule r { Resources[ x | Tags[ keys == 'Name' ][ nm | this == 'alpha' ] exists or Tags exists ] !empty }",
+    )?;
+    let mut a1_root = root_scope(&a1_rules, Rc::new(PathAwareValue::try_from(A_STRING_TAG)?));
+    eval_rules_file(&a1_rules, &mut a1_root, None)?;
+    let a1_warnings: Vec<String> = a1_root.warnings().cloned().collect();
+    let (a1_lines, a1_notices): (Vec<&String>, Vec<&String>) = a1_warnings
+        .iter()
+        .partition(|line| line.contains(THE_REFUSED_READ_MARKER));
+    let (status, _) = rule_record(&a1_root.reset_recorder().extract(), "r");
+    // The notice on the warning channel is `unsupported_capture_warning`'s text ("the capture `nm` in
+    // the filter `[ nm | ... ]` at <position> is not supported after a part that names one value: ...");
+    // "declares the capture `nm` after" is the RECORD's reason (`capture_not_bound_reason`), which the
+    // warning never carries, so an earlier cut of this row read false against a notice that was there.
+    cells.check_with(
+        "(A1) an unbound capture's refusal decided past by an `or` inside the predicate: PASS, no refused-read line, and exactly one capture notice naming `nm` in its filter after a part that names one value (the notice is its one report)",
+        (Status::PASS, 0, 1, true),
+        (
+            status,
+            a1_lines.len(),
+            a1_notices.len(),
+            a1_notices.iter().all(|notice| {
+                notice.contains("the capture `nm` in the filter `[ nm | ")
+                    && notice.contains("is not supported after a part that names one value")
+            }),
+        ),
+        || format!("the warnings read: {a1_warnings:?}"),
+    );
+    let (status, lines) = run(
+        "rule r { Resources[ x | Properties.Statement[ Effect == 'Allow' ].Action == '*' or Tags exists ] !empty }",
+        ONE_OBJECT_STATEMENT,
+        "r",
+        "",
+    )?;
+    cells.check_with(
+        "(A1) the control, a one-object filter's refusal decided past by the same `or`: PASS, ONE line",
+        (Status::PASS, 1),
+        (status, lines.len()),
+        || format!("the lines read: {lines:?}"),
+    );
+    // (H1)
+    CLAUSE_TEXT_RENDERS.with(|renders| renders.set(0));
+    let (status, _) = run(
+        "rule r { Items.*.Name exists\nItems.*.Name !empty\nMaps.M.PROD exists\nCfg2.*.Kind exists\nCfg2.* { Kind exists } }",
+        &document_two,
+        "r",
+        "",
+    )?;
+    let quiet_renders = CLAUSE_TEXT_RENDERS.with(std::cell::Cell::get);
+    CLAUSE_TEXT_RENDERS.with(|renders| renders.set(0));
+    let (_, lines) = run(&asserted("some %y !empty"), &document_two, "gate", "")?;
+    let noting_renders = CLAUSE_TEXT_RENDERS.with(std::cell::Cell::get);
+    cells.check_with(
+        "(H1) a rules file of unary clauses over the entries, meeting no refusal: PASS and no clause text rendered; the K1 run renders only where it notes or writes, no more than its three clauses",
+        (Status::PASS, 0, true),
+        (
+            status,
+            quiet_renders,
+            (1..=3).contains(&noting_renders),
+        ),
+        || format!("renders: quiet {quiet_renders}, noting {noting_renders}; the lines read: {lines:?}"),
+    );
+    cells.assert_all_agreed();
+    Ok(())
+}
+
+/// A reference's `not` over a rule that FAILed decides by the BASIS the rule's folds gave its FAIL
+/// (`FailBasis`, carried with the status), never by scanning the entries the rule handed up: a FAIL
+/// that rests on undecidables alone fails the negation closed, since a pass there would be a verdict the
+/// refusal manufactured, and is reported in the `not` clause's OWN FAIL record, whose message names the
+/// refusal; it writes NO refused-read line (failing closed is acting on the refusal, so "was not raised"
+/// would be false of it); a FAIL that is a decided no by the structure of the rule's folds (here a
+/// conjunct `Maps.Nope exists` beside the refused comparison: `AND(no, unknown)` is `no`) is a no the
+/// `not` inverts, PASS, and the refused entry's line reads "passed by the negation of a rule that
+/// failed". Rows, each labeled, the parameterized and the named spelling of each: "R1" the refusal-only
+/// FAIL under `not`, FAIL, no line, and the record message; "R1b" the decided-no control, PASS and the
+/// negation word; "R1c" two references to one failing rule, the second a cache hit for the named spelling
+/// (`EvalContext::rule_status` answers the stored FAIL with its basis and re-notes the stored entries; the hit is counted,
+/// `RULE_STATUS_CACHE_HITS`, one for the named spelling and none for the parameterized, whose every call
+/// runs the rule), both FAIL and no line; "R3" `rule a { not check }  rule b { check or Maps exists }`, the
+/// named twin of the parameterized row in
+/// `frame_entries_decide_by_kind_and_a_rule_call_runs_in_its_own_frame`: `a` FAILs closed, `b` PASSES,
+/// and the ONE line at `check`'s clause counts "passed by a sibling clause that holds" alone (the `not`
+/// contributes no phrase). Then the condition rows: "W1" an asserted block body whose `when` condition is
+/// the refused comparison (`when some %y NOT IN %m { Name exists }`) beside `Name == 'n1'`, in both
+/// orders: the condition's raise is re-noted as the block's own leaf FAIL at the strict conversion (the
+/// body's FAIL exit asserts no raise is left among its entries, which the condition's own kind tripped),
+/// the rule FAILs and no line is written; "W2" the same `when` under `some Items.* { .. } or Maps exists`:
+/// PASS and ONE line at the comparison, "passed by a sibling clause that holds", the leaf FAIL handed up
+/// out of the `when` and the block; "W3" the gate role of the same body: `r` not applicable and ONE line
+/// carrying both sibling phrases, as the plain comparison's row does; "T1" a type block whose one
+/// resource's condition is refused (`AWS::SQS::Queue when Properties.Tags[ Key == 'Env' ] !empty { .. }`
+/// over a string `Tags`) under `not`: the referencing rule FAILs closed and no line is written; "T1b" its
+/// control, a second queue with list tags whose body FAILs on a decided no (`Properties.Nope exists`)
+/// beside the refused resource: a type block is every resource at once, so its FAIL is decided, the `not`
+/// PASSES, and the refused condition's entry is written "passed by the negation of a rule that failed"
+/// at the condition's clause, naming the string-filter refusal.
+#[test]
+fn a_negated_reference_fails_closed_on_a_refusal_only_fail() -> Result<()> {
+    let (_, document_two) = gate_role_documents();
+    const STRING_TAGS_WITH_ITEMS: &str = r#"{ Resources: { Q: { Type: 'AWS::SQS::Queue', Properties: { Tags: 'x' } } }, Items: { I1: { Name: 'n1' }, I2: { Name: 'n2' } } }"#;
+    const THE_STRING_REFUSAL: &str = "filters the entries of a String";
+    const PASSED_BY_NEGATION: &str = "passed by the negation of a rule that failed";
+    const BY_A_SIBLING_CLAUSE: &str = "passed by a sibling clause that holds";
+    /// The head of the sentence a fail-closed `not` carries in its own record (`negation_fail_message`).
+    const FAILED_CLOSED_RECORD: &str = "failed only on reads it could not decide";
+    /// A run of `rules` over `doc`: rule `rule_name`'s status on its own record, every refused-read line
+    /// whose clause part is EXACTLY `clause` (`clause_part`), or every line but the refused walk's own
+    /// (`is_the_refused_walks_own_line`: the bind's line at its own site, pinned elsewhere) when `clause`
+    /// is empty, and every message recorded under the rule with its refusal flag
+    /// (`recorded_messages_with_kind`).
+    type Seen = (Status, Vec<String>, Vec<(bool, String)>);
+    fn run(rules: &str, doc: &str, rule_name: &str, clause: &str) -> Result<Seen> {
+        let rules_file = RulesFile::try_from(rules)?;
+        let mut root = root_scope(&rules_file, Rc::new(PathAwareValue::try_from(doc)?));
+        eval_rules_file(&rules_file, &mut root, None)?;
+        let lines: Vec<String> = if clause.is_empty() {
+            without_the_refused_walks_line(refused_read_lines(&root))
+        } else {
+            refused_read_lines(&root)
+                .into_iter()
+                .filter(|line| clause_part(line) == Some(clause))
+                .collect()
+        };
+        let top = root.reset_recorder().extract();
+        let (status, record) = rule_record(&top, rule_name);
+        let mut messages = Vec::new();
+        recorded_messages_with_kind(record, &mut messages);
+        Ok((status, lines, messages))
+    }
+    let phrase = |lines: &[String], phrase: &str| lines.iter().all(|line| line.contains(phrase));
+    /// Whether a record under the rule is a fail-closed `not`'s over the rule `negated`: flagged a refusal,
+    /// its message the fail-closed sentence ABOUT that rule (`the negated rule [<negated>]`, so a nested
+    /// reference's own fail-closed record, which sits inside the referencing rule's tree, is never read as
+    /// this rule's) and NAMING the refused read `named`.
+    fn fail_closed_record(messages: &[(bool, String)], negated: &str, named: &str) -> bool {
+        let subject = format!("the negated rule [{negated}]");
+        messages.iter().any(|(refusal, message)| {
+            *refusal
+                && message.contains(&subject)
+                && message.contains(FAILED_CLOSED_RECORD)
+                && message.contains(named)
+        })
+    }
+    /// Whether NO record under the rule is a fail-closed `not`'s, whatever it names: the negative controls'
+    /// reading (a decided no inverted writes none at all, not merely none naming the refusal).
+    fn no_fail_closed_record(messages: &[(bool, String)]) -> bool {
+        !messages
+            .iter()
+            .any(|(_, message)| message.contains(FAILED_CLOSED_RECORD))
+    }
+    let cache_hits = || crate::rules::eval_context::RULE_STATUS_CACHE_HITS.with(|hits| hits.get());
+    let mut cells = CellFailures::default();
+
+    // The negation rows, in both spellings: `check(p)` called as `check(1)`, and the plain `check`.
+    let refusal_only = "some %y NOT IN %m";
+    let beside_a_decided_no = "some %y NOT IN %m\nMaps.Nope exists";
+    for (spelling, header, reference, hits_expected) in [
+        ("parameterized", "rule check(p)", "check(1)", 0),
+        ("named", "rule check", "check", 1),
+    ] {
+        let check = |body: &str| gate_role_block(header, &gate_role_refused_binds(), body);
+        // (R1) The refusal-only FAIL under `not`: FAIL, no line, the record names the refusal.
+        let label = "R1";
+        let (status, lines, messages) = run(
+            &format!("{}\nrule main {{ not {reference} }}", check(refusal_only)),
+            &document_two,
+            "main",
+            "",
+        )?;
+        cells.check_with(
+            &format!("({label}, {spelling}) `rule main {{ not {reference} }}` over a `check` whose body is `{refusal_only}`: FAIL closed, NO refused-read line, and a record under `main` flagged a refusal whose message says the negated rule \"{FAILED_CLOSED_RECORD}\" and names the own-key refusal"),
+            (Status::FAIL, 0, true),
+            (
+                status,
+                lines.len(),
+                fail_closed_record(&messages, "check", THE_OWN_KEY_REFUSAL),
+            ),
+            || format!("the lines read: {lines:?}; the messages read: {messages:?}"),
+        );
+        // (R1b) The decided-no control: PASS, the refused entry written as passed by the negation.
+        let label = "R1b";
+        let (status, lines, messages) = run(
+            &format!(
+                "{}\nrule main {{ not {reference} }}",
+                check(beside_a_decided_no)
+            ),
+            &document_two,
+            "main",
+            "some %y not in %m",
+        )?;
+        cells.check_with(
+            &format!("({label}, {spelling}) `rule main {{ not {reference} }}` over a `check` whose body is `{}`: PASS, ONE line at `check`'s clause, \"{PASSED_BY_NEGATION}\", and no fail-closed record at all", beside_a_decided_no.replace('\n', "  ")),
+            (Status::PASS, 1, true, true),
+            (
+                status,
+                lines.len(),
+                phrase(&lines, PASSED_BY_NEGATION),
+                no_fail_closed_record(&messages),
+            ),
+            || format!("the lines read: {lines:?}; the messages read: {messages:?}"),
+        );
+        // (R1c) Two references, the second a cache hit for the named spelling: the stored FAIL's basis
+        // decides the second as the first was decided, observably (the hit is counted).
+        let two_references = format!(
+            "{}\nrule a {{ not {reference} }}\nrule b {{ not {reference} }}",
+            check(refusal_only)
+        );
+        let label = "R1c";
+        let hits_before = cache_hits();
+        let (status_a, lines, _) = run(&two_references, &document_two, "a", "")?;
+        let hits = cache_hits() - hits_before;
+        let (status_b, _, messages_b) = run(&two_references, &document_two, "b", "")?;
+        cells.check_with(
+            &format!("({label}, {spelling}) two references to the refusal-only `check` under `not`: both FAIL closed, no line, {hits_expected} cache hit(s) for the run (the stored basis decides the second), and `b`'s record names the own-key refusal"),
+            (Status::FAIL, Status::FAIL, 0, hits_expected, true),
+            (
+                status_a,
+                status_b,
+                lines.len(),
+                hits,
+                fail_closed_record(&messages_b, "check", THE_OWN_KEY_REFUSAL),
+            ),
+            || format!("the lines read: {lines:?}; the messages read: {messages_b:?}"),
+        );
+        // (R3) The `not` failed closed and the `or` passed: one site, two references, one phrase (the
+        // `not` writes none).
+        let rules = format!(
+            "{}\nrule a {{ not {reference} }}\nrule b {{ {reference} or Maps exists }}",
+            check(refusal_only)
+        );
+        let label = "R3";
+        let (status_a, lines, _) = run(&rules, &document_two, "a", "some %y not in %m")?;
+        let (status_b, _, _) = run(&rules, &document_two, "b", "")?;
+        cells.check_with(
+            &format!("({label}, {spelling}) `rule a {{ not {reference} }}  rule b {{ {reference} or Maps exists }}`: `a` FAILs closed, `b` PASSES, ONE line at `check`'s clause reading \"{BY_A_SIBLING_CLAUSE}\" alone, with no count (decided one way) and no \"failed closed\" phrase (the `not` is not tallied into a line it does not name)"),
+            (Status::FAIL, Status::PASS, 1, true, false, false),
+            (
+                status_a,
+                status_b,
+                lines.len(),
+                phrase(&lines, BY_A_SIBLING_CLAUSE),
+                lines.iter().any(|line| line.contains(" evaluation")),
+                lines.iter().any(|line| line.contains("failed closed")),
+            ),
+            || format!("the lines read: {lines:?}"),
+        );
+    }
+
+    // (W1) The refused comparison as a `when` condition inside an asserted block body, in both orders.
+    let asserted = |body: &str| gate_role_block("rule gate", &gate_role_refused_binds(), body);
+    for (order, body) in [
+        (
+            "the `when` first",
+            "Items.* {\n when some %y NOT IN %m { Name exists }\n Name == 'n1' }",
+        ),
+        (
+            "the `when` last",
+            "Items.* {\n Name == 'n1'\n when some %y NOT IN %m { Name exists } }",
+        ),
+    ] {
+        let (status, lines, _) = run(&asserted(body), &document_two, "gate", "")?;
+        cells.check_with(
+            &format!("(W1, {order}) an asserted body whose `when` condition is the refused comparison beside a decided sibling: FAIL (the condition's raise is the block's own leaf FAIL) and no line"),
+            (Status::FAIL, 0),
+            (status, lines.len()),
+            || format!("the lines read: {lines:?}"),
+        );
+    }
+    // (W2) The same `when` under a `some` block that a disjunct passes past.
+    let (status, lines, _) = run(
+        &asserted("some Items.* {\n when some %y NOT IN %m { Name exists }\n Name exists } or Maps exists"),
+        &document_two,
+        "gate",
+        "some %y not in %m",
+    )?;
+    cells.check_with(
+        "(W2) the refused `when` condition's leaf FAIL handed up out of the `when` and the `some` block to a disjunct that holds: PASS, ONE line at the comparison, \"passed by a sibling clause that holds\"",
+        (Status::PASS, 1, true),
+        (status, lines.len(), phrase(&lines, BY_A_SIBLING_CLAUSE)),
+        || format!("the lines read: {lines:?}"),
+    );
+    // (W3) The gate role of the same body: the condition's raise is kept and absorbed as a raise.
+    let gate_rules = |body: &str| -> String {
+        format!(
+            "{}\nrule r when gate(1) {GATE_ROLE_BODY}",
+            gate_role_block("rule gate(p)", &gate_role_refused_binds(), body)
+        )
+    };
+    let (status, lines) = gate_role_lines(
+        &gate_rules("Items.* {\n when some %y NOT IN %m { Name exists }\n Name == 'n1' }"),
+        &document_two,
+        "%y",
+    )?;
+    cells.check_with(
+        "(W3) the gate role of the refused `when` condition: `r` not applicable, ONE line carrying both sibling phrases",
+        (Status::SKIP, 1, true, true),
+        (
+            status,
+            lines.len(),
+            lines
+                .iter()
+                .any(|line| line.contains("was decided by a sibling entry's failure on 1 evaluation")),
+            lines
+                .iter()
+                .any(|line| line.contains("was decided by a sibling clause's failure on 1 evaluation")),
+        ),
+        || format!("the lines read: {lines:?}"),
+    );
+
+    // (T1) A type block whose one resource's condition is refused, under `not`: FAIL closed, no line.
+    // (T1b) The control: a second queue with list tags whose body fails on a decided no beside the refused
+    // resource, so the type block's FAIL is decided and the `not` passes, the refused condition's entry
+    // written as passed by the negation at the condition's clause.
+    let two_queues = STRING_TAGS_WITH_ITEMS.replace(
+        "Tags: 'x' } }",
+        "Tags: 'x' } }, Q2: { Type: 'AWS::SQS::Queue', Properties: { Tags: [ { Key: 'Env', Value: 'x' } ] } }",
+    );
+    assert_ne!(
+        two_queues, STRING_TAGS_WITH_ITEMS,
+        "the control holds a second queue"
+    );
+    for (label, doc, body, expected, count, word) in [
+        (
+            "T1",
+            STRING_TAGS_WITH_ITEMS.to_string(),
+            "Properties.Tags exists",
+            Status::FAIL,
+            0,
+            "",
+        ),
+        (
+            "T1b",
+            two_queues,
+            "Properties.Tags exists\n Properties.Nope exists",
+            Status::PASS,
+            1,
+            PASSED_BY_NEGATION,
+        ),
+    ] {
+        let (status, lines, messages) = run(
+            &format!(
+                "rule tb {{ AWS::SQS::Queue when Properties.Tags[ Key == 'Env' ] !empty {{ {body} }} }}\nrule main {{ not tb }}"
+            ),
+            &doc,
+            "main",
+            "",
+        )?;
+        let at_the_condition: Vec<&String> = lines
+            .iter()
+            .filter(|line| line_opens_with(line, "Properties.Tags["))
+            .collect();
+        cells.check_with(
+            &format!("({label}) `rule tb {{ AWS::SQS::Queue when Properties.Tags[ Key == 'Env' ] !empty {{ {} }} }}  rule main {{ not tb }}`: {expected:?}, {count} line(s) at the condition's clause naming the string-filter refusal with \"{word}\", no other line, and a fail-closed record over `tb` under `main` exactly where it FAILs (none at all where it passes)", body.replace('\n', " ")),
+            (expected, count, true, true, true),
+            (
+                status,
+                at_the_condition.len(),
+                at_the_condition
+                    .iter()
+                    .all(|line| line.contains(word) && line.contains(THE_STRING_REFUSAL)),
+                lines.len() == at_the_condition.len(),
+                if expected == Status::FAIL {
+                    fail_closed_record(&messages, "tb", THE_STRING_REFUSAL)
+                } else {
+                    no_fail_closed_record(&messages)
+                },
+            ),
+            || format!("the lines read: {lines:?}; the messages read: {messages:?}"),
+        );
+    }
+    cells.assert_all_agreed();
+    Ok(())
+}
+
+/// The structured report's sentence for a unary check refused over an undecidable marker carries `Error =
+/// [<refusal>]` once: the unary arm's head is empty for such a record, so the bracketed refusal is written
+/// by the join alone where a head that wrote it too printed it twice. The console's layout of the same
+/// record is `a_unary_refusals_empty_head_writes_the_refusal_once_on_the_reason_line`.
+#[test]
+fn a_unary_refusals_structured_sentence_is_the_bracketed_refusal_alone() -> Result<()> {
+    const AMBIGUOUS_BESIDE_A_DECIDED_SIBLING: &str = r#"{ Resources: { R1: { Cfg: { Limits: { cpu: '1' }, Other: { cpu: '2' } } }, R2: { Cfg: { Limits: { cpu: '1' }, Tier: 'gold' } } } }"#;
+    let rules_file = RulesFile::try_from("rule r { Resources[ Cfg[*].Limits exists ] !empty }")?;
+    let mut root = root_scope(
+        &rules_file,
+        Rc::new(PathAwareValue::try_from(
+            AMBIGUOUS_BESIDE_A_DECIDED_SIBLING,
+        )?),
+    );
+    let status = eval_rules_file(&rules_file, &mut root, None)?;
+    let tree = root.reset_recorder().extract();
+    let report = crate::rules::eval_context::simplified_json_from_root(&tree)?;
+    let mut reported = Vec::new();
+    report
+        .not_compliant
+        .iter()
+        .for_each(|clause| clause_report_messages(clause, &mut reported));
+    let refusal_sentences: Vec<&String> = reported
+        .iter()
+        .filter(|(refusal, message)| *refusal && message.contains("Error = ["))
+        .map(|(_, message)| message)
+        .collect();
+    let mut cells = CellFailures::default();
+    cells.check_with(
+        "the unary refusal's `error_message` is `Error = [<the refusal>]` alone: FAIL, one flagged sentence, opening with the bracket, one bracket, closed at its end",
+        (Status::FAIL, 1, true, true, true),
+        (
+            status,
+            refusal_sentences.len(),
+            refusal_sentences
+                .iter()
+                .all(|message| message.starts_with("Error = [")),
+            refusal_sentences
+                .iter()
+                .all(|message| message.matches("Error = [").count() == 1),
+            refusal_sentences.iter().all(|message| message.ends_with(']')),
+        ),
+        || format!("the sentences read: {refusal_sentences:?}"),
+    );
+    cells.assert_all_agreed();
+    Ok(())
+}
+
+/// One reading of a marker as a refused read, whatever its kind, on BOTH sides that classify one: the
+/// comparison's collections and the key filter's classifier (`key_filter::outcome_of`) both call the one
+/// function `refused_read_text`, `marker_reason` read against the registry, so neither side derives a
+/// reading of its own. An `Absent` marker whose own reason the registry holds is a refused read to both, by
+/// that text; one whose reason is a retrieval's sentence is a decided absence to both. Read through
+/// `undecidable_reason` alone on one side and through the marker's own reason on the other, such a marker
+/// was a refused read to the key filter and none to the comparison.
+#[test]
+fn a_marker_of_any_kind_is_a_refused_read_by_one_reading_on_both_sides() -> Result<()> {
+    // Registered under a LIVE root scope (with none alive a registration is dropped, so the cells below
+    // read the text as no refusal's, which this cell once did while believing it registered).
+    let rules_file = RulesFile::try_from("rule r { Resources exists }")?;
+    let root = root_scope(
+        &rules_file,
+        Rc::new(PathAwareValue::try_from("{ Resources: {} }")?),
+    );
+    let registered = "then no kept entry holds a key the predicate names, at path /Resources/R/Cfg";
+    let _ = crate::rules::eval_context::register_refusal(registered);
+    let absent = |reason: &str| UnResolved {
+        traversed_to: Rc::new(PathAwareValue::try_from("{ Resources: {} }").expect("parses")),
+        remaining_query: "Cfg".to_string(),
+        reason: Some(reason.to_string()),
+        kind: UnResolvedKind::Absent,
+    };
+    let retrieval = "Could not find key Cfg inside struct at path /Resources/R";
+    let mut cells = CellFailures::default();
+    // `refused_read_text` is the ONE classifier: the comparison's collections call it, and the key filter's
+    // `outcome_of` calls it for a right-hand marker (no second derivation on either side), so one call here
+    // is both sides' reading.
+    cells.check_with(
+        "an `Absent` marker whose own reason the registry holds is a refused read by that text to the comparison's collections and to the key filter alike (one classifier, `refused_read_text`, over `marker_reason`); one whose reason is a retrieval's sentence is none to either",
+        (
+            Some(registered.to_string()),
+            None,
+            Some(registered.to_string()),
+            Some(retrieval.to_string()),
+        ),
+        (
+            refused_read_text(&absent(registered)),
+            refused_read_text(&absent(retrieval)),
+            marker_reason(&absent(registered)),
+            marker_reason(&absent(retrieval)),
+        ),
+        String::new,
+    );
+    // The key filter's own classifier over the same two markers, each as the right-hand evidence of a
+    // `[ keys == <marker> ]` pairing (`key_filter::outcome_of`, visible to this module through `pub(super)` for this read): the
+    // registered reason is an unfinished pairing to REGISTER (a refused read), the retrieval's sentence an
+    // unfinished pairing that is none, the one answer `refused_read_text` gave each above.
+    let ranking_of_frames = ranking_under(root.refusal_frames());
+    let ranking: Ranking<'_> = &ranking_of_frames;
+    let key = Rc::new(PathAwareValue::try_from("'k'")?);
+    let classed = |reason: &str| -> Option<bool> {
+        let evidence = ComparisonResult::UnResolvedRhs(UnResolvedRhs {
+            rhs: QueryResult::UnResolved(absent(reason)),
+            lhs: Rc::clone(&key),
+        });
+        match key_filter::outcome_of(&evidence, ranking) {
+            KeyPairOutcome::Unfinished { register, .. } => Some(register),
+            KeyPairOutcome::Equal(_) | KeyPairOutcome::NoAnswer => None,
+        }
+    };
+    cells.check_with(
+        "the key filter's classifier reads the two markers as `refused_read_text` does: the registered reason is an unfinished pairing to register (a refused read), the retrieval's sentence an unfinished pairing that is none",
+        (
+            Some(refused_read_text(&absent(registered)).is_some()),
+            Some(refused_read_text(&absent(retrieval)).is_some()),
+        ),
+        (classed(registered), classed(retrieval)),
+        String::new,
+    );
+    cells.assert_all_agreed();
+    Ok(())
+}
+
+/// A reference's `not` reads the basis of the FAIL the rule's folds compute from their branches
+/// (`FailBasis`, carried with the status), so the SHAPE of the body decides, never a flat scan of what the body
+/// noted: an AND's FAIL is decided when any failing conjunct's is (`AND(no, unknown)` is `no`), an OR's
+/// and a `some` block's only when every failing branch's is (`OR(no, unknown)` is unknown). Rows over the
+/// gate-role fixtures (`some %y NOT IN %m`, the refusal-only comparison; `Maps.Nope exists`, a decided no),
+/// `check` held by a rule and `rule main { not check }` over it: "A1"/"A2" the two in a conjunction, both
+/// orders: PASS; "O1"/"O2" the two in a disjunction, both orders: FAIL closed; "S1" a `some` block over two
+/// entries, one body a decided no and the other the refused comparison (each behind a per-entry `when`):
+/// FAIL closed; "S2" its control, every entry a decided no: PASS; "S3" every entry the refused comparison:
+/// FAIL closed. "M1" the basis travels where the frames note nothing: the file's status under
+/// `Measurement::WithoutUnresolved` equals the real run's for `rule main { not check(1) }` over a
+/// parameterized `check` (FAIL both; the frame channel read PASS there, since a measurement notes no
+/// entry), and "M2" the same for the gate `rule r when not check(1) { .. }` (FAIL both). "G1" the gate
+/// role: `rule r when not check(1) { Items.I1.Name == 'n1' }` FAILs closed with the condition's "could not
+/// be evaluated" message, so a `when not r` neither opens nor skips its block in silence. "N1" `rule r
+/// when Maps.Nope exists check { .. }`, a condition decided by a plain no beside the refused reference:
+/// `r` not applicable, and every line written has a clause part (no empty warning line). "D1" `rule main
+/// { not check or Maps exists }`: the passing disjunct decides past the fail-closed `not` as past any
+/// decided FAIL: PASS, no "failed closed" phrase, exactly one line at `check`'s clause, "passed by a
+/// sibling clause that holds". Then the sites that fail closed on an undecidable WITHOUT noting a refusal,
+/// each under `not` (the basis, not the frame, is what the `not` reads): "B1" a block over a spent regex
+/// budget's marker in its own query (`%m { cpu exists }`): FAIL closed; "B2" the block arm's own-key
+/// refusal (`Resources.*.Cfg[*] { Limits exists }` over one ambiguous map): FAIL closed, and "B3" its
+/// control beside a decided no (a second resource whose body fails on `Nope exists`): PASS; "B4" a block
+/// over the refused marker the key spelling leaves in its own query (`Resources.*.Cfg[*].Limits { cpu
+/// exists }`): FAIL closed; "L1" the asserted left-hand marker under `NOT IN <literal>` (`some %w NOT IN
+/// ['x']`, `%w` the refused marker alone, the one strict shape that FAILs on an undecidable pair without
+/// raising): FAIL closed, and "L2" its control over a resolved value that matches the denied literal: PASS.
+/// Then the carried basis and the remaining strict sites: "X1"/"X2" a double negation (`rule inner { not
+/// check }  rule main { not inner }`, both spellings): the `not`'s own FAIL carries the basis on, so the
+/// second `not` fails closed too; "C1" a rule's own `when` raised on the key arm's refusal, failed closed:
+/// `not` over it FAILs; "C2" a block body's `when` condition raised on the refused comparison beside a
+/// passing sibling, over the one-entry document: FAIL closed; "U1" a strict unary clause on a type the
+/// operator has no answer for (`empty` over a number), "U2" a `match_all` comparison whose every pair is
+/// undecided against the budget marker (decided by its FAIL statuses, no raise) and "U3" the same under
+/// `some` (raised, then failed closed): FAIL closed, the record NOT flagged a refusal and naming no read,
+/// since the undecidable is no refusal. Every fail-closed record is read against its basis AND its subject
+/// (the message names the rule the `not` negated, so a nested reference's own record inside the tree is
+/// never read as the referencing rule's): flagged and naming the refused read where one stands behind the
+/// FAIL, unflagged where none does, and no such record at all where the negation passed; "D1" runs in both
+/// spellings and pins exactly one line.
+#[test]
+fn a_negated_reference_decides_by_the_structure_of_the_rules_folds() -> Result<()> {
+    let (document, document_two) = gate_role_documents();
+    const ONE_AMBIGUOUS_CFG: &str =
+        r#"{ Resources: { R1: { Cfg: { Limits: { cpu: '1' }, Other: { cpu: '2' } } } } }"#;
+    const AMBIGUOUS_BESIDE_A_DECIDED_SIBLING: &str = r#"{ Resources: { R1: { Cfg: { Limits: { cpu: '1' }, Other: { cpu: '2' } } }, R2: { Cfg: { Limits: { cpu: '1' }, Tier: 'gold' } } } }"#;
+    const BY_A_SIBLING_CLAUSE: &str = "passed by a sibling clause that holds";
+    const FAILED_CLOSED_RECORD: &str = "failed only on reads it could not decide";
+    /// The remedy every own-key refusal of a block or key arm names, the one text both arms share.
+    const THE_BLOCK_ARM_REMEDY: &str = "Write `X.Key == value` to read `X` as one object";
+    /// A run of `rules` over `doc`: rule `rule_name`'s status on its own record, every refused-read line
+    /// holding `needle` (every line for `""`) but the refused walk's own (`is_the_refused_walks_own_line`:
+    /// the bind's line at its own site, pinned elsewhere), and every message recorded under the rule with
+    /// its flag.
+    type Seen = (Status, Vec<String>, Vec<(bool, String)>);
+    fn run(rules: &str, doc: &str, rule_name: &str, needle: &str) -> Result<Seen> {
+        let rules_file = RulesFile::try_from(rules)?;
+        let mut root = root_scope(&rules_file, Rc::new(PathAwareValue::try_from(doc)?));
+        eval_rules_file(&rules_file, &mut root, None)?;
+        let lines: Vec<String> = without_the_refused_walks_line(refused_read_lines(&root))
+            .into_iter()
+            .filter(|line| line.contains(needle))
+            .collect();
+        let top = root.reset_recorder().extract();
+        let (status, record) = rule_record(&top, rule_name);
+        let mut messages = Vec::new();
+        recorded_messages_with_kind(record, &mut messages);
+        Ok((status, lines, messages))
+    }
+    /// The FILE's status for `rules` over `doc` under `measurement` (the root records nothing under a
+    /// measurement, so the file's status is the one answer both readings give).
+    fn file_status(rules: &str, doc: &str, measurement: Measurement) -> Result<Status> {
+        let rules_file = RulesFile::try_from(rules)?;
+        let mut root = root_scope(&rules_file, Rc::new(PathAwareValue::try_from(doc)?));
+        root.set_measurement(measurement);
+        let status = eval_rules_file(&rules_file, &mut root, None)?;
+        root.set_measurement(Measurement::Off);
+        Ok(status)
+    }
+    /// Whether a record under the rule is a fail-closed `not`'s OVER the rule `negated` (its message names
+    /// that rule, `the negated rule [<negated>]`, so a nested reference's own fail-closed record inside the
+    /// referencing rule's tree is never read as this rule's), and reads as its basis says: with `named` a
+    /// refused read, the record is flagged a refusal and its message names that read; with none (an
+    /// undecidable that is no refusal, a spent regex budget, a type the operator cannot read), the record
+    /// is NOT flagged and its message says where the undecided reads are reported.
+    fn fail_closed_record(messages: &[(bool, String)], negated: &str, named: Option<&str>) -> bool {
+        let subject = format!("the negated rule [{negated}]");
+        messages.iter().any(|(refusal, message)| {
+            message.contains(&subject)
+                && message.contains(FAILED_CLOSED_RECORD)
+                && match named {
+                    Some(read) => *refusal && message.contains(read),
+                    None => !*refusal && message.contains("reported where the rule met them"),
+                }
+        })
+    }
+    /// Whether NO record under the rule is a fail-closed `not`'s, whatever it names: the negative controls'
+    /// reading (a decided no inverted writes none at all, not merely none naming the refusal).
+    fn no_fail_closed_record(messages: &[(bool, String)]) -> bool {
+        !messages
+            .iter()
+            .any(|(_, message)| message.contains(FAILED_CLOSED_RECORD))
+    }
+    const PASSED_BY_NEGATION: &str = "passed by the negation of a rule that failed";
+    let check = |body: &str| gate_role_block("rule check", &gate_role_refused_binds(), body);
+    let mut cells = CellFailures::default();
+
+    // The structural rows: a conjunction, a disjunction and a `some` block over the two kinds of FAIL,
+    // each with the lines it writes: a PASS writes the refused entry as passed by the negation where the
+    // body met one, a fail-closed FAIL writes none.
+    let refused = "some %y NOT IN %m";
+    let decided = "Maps.Nope exists";
+    for (label, body, expected, lines_expected) in [
+        ("A1", format!("{refused}\n{decided}"), Status::PASS, 1),
+        ("A2", format!("{decided}\n{refused}"), Status::PASS, 1),
+        ("O1", format!("{refused} or {decided}"), Status::FAIL, 0),
+        ("O2", format!("{decided} or {refused}"), Status::FAIL, 0),
+        (
+            "S1",
+            format!(
+                "some Items.* {{\n when Name == 'n1' {{ {decided} }}\n when Name == 'n2' {{ {refused} }} }}"
+            ),
+            Status::FAIL,
+            0,
+        ),
+        ("S2", format!("some Items.* {{ {decided} }}"), Status::PASS, 0),
+        ("S3", format!("some Items.* {{ {refused} }}"), Status::FAIL, 0),
+    ] {
+        let (status, lines, messages) = run(
+            &format!("{}\nrule main {{ not check }}", check(&body)),
+            &document_two,
+            "main",
+            "",
+        )?;
+        cells.check_with(
+            &format!("({label}) `rule main {{ not check }}` over a `check` whose body is `{}`: {expected:?}, {lines_expected} line(s) (a decided no inverted, its refused entry written \"{PASSED_BY_NEGATION}\" and no fail-closed record at all; or failed closed with the record over `check` naming the own-key refusal and no line)", body.replace('\n', "  ")),
+            (expected, lines_expected, true, true),
+            (
+                status,
+                lines.len(),
+                lines.iter().all(|line| {
+                    line.contains(PASSED_BY_NEGATION) && line.contains(THE_OWN_KEY_REFUSAL)
+                }),
+                if expected == Status::FAIL {
+                    fail_closed_record(&messages, "check", Some(THE_OWN_KEY_REFUSAL))
+                } else {
+                    no_fail_closed_record(&messages)
+                },
+            ),
+            || format!("the lines read: {lines:?}; the messages read: {messages:?}"),
+        );
+    }
+
+    // (M1, M2) The basis under a measurement, where the absorbed frames note nothing.
+    let parameterized = gate_role_block("rule check(p)", &gate_role_refused_binds(), refused);
+    for (label, rules) in [
+        (
+            "M1",
+            format!("{parameterized}\nrule main {{ not check(1) }}"),
+        ),
+        (
+            "M2",
+            format!("{parameterized}\nrule r when not check(1) {GATE_ROLE_BODY}"),
+        ),
+    ] {
+        let real = file_status(&rules, &document_two, Measurement::Off)?;
+        let under_measurement = file_status(&rules, &document_two, Measurement::WithoutUnresolved)?;
+        cells.check(
+            &format!("({label}) `{}`: the file's status under the measurement equals the real run's, FAIL both", rules.lines().last().unwrap_or_default()),
+            (Status::FAIL, Status::FAIL),
+            (real, under_measurement),
+        );
+    }
+
+    // (G1) The gate role: undecided, so the rule fails closed on its condition.
+    let (status, _, messages) = run(
+        &format!("{parameterized}\nrule r when not check(1) {GATE_ROLE_BODY}"),
+        &document_two,
+        "r",
+        "",
+    )?;
+    let label = "G1";
+    cells.check_with(
+        &format!("({label}) `rule r when not check(1) {{ .. }}` over the refusal-only `check`: `r` FAILs closed on its condition, with the condition's own sentence (the rule's own raise, in the gate role, reaches the reference before any negation)"),
+        (Status::FAIL, true),
+        (
+            status,
+            messages.iter().any(|(_, message)| {
+                message.contains("The rule's condition could not be evaluated")
+            }),
+        ),
+        || format!("the messages read: {messages:?}"),
+    );
+
+    // (N1) A condition decided by a plain no beside the refused reference: not applicable, and no empty
+    // line.
+    let (status, lines, _) = run(
+        &format!(
+            "{}\nrule r when Maps.Nope exists check {GATE_ROLE_BODY}",
+            check(refused)
+        ),
+        &document_two,
+        "r",
+        "",
+    )?;
+    let label = "N1";
+    cells.check_with(
+        &format!("({label}) `rule r when Maps.Nope exists check {{ .. }}`: `r` not applicable, and every refused-read line written has a clause part"),
+        (Status::SKIP, true),
+        (
+            status,
+            lines
+                .iter()
+                .all(|line| clause_part(line).is_some_and(|clause| !clause.is_empty())),
+        ),
+        || format!("the lines read: {lines:?}"),
+    );
+
+    // (D1) A passing disjunct decides past the fail-closed `not` as past any decided FAIL, in both
+    // spellings of the reference (the parameterized rule never runs at the top level, so the call's frame
+    // is the one writer).
+    let label = "D1";
+    for (spelling, rules) in [
+        (
+            "named",
+            format!(
+                "{}\nrule main {{ not check or Maps exists }}",
+                check(refused)
+            ),
+        ),
+        (
+            "parameterized",
+            format!("{parameterized}\nrule main {{ not check(1) or Maps exists }}"),
+        ),
+    ] {
+        let (status, lines, _) = run(&rules, &document_two, "main", "")?;
+        cells.check_with(
+            &format!("({label}, {spelling}) `{}`: PASS, exactly ONE line, at `check`'s clause, \"{BY_A_SIBLING_CLAUSE}\" naming the own-key refusal, no \"failed closed\" phrase", rules.lines().last().unwrap_or_default()),
+            (Status::PASS, 1, true, false),
+            (
+                status,
+                lines.len(),
+                lines.iter().all(|line| {
+                    line.contains(BY_A_SIBLING_CLAUSE) && line.contains(THE_OWN_KEY_REFUSAL)
+                }),
+                lines.iter().any(|line| line.contains("failed closed")),
+            ),
+            || format!("the lines read: {lines:?}"),
+        );
+    }
+
+    // The strict sites that fail closed on an undecidable without noting a refusal, each under `not`. Each
+    // row names the rule its `not` negates (`main`'s record is read for THAT rule's fail-closed record, so
+    // `inner`'s own record nested under `main` in the double-negation rows is not mistaken for `main`'s)
+    // and what the record names: the block or key arm's own-key refusal with its remedy, the own-key
+    // refusal of the gate fixtures' `%y` (`Sub[*][ s | R1 !exists ]`), or no read at all for an undecidable
+    // that is no refusal (a spent regex budget, a type the operator cannot read); the negative controls
+    // (B3, L2) name nothing, since no fail-closed record at all is expected of a decided no inverted. None
+    // of these sites notes a refused read, so no row writes a refused-read line.
+    for (label, rules, doc, expected, negated, named) in [
+        (
+            "B1",
+            format!("{}\nrule main {{ not check }}", check("%m { cpu exists }")),
+            document_two.clone(),
+            Status::FAIL,
+            "check",
+            None,
+        ),
+        (
+            "B2",
+            "rule check { Resources.*.Cfg[*] { Limits exists } }\nrule main { not check }".to_string(),
+            ONE_AMBIGUOUS_CFG.to_string(),
+            Status::FAIL,
+            "check",
+            Some(THE_BLOCK_ARM_REMEDY),
+        ),
+        (
+            "B3",
+            "rule check { Resources.*.Cfg[*] { Limits exists  Nope exists } }\nrule main { not check }"
+                .to_string(),
+            AMBIGUOUS_BESIDE_A_DECIDED_SIBLING.to_string(),
+            Status::PASS,
+            "check",
+            None,
+        ),
+        (
+            "B4",
+            "rule check { Resources.*.Cfg[*].Limits { cpu exists } }\nrule main { not check }"
+                .to_string(),
+            ONE_AMBIGUOUS_CFG.to_string(),
+            Status::FAIL,
+            "check",
+            Some(THE_BLOCK_ARM_REMEDY),
+        ),
+        (
+            "L1",
+            "rule check { let w = Resources.R1.Cfg[*].Limits\n some %w NOT IN ['x'] }\nrule main { not check }"
+                .to_string(),
+            ONE_AMBIGUOUS_CFG.to_string(),
+            Status::FAIL,
+            "check",
+            Some(THE_BLOCK_ARM_REMEDY),
+        ),
+        (
+            "L2",
+            "rule check { let w = Resources.R2.Cfg.Tier\n some %w NOT IN ['gold'] }\nrule main { not check }"
+                .to_string(),
+            AMBIGUOUS_BESIDE_A_DECIDED_SIBLING.to_string(),
+            Status::PASS,
+            "check",
+            None,
+        ),
+        // (X1, X2) A double negation: the `not`'s own FAIL carries the basis on, so a second `not` over it
+        // fails closed too, in both spellings; `main`'s record is the one over `inner`.
+        (
+            "X1",
+            format!(
+                "{}\nrule inner {{ not check }}\nrule main {{ not inner }}",
+                check(refused)
+            ),
+            document_two.clone(),
+            Status::FAIL,
+            "inner",
+            Some(THE_OWN_KEY_REFUSAL),
+        ),
+        (
+            "X2",
+            format!("{parameterized}\nrule inner {{ not check(1) }}\nrule main {{ not inner }}"),
+            document_two.clone(),
+            Status::FAIL,
+            "inner",
+            Some(THE_OWN_KEY_REFUSAL),
+        ),
+        // (C1) A rule's own `when` raised on a refused read, failed closed in the strict role.
+        (
+            "C1",
+            "rule check when Resources.*.Cfg[*].Limits exists { Resources exists }\nrule main { not check }"
+                .to_string(),
+            ONE_AMBIGUOUS_CFG.to_string(),
+            Status::FAIL,
+            "check",
+            Some(THE_BLOCK_ARM_REMEDY),
+        ),
+        // (C2) A block body's `when` condition raised on the refused comparison beside a passing sibling,
+        // over the one-entry document (a second entry's decided no would decide the every-entry block).
+        (
+            "C2",
+            format!(
+                "{}\nrule main {{ not check }}",
+                check("Items.* {\n when some %y NOT IN %m { Name exists }\n Name == 'n1' }")
+            ),
+            document.clone(),
+            Status::FAIL,
+            "check",
+            Some(THE_OWN_KEY_REFUSAL),
+        ),
+        // (U1) A strict unary clause on a type the operator has no answer for (`empty` over a number): an
+        // undecidable that is no refusal, so the record is not flagged and names no read.
+        (
+            "U1",
+            format!("{}\nrule main {{ not check }}", check("Maps.M.PROD empty")),
+            document_two.clone(),
+            Status::FAIL,
+            "check",
+            None,
+        ),
+        // (U2, U3) A comparison whose every pair is undecided against the budget marker, under
+        // `match_all` (decided by its FAIL statuses, no raise) and under `some` (raised and failed closed):
+        // both rest on an undecidable that is no refusal.
+        (
+            "U2",
+            format!("{}\nrule main {{ not check }}", check("Items.*.Name IN %m")),
+            document_two.clone(),
+            Status::FAIL,
+            "check",
+            None,
+        ),
+        (
+            "U3",
+            format!("{}\nrule main {{ not check }}", check("some Items.*.Name IN %m")),
+            document_two.clone(),
+            Status::FAIL,
+            "check",
+            None,
+        ),
+    ] {
+        let (status, lines, messages) = run(&rules, &doc, "main", "")?;
+        cells.check_with(
+            &format!("({label}) `{}`: {expected:?}, no refused-read line, and the record over `{negated}` as its basis says (failed closed, flagged and naming the read where one stands behind the FAIL, unflagged and naming none where none does; no fail-closed record at all where a decided no was inverted)", rules.replace('\n', "  ")),
+            (expected, true, true),
+            (
+                status,
+                lines.is_empty(),
+                if expected == Status::FAIL {
+                    fail_closed_record(&messages, negated, named)
+                } else {
+                    no_fail_closed_record(&messages)
+                },
+            ),
+            || format!("the lines read: {lines:?}; the messages read: {messages:?}"),
+        );
+    }
+    cells.assert_all_agreed();
+    Ok(())
+}
+
+/// `FailBasis` folds as the conjunction and disjunction logic says, and `Judged` carries a basis on a FAIL
+/// alone: `and` is decided when either side is (`AND(no, unknown)` is `no`) and joins two undecidables'
+/// reads; `or` is decided only when both are, keeps the undecidable side's reads otherwise, and joins two
+/// undecidables' reads; a joined or built basis holds each read once, in the order met; an undecidable with
+/// no read rests on no refusal (a spent regex budget), one with a read does; `Judged::decided` and
+/// `Judged::folded` name `Decided` for a FAIL no branch gave a basis, and no PASS or SKIP carries one.
+#[test]
+fn a_fail_basis_folds_as_the_conjunction_and_disjunction_logic_says() {
+    use crate::rules::{FailBasis, Judged};
+    let reads =
+        |texts: &[&str]| FailBasis::undecidable(texts.iter().map(|t| t.to_string()).collect());
+    let a = || reads(&["a", "b"]);
+    let b = || reads(&["b", "c"]);
+    let mut cells = CellFailures::default();
+    cells.check(
+        "and: a decided no beside an undecidable is a decided no, in either order",
+        (FailBasis::Decided, FailBasis::Decided),
+        (FailBasis::Decided.and(a()), a().and(FailBasis::Decided)),
+    );
+    cells.check(
+        "and: two undecidables join their reads, each once, in the order met",
+        (reads(&["a", "b", "c"]), reads(&["b", "c", "a"])),
+        (a().and(b()), b().and(a())),
+    );
+    cells.check(
+        "or: decided only when both sides are",
+        FailBasis::Decided,
+        FailBasis::Decided.or(FailBasis::Decided),
+    );
+    cells.check(
+        "or: an undecidable beside a decided no keeps the undecidable's reads, in either order",
+        (a(), a()),
+        (FailBasis::Decided.or(a()), a().or(FailBasis::Decided)),
+    );
+    cells.check(
+        "or: two undecidables join their reads, each once, in the order met",
+        (reads(&["a", "b", "c"]), reads(&["b", "c", "a"])),
+        (a().or(b()), b().or(a())),
+    );
+    cells.check(
+        "undecidable: a repeated read is kept once, at its first position",
+        reads(&["x", "y"]),
+        reads(&["x", "y", "x", "y"]),
+    );
+    cells.check(
+        "rests_on_a_refusal: a decided no and a read-less undecidable rest on none, an undecidable with a read does; refused_reads answers the reads",
+        (false, false, true, vec!["a".to_string(), "b".to_string()]),
+        (
+            FailBasis::Decided.rests_on_a_refusal(),
+            reads(&[]).rests_on_a_refusal(),
+            a().rests_on_a_refusal(),
+            a().refused_texts(),
+        ),
+    );
+    // A read's token travels with it through every fold: a text met first with no token takes a later
+    // token for the same text, and a text met first with a token keeps it.
+    let tokened = |text: &str, count: u64| {
+        FailBasis::undecidable_reads(vec![(
+            text.to_string(),
+            Some(crate::rules::errors::RefusalToken::minted(count)),
+        )])
+    };
+    cells.check(
+        "tokens: kept through and/or, a later token fills a token-less read of the same text, and a tokened read keeps its own",
+        (
+            vec![Some(crate::rules::errors::RefusalToken::minted(3))],
+            vec![Some(crate::rules::errors::RefusalToken::minted(3))],
+            vec![
+                Some(crate::rules::errors::RefusalToken::minted(5)),
+                None,
+            ],
+        ),
+        (
+            reads(&["t"])
+                .or(tokened("t", 3))
+                .refused_reads()
+                .iter()
+                .map(|(_, token)| *token)
+                .collect::<Vec<_>>(),
+            tokened("t", 3)
+                .and(tokened("t", 9))
+                .refused_reads()
+                .iter()
+                .map(|(_, token)| *token)
+                .collect::<Vec<_>>(),
+            tokened("t", 5)
+                .or(reads(&["u"]))
+                .refused_reads()
+                .iter()
+                .map(|(_, token)| *token)
+                .collect::<Vec<_>>(),
+        ),
+    );
+    cells.check(
+        "Judged: decided and folded name a decided no for a FAIL no branch gave a basis, carry the folded basis otherwise, and give a PASS or a SKIP none",
+        (
+            Judged::Fail(FailBasis::Decided),
+            Judged::Fail(FailBasis::Decided),
+            Judged::Fail(a()),
+            Judged::Pass,
+            Judged::Skip,
+            Judged::Pass,
+            Judged::Skip,
+            Status::FAIL,
+            Status::PASS,
+        ),
+        (
+            Judged::decided(Status::FAIL),
+            Judged::folded(Status::FAIL, None),
+            Judged::folded(Status::FAIL, Some(a())),
+            Judged::folded(Status::PASS, Some(a())),
+            Judged::folded(Status::SKIP, Some(a())),
+            Judged::decided(Status::PASS),
+            Judged::decided(Status::SKIP),
+            Judged::Fail(a()).status(),
+            Judged::Pass.status(),
+        ),
+    );
+    cells.assert_all_agreed();
+}
+
+/// The one renderer of a `when`'s conditions (`when_block_text`) and of a type block's head
+/// (`type_block_as_written`) spell them as the grammar does: `when` and each condition as the evaluator
+/// renders a condition (`when_clause_text`), the disjuncts of a conjunction joined by ` or `, the
+/// conjunctions by ONE space (`when a or b c`; the renderer this one replaced wrote two), and a type block
+/// by its name alone or its name and that `when` text. Rows: "W2" a `when` block of two conjunctions, the
+/// first a disjunction; "TW" a type block with a `when` of two conjunctions; "T" a type block with no `when`.
+#[test]
+fn a_when_or_type_block_head_renders_its_conditions_with_one_space_between_conjunctions(
+) -> Result<()> {
+    let rules_file = RulesFile::try_from(
+        // A rule reference as a condition ends its conjunction at a line break, `or`, a message, a
+        // comment or a brace (`rule_clause`'s peek set: `not check Size > 1` on one line is a parse
+        // error naming the stray `Size`), so the reference and the call each stand on their own line
+        // and the comparison follows on the next; the renderer joins the two conjunctions with one
+        // space whatever separated them in the source.
+        "rule r {\n when Tags exists or Size > 1 Name !empty { Name exists }\n AWS::SQS::Queue when Properties.Tags exists Properties.Name !empty { Properties exists }\n AWS::S3::Bucket { Properties exists }\n when not check\n Size > 1 { Name exists }\n when check(1)\n Size > 1 { Name exists } }",
+    )?;
+    let clauses = &rules_file.guard_rules[0].block.conjunctions;
+    let condition_texts = |conditions: &WhenConditions<'_>| -> Vec<Vec<String>> {
+        conditions
+            .iter()
+            .map(|disjunction| disjunction.iter().map(when_clause_text).collect())
+            .collect()
+    };
+    let mut cells = CellFailures::default();
+    let (when_text, parts) = match clauses[0].first() {
+        Some(RuleClause::WhenBlock(conditions, _)) => {
+            (when_block_text(conditions), condition_texts(conditions))
+        }
+        other => panic!(
+            "the first clause is a `when` block of two conjunctions, read {:?}",
+            other
+        ),
+    };
+    let label = "W2";
+    cells.check_with(
+        &format!("({label}) a `when` block of two conjunctions, the first a disjunction: `when <a> or <b> <c>`, each condition as the condition renderer spells it, ONE space between the conjunctions and no double space anywhere; the body is no part of the name"),
+        (
+            format!("when {} or {} {}", parts[0][0], parts[0][1], parts[1][0]),
+            false,
+            false,
+        ),
+        (
+            when_text.clone(),
+            when_text.contains("  "),
+            when_text.contains("Name exists }"),
+        ),
+        || format!("the conditions rendered: {parts:?}"),
+    );
+    let (type_text, parts) = match clauses[1].first() {
+        Some(RuleClause::TypeBlock(type_block)) => (
+            type_block_as_written(type_block),
+            type_block
+                .conditions
+                .as_ref()
+                .map(condition_texts)
+                .unwrap_or_default(),
+        ),
+        other => panic!(
+            "the second clause is a type block with a `when`, read {:?}",
+            other
+        ),
+    };
+    let label = "TW";
+    cells.check_with(
+        &format!("({label}) a type block with a `when` of two conjunctions: its name, one space, and the same `when` text"),
+        format!("AWS::SQS::Queue when {} {}", parts[0][0], parts[1][0]),
+        type_text,
+        || format!("the conditions rendered: {parts:?}"),
+    );
+    let type_text = match clauses[2].first() {
+        Some(RuleClause::TypeBlock(type_block)) => type_block_as_written(type_block),
+        other => panic!(
+            "the third clause is a type block with no `when`, read {:?}",
+            other
+        ),
+    };
+    let label = "T";
+    cells.check(
+        &format!("({label}) a type block with no `when`: its name alone"),
+        "AWS::S3::Bucket".to_string(),
+        type_text,
+    );
+    // (N, P) A negated reference and a call as conditions: the one renderer spells them `not check` (the
+    // `not` kept) and `check(1)` (name and arguments), in the entry a condition nets at its own position
+    // and in the enclosing block's name alike.
+    for (label, index, reference_expected) in [("N", 3, "not check"), ("P", 4, "check(1)")] {
+        let (when_text, conditions) = match clauses[index].first() {
+            Some(RuleClause::WhenBlock(conditions, _)) => (when_block_text(conditions), conditions),
+            other => panic!(
+                "the clause at {} is a `when` block over a reference, read {:?}",
+                index, other
+            ),
+        };
+        let parts: Vec<String> = conditions.iter().flatten().map(when_clause_text).collect();
+        cells.check_with(
+            &format!("({label}) `when {reference_expected} Size > 1`: the condition renderer spells the reference `{reference_expected}`, and the block's name is `when` plus the conditions it spells, one space apart"),
+            (
+                reference_expected.to_string(),
+                format!("when {} {}", parts[0], parts[1]),
+            ),
+            (parts[0].clone(), when_text),
+            || format!("the conditions rendered: {parts:?}"),
+        );
+    }
+    cells.assert_all_agreed();
+    Ok(())
+}
+
+/// A block body run over the empty selection a one-object filter left, and refused there, FAILs on a basis
+/// chosen by ONE rule in every role: the body's decided no holds under the reading that kept an element
+/// and not under the reading that kept none, so the block's FAIL is DECIDED exactly when its judgement
+/// over the sibling values alone equals its judgement over the siblings plus that FAIL, status and basis
+/// (`AND(no, unknown)` is `no` then), and UNDECIDABLE on the block's own read otherwise (`FailBasis::or`,
+/// every read named, and `not` over the rule fails closed). Alone, the readings agree only under `not
+/// empty`; beside siblings a `some` agrees unless every sibling skips, every-entry agrees where a sibling
+/// fails on a decided no and disagrees where every sibling passes or where every failure rests on an
+/// undecidable; an undecided sibling (a raise the block holds, a refused selection whose body is
+/// undecidable) agrees with nothing. The gate role also reads FAIL against SKIP as agreement, since both
+/// mean the guard did not hold (alone without `not empty`; either quantifier where every sibling skips).
+/// The block's record is flagged by the block's OWN read,
+/// whatever the body decided beside it. What the body can decide over the refused selection is set by
+/// the reading the engine gives a held key there: a key the object HOLDS (`Effect` over the one-object
+/// statement) is read as NOTHING, exactly as the inline spelling `Statement[*][ Principal == '*' ].Effect
+/// == 'Deny'` reads it, so a clause on it is not applicable and decides nothing, and a `when` in the body
+/// gated on it reads nothing and leaves the value not applicable; a key the object LACKS (`Sid`) is the
+/// refused read. So a body of `Sid exists  Effect == 'Deny'` is undecidable on `Sid` alone (it holds no
+/// decided no for the two readings to agree on), and the siblings decide the value or the block raises.
+/// Over `{ Statement: { Effect: 'Allow', .. } }`, a one-object statement with no `Sid` and no
+/// `Condition`, under `Statement[*][ Principal == '*' ]` (a predicate the pair twin cannot read): "E1" `{
+/// Sid exists  %flag == true }` with `%flag` false and no `not empty`, a body that decided a no on nothing
+/// read from the object: the other reading is SKIP, so `rule main { not check }` FAILS closed naming `Sid`
+/// while the gate reads FAIL against SKIP as the guard not holding (`r` not applicable, one "decided by a
+/// sibling clause" line); "E1k" `{ Sid exists  Effect == 'Deny' }` with no `not empty`: `not check` FAILS
+/// closed naming `Sid`, `r` fails closed on its condition (alone, the undecidable body is the block's
+/// raise), the block's record flagged; "E1nk" the same under `not empty`: the same answers, since `not
+/// empty` gives the readings a decided no to agree on only where the body decided one; "E1i" the inline
+/// chained-filter spelling of E1nk's keys (`[ .. ] !empty`): `main` PASSES and `r` is not applicable, the
+/// chained filter deciding on the held `Effect` (a second filter is refused only when every key it names
+/// is lacking), so the block and chained spellings part here by design; "E2"/"E2n" `{ Sid exists
+/// Condition exists }`, refused reads
+/// alone, with and without `not empty`: `main` FAILS closed naming BOTH reads, `r` fails closed on its
+/// condition, the block's record flagged; "E2i" its inline spelling; "V1" a tags map under a pair-shaped
+/// predicate beside a decided no (`%flag` false) under `not empty`: PASS with one line; "SP"/"SF" the
+/// refused selection beside a sibling value whose body PASSes / FAILs (a map-shaped `Tags` beside a
+/// list-shaped one): the refusal is that value's own undecidable failure and the sibling is evaluated, so
+/// `not check` FAILS closed beside the passing sibling (`r` fails closed on its condition) and PASSES beside
+/// the failing one, whose decided no decides the block (`r` not applicable); "GS" the refused one-object
+/// statement (refused `Sid`; `Effect`, a held key, reads as nothing) beside a passing list statement under
+/// an every-entry block: the body is undecidable, so the value's FAIL rests on the refused read in both
+/// roles (`not check` fails closed naming `Sid`; the gate holds the value as undecided, nothing fails
+/// beside it, so it raises and `r` fails closed on its condition), no refused-read line in either run;
+/// "GSf" the same statements with the list statement FAILING: its decided no decides the every-entry block
+/// past the undecidable value in both roles, `not check` PASSES with the read's line and the gate's
+/// `check` FAILs decided (`r` not applicable), one line carrying both verdicts; "GSsf" the decided-no body
+/// (`Sid exists  %flag == true`) under a `some` block beside a list statement failing on the same clause:
+/// a `some` beside judged siblings agrees unless every sibling skips, so the decided no is a decided FAIL
+/// in both roles, `not check` PASSES with the read's line and the gate's `check` FAILs decided (`r` not
+/// applicable); "GSsfk" GSf under a `some` block: a `some` is decided by a pass alone, and nothing passes,
+/// so the block's FAIL rests on the undecidable value: `not check` fails closed naming `Sid`, the gate
+/// raises and `r` fails closed, no line; "GKk" a `when Effect == 'Allow'` in the body: over the refused
+/// statement the condition reads a held key, nothing, so the value is not applicable, and the Deny-only
+/// list statement skips too: `check` is not applicable, `not check` and `r` with it, no record of the
+/// block's read and no line (the shape of every sibling skipping beside a refused value whose body decided
+/// a no cannot be built over a one-object statement, the row says why); "GKsk" GKk under a `some` block,
+/// the same answers; "GKnk"/"GKsnk" GKk and GKsk under `not empty`: the two values the query selected
+/// skip, so the block is not applicable, not the `not empty` FAIL over no value, and the answers are
+/// GKk's and GKsk's; "GSu" `M` beside an `L` whose nested `Tags[*][ Key == 'Env' ] { Value == 'prod' }`
+/// runs over a map of ONE scalar entry, `{ Env: 'dev' }`, which the pair twin reads as the list `[ { Key:
+/// Env, Value: dev } ]`, a decided no on `Value`: `L`'s FAIL is decided, it decides the every-entry block
+/// past `M`'s undecidable body, `not check` PASSES and `r` is not applicable, one line carrying both runs'
+/// verdicts (the row's earlier reading had `L` failing on a refusal; the twin reading is the engine's
+/// since the pair-shaped filter over a map of scalars took it); "GSr" the same `L` with a map the twin
+/// does not read (`{ Env: 'dev', ENV: { Ref: 'Stage' } }`, a non-scalar entry beside the scalar): the
+/// nested block is refused on `Value`, `L` fails only on that refusal, the undecidable value beside it
+/// agrees with nothing, `not check` fails closed naming BOTH reads (`Sid`, `Value`) and the gate raises
+/// (`r` fails closed), no line in either run; "GKr" two one-object statements beside a skipping sibling,
+/// under a `when` body: `M1` lacks `Effect`, so its `when` reads a refused key and its body is
+/// undecidable; `M2` holds `Effect`, so its `when` reads nothing and the value is not applicable; `not
+/// check` fails closed naming `Effect` (the one refused read) and the gate raises; "GKx" a sibling whose
+/// body raises in the gate role (`Action IN %m` against a budget marker): the siblings are undecided, the
+/// block raises, `r` fails closed with no sibling line, and `not check` fails closed naming `Sid`; "GKd" GKx's
+/// statements beside a sibling that fails on a decided no: the block is decided by it in both roles (`r`
+/// not applicable, `not check` PASS, one line); "GKr2"/"GKr2r" TWO refused selections with no value beside
+/// them, in both map orders (`M1` and `M2` both lack `Sid`; each body decides a no on `%flag == true`):
+/// judged after the loop against no sibling value as a lone selection is, so without the refused value the
+/// block is SKIP: `not check` fails closed naming `Sid` and the gate's `check` FAILs decided (`r` not
+/// applicable) in both orders; "GKr2k"/"GKr2rk" GKr's `when` body over the same two statements: `M2`
+/// reads nothing and is not applicable, `M1` is the one refused selection, `not check` fails closed naming
+/// `Effect` and the gate raises in both orders; "GKek"/"GKenk" `M2` beside `M3`, a one-object statement
+/// whose `Effect: 'Deny'` closes the body's `when`, without and with `not empty`: both read `Effect`, a
+/// held key, as nothing, so neither is refused and the block has no value: it is not applicable (`check`,
+/// `not check` and `r` all not applicable, no record of a read, no line), and under `not empty` it FAILs
+/// for want of a value, a decided no, so `not check` PASSES and `r` is not applicable, no line; "SS" a
+/// `some`
+/// block over the refused selection beside a sibling whose body PASSes: `check` PASSES on the sibling and
+/// the block's refused read is written "passed by a sibling entry that holds", exactly once; "GSs" GS's
+/// statements under a `some` block: `check` PASSES on the list statement in both roles, the gate run leaves
+/// one flagged per-value FAIL record under the block, and its read is one line, worded by both runs as
+/// passed by the sibling entry (the undecidable body is passed past in the gate role as in the strict,
+/// never decided by a clause of its own); "D" the block beside a disjunct that holds (`{ .. } or Statement
+/// exists`): `check` PASSES and
+/// `Sid`'s refused read is written "passed by a sibling clause that holds", exactly once.
+#[test]
+fn a_blocks_refused_read_over_the_empty_selection_is_judged_with_its_bodys_basis() -> Result<()> {
+    const STATEMENT: &str =
+        r#"{ Statement: { Effect: 'Allow', Action: 's3:GetObject', Resource: '*' } }"#;
+    const TAGS: &str = r#"{ Tags: { Env: 'dev', ENV: { Ref: 'Stage' } } }"#;
+    const FAILED_CLOSED_RECORD: &str = "failed only on reads it could not decide";
+    const PASSED_BY_NEGATION: &str = "passed by the negation of a rule that failed";
+    const THE_BLOCKS_RECORD: &str =
+        "The block's body read the empty selection a one-object filter left";
+    type Seen = (Status, Vec<String>, Vec<(bool, String)>);
+    /// Rule `rule_name`'s status, every refused-read line the run wrote, and every message under the rule.
+    fn run(rules: &str, doc: &str, rule_name: &str) -> Result<Seen> {
+        let rules_file = RulesFile::try_from(rules)?;
+        let mut root = root_scope(&rules_file, Rc::new(PathAwareValue::try_from(doc)?));
+        eval_rules_file(&rules_file, &mut root, None)?;
+        let lines = refused_read_lines(&root);
+        let top = root.reset_recorder().extract();
+        let (status, record) = rule_record(&top, rule_name);
+        let mut messages = Vec::new();
+        recorded_messages_with_kind(record, &mut messages);
+        Ok((status, lines, messages))
+    }
+    const PASSED_BY_A_SIBLING: &str = "passed by a sibling clause that holds";
+    const PASSED_BY_A_SIBLING_ENTRY: &str = "passed by a sibling entry that holds";
+    const DECIDED_BY_A_SIBLING_ENTRY: &str = "was decided by a sibling entry's failure";
+    const TWO_STATEMENTS: &str = r#"{ Resources: { M: { Statement: { Effect: 'Allow', Action: '*', Resource: '*' } }, L: { Statement: [ { Principal: '*', Sid: 's', Effect: 'Deny', Action: '*', Resource: '*' } ] } } }"#;
+    const TWO_STATEMENTS_FAILING: &str = r#"{ Resources: { M: { Statement: { Effect: 'Allow', Action: '*', Resource: '*' } }, L: { Statement: [ { Principal: '*', Sid: 's', Effect: 'Allow', Action: '*', Resource: '*' } ] } } }"#;
+    // `L`'s statement carries a map-shaped `Tags` of ONE scalar entry: a pair-shaped `Tags[*][ Key ==
+    // 'Env' ] { .. }` in the body reads it through the pair twin, `[ { Key: Env, Value: dev } ]`, so `L`
+    // fails on a DECIDED no (`Value == 'prod'` over `dev`), not on a refusal.
+    const TWO_STATEMENTS_NESTED: &str = r#"{ Resources: { M: { Statement: { Effect: 'Allow', Action: '*', Resource: '*' } }, L: { Statement: [ { Principal: '*', Sid: 's', Effect: 'Deny', Action: '*', Resource: '*', Tags: { Env: 'dev' } } ] } } }"#;
+    // The same `L` with a `Tags` map the twin does not read (a non-scalar entry beside the scalar), so
+    // the nested `Tags[*][ Key == 'Env' ] { .. }` is REFUSED on it and `L` fails only on that refusal.
+    const TWO_STATEMENTS_NESTED_REFUSED: &str = r#"{ Resources: { M: { Statement: { Effect: 'Allow', Action: '*', Resource: '*' } }, L: { Statement: [ { Principal: '*', Sid: 's', Effect: 'Deny', Action: '*', Resource: '*', Tags: { Env: 'dev', ENV: { Ref: 'Stage' } } } ] } } }"#;
+    // Two one-object statements beside the Deny-only list: `M1` without `Effect` (a body gated on
+    // `Effect` reads a refused key and is undecidable over it) and `M2` with `Effect: 'Allow'` (a held
+    // key, read as nothing: that body's `when` closes and the value is not applicable).
+    const TWO_MAPS_AND_A_LIST: &str = r#"{ Resources: { M1: { Statement: { Action: '*', Resource: '*' } }, M2: { Statement: { Effect: 'Allow', Action: '*', Resource: '*' } }, L: { Statement: [ { Principal: '*', Sid: 's', Effect: 'Deny', Action: '*', Resource: '*' } ] } } }"#;
+    // The two one-object statements of TWO_MAPS_AND_A_LIST with no list beside them, `M1` first and `M2`
+    // first; both lack `Sid`, so a body that reads `Sid` is refused on each.
+    const TWO_MAPS: &str = r#"{ Resources: { M1: { Statement: { Action: '*', Resource: '*' } }, M2: { Statement: { Effect: 'Allow', Action: '*', Resource: '*' } } } }"#;
+    const TWO_MAPS_REVERSED: &str = r#"{ Resources: { M2: { Statement: { Effect: 'Allow', Action: '*', Resource: '*' } }, M1: { Statement: { Action: '*', Resource: '*' } } } }"#;
+    // `M2` beside `M3`, a one-object statement whose `Effect: 'Deny'` closes a body gated on `Effect ==
+    // 'Allow'`: `M3`'s discovery reads nothing and the block has no value beside `M2`.
+    const TWO_MAPS_ONE_READ_NOTHING: &str = r#"{ Resources: { M2: { Statement: { Effect: 'Allow', Action: '*', Resource: '*' } }, M3: { Statement: { Effect: 'Deny', Action: '*', Resource: '*' } } } }"#;
+    // GS's two statements beside a map whose one key spends the regular-expression budget of
+    // `keys == /(?!x)((a+)+)b/`, so a rule-level `let m = Maps.M[ keys == /(?!x)((a+)+)b/ ]` binds the
+    // budget marker and `Action IN %m` in a body RAISES in the gate role (the shape the gate-role cells of
+    // this file rest on), while the assertion role fails it closed on an undecidable that is no refusal.
+    const TWO_STATEMENTS_AND_A_BUDGET: &str = r#"{ Resources: { M: { Statement: { Effect: 'Allow', Action: '*', Resource: '*' } }, L: { Statement: [ { Principal: '*', Sid: 's', Effect: 'Deny', Action: '*', Resource: '*' } ] } }, Maps: { M: { 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa': 1 } } }"#;
+    // The same with a third statement `K`, a list statement whose `Effect` is `Allow`: `K` fails on a
+    // decided no beside the raising `L` and the refused `M`.
+    const THREE_STATEMENTS_AND_A_BUDGET: &str = r#"{ Resources: { M: { Statement: { Effect: 'Allow', Action: '*', Resource: '*' } }, K: { Statement: [ { Principal: '*', Sid: 'k', Effect: 'Allow', Action: '*', Resource: '*' } ] }, L: { Statement: [ { Principal: '*', Sid: 's', Effect: 'Deny', Action: '*', Resource: '*' } ] } }, Maps: { M: { 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa': 1 } } }"#;
+    const DECIDED_BY_A_SIBLING_CLAUSE: &str = "was decided by a sibling clause's failure";
+    const TWO_TAGS: &str = r#"{ Resources: { M: { Tags: { Env: 'dev', ENV: { Ref: 'Stage' } } }, L: { Tags: [ { Key: 'Env', Value: 'prod' } ] } } }"#;
+    const TWO_TAGS_FAILING: &str = r#"{ Resources: { M: { Tags: { Env: 'dev', ENV: { Ref: 'Stage' } } }, L: { Tags: [ { Key: 'Env', Value: 'dev' } ] } } }"#;
+    let mut cells = CellFailures::default();
+    // Per row: the `check` rule, the document, the gate body (a clause the document holds), `main`'s
+    // status, `r`'s status, whether `main` holds a fail-closed record over `check`, the reads it names,
+    // the block record's flag (`None` for the inline spelling, which writes no block record), the
+    // refused-read lines the run writes (`None` where the row does not read them) and the phrases every
+    // line carries (one line can carry both runs' verdicts; empty where no line is expected).
+    for (
+        label,
+        check,
+        doc,
+        gate_body,
+        main_expected,
+        gate_expected,
+        fail_closed_expected,
+        reads,
+        block_flag,
+        lines_expected,
+        line_phrases,
+    ) in [
+        // (E1) A lone refused selection whose body decided a NO that does not come from the object (the
+        // refused `Sid` beside `%flag == true` with `%flag` false, as V1 reads it), with no `not empty`: the
+        // other reading of the filter is SKIP. The assertion role reads FAIL against SKIP as a
+        // disagreement (a `not` would answer PASS under one reading and SKIP under the other), so `not
+        // check` fails closed naming `Sid`; as a `when` condition both mean the guard did not hold, so the
+        // gate's `check` FAILs decided, `r` is not applicable and the block writes the read's line once,
+        // "was decided by a sibling clause's failure" (the body's no). Reasoned from the fold; a gate
+        // reading FAIL here would mean the alone agreement for the gate role was lost.
+        (
+            "E1",
+            "let flag = false\nrule check { Statement[*][ Principal == '*' ] { Sid exists\n %flag == true } }",
+            STATEMENT,
+            "Statement exists",
+            Status::FAIL,
+            Status::SKIP,
+            true,
+            &["Sid"][..],
+            Some(true),
+            Some(1),
+            &[DECIDED_BY_A_SIBLING_CLAUSE][..],
+        ),
+        // (E1k) The refused `Sid` beside `Effect`, a key the object HOLDS, which reads as nothing over the
+        // refused selection (the dotted `.Effect == 'Deny'` reads it so): the body is undecidable on `Sid`
+        // alone, so `not check` fails closed naming it and the gate, with no sibling to decide the value,
+        // raises and `r` fails closed on its condition. Reasoned from the engine's reading of a held key;
+        // a gate reading SKIP here would mean the body answered a decided no on `Effect`.
+        (
+            "E1k",
+            "rule check { Statement[*][ Principal == '*' ] { Sid exists\n Effect == 'Deny' } }",
+            STATEMENT,
+            "Statement exists",
+            Status::FAIL,
+            Status::FAIL,
+            true,
+            &["Sid"][..],
+            Some(true),
+            Some(0),
+            &[][..],
+        ),
+        // (E1nk) E1k's body under `not empty`: `not empty` gives the two readings a decided no to agree on
+        // only where the body decided one, and this body decided nothing, so the answers are E1k's. The
+        // chained-filter spelling of the same keys, E1i, decides on the held `Effect` instead (a second
+        // filter is refused only when every key it names is lacking), so the two spellings part here by
+        // design, both failing closed on the block side.
+        (
+            "E1nk",
+            "rule check { Statement[*][ Principal == '*' ] not empty { Sid exists\n Effect == 'Deny' } }",
+            STATEMENT,
+            "Statement exists",
+            Status::FAIL,
+            Status::FAIL,
+            true,
+            &["Sid"][..],
+            Some(true),
+            Some(0),
+            &[][..],
+        ),
+        // (E1i) The inline chained-filter spelling (`!empty` is its `not empty`), judged by the chained
+        // filter's own reading of its keys: `main` PASSES and `r` is not applicable.
+        (
+            "E1i",
+            "rule check { Statement[*][ Principal == '*' ][ Sid exists  Effect == 'Deny' ] !empty }",
+            STATEMENT,
+            "Statement exists",
+            Status::PASS,
+            Status::SKIP,
+            false,
+            &[][..],
+            None,
+            None,
+            &[][..],
+        ),
+        // (E2, E2n, E2i) Refused reads alone: `not check` fails closed naming both, the gate fails closed on
+        // its condition, the block's record is flagged; with and without `not empty`, and inline.
+        (
+            "E2",
+            "rule check { Statement[*][ Principal == '*' ] { Sid exists\n Condition exists } }",
+            STATEMENT,
+            "Statement exists",
+            Status::FAIL,
+            Status::FAIL,
+            true,
+            &["Sid", "Condition"][..],
+            Some(true),
+            Some(0),
+            &[][..],
+        ),
+        (
+            "E2n",
+            "rule check { Statement[*][ Principal == '*' ] not empty { Sid exists\n Condition exists } }",
+            STATEMENT,
+            "Statement exists",
+            Status::FAIL,
+            Status::FAIL,
+            true,
+            &["Sid", "Condition"][..],
+            Some(true),
+            Some(0),
+            &[][..],
+        ),
+        (
+            "E2i",
+            "rule check { Statement[*][ Principal == '*' ][ Sid exists  Condition exists ] !empty }",
+            STATEMENT,
+            "Statement exists",
+            Status::FAIL,
+            Status::FAIL,
+            true,
+            &["Sid", "Condition"][..],
+            None,
+            None,
+            &[][..],
+        ),
+        // (V1) A tags map under a pair-shaped predicate, the refused `Value` read beside a decided no
+        // (`%flag` false), under `not empty`: `not check` PASSES with exactly one refused-read line.
+        (
+            "V1",
+            "let flag = false\nrule check { Tags[*][ Key == 'Env' ] not empty { Value == 'prod'\n %flag == true } }",
+            TAGS,
+            "Tags exists",
+            Status::PASS,
+            Status::SKIP,
+            false,
+            &[][..],
+            Some(true),
+            Some(1),
+            &[PASSED_BY_NEGATION][..],
+        ),
+        // (SP, SF) The refused selection (the map-shaped `Tags` of `M`) beside a sibling value (the
+        // list-shaped `Tags` of `L`) whose body PASSes, then FAILs: the refusal is `M`'s own undecidable
+        // failure and `L` is evaluated as before, so beside the passing sibling the block's FAIL rests on
+        // the refusal (`not check` fails closed, the gate fails closed on its condition) and beside the
+        // failing sibling the sibling's decided no decides the block (`not check` PASSES, `r` not
+        // applicable); the value's record under the block is flagged by the refused read.
+        (
+            "SP",
+            "rule check { Resources.*.Tags[*][ Key == 'Env' ] { Value == 'prod' } }",
+            TWO_TAGS,
+            "Resources exists",
+            Status::FAIL,
+            Status::FAIL,
+            true,
+            &["Value"][..],
+            Some(true),
+            None,
+            &[][..],
+        ),
+        // SF's one line carries both runs' verdicts at the block's position: the assertion run's "passed
+        // by the negation of a rule that failed" and the gate run's "was decided by a sibling entry's
+        // failure" (the gate folded the undecidable value beside the failing sibling, which decided).
+        (
+            "SF",
+            "rule check { Resources.*.Tags[*][ Key == 'Env' ] { Value == 'prod' } }",
+            TWO_TAGS_FAILING,
+            "Resources exists",
+            Status::PASS,
+            Status::SKIP,
+            false,
+            &[][..],
+            Some(true),
+            Some(1),
+            &[PASSED_BY_NEGATION, DECIDED_BY_A_SIBLING_ENTRY][..],
+        ),
+        // (GS) The refused selection (a one-object statement, refused `Sid` beside `Effect`, a held key
+        // read as nothing) beside a sibling list statement whose body PASSes, under an every-entry block:
+        // the body is undecidable, so in BOTH roles the value's FAIL rests on the refused read: `not check`
+        // fails closed naming `Sid`, and the gate holds the value as undecided, no sibling fails beside it,
+        // the block raises and `r` fails closed on its condition (a decided FAIL here let `r` skip at exit
+        // 0 with its assertions unchecked where the assertion role failed closed on the same block).
+        // Neither run writes a refused-read line: the fail-closed `not` acts on the refusal, and the raise
+        // is the gate's own FAIL.
+        (
+            "GS",
+            "rule check { Resources.*.Statement[*][ Principal == '*' ] { Sid exists\n Effect == 'Deny' } }",
+            TWO_STATEMENTS,
+            "Resources exists",
+            Status::FAIL,
+            Status::FAIL,
+            true,
+            &["Sid"][..],
+            Some(true),
+            Some(0),
+            &[][..],
+        ),
+        // (GSf) GS's statements with the list statement FAILING too (`Effect: 'Allow'`): the sibling's
+        // decided no decides the every-entry block past the undecidable value in both roles: `not check`
+        // PASSES and writes the block's read "passed by the negation of a rule that failed"; the gate's
+        // `check` FAILs decided, `r` is not applicable, and the gate writes "was decided by a sibling
+        // entry's failure" for the same read (the sibling entry decided past the undecidable body), one
+        // line carrying both.
+        (
+            "GSf",
+            "rule check { Resources.*.Statement[*][ Principal == '*' ] { Sid exists\n Effect == 'Deny' } }",
+            TWO_STATEMENTS_FAILING,
+            "Resources exists",
+            Status::PASS,
+            Status::SKIP,
+            false,
+            &[][..],
+            Some(true),
+            Some(1),
+            &[PASSED_BY_NEGATION, DECIDED_BY_A_SIBLING_ENTRY][..],
+        ),
+        // (GSsf) The refused selection with a decided-no body (`%flag == true`, false) under a `some` block
+        // beside a list statement whose body FAILs on the same clause: a `some` beside judged siblings
+        // agrees unless every sibling skips, so the decided no is a decided FAIL in both roles, `not check`
+        // PASSES with the read's line and the gate's `check` FAILs decided (`r` not applicable), one line
+        // carrying both verdicts. Reasoned from the fold.
+        (
+            "GSsf",
+            "let flag = false\nrule check { some Resources.*.Statement[*][ Principal == '*' ] { Sid exists\n %flag == true } }",
+            TWO_STATEMENTS_FAILING,
+            "Resources exists",
+            Status::PASS,
+            Status::SKIP,
+            false,
+            &[][..],
+            Some(true),
+            Some(1),
+            &[PASSED_BY_NEGATION, DECIDED_BY_A_SIBLING_CLAUSE][..],
+        ),
+        // (GSsfk) GSf's statements under a `some` block: a `some` is decided by a pass alone, nothing
+        // passes, and the refused value's body is undecidable (no decided no on the held `Effect`), so the
+        // block's FAIL rests on that value's read: `not check` fails closed naming `Sid`, the gate raises
+        // and `r` fails closed on its condition, no line in either run.
+        (
+            "GSsfk",
+            "rule check { some Resources.*.Statement[*][ Principal == '*' ] { Sid exists\n Effect == 'Deny' } }",
+            TWO_STATEMENTS_FAILING,
+            "Resources exists",
+            Status::FAIL,
+            Status::FAIL,
+            true,
+            &["Sid"][..],
+            Some(true),
+            Some(0),
+            &[][..],
+        ),
+        // (GKk) A `when Effect == 'Allow' { Sid exists  Action != '*' }` body: over the refused one-object
+        // statement the condition reads `Effect`, a key the object holds, as nothing, so the condition does
+        // not hold, the body reads nothing further and the value is not applicable (no refused read, no
+        // record of one); the Deny-only list statement does not hold the condition and skips too. Every
+        // value skips, so `check` is not applicable, `not check` and `r` with it, and no line is written.
+        // The earlier reading of this row had the condition DECIDING on the held `Effect`, which the
+        // engine does not do over a refused selection. The shape the old label pinned, every sibling
+        // SKIPPING beside a refused value whose body decided a no, cannot be built over a one-object
+        // statement: a `when` in the body that closes on the list sibling reads a key of the statement,
+        // and over the refused selection a held key closes the `when` on it too while a lacking key is the
+        // refused read, so the value is either not applicable or undecidable, never a decided no beside a
+        // skipping sibling.
+        (
+            "GKk",
+            "rule check { Resources.*.Statement[*][ Principal == '*' ] { when Effect == 'Allow' { Sid exists\n Action != '*' } } }",
+            TWO_STATEMENTS,
+            "Resources exists",
+            Status::SKIP,
+            Status::SKIP,
+            false,
+            &[][..],
+            None,
+            Some(0),
+            &[][..],
+        ),
+        // (GKsk) GKk under a `some` block: the same two values skip, the same answers.
+        (
+            "GKsk",
+            "rule check { some Resources.*.Statement[*][ Principal == '*' ] { when Effect == 'Allow' { Sid exists\n Action != '*' } } }",
+            TWO_STATEMENTS,
+            "Resources exists",
+            Status::SKIP,
+            Status::SKIP,
+            false,
+            &[][..],
+            None,
+            Some(0),
+            &[][..],
+        ),
+        // (GKnk, GKsnk) GKk and GKsk under `not empty`: the query selected two values, both of which skip,
+        // so the block is not applicable (not the `not empty` FAIL over an empty selection, which only a
+        // block with no value at all answers), and the answers are GKk's and GKsk's.
+        (
+            "GKnk",
+            "rule check { Resources.*.Statement[*][ Principal == '*' ] not empty { when Effect == 'Allow' { Sid exists\n Action != '*' } } }",
+            TWO_STATEMENTS,
+            "Resources exists",
+            Status::SKIP,
+            Status::SKIP,
+            false,
+            &[][..],
+            None,
+            Some(0),
+            &[][..],
+        ),
+        (
+            "GKsnk",
+            "rule check { some Resources.*.Statement[*][ Principal == '*' ] not empty { when Effect == 'Allow' { Sid exists\n Action != '*' } } }",
+            TWO_STATEMENTS,
+            "Resources exists",
+            Status::SKIP,
+            Status::SKIP,
+            false,
+            &[][..],
+            None,
+            Some(0),
+            &[][..],
+        ),
+        // (GSu) `M` (undecidable body: `Sid` refused, `Effect` a held key read as nothing, `Tags` a key the
+        // statement lacks) beside an `L` whose nested `Tags[*][ Key == 'Env' ] { Value == 'prod' }` runs
+        // over `{ Env: 'dev' }`, a map of one scalar entry the pair twin reads as `[ { Key: Env, Value:
+        // dev } ]`: `L` FAILs on a decided no (`dev` is not `prod`), the decided no decides the every-entry
+        // block past the undecidable value in both roles, `not check` PASSES and `r` is not applicable,
+        // and `M`'s read is one line carrying both runs' verdicts. The row's earlier reading had `L` fail
+        // on a refusal; the twin is the engine's reading of a pair-shaped filter over a map of scalars.
+        (
+            "GSu",
+            "rule check { Resources.*.Statement[*][ Principal == '*' ] { Sid exists\n Effect == 'Deny'\n Tags[*][ Key == 'Env' ] { Value == 'prod' } } }",
+            TWO_STATEMENTS_NESTED,
+            "Resources exists",
+            Status::PASS,
+            Status::SKIP,
+            false,
+            &[][..],
+            Some(true),
+            Some(1),
+            &[PASSED_BY_NEGATION, DECIDED_BY_A_SIBLING_ENTRY][..],
+        ),
+        // (GSr) The agreement compares BASES: the same `M` beside an `L` whose `Tags` map the twin does
+        // not read (a `{ Ref }` entry beside the scalar), so `L`'s nested block is REFUSED on `Value` and
+        // `L` fails only on that refusal. `M`'s body is undecidable and `L`'s FAIL rests on an undecidable,
+        // so nothing decides the block: `not check` fails closed naming BOTH reads (`Sid`, `Value`); as a
+        // `when` condition `L`'s nested block raises its refusal, the block hands it up with `M`'s record
+        // written beneath it, and `r` fails closed on its condition; no refused-read line in either run.
+        // Reasoned from the engine's reading of the two maps; a `main` PASS here would mean a FAIL that
+        // rests on a refusal was counted as a decided no.
+        (
+            "GSr",
+            "rule check { Resources.*.Statement[*][ Principal == '*' ] { Sid exists\n Effect == 'Deny'\n Tags[*][ Key == 'Env' ] { Value == 'prod' } } }",
+            TWO_STATEMENTS_NESTED_REFUSED,
+            "Resources exists",
+            Status::FAIL,
+            Status::FAIL,
+            true,
+            &["Sid", "Value"][..],
+            Some(true),
+            Some(0),
+            &[][..],
+        ),
+        // (GKr2, GKr2r) TWO refused selections and no value beside them, in both map orders: `M1` and `M2`
+        // both lack `Sid`, so each is refused, and each body decides a NO on `%flag == true` (false). The
+        // two are judged after the loop against the siblings as they stood before either was counted (no
+        // value at all), as a lone selection is: without the refused value the block is SKIP, so the
+        // assertion role reads FAIL against SKIP as a disagreement and `not check` fails closed naming
+        // `Sid`, while the gate reads both as the guard not holding, counts the decided no and `r` is not
+        // applicable, whichever map is read first. The lines are not read here (two selections at one site
+        // write that site's line with a count). Reasoned from the fold; earlier builds of this change
+        // returned before that fold ran, on the first selection judged and then at the exit over an empty
+        // value set, so the second selection was never read.
+        (
+            "GKr2",
+            "let flag = false\nrule check { Resources.*.Statement[*][ Principal == '*' ] { Sid exists\n %flag == true } }",
+            TWO_MAPS,
+            "Resources exists",
+            Status::FAIL,
+            Status::SKIP,
+            true,
+            &["Sid"][..],
+            Some(true),
+            None,
+            &[][..],
+        ),
+        (
+            "GKr2r",
+            "let flag = false\nrule check { Resources.*.Statement[*][ Principal == '*' ] { Sid exists\n %flag == true } }",
+            TWO_MAPS_REVERSED,
+            "Resources exists",
+            Status::FAIL,
+            Status::SKIP,
+            true,
+            &["Sid"][..],
+            Some(true),
+            None,
+            &[][..],
+        ),
+        // (GKr2k, GKr2rk) GKr's two one-object statements under its `when` body with NO list beside them,
+        // in both map orders: `M2` holds `Effect`, so its `when` reads nothing and the value is not
+        // applicable, never refused; `M1` lacks `Effect`, so its `when` reads a refused key and its body is
+        // undecidable. `M1` is then the one refused selection, judged after the loop against no sibling
+        // value as a lone selection is: `not check` fails closed naming `Effect`, the gate raises and `r`
+        // fails closed, whichever map is read first.
+        (
+            "GKr2k",
+            "rule check { Resources.*.Statement[*][ Principal == '*' ] { when Effect == 'Allow' { Sid exists\n Action != '*' } } }",
+            TWO_MAPS,
+            "Resources exists",
+            Status::FAIL,
+            Status::FAIL,
+            true,
+            &["Effect"][..],
+            Some(true),
+            Some(0),
+            &[][..],
+        ),
+        (
+            "GKr2rk",
+            "rule check { Resources.*.Statement[*][ Principal == '*' ] { when Effect == 'Allow' { Sid exists\n Action != '*' } } }",
+            TWO_MAPS_REVERSED,
+            "Resources exists",
+            Status::FAIL,
+            Status::FAIL,
+            true,
+            &["Effect"][..],
+            Some(true),
+            Some(0),
+            &[][..],
+        ),
+        // (GKek, GKenk) `M2` beside `M3`, two one-object statements that both HOLD `Effect`: over each the
+        // body's `when` reads a held key as nothing, so neither selection is refused and the block has no
+        // value at all. Without `not empty` it is not applicable (`check`, `not check` and `r` alike), with
+        // no record of a refused read and no line; under `not empty` it FAILs for want of a value, a
+        // decided no, so `not check` PASSES and `r` is not applicable, again with no record and no line.
+        // The earlier reading of these rows had `M2`'s `when` deciding on the held `Effect`; the shape it
+        // meant, a refused value beside a sibling a closed `when` left as no value, cannot be built here
+        // for the reason GKk gives (a `when` that closes on one statement closes on or refuses the other).
+        (
+            "GKek",
+            "rule check { Resources.*.Statement[*][ Principal == '*' ] { when Effect == 'Allow' { Sid exists\n Action != '*' } } }",
+            TWO_MAPS_ONE_READ_NOTHING,
+            "Resources exists",
+            Status::SKIP,
+            Status::SKIP,
+            false,
+            &[][..],
+            None,
+            Some(0),
+            &[][..],
+        ),
+        (
+            "GKenk",
+            "rule check { Resources.*.Statement[*][ Principal == '*' ] not empty { when Effect == 'Allow' { Sid exists\n Action != '*' } } }",
+            TWO_MAPS_ONE_READ_NOTHING,
+            "Resources exists",
+            Status::PASS,
+            Status::SKIP,
+            false,
+            &[][..],
+            None,
+            Some(0),
+            &[][..],
+        ),
+        // (GKr) `M1`'s body is undecidable (its `when` reads an `Effect` it lacks, the refused read), `M2`
+        // holds `Effect` and is not applicable (a held key reads as nothing), `L` skips. `M1` is the one
+        // refused selection, judged against siblings that decided nothing, so its FAIL rests on its read:
+        // `not check` fails closed naming `Effect`, and the gate raises (`r` fails closed on its
+        // condition, not "not applicable"), no refused-read line in either run.
+        (
+            "GKr",
+            "rule check { Resources.*.Statement[*][ Principal == '*' ] { when Effect == 'Allow' { Sid exists\n Action != '*' } } }",
+            TWO_MAPS_AND_A_LIST,
+            "Resources exists",
+            Status::FAIL,
+            Status::FAIL,
+            true,
+            &["Effect"][..],
+            Some(true),
+            Some(0),
+            &[][..],
+        ),
+        // (GKx) A sibling that RAISES in the gate role: `L`'s body meets `Action IN %m` against the budget
+        // marker a rule-level `let` binds, which the gate holds as the block's undecided reason, so the
+        // siblings are undecided and `M`'s undecidable body (the refused `Sid`; `Effect` a held key read as
+        // nothing) agrees with nothing: the
+        // block raises, `r` fails closed on its condition (not "not applicable" with the raise swallowed)
+        // and no "decided by a sibling" line is written. In the assertion role `L` fails closed on the
+        // marker, an undecidable that is no refusal, so every failure rests on an undecidable, the
+        // readings disagree and `not check` fails closed naming `Sid`. Chosen over an absent let-bound
+        // value (`let allowed = Resources.*.Properties.Allowed`), whose comparison arm this file does not
+        // pin as a raise; the budget marker's raise in a gate is the shape the gate-role cells rest on.
+        (
+            "GKx",
+            "rule check { let m = Maps.M[ keys == /(?!x)((a+)+)b/ ]\n Resources.*.Statement[*][ Principal == '*' ] { Sid exists\n Effect == 'Deny'\n Action IN %m } }",
+            TWO_STATEMENTS_AND_A_BUDGET,
+            "Resources exists",
+            Status::FAIL,
+            Status::FAIL,
+            true,
+            &["Sid"][..],
+            Some(true),
+            Some(0),
+            &[][..],
+        ),
+        // (GKd) GKx's statements beside `K`, a list statement that fails on a decided no (`Effect: 'Allow'`):
+        // the raising `L` leaves the siblings undecided, so `M` rests on its read in the gate, but `K`'s
+        // decided no decides the every-entry block (`AND(no, unknown)` is `no`): no raise, `r` is not
+        // applicable, and `M`'s read is written "was decided by a sibling entry's failure". In the
+        // assertion role `K`'s decided no makes the block's FAIL decided past `M`'s undecidable body, so
+        // `check` FAILs decided and `not check` PASSES with the read's line; one line, both verdicts.
+        (
+            "GKd",
+            "rule check { let m = Maps.M[ keys == /(?!x)((a+)+)b/ ]\n Resources.*.Statement[*][ Principal == '*' ] { Sid exists\n Effect == 'Deny'\n Action IN %m } }",
+            THREE_STATEMENTS_AND_A_BUDGET,
+            "Resources exists",
+            Status::PASS,
+            Status::SKIP,
+            false,
+            &[][..],
+            Some(true),
+            Some(1),
+            &[PASSED_BY_NEGATION, DECIDED_BY_A_SIBLING_ENTRY][..],
+        ),
+        // (SS) A `some` block over the refused selection beside a sibling value whose body PASSes: `check`
+        // PASSES on the sibling (so `not check` is a decided FAIL and the gate opens), and the block's
+        // refused read, a leaf FAIL beside the passing entry, is written as passed by that entry, once.
+        (
+            "SS",
+            "rule check { some Resources.*.Tags[*][ Key == 'Env' ] { Value == 'prod' } }",
+            TWO_TAGS,
+            "Resources exists",
+            Status::FAIL,
+            Status::PASS,
+            false,
+            &[][..],
+            Some(true),
+            Some(1),
+            &[PASSED_BY_A_SIBLING_ENTRY][..],
+        ),
+        // (D) The block beside a disjunct that holds: `check` PASSES (so `not check` is a decided FAIL and
+        // the gate opens) and the block's refused read is written as passed by the sibling clause, once.
+        (
+            "D",
+            "rule check { Statement[*][ Principal == '*' ] { Sid exists\n Effect == 'Deny' } or Statement exists }",
+            STATEMENT,
+            "Statement exists",
+            Status::FAIL,
+            Status::PASS,
+            false,
+            &[][..],
+            Some(true),
+            Some(1),
+            &[PASSED_BY_A_SIBLING][..],
+        ),
+    ] {
+        let rules = format!("{check}\nrule main {{ not check }}\nrule r when check {{ {gate_body} }}");
+        let (main_status, lines, main_messages) = run(&rules, doc, "main")?;
+        let (gate_status, _, _) = run(&rules, doc, "r")?;
+        let fail_closed = main_messages.iter().find(|(_, message)| {
+            message.contains("the negated rule [check]") && message.contains(FAILED_CLOSED_RECORD)
+        });
+        let blocks_record = main_messages
+            .iter()
+            .find(|(_, message)| message.contains(THE_BLOCKS_RECORD));
+        cells.check_with(
+            &format!("({label}) `{}`: `rule main {{ not check }}` {main_expected:?}, `rule r when check {{ .. }}` {gate_expected:?}, main's fail-closed record over `check` exactly where expected ({fail_closed_expected}), flagged and naming {reads:?}, the block's own record flagged by the block's refused read, and {lines_expected:?} refused-read line(s), each carrying {line_phrases:?}", check.replace('\n', " ")),
+            (
+                main_expected,
+                gate_expected,
+                fail_closed_expected,
+                fail_closed_expected,
+                true,
+                block_flag,
+                lines_expected,
+                true,
+            ),
+            (
+                main_status,
+                gate_status,
+                fail_closed.is_some(),
+                fail_closed.is_some_and(|(refusal, _)| *refusal),
+                fail_closed
+                    .map(|(_, message)| reads.iter().all(|read| message.contains(read)))
+                    .unwrap_or(true),
+                blocks_record.map(|(refusal, _)| *refusal),
+                lines_expected.map(|_| lines.len()),
+                lines_expected.is_none()
+                    || lines.iter().all(|line| {
+                        line_phrases.iter().all(|phrase| line.contains(phrase))
+                    }),
+            ),
+            || format!("the lines read: {lines:?}; the messages read: {main_messages:?}"),
+        );
+    }
+    // (GSs) GS's shape under a `some` block: the sibling list statement PASSes, so `check` PASSES on it in
+    // both roles (`not check` a decided FAIL; `r` applies and PASSES). The refused one-object statement's
+    // body is undecidable (`Effect`, a held key, reads as nothing), so the value is passed past by the
+    // sibling in the gate role as in the strict, which leaves ONE flagged `GuardClauseBlockCheck` FAIL
+    // record under the block (no sentence: a gate's per-value records are never rendered, as the undecided
+    // fold's are not), read under `r`. Its refused read is one line at the block's position, worded by
+    // both runs as passed by the sibling entry; no run decided it by a clause of the body (the earlier
+    // reading of this row had the gate run decide the value on `Effect`).
+    let rules = format!(
+        "{}\nrule main {{ not check }}\nrule r when check {{ Resources exists }}",
+        "rule check { some Resources.*.Statement[*][ Principal == '*' ] { Sid exists\n Effect == 'Deny' } }"
+    );
+    let (main_status, lines, _) = run(&rules, TWO_STATEMENTS, "main")?;
+    let rules_file = RulesFile::try_from(rules.as_str())?;
+    let mut root = root_scope(
+        &rules_file,
+        Rc::new(PathAwareValue::try_from(TWO_STATEMENTS)?),
+    );
+    eval_rules_file(&rules_file, &mut root, None)?;
+    let top = root.reset_recorder().extract();
+    let (gate_status, gate_record) = rule_record(&top, "r");
+    let flagged = flagged_failed_block_values(gate_record);
+    // The row's label as a string of its own, so a citation of the case by name resolves to it.
+    let label = "GSs";
+    cells.check_with(
+        &format!("({label}) `rule check {{ some Resources.*.Statement[*][ Principal == '*' ] {{ Sid exists  Effect == 'Deny' }} }}`: `not check` FAIL (decided), `r` PASS, ONE flagged per-value FAIL record under the gate run's block, and ONE refused-read line at the block's position worded by both runs as passed by the sibling entry, by neither as decided by a sibling clause"),
+        (Status::FAIL, Status::PASS, 1, 1, true, false),
+        (
+            main_status,
+            gate_status,
+            flagged,
+            lines.len(),
+            lines
+                .iter()
+                .all(|line| line.contains(PASSED_BY_A_SIBLING_ENTRY)),
+            lines
+                .iter()
+                .all(|line| line.contains(DECIDED_BY_A_SIBLING_CLAUSE)),
+        ),
+        || format!("the lines read: {lines:?}; the gate run's record tree: {gate_record:?}"),
+    );
+    cells.assert_all_agreed();
+    Ok(())
+}
+
+/// How many `GuardClauseBlockCheck` FAIL records flagged a refusal sit under `record`, at any depth: the
+/// per-value record a block leaves for a refused one-object selection beside siblings, in either role
+/// (the gate's carries no sentence, the assertion's does).
+fn flagged_failed_block_values(record: &EventRecord<'_>) -> usize {
+    let own = match &record.container {
+        Some(RecordType::GuardClauseBlockCheck(BlockCheck {
+            status: Status::FAIL,
+            refusal: true,
+            ..
+        })) => 1,
+        _ => 0,
+    };
+    own + record
+        .children
+        .iter()
+        .map(flagged_failed_block_values)
+        .sum::<usize>()
+}
+
+/// The sentence a block records against a refused one-object selection met beside sibling values, in
+/// the assertion role, reaches the structured output: `rule check { Resources.*.Tags[*][ Key == 'Env' ]
+/// { Value == 'prod' } }` over a map-shaped `Tags` beside a list-shaped one (the "SP" shape of the
+/// assertion test) under `-o json` exits at the validation failure code and writes "The block's body read
+/// the empty selection a one-object filter left" exactly once: the refused value's per-value record has no
+/// child to speak for it, so the structured reporter falls back to the record's own message, as it does
+/// for every block-shaped record with none (the same fallback the console summary takes). The read proof
+/// of that record's sentence for the census of recorded explanations
+/// (`every_recorded_explanation_has_a_rendering_path`).
+#[test]
+fn a_refused_values_record_beside_a_sibling_reaches_the_structured_output() -> Result<()> {
+    use crate::commands::reporters::validate::structured::StructuredEvaluator;
+    use crate::commands::validate::{DataFile, OutputFormatType, RuleFileInfo};
+    use crate::utils::writer::WriteBuffer;
+    const TWO_TAGS: &str = r#"{ Resources: { M: { Tags: { Env: 'dev', ENV: { Ref: 'Stage' } } }, L: { Tags: [ { Key: 'Env', Value: 'prod' } ] } } }"#;
+    const THE_BLOCKS_RECORD: &str =
+        "The block's body read the empty selection a one-object filter left";
+    let rules = "rule check { Resources.*.Tags[*][ Key == 'Env' ] { Value == 'prod' } }";
+    let rule_info = [RuleFileInfo {
+        content: rules.to_string(),
+        file_name: "rules.guard".to_string(),
+    }];
+    let data = vec![DataFile {
+        content: TWO_TAGS.to_string(),
+        path_value: PathAwareValue::try_from(TWO_TAGS)?,
+        name: "template.json".to_string(),
+    }];
+    let mut writer = Writer::new_with_err(WriteBuffer::Vec(vec![]), WriteBuffer::Vec(vec![]))?;
+    let mut evaluator = StructuredEvaluator {
+        rule_info: &rule_info,
+        input_params: None,
+        data,
+        output: OutputFormatType::JSON,
+        writer: &mut writer,
+        exit_code: 0,
+    };
+    let exit_code = evaluator.evaluate()?;
+    let output = writer.stripped()?;
+    let mut cells = CellFailures::default();
+    cells.check_with(
+        "(SPj) `rule check { Resources.*.Tags[*][ Key == 'Env' ] { Value == 'prod' } }` over a map-shaped `Tags` beside a list-shaped one, `-o json`: the validation failure code, and the refused value's sentence written exactly once",
+        (crate::commands::FAILURE_STATUS_CODE, 1),
+        (exit_code, output.matches(THE_BLOCKS_RECORD).count()),
+        || format!("the output read: {output}"),
+    );
+    cells.assert_all_agreed();
+    Ok(())
+}
+
+/// The author's `<< >>` message on a reference or a clause travels on the record exactly as the parser
+/// read it, one rule for every writer (the dependent-rule record clones the clause's field; the
+/// fail-closed `not`'s record, the access clause's own block-shaped records and the call's argument
+/// record do the same), and the validate report carries it once. Rows: "WS" a whitespace-only `<<   >>`
+/// on `not check` and on `not check(1)`, whose record field equals the parsed field byte for byte; "J" the
+/// fail-closed `not`'s message in `-o json`, written exactly once beside the refusal sentence; "A" an
+/// access clause whose own query raises (a `let` the function could not convert), `%n == 1 << msg >>`,
+/// whose block-shaped record carries the message into `-o json` once; "Q" an access clause decided over an
+/// empty selection (`Resources[ Type == 'Nope' ] !empty << msg >>`, a filter that kept nothing), once in
+/// `-o json`; "U" an access clause whose comparison raised and failed closed (`some Items.*.Name IN %m
+/// << msg >>` against the budget marker), once; "C" a call whose argument could not be evaluated (the
+/// key arm's own-key refusal over an ambiguous map, `check(Resources.*.Cfg[*].Limits) << msg >>`'s
+/// argument record), once; "SK" a `<< msg >>` reference to a rule that did not apply, asserting ABSENCE:
+/// the SKIP record carries no `custom_message` (the author's text explains a failure) and its sentence is
+/// the rule's skip reason, unchanged.
+#[test]
+fn an_authors_message_travels_on_every_record_whose_clause_carries_one() -> Result<()> {
+    use crate::commands::reporters::validate::structured::StructuredEvaluator;
+    use crate::commands::validate::{DataFile, OutputFormatType, RuleFileInfo};
+    use crate::utils::writer::WriteBuffer;
+    const AUTHORS: &str = "the helper must fail for a reason the template can show";
+    const FAILED_CLOSED_RECORD: &str = "failed only on reads it could not decide";
+    /// The `-o json` output of `validate` over `rules` and `doc`, and its exit code.
+    fn json_output(rules: &str, doc: &str) -> Result<(i32, String)> {
+        let rule_info = [RuleFileInfo {
+            content: rules.to_string(),
+            file_name: "rules.guard".to_string(),
+        }];
+        let data = vec![DataFile {
+            content: doc.to_string(),
+            path_value: PathAwareValue::try_from(doc)?,
+            name: "template.json".to_string(),
+        }];
+        let mut writer = Writer::new_with_err(WriteBuffer::Vec(vec![]), WriteBuffer::Vec(vec![]))?;
+        let mut evaluator = StructuredEvaluator {
+            rule_info: &rule_info,
+            input_params: None,
+            data,
+            output: OutputFormatType::JSON,
+            writer: &mut writer,
+            exit_code: 0,
+        };
+        let exit_code = evaluator.evaluate()?;
+        Ok((exit_code, writer.stripped()?))
+    }
+    /// The parsed `custom_message` of the first clause of `rule main`, by reference spelling.
+    fn parsed_message(rules_file: &RulesFile<'_>) -> Option<String> {
+        let main = rules_file
+            .guard_rules
+            .iter()
+            .find(|rule| rule.rule_name == "main")
+            .expect("`rule main` is in the file");
+        match main.block.conjunctions.first().and_then(|d| d.first()) {
+            Some(RuleClause::Clause(GuardClause::NamedRule(gnc))) => gnc.custom_message.clone(),
+            Some(RuleClause::Clause(GuardClause::ParameterizedNamedRule(prc))) => {
+                prc.named_rule.custom_message.clone()
+            }
+            other => panic!(
+                "`rule main`'s first clause is a reference, read {:?}",
+                other
+            ),
+        }
+    }
+    let (_, document_two) = gate_role_documents();
+    let refused = "some %y NOT IN %m";
+    let mut cells = CellFailures::default();
+    // (WS) Whitespace only, both spellings: the record's field is the parsed field.
+    let label = "WS";
+    for (spelling, header, reference) in [
+        ("named", "rule check", "check"),
+        ("parameterized", "rule check(p)", "check(1)"),
+    ] {
+        let rules = format!(
+            "{}\nrule main {{ not {reference} <<   >> }}",
+            gate_role_block(header, &gate_role_refused_binds(), refused)
+        );
+        let rules_file = RulesFile::try_from(rules.as_str())?;
+        let parsed = parsed_message(&rules_file);
+        let mut root = root_scope(
+            &rules_file,
+            Rc::new(PathAwareValue::try_from(document_two.as_str())?),
+        );
+        eval_rules_file(&rules_file, &mut root, None)?;
+        let top = root.reset_recorder().extract();
+        let (status, record) = rule_record(&top, "main");
+        let recorded = fail_closed_block_message(record);
+        cells.check_with(
+            &format!("({label}, {spelling}) `not {reference} <<   >>`: FAIL closed, and the record's author's message is the parsed field byte for byte (one rule for every writer: no trim, no filter)"),
+            (Status::FAIL, Some(parsed.clone())),
+            (status, recorded),
+            || format!("the parsed field: {parsed:?}"),
+        );
+    }
+    // (J) The fail-closed `not`'s message in `-o json`, once.
+    let label = "J";
+    let rules = format!(
+        "{}\nrule main {{ not check << {AUTHORS} >> }}",
+        gate_role_block("rule check", &gate_role_refused_binds(), refused)
+    );
+    let (exit_code, output) = json_output(&rules, &document_two)?;
+    cells.check_with(
+        &format!("({label}) `rule main {{ not check << .. >> }}` under `-o json`: the validation failure code, the author's text written exactly once, beside the refusal sentence"),
+        (crate::commands::FAILURE_STATUS_CODE, 1, true),
+        (
+            exit_code,
+            output.matches(AUTHORS).count(),
+            output.contains(FAILED_CLOSED_RECORD),
+        ),
+        || format!("the output read: {output}"),
+    );
+    // (A, Q, U, C) The other block-shaped records of a clause that carries a message, each under `-o json`
+    // with the author's text written exactly once: "A" an access clause whose own query raises (a `let`
+    // the function could not convert); "Q" an access clause decided over an empty selection (`!empty` over
+    // a filter that kept nothing); "U" an access clause whose comparison raised and failed closed (`some
+    // .. IN %m` against the budget marker, the one strict shape that raises); "C" a call whose argument
+    // could not be evaluated (the key arm's own-key refusal over an ambiguous map).
+    let one_ambiguous_cfg =
+        r#"{ Resources: { R1: { Cfg: { Limits: { cpu: '1' }, Other: { cpu: '2' } } } } }"#;
+    for (label, rules, doc) in [
+        (
+            "A",
+            format!("rule check {{ let n = parse_int(Resources.R.Name)\n %n == 1 << {AUTHORS} >> }}"),
+            r#"{ Resources: { R: { Name: 'abc' } } }"#.to_string(),
+        ),
+        (
+            "Q",
+            format!("rule check {{ Resources[ Type == 'Nope' ] !empty << {AUTHORS} >> }}"),
+            r#"{ Resources: { R: { Type: 'X' } } }"#.to_string(),
+        ),
+        (
+            "U",
+            gate_role_block(
+                "rule check",
+                &gate_role_refused_binds(),
+                &format!("some Items.*.Name IN %m << {AUTHORS} >>"),
+            ),
+            document_two.clone(),
+        ),
+        (
+            "C",
+            format!(
+                "rule check(p) {{ %p exists }}\nrule main {{ check(Resources.*.Cfg[*].Limits) << {AUTHORS} >> }}"
+            ),
+            one_ambiguous_cfg.to_string(),
+        ),
+    ] {
+        let (exit_code, output) = json_output(&rules, &doc)?;
+        cells.check_with(
+            &format!("({label}) `{}` under `-o json`: the validation failure code and the author's text written exactly once", rules.replace('\n', "  ")),
+            (crate::commands::FAILURE_STATUS_CODE, 1),
+            (exit_code, output.matches(AUTHORS).count()),
+            || format!("the output read: {output}"),
+        );
+    }
+    // (SK) A reference that did not apply keeps its skip reason and takes no author's message: the text
+    // explains a failure, and this record is a SKIP whose sentence is the rule's reason.
+    let label = "SK";
+    let rules = format!(
+        "rule helper when Resources.Nope exists {{ Resources exists }}\nrule main {{ helper << {AUTHORS} >> }}"
+    );
+    let rules_file = RulesFile::try_from(rules.as_str())?;
+    let mut root = root_scope(
+        &rules_file,
+        Rc::new(PathAwareValue::try_from(
+            r#"{ Resources: { R: { Type: 'X' } } }"#,
+        )?),
+    );
+    eval_rules_file(&rules_file, &mut root, None)?;
+    let top = root.reset_recorder().extract();
+    let (status, record) = rule_record(&top, "main");
+    let skip_record = skipped_reference_record(record);
+    cells.check_with(
+        &format!("({label}) `rule main {{ helper << .. >> }}` over a `helper` that did not apply: `main` SKIP, its reference's record the skip reason naming `helper`, with no author's message on it"),
+        (Status::SKIP, Some(None)),
+        (status, skip_record),
+        || format!("the record tree: {top:?}"),
+    );
+    cells.assert_all_agreed();
+    Ok(())
+}
+
+/// A GATE-role block over a refused one-object selection beside a sibling value (the map-shaped `Tags` of
+/// `M`, whose `Value` read the selection refused; the list-shaped `Tags` of `L` beside it), held by a
+/// parameterized rule so the gate role is the only run: the refused value is either RAISED once or
+/// written once by the block's own line, never both, and it leaves exactly one flagged per-value FAIL
+/// record under the block whichever route it took (the gate's per-value records carry no sentence, so
+/// the route is read off `r`'s status and the lines). "GU" a `some` block with an UNDECIDABLE body
+/// (`Value == 'prod'` alone) beside a sibling that FAILs (`L`'s `Value` is `dev`): nothing passes, the
+/// block raises and `r` fails closed on its condition, with no "decided by a sibling" and no "passed by a
+/// sibling" line; "GUd" the same `some` with a DECIDED body (`Value == 'prod'  %flag == true`, `%flag`
+/// false by a rule-level `let`: `AND(unknown, no)` is `no`) beside the failing sibling: `M` counts as a
+/// decided FAIL (the `some`'s verdict is the same with or without it), the `some` FAILs decided, `r` is
+/// not applicable and the read is written once "decided by a sibling clause's failure"; "GUf" GUd's body
+/// with the `let` at file level, the same verdict (an earlier cut of this test expected FAIL of the
+/// decided body, reading it as undecidable: `AND(unknown, no)` is a decided no, as "V1" of the assertion
+/// test says of the same body); "GD" the undecidable `some` beside a sibling that PASSES: `r` applies and
+/// the block's own entry is written once "passed by a sibling entry that holds"; "MF" the undecidable body
+/// under an every-entry block beside the failing sibling: the sibling's decided no decides the block, `r`
+/// is not applicable, the entry is written once "was decided by a sibling entry's failure"; "MO" the
+/// every-entry block as a disjunct beside a passing sibling clause (`{ .. } or Resources exists`) over the
+/// passing document: the block raises, the entry is handed up and written once at the disjunction
+/// "passed by a sibling clause that holds", and `r` applies. Every line counted opens with the block as
+/// written (`some ` first for a `some` block).
+#[test]
+fn a_gate_role_block_over_a_refused_selection_beside_a_sibling_raises_or_writes_its_own_line_once(
+) -> Result<()> {
+    const TWO_TAGS: &str = r#"{ Resources: { M: { Tags: { Env: 'dev', ENV: { Ref: 'Stage' } } }, L: { Tags: [ { Key: 'Env', Value: 'prod' } ] } } }"#;
+    const TWO_TAGS_FAILING: &str = r#"{ Resources: { M: { Tags: { Env: 'dev', ENV: { Ref: 'Stage' } } }, L: { Tags: [ { Key: 'Env', Value: 'dev' } ] } } }"#;
+    const BLOCK_AS_WRITTEN: &str = "Resources.*.Tags[*][ Key == 'Env' ]";
+    const DECIDED_BY_A_SIBLING_ENTRY: &str = "was decided by a sibling entry's failure";
+    const DECIDED_BY_A_SIBLING_CLAUSE: &str = "was decided by a sibling clause's failure";
+    const PASSED_BY_A_SIBLING_ENTRY: &str = "passed by a sibling entry that holds";
+    const PASSED_BY_A_SIBLING_CLAUSE: &str = "passed by a sibling clause that holds";
+    const UNDECIDABLE: &str = "{ Value == 'prod' }";
+    const DECIDED: &str = "{ Value == 'prod'\n %flag == true }";
+    let some_block = format!("some {BLOCK_AS_WRITTEN}");
+    let mut cells = CellFailures::default();
+    // Per row: the text before the gate rule (a file-level `let`, or nothing), the gate rule's body, the
+    // document, `r`'s status, the count of lines carrying each of the four verdict wordings (decided by a
+    // sibling entry, decided by a sibling clause, passed by a sibling entry, passed by a sibling clause),
+    // and the text every counted line's clause part opens with.
+    for (label, prelude, body, doc, status_expected, counts_expected, opens_with) in [
+        (
+            "GU",
+            "",
+            format!("{some_block} {UNDECIDABLE}"),
+            TWO_TAGS_FAILING,
+            Status::FAIL,
+            (0, 0, 0, 0),
+            some_block.as_str(),
+        ),
+        (
+            "GUd",
+            "",
+            format!("let flag = false\n {some_block} {DECIDED}"),
+            TWO_TAGS_FAILING,
+            Status::SKIP,
+            (0, 1, 0, 0),
+            some_block.as_str(),
+        ),
+        (
+            "GUf",
+            "let flag = false\n",
+            format!("{some_block} {DECIDED}"),
+            TWO_TAGS_FAILING,
+            Status::SKIP,
+            (0, 1, 0, 0),
+            some_block.as_str(),
+        ),
+        (
+            "GD",
+            "",
+            format!("{some_block} {UNDECIDABLE}"),
+            TWO_TAGS,
+            Status::PASS,
+            (0, 0, 1, 0),
+            some_block.as_str(),
+        ),
+        (
+            "MF",
+            "",
+            format!("{BLOCK_AS_WRITTEN} {UNDECIDABLE}"),
+            TWO_TAGS_FAILING,
+            Status::SKIP,
+            (1, 0, 0, 0),
+            BLOCK_AS_WRITTEN,
+        ),
+        (
+            "MO",
+            "",
+            format!("{BLOCK_AS_WRITTEN} {UNDECIDABLE} or Resources exists"),
+            TWO_TAGS,
+            Status::PASS,
+            (0, 0, 0, 1),
+            BLOCK_AS_WRITTEN,
+        ),
+    ] {
+        let rules = format!(
+            "{prelude}rule gate(p) {{ {body} }}\nrule r when gate(1) {{ Resources exists }}"
+        );
+        let rules_file = RulesFile::try_from(rules.as_str())?;
+        let mut root = root_scope(&rules_file, Rc::new(PathAwareValue::try_from(doc)?));
+        eval_rules_file(&rules_file, &mut root, None)?;
+        let lines = refused_read_lines(&root);
+        let top = root.reset_recorder().extract();
+        let (status, record) = rule_record(&top, "r");
+        let flagged = flagged_failed_block_values(record);
+        let count = |wording: &str| lines.iter().filter(|line| line.contains(wording)).count();
+        let counts = (
+            count(DECIDED_BY_A_SIBLING_ENTRY),
+            count(DECIDED_BY_A_SIBLING_CLAUSE),
+            count(PASSED_BY_A_SIBLING_ENTRY),
+            count(PASSED_BY_A_SIBLING_CLAUSE),
+        );
+        let total_expected =
+            counts_expected.0 + counts_expected.1 + counts_expected.2 + counts_expected.3;
+        cells.check_with(
+            &format!("({label}) `{}rule gate(p) {{ {} }}` as the gate of `r`: `r` {status_expected:?}, lines (decided by a sibling entry, decided by a sibling clause, passed by a sibling entry, passed by a sibling clause) {counts_expected:?} and no other, each opening with `{opens_with}`, ONE flagged per-value FAIL record under `r`", prelude.replace('\n', " "), body.replace('\n', " ")),
+            (status_expected, counts_expected, total_expected, true, 1),
+            (
+                status,
+                counts,
+                lines.len(),
+                lines
+                    .iter()
+                    .all(|line| clause_part(line).is_some_and(|part| part.starts_with(opens_with))),
+                flagged,
+            ),
+            || format!("the lines read: {lines:?}; the record tree under `r`: {record:?}"),
+        );
+    }
+    cells.assert_all_agreed();
+    Ok(())
+}
+
+/// A block's refused one-object selection kept for the fold after the loop (the map-shaped `Tags` of `M`,
+/// whose `Value` read the selection refused) is SETTLED on every exit the block takes before that fold,
+/// and a body that raises over, or is refused whole over, a selection that refused a read is deferred
+/// whatever shape the body's read took and whichever error its conjunction held first. The gate rows:
+/// "PE" a sibling value's body (`L`'s list-shaped `Tags`) meets a data-dependent error after `M` was
+/// deferred (`let n = parse_int(Value)` over `Value: prod`, a value no converter reads), which the gate
+/// hands up at once as the clause spelling does: `r` fails closed on the raise, and `M`'s per-value record
+/// is written beneath the block, flagged by the refused read, before the block returns (left pending, the
+/// refusal was lost at that exit: no record, no entry for the condition site); "PEo" the same block as the
+/// first disjunct of `.. or Resources exists`: the disjunction holds the block's raise and the second
+/// disjunct decides it, so `r` opens and PASSES, and `M`'s entry, handed into the frame before the block
+/// returned, is written by the disjunction as "passed by a sibling clause that holds", opening with the
+/// block as written, which is how the row reads that the entry reached the condition site (the record
+/// alone cannot say); "HO" the body reads EVERY key the map holds (`{ Env exists  ENV exists }` over
+/// `{ Env, ENV }`), so the selection refuses the body whole (`held_only_refusal`) beside a sibling whose
+/// body FAILs on a decided no (`Env exists` over the pair `{ Key, Value }`): the refused body is kept for
+/// the fold as a raise over a refused selection is, the sibling's decided no decides the every-entry
+/// block, `r` is not applicable, the read is written once "was decided by a sibling entry's failure" and
+/// the per-value record is flagged (returned at once beside the sibling, that body raised the gate where
+/// `{ Value == 'prod' }` over the same shape let the sibling decide); "PO" the clauses of PE's body the
+/// other way round, the converter's error first (`let n = parse_int(Value)  %n == 1  Value == 'prod'`
+/// over `M`, with `%name` bound to `L`'s `Value`, so the converter's error is the body's FIRST held error
+/// and `M`'s refused read of `Value` comes after it): `M` is deferred all the same, since the deferral is
+/// decided by the selection having refused a read and the raise re-minted over the kept text, so `r`
+/// reads as PE does; keyed on the error that arrived, the block exited at once here and the two orders of
+/// one body answered differently; "PEp" and "POp" the same two orders beside a sibling whose body
+/// PASSES (`L`'s `Value` is `1`, so the converter reads it), where `M`'s only error is its refused read
+/// in either order: `r` opens and PASSES, `M`'s record is flagged, and its read is written once "passed by
+/// a sibling entry that holds"; PE and PO, and PEp and POp, are asserted equal to each other besides.
+/// "AF" an earlier value's absorbed refusal survives a later value's plain error: over `A`, whose `Tags`
+/// is a string, the key filter `Props[ keys == Tags[ Key == 'Env' ].Value ]` is refused and `!empty`
+/// raises the undecidable comparison, kept in the block's absorbed entries; over `B`, whose tags resolve
+/// and whose `Props` holds the key, the body passes `!empty` and then meets the converter's error over
+/// `%name`, which the gate hands up at once; the block's `.. or Resources exists` disjunction decides past
+/// the raise, so `r` PASSES and `A`'s refusal is written once "passed by a sibling clause that holds"
+/// opening with the key filter clause (dropped at that exit before, no line was written); "PF" PO's
+/// `%name` body in PE's order, the refused read first and the converter's error after it: PO's result,
+/// so the converter-error shape answers alike both ways as the numeric shape does; "HOp" HO's
+/// refused-whole body under `some` beside a sibling whose items hold `Env` and `ENV`, so its body PASSES:
+/// the pass decides `some`, `r` opens and PASSES, `M`'s record is flagged and its read is written once
+/// "passed by a sibling entry that holds". The strict rows, the
+/// same refused-whole body under `rule check` with `rule main { not check }`, judged by the one fold
+/// both roles share: "HSa" the every-entry block beside `L`'s decided no: `check` FAILs decided (a sibling
+/// that fails decides an every-entry block), `main` PASSES and `M`'s read is written once "passed by the
+/// negation of a rule that failed"; "HSs" the `some` block beside that failing sibling: nothing passes,
+/// `check` FAILs on `M`'s read, `main` fails closed, no line; "HSp" the `some` block beside a sibling
+/// whose list items hold `Env` and `ENV` too, so its body PASSES: `check` PASSES on the sibling (a pass
+/// decides `some`; with the refused value the block could only pass too), `main` is a decided FAIL and
+/// `M`'s read is written once "passed by a sibling entry that holds". Each strict row leaves ONE flagged
+/// per-value record under `check`. The lone selection keeps the block's own raise (row "E2" of
+/// `a_blocks_refused_read_over_the_empty_selection_is_judged_with_its_bodys_basis`). Rows PE and HO have
+/// run green; every other row is reasoned from the code.
+#[test]
+fn a_blocks_pending_refused_selection_is_settled_at_every_exit_in_both_roles() -> Result<()> {
+    const TWO_TAGS: &str = r#"{ Resources: { M: { Tags: { Env: 'dev', ENV: { Ref: 'Stage' } } }, L: { Tags: [ { Key: 'Env', Value: 'prod' } ] } } }"#;
+    const TWO_TAGS_NUMERIC: &str = r#"{ Resources: { M: { Tags: { Env: 'dev', ENV: { Ref: 'Stage' } } }, L: { Tags: [ { Key: 'Env', Value: '1' } ] } } }"#;
+    const TWO_TAGS_L_HOLDING_BOTH: &str = r#"{ Resources: { M: { Tags: { Env: 'dev', ENV: { Ref: 'Stage' } } }, L: { Tags: [ { Key: 'Env', Value: 'prod', Env: 'dev', ENV: 'x' } ] } } }"#;
+    const STRING_TAGS_THEN_A_MAP: &str = r#"{ Resources: { A: { Props: { PROD: 1 }, Tags: 'x' }, B: { Props: { PROD: 1 }, Tags: [ { Key: 'Env', Value: 'PROD' } ] } } }"#;
+    const DECIDED_BY_A_SIBLING_ENTRY: &str = "was decided by a sibling entry's failure";
+    const PASSED_BY_A_SIBLING_CLAUSE: &str = "passed by a sibling clause that holds";
+    const PASSED_BY_A_SIBLING_ENTRY: &str = "passed by a sibling entry that holds";
+    const PASSED_BY_NEGATION: &str = "passed by the negation of a rule that failed";
+    const PE_BODY: &str =
+        "some Resources.*.Tags[*][ Key == 'Env' ] { Value == 'prod'\n let n = parse_int(Value)\n %n == 1 }";
+    const PE_BODY_OR: &str = "some Resources.*.Tags[*][ Key == 'Env' ] { Value == 'prod'\n let n = parse_int(Value)\n %n == 1 } or Resources exists";
+    // PO's converter error comes from a rule-level binding, `%name` over `L`'s `Value`, so its clause
+    // raises the same error over `M` and over `L`, before `M`'s `Value` is read.
+    const PO_PRELUDE: &str = "let name = Resources.L.Tags[*].Value\n ";
+    const PO_BODY: &str =
+        "some Resources.*.Tags[*][ Key == 'Env' ] { let n = parse_int(%name)\n %n == 1\n Value == 'prod' }";
+    const PF_BODY: &str =
+        "some Resources.*.Tags[*][ Key == 'Env' ] { Value == 'prod'\n let n = parse_int(%name)\n %n == 1 }";
+    const HO_BODY: &str = "Resources.*.Tags[*][ Key == 'Env' ] { Env exists\n ENV exists }";
+    const HO_SOME_BODY: &str =
+        "some Resources.*.Tags[*][ Key == 'Env' ] { Env exists\n ENV exists }";
+    const PEP_BODY: &str =
+        "some Resources.*.Tags[*][ Key == 'Env' ] { Value == '1'\n let n = parse_int(Value)\n %n == 1 }";
+    const POP_BODY: &str =
+        "some Resources.*.Tags[*][ Key == 'Env' ] { let n = parse_int(Value)\n %n == 1\n Value == '1' }";
+    const AF_PRELUDE: &str = "let name = Resources.B.Tags[*].Value\n ";
+    const AF_BODY: &str = "Resources.* { Props[ keys == Tags[ Key == 'Env' ].Value ] !empty\n let n = parse_int(%name)\n %n == 1 } or Resources exists";
+    const SOME_BLOCK: &str = "some Resources.*.Tags[*][ Key == 'Env' ]";
+    const EVERY_BLOCK: &str = "Resources.*.Tags[*][ Key == 'Env' ]";
+    const KEY_FILTER_CLAUSE: &str = "Props[ keys == Tags[ Key == 'Env' ].Value ] !empty";
+    let mut cells = CellFailures::default();
+    // Per gate row: what the gate rule's body opens with (a binding, or nothing), the body, the document,
+    // `r`'s status, the flagged per-value FAIL records under `r` where the row reads them, the refused-read
+    // lines where the row reads them (their count and the wording each carries), and the text each line's
+    // clause part opens with (the raising clause as written). What each row saw is kept by label, so the
+    // two clause orders of one body are then asserted equal to each other.
+    type Seen = (Status, usize, usize, Vec<String>);
+    let mut seen: Vec<(&str, Seen)> = Vec::new();
+    for (
+        label,
+        prelude,
+        body,
+        doc,
+        status_expected,
+        flagged_expected,
+        lines_expected,
+        opens_with,
+    ) in [
+        (
+            "PE",
+            "",
+            PE_BODY,
+            TWO_TAGS,
+            Status::FAIL,
+            Some(1),
+            None,
+            SOME_BLOCK,
+        ),
+        (
+            "PEo",
+            "",
+            PE_BODY_OR,
+            TWO_TAGS,
+            Status::PASS,
+            Some(1),
+            Some((1, PASSED_BY_A_SIBLING_CLAUSE)),
+            SOME_BLOCK,
+        ),
+        (
+            "PO",
+            PO_PRELUDE,
+            PO_BODY,
+            TWO_TAGS,
+            Status::FAIL,
+            Some(1),
+            None,
+            SOME_BLOCK,
+        ),
+        (
+            "PF",
+            PO_PRELUDE,
+            PF_BODY,
+            TWO_TAGS,
+            Status::FAIL,
+            Some(1),
+            None,
+            SOME_BLOCK,
+        ),
+        (
+            "HOp",
+            "",
+            HO_SOME_BODY,
+            TWO_TAGS_L_HOLDING_BOTH,
+            Status::PASS,
+            Some(1),
+            Some((1, PASSED_BY_A_SIBLING_ENTRY)),
+            SOME_BLOCK,
+        ),
+        (
+            "PEp",
+            "",
+            PEP_BODY,
+            TWO_TAGS_NUMERIC,
+            Status::PASS,
+            Some(1),
+            Some((1, PASSED_BY_A_SIBLING_ENTRY)),
+            SOME_BLOCK,
+        ),
+        (
+            "POp",
+            "",
+            POP_BODY,
+            TWO_TAGS_NUMERIC,
+            Status::PASS,
+            Some(1),
+            Some((1, PASSED_BY_A_SIBLING_ENTRY)),
+            SOME_BLOCK,
+        ),
+        (
+            "HO",
+            "",
+            HO_BODY,
+            TWO_TAGS,
+            Status::SKIP,
+            Some(1),
+            Some((1, DECIDED_BY_A_SIBLING_ENTRY)),
+            EVERY_BLOCK,
+        ),
+        (
+            "AF",
+            AF_PRELUDE,
+            AF_BODY,
+            STRING_TAGS_THEN_A_MAP,
+            Status::PASS,
+            None,
+            Some((1, PASSED_BY_A_SIBLING_CLAUSE)),
+            KEY_FILTER_CLAUSE,
+        ),
+    ] {
+        let rules = format!(
+            "rule gate(p) {{ {prelude}{body} }}\nrule r when gate(1) {{ Resources exists }}"
+        );
+        let rules_file = RulesFile::try_from(rules.as_str())?;
+        let mut root = root_scope(&rules_file, Rc::new(PathAwareValue::try_from(doc)?));
+        eval_rules_file(&rules_file, &mut root, None)?;
+        let lines = refused_read_lines(&root);
+        let top = root.reset_recorder().extract();
+        let (status, record) = rule_record(&top, "r");
+        let flagged = flagged_failed_block_values(record);
+        cells.check_with(
+            &format!("({label}) `rule gate(p) {{ {}{} }}` as the gate of `r`: `r` {status_expected:?}, {flagged_expected:?} flagged per-value FAIL record(s) under `r`, lines {lines_expected:?}, each opening with `{opens_with}`", prelude.replace('\n', " "), body.replace('\n', " ")),
+            (
+                status_expected,
+                flagged_expected,
+                lines_expected.map(|(count, _)| count),
+                true,
+                true,
+            ),
+            (
+                status,
+                flagged_expected.map(|_| flagged),
+                lines_expected.map(|_| lines.len()),
+                match lines_expected {
+                    Some((_, wording)) => lines.iter().all(|line| line.contains(wording)),
+                    None => true,
+                },
+                lines
+                    .iter()
+                    .all(|line| clause_part(line).is_some_and(|part| part.starts_with(opens_with))),
+            ),
+            || format!("the lines read: {lines:?}; the record tree under `r`: {record:?}"),
+        );
+        // Each line without its clause part (the body as written differs between the two orders):
+        // the verdict wording and the refused read it names are what the orders have to share.
+        let lines_without_their_clause: Vec<String> = lines
+            .iter()
+            .map(|line| match clause_part(line) {
+                Some(part) => line.replacen(part, "<the block>", 1),
+                None => line.clone(),
+            })
+            .collect();
+        seen.push((
+            label,
+            (status, flagged, lines.len(), lines_without_their_clause),
+        ));
+    }
+    // The two orders of one body answer alike, converter's error first or refused read first.
+    for (first, second) in [("PE", "PO"), ("PF", "PO"), ("PEp", "POp")] {
+        let of = |label: &str| {
+            seen.iter()
+                .find(|(seen_label, _)| *seen_label == label)
+                .map(|(_, seen)| seen.clone())
+                .expect("the row ran")
+        };
+        cells.check_with(
+            &format!("({first}/{second}) the two clause orders of one body beside the same sibling: `r`'s status, the flagged records, the lines and their texts apart from the body as written are one"),
+            of(first),
+            of(second),
+            || "the two orders answered differently".to_string(),
+        );
+    }
+    // Per strict row: `check`'s body and the document, `check`'s status, `main`'s (`not check`), the flagged
+    // per-value FAIL records under `check`, and the refused-read lines (count and wording).
+    for (label, body, doc, check_expected, main_expected, lines_expected) in [
+        (
+            "HSa",
+            HO_BODY,
+            TWO_TAGS,
+            Status::FAIL,
+            Status::PASS,
+            Some((1, PASSED_BY_NEGATION)),
+        ),
+        (
+            "HSs",
+            HO_SOME_BODY,
+            TWO_TAGS,
+            Status::FAIL,
+            Status::FAIL,
+            Some((0, "")),
+        ),
+        (
+            "HSp",
+            HO_SOME_BODY,
+            TWO_TAGS_L_HOLDING_BOTH,
+            Status::PASS,
+            Status::FAIL,
+            Some((1, PASSED_BY_A_SIBLING_ENTRY)),
+        ),
+    ] {
+        let rules = format!("rule check {{ {body} }}\nrule main {{ not check }}");
+        let rules_file = RulesFile::try_from(rules.as_str())?;
+        let mut root = root_scope(&rules_file, Rc::new(PathAwareValue::try_from(doc)?));
+        eval_rules_file(&rules_file, &mut root, None)?;
+        let lines = refused_read_lines(&root);
+        let top = root.reset_recorder().extract();
+        let (check_status, check_record) = rule_record(&top, "check");
+        let (main_status, _) = rule_record(&top, "main");
+        let flagged = flagged_failed_block_values(check_record);
+        cells.check_with(
+            &format!("({label}) `rule check {{ {} }}` asserted, with `rule main {{ not check }}`: `check` {check_expected:?}, `main` {main_expected:?}, ONE flagged per-value FAIL record under `check`, lines {lines_expected:?}", body.replace('\n', " ")),
+            (
+                check_expected,
+                main_expected,
+                1,
+                lines_expected.map(|(count, _)| count),
+                true,
+            ),
+            (
+                check_status,
+                main_status,
+                flagged,
+                lines_expected.map(|_| lines.len()),
+                match lines_expected {
+                    Some((_, wording)) => lines.iter().all(|line| line.contains(wording)),
+                    None => true,
+                },
+            ),
+            || format!("the lines read: {lines:?}; the record tree under `check`: {check_record:?}"),
+        );
+    }
+    cells.assert_all_agreed();
+    Ok(())
+}
+
+/// A call or a reference in a rule body whose RULE fails at its own leaf on a refusal (the key arm's own-key
+/// refusal over an ambiguous map, met inside the called body when the lazy argument `%p` resolves at `%p
+/// exists`, or by `Resources.*.Cfg[*].Limits exists` in the referenced rule), decided past by a disjunct
+/// that holds, writes ONE refused-read line at the REFERENCED rule's own clause: the line's clause part is
+/// the inner clause as written, `%p exists` for the call and `Resources.*.Cfg[*].Limits exists` for the
+/// reference, never the call's or the reference's text and never the record's key (`Rule(check@..)`). That
+/// is the one-line-per-referenced-clause design `RootScope::rule_status` states: the rule's leaf FAILs are
+/// re-noted into every reference's frame with their own clause and site, so two references that judge one
+/// leaf FAIL two ways write one line at that clause carrying both verdicts (`frame_entries_decide_by_kind_
+/// and_a_rule_call_runs_in_its_own_frame`, rows "R2" and "R3"). `call_text` names the call only where the
+/// ARGUMENT itself refuses at the call site (`resolve_call_arguments` in `eval_parameterized_rule_call`), a
+/// shape a lazily resolved query argument never takes. An earlier cut of this test expected the call's and
+/// the reference's text here, against those rows and that design; re-pinned to the inner clause. Rows "C"
+/// the call and "R" the reference.
+#[test]
+fn a_body_level_call_decided_past_is_named_at_the_referenced_rules_clause() -> Result<()> {
+    const ONE_AMBIGUOUS_CFG: &str =
+        r#"{ Resources: { R1: { Cfg: { Limits: { cpu: '1' }, Other: { cpu: '2' } } } } }"#;
+    let mut cells = CellFailures::default();
+    for (label, rules, clause_expected) in [
+        (
+            "C",
+            "rule check(p) { %p exists }\nrule main { check(Resources.*.Cfg[*].Limits) or Resources exists }",
+            "%p exists",
+        ),
+        (
+            "R",
+            "rule check { Resources.*.Cfg[*].Limits exists }\nrule main { check or Resources exists }",
+            "Resources.*.Cfg[*].Limits exists",
+        ),
+    ] {
+        let rules_file = RulesFile::try_from(rules)?;
+        let mut root = root_scope(
+            &rules_file,
+            Rc::new(PathAwareValue::try_from(ONE_AMBIGUOUS_CFG)?),
+        );
+        eval_rules_file(&rules_file, &mut root, None)?;
+        let lines = refused_read_lines(&root);
+        let top = root.reset_recorder().extract();
+        let (status, _) = rule_record(&top, "main");
+        cells.check_with(
+            &format!("({label}) `{}` over the ambiguous map: `main` PASS, ONE line whose clause part is `{clause_expected}`, the referenced rule's own clause, passed by the sibling clause", rules.replace('\n', "  ")),
+            (Status::PASS, 1, Some(clause_expected.to_string()), true),
+            (
+                status,
+                lines.len(),
+                lines
+                    .first()
+                    .and_then(|line| clause_part(line).map(str::to_string)),
+                lines
+                    .iter()
+                    .all(|line| line.contains("passed by a sibling clause that holds")),
+            ),
+            || format!("the lines read: {lines:?}"),
+        );
+    }
+    cells.assert_all_agreed();
+    Ok(())
+}
+
+/// The two spellings of a negated reference whose rule fails only on a refusal, `not check` and `not
+/// check(..)`, report in ONE order through the structured report (`simplified_json_from_root`, the source
+/// of `-o json`'s `not_compliant` and the console's unattributed section): under `main`'s own rule report
+/// the referenced rule's run first, then the reference's own block record with the fail-closed sentence.
+/// The call spelling opens its record after the referenced rule's run was recorded as its earlier sibling,
+/// and the report builder writes every access clause's block record AFTER its children, so the named
+/// spelling reads the same; before that, `not check` reported the block first and `not check()` the run
+/// first. Read under `main`'s report alone: `not_compliant` wraps every failing rule as its own report, so
+/// its shape ends with a bracket whatever the order inside, and the named spelling carries a report for
+/// the failing `check` beside `main`'s that the call spelling (whose `check` runs under the call alone) has
+/// not, so the two whole lists never read alike; an earlier cut of this cell compared them whole.
+#[test]
+fn the_two_spellings_of_a_negated_reference_report_in_one_order() -> Result<()> {
+    const ONE_AMBIGUOUS_CFG: &str =
+        r#"{ Resources: { R1: { Cfg: { Limits: { cpu: '1' }, Other: { cpu: '2' } } } } }"#;
+    /// The kinds of the reports, depth first: `B` a block, `C` a clause, `R` a rule, `D` a disjunction,
+    /// each rule's and disjunction's children inside brackets.
+    fn shape(reports: &[crate::rules::eval_context::ClauseReport<'_>]) -> String {
+        use crate::rules::eval_context::ClauseReport;
+        reports
+            .iter()
+            .map(|report| match report {
+                ClauseReport::Block(_) => "B".to_string(),
+                ClauseReport::Clause(_) => "C".to_string(),
+                ClauseReport::Rule(rule) => format!("R[{}]", shape(&rule.checks)),
+                ClauseReport::Disjunctions(disjunctions) => {
+                    format!("D[{}]", shape(&disjunctions.checks))
+                }
+            })
+            .collect()
+    }
+    CellFailures::table(|cells| {
+        let mut shapes = Vec::new();
+        for (label, rules) in [
+            (
+                "the named spelling",
+                "rule check { Resources.*.Cfg[*].Limits exists }\nrule main { not check }",
+            ),
+            (
+                "the call spelling",
+                "rule check(p) { %p exists }\nrule main { not check(Resources.*.Cfg[*].Limits) }",
+            ),
+        ] {
+            let rules_file = RulesFile::try_from(rules)?;
+            let mut root = root_scope(
+                &rules_file,
+                Rc::new(PathAwareValue::try_from(ONE_AMBIGUOUS_CFG)?),
+            );
+            let status = eval_rules_file(&rules_file, &mut root, None)?;
+            let tree = root.reset_recorder().extract();
+            let report = crate::rules::eval_context::simplified_json_from_root(&tree)?;
+            // `main`'s own report: its `checks` are the referenced rule's run (a rule report of its own,
+            // `R[..]`) and then the negation's block record, `B` last.
+            let main = report
+                .not_compliant
+                .iter()
+                .find_map(|report| match report {
+                    crate::rules::eval_context::ClauseReport::Rule(rule) if rule.name == "main" => {
+                        Some(shape(&rule.checks))
+                    }
+                    _ => None,
+                })
+                .unwrap_or_default();
+            cells.check_with(
+                &format!("{label}: `main` fails closed on the refusal, and its report ends with the negation's own block record after the referenced rule's run"),
+                (Status::FAIL, true),
+                (status, main.ends_with('B') && main.contains("R[")),
+                || format!("`main`'s report shape reads {main:?}; the whole list reads {}", shape(&report.not_compliant)),
+            );
+            shapes.push(main);
+        }
+        cells.check(
+            "the two spellings report `main` in one order",
+            shapes[0].clone(),
+            shapes[1].clone(),
+        );
+        Ok(())
+    })
+}
+
+/// The `custom_message` of the first SKIP block check under `record` whose sentence is a reference's skip
+/// reason ("the rule did not apply because it referenced rule"), depth first; `None` when no such record is
+/// there.
+fn skipped_reference_record(record: &EventRecord<'_>) -> Option<Option<String>> {
+    if let Some(RecordType::GuardClauseBlockCheck(BlockCheck {
+        status: Status::SKIP,
+        message: Some(message),
+        custom_message,
+        ..
+    })) = &record.container
+    {
+        if message.contains("the rule did not apply because it referenced rule") {
+            return Some(custom_message.clone());
+        }
+    }
+    record.children.iter().find_map(skipped_reference_record)
+}
+
+/// The `custom_message` of the first fail-closed `not` block check under `record`, searched depth first;
+/// `None` when no such record is there.
+fn fail_closed_block_message(record: &EventRecord<'_>) -> Option<Option<String>> {
+    if let Some(RecordType::GuardClauseBlockCheck(BlockCheck {
+        message: Some(message),
+        custom_message,
+        ..
+    })) = &record.container
+    {
+        if message.contains("failed only on reads it could not decide") {
+            return Some(custom_message.clone());
+        }
+    }
+    record.children.iter().find_map(fail_closed_block_message)
+}
+
+/// `not r << msg >>` and `not r(..) << msg >>` that fail closed keep the author's message: the one
+/// fail-closed record carries it in its own field, apart from the refusal sentence, and the structured
+/// report's block check reads it as `custom_message` beside the `error_message`, flagged a refusal; both
+/// spellings read the same two texts.
+#[test]
+fn a_negated_reference_that_fails_closed_keeps_the_authors_message() -> Result<()> {
+    const AUTHORS: &str = "the helper must fail for a reason the template can show";
+    /// Every block check of the structured report: its author's message, its sentence and its flag.
+    fn block_reports(
+        report: &crate::rules::eval_context::ClauseReport<'_>,
+        out: &mut Vec<(Option<String>, Option<String>, bool)>,
+    ) {
+        use crate::rules::eval_context::ClauseReport;
+        match report {
+            ClauseReport::Rule(rule) => rule
+                .checks
+                .iter()
+                .for_each(|check| block_reports(check, out)),
+            ClauseReport::Disjunctions(disjunctions) => disjunctions
+                .checks
+                .iter()
+                .for_each(|check| block_reports(check, out)),
+            ClauseReport::Block(block) => out.push((
+                block.messages.custom_message.clone(),
+                block.messages.error_message.clone(),
+                block.messages.refusal,
+            )),
+            ClauseReport::Clause(_) => {}
+        }
+    }
+    let (_, document_two) = gate_role_documents();
+    let refused = "some %y NOT IN %m";
+    let mut cells = CellFailures::default();
+    for (spelling, header, reference) in [
+        ("named", "rule check", "check"),
+        ("parameterized", "rule check(p)", "check(1)"),
+    ] {
+        let rules = format!(
+            "{}\nrule main {{ not {reference} << {AUTHORS} >> }}",
+            gate_role_block(header, &gate_role_refused_binds(), refused)
+        );
+        let rules_file = RulesFile::try_from(rules.as_str())?;
+        let mut root = root_scope(
+            &rules_file,
+            Rc::new(PathAwareValue::try_from(document_two.as_str())?),
+        );
+        let status = eval_rules_file(&rules_file, &mut root, None)?;
+        let tree = root.reset_recorder().extract();
+        let report = crate::rules::eval_context::simplified_json_from_root(&tree)?;
+        let mut blocks = Vec::new();
+        report
+            .not_compliant
+            .iter()
+            .for_each(|clause| block_reports(clause, &mut blocks));
+        let fail_closed: Vec<_> = blocks
+            .iter()
+            .filter(|(_, error, _)| {
+                error
+                    .as_deref()
+                    .is_some_and(|sentence| sentence.contains("the negated rule [check]"))
+            })
+            .collect();
+        cells.check_with(
+            &format!("({spelling}) `rule main {{ not {reference} << .. >> }}` over the refusal-only `check`: FAIL, ONE fail-closed block check in the report, its `custom_message` the author's text, its `error_message` the refusal sentence without that text, flagged a refusal"),
+            (Status::FAIL, 1, Some(AUTHORS.to_string()), true, true),
+            (
+                status,
+                fail_closed.len(),
+                fail_closed
+                    .first()
+                    .and_then(|(custom, _, _)| custom.as_deref().map(str::trim).map(str::to_string)),
+                fail_closed.iter().all(|(_, error, _)| {
+                    error.as_deref().is_some_and(|sentence| !sentence.contains(AUTHORS))
+                }),
+                fail_closed.iter().all(|(_, _, refusal)| *refusal),
+            ),
+            || format!("the block checks read: {blocks:?}"),
+        );
+    }
+    cells.assert_all_agreed();
+    Ok(())
+}
+
+/// The raise a non-strict `not` makes over an undecidable-born FAIL (`fail_closed_negation_raise`, the
+/// release-build fallback of `negate_a_failed_rule`, which a debug build asserts is never reached and this
+/// cell exercises directly): the refusal the basis rests on, spelled as every raise over refused reads is.
+/// Rows: "R" one registered read: the read bare, with its token, read as a refusal; "R2" two registered
+/// reads: the numbered `(1) .. (2) ..` text every reader splits, naming both, with a token, a refusal; "B"
+/// no read (a budget-only basis): the negation's own sentence naming the rule, no token, no refusal.
+#[test]
+fn a_fail_closed_negations_raise_is_the_refusal_it_rests_on_with_its_token() -> Result<()> {
+    let rules_file = RulesFile::try_from("rule r { Resources exists }")?;
+    let mut root = root_scope(
+        &rules_file,
+        Rc::new(PathAwareValue::try_from("{ Resources: {} }")?),
+    );
+    let registered = "then no kept entry holds a key the predicate names, at path /Resources/R/Cfg";
+    let other = "then no kept entry holds a key the predicate names, at path /Resources/R/Other";
+    let _ = crate::rules::eval_context::register_refusal(registered);
+    let _ = crate::rules::eval_context::register_refusal(other);
+    let mut cells = CellFailures::default();
+    for (label, reads, text_expected, numbered, token_expected, refusal_expected) in [
+        (
+            "R",
+            vec![registered.to_string()],
+            vec![registered],
+            false,
+            true,
+            true,
+        ),
+        (
+            "R2",
+            vec![registered.to_string(), other.to_string()],
+            vec!["(1) ", registered, "(2) ", other],
+            true,
+            true,
+            true,
+        ),
+        (
+            "B",
+            Vec::new(),
+            vec!["the negated rule [check] failed only on reads it could not decide, so the negation fails closed rather than passing; the undecided reads are reported where the rule met them"],
+            false,
+            false,
+            false,
+        ),
+    ] {
+        let raised = fail_closed_negation_raise(
+            &mut root,
+            "check",
+            &crate::rules::FailBasis::undecidable(reads.clone()),
+        );
+        let seen = match &raised {
+            Error::UndecidableComparison(text, token) => (
+                text_expected.iter().all(|part| text.contains(part)),
+                if numbered {
+                    text.starts_with("(1) ")
+                } else {
+                    text == text_expected[0]
+                },
+                token.is_some(),
+                is_refusal(&raised),
+            ),
+            other => panic!(
+                "the fail-closed negation raises `UndecidableComparison`, read {:?}",
+                other
+            ),
+        };
+        cells.check_with(
+            &format!("({label}) the raise over {reads:?}: `UndecidableComparison` whose text names the reads as every raise spells them (one bare, several numbered), with a token exactly where a read is registered, read as a refusal exactly then"),
+            (true, true, token_expected, refusal_expected),
+            seen,
+            || format!("the raise read: {raised:?}"),
+        );
+    }
+    // (T) A refusal vouched for by its token alone (a text no registry holds): the basis carries the
+    // token with the read, the raise carries it on, and `is_refusal` reads it as one, with no registry
+    // lookup; a filter predicate run over such a `not` therefore marks its entry as the strict role's
+    // record is flagged.
+    let label = "T";
+    let unregistered = "a read vouched for by its token alone, in no registry";
+    let raised = fail_closed_negation_raise(
+        &mut root,
+        "check",
+        &crate::rules::FailBasis::undecidable_reads(vec![(
+            unregistered.to_string(),
+            Some(crate::rules::errors::RefusalToken::minted(11)),
+        )]),
+    );
+    let seen = match &raised {
+        Error::UndecidableComparison(text, token) => {
+            (text == unregistered, token.is_some(), is_refusal(&raised))
+        }
+        other => panic!(
+            "the fail-closed negation raises `UndecidableComparison`, read {:?}",
+            other
+        ),
+    };
+    cells.check_with(
+        &format!("({label}) a token-only read, in no registry: the raise is the read bare, carries the token, and is a refusal"),
+        (true, true, true),
+        seen,
+        || format!("the raise read: {raised:?}"),
+    );
+    cells.assert_all_agreed();
+    Ok(())
+}
+
+/// The debug twin of the release-build fallback (`fail_closed_negation_raise`, pinned by
+/// `a_fail_closed_negations_raise_is_the_refusal_it_rests_on_with_its_token` in every build and run
+/// through `negate_a_failed_rule` by
+/// `a_non_strict_negation_over_an_undecidable_fail_hands_its_entries_up_and_raises_in_a_release_build` in a
+/// release build): a debug build asserts that no non-strict `not` meets an undecidable-born FAIL.
+#[cfg(debug_assertions)]
+#[test]
+#[should_panic(
+    expected = "a non-strict `not` (a gate's or a filter predicate's) met a rule whose FAIL rests on an undecidable"
+)]
+fn a_non_strict_negation_over_an_undecidable_fail_is_asserted_in_a_debug_build() {
+    let rules_file = RulesFile::try_from("rule r { Resources exists }").expect("the rule parses");
+    let mut root = root_scope(
+        &rules_file,
+        Rc::new(PathAwareValue::try_from("{ Resources: {} }").expect("the document parses")),
+    );
+    let _ = negate_a_failed_rule(
+        &mut root,
+        Vec::new(),
+        ClauseRole::Gate,
+        "check",
+        crate::rules::FailBasis::undecidable(vec!["a refused read".to_string()]),
+    );
+}
+
+/// The release-build fallback THROUGH `negate_a_failed_rule` (a debug build asserts before it; this cell
+/// runs in a release build alone, under `cargo test --release`): a non-strict `not` over an
+/// undecidable-born FAIL hands the entries the rule left up into the frame around it, as they were, and
+/// returns the raise (`fail_closed_negation_raise`) rather than a status, so a dropped hand-up or a status
+/// answered in its place would show here where the helper's own cell cannot see it.
+#[cfg(not(debug_assertions))]
+#[test]
+fn a_non_strict_negation_over_an_undecidable_fail_hands_its_entries_up_and_raises_in_a_release_build(
+) -> Result<()> {
+    let rules_file = RulesFile::try_from("rule r { Resources exists }")?;
+    let mut root = root_scope(
+        &rules_file,
+        Rc::new(PathAwareValue::try_from("{ Resources: {} }")?),
+    );
+    let registered = "then no kept entry holds a key the predicate names, at path /Resources/R/Cfg";
+    let _ = crate::rules::eval_context::register_refusal(registered);
+    let entry = crate::rules::AbsorbedRaise {
+        clause: "some %y not in %m".to_string(),
+        site: unlocated(),
+        reads: vec![registered.to_string()],
+        kind: crate::rules::RaiseKind::Raised,
+    };
+    let (raised, frame) = with_absorbed_frame(&mut root, |root| {
+        negate_a_failed_rule(
+            root,
+            vec![entry.clone()],
+            ClauseRole::Gate,
+            "check",
+            crate::rules::FailBasis::undecidable(vec![registered.to_string()]),
+        )
+    });
+    let mut cells = CellFailures::default();
+    cells.check_with(
+        "a gate-role `not` over an undecidable-born FAIL: the entries handed up as they were, and the refusal raised with its token",
+        (vec![entry.clone()], true),
+        (
+            frame,
+            matches!(&raised, Err(Error::UndecidableComparison(_, Some(_)))),
+        ),
+        || format!("the raise read: {raised:?}"),
+    );
+    cells.assert_all_agreed();
+    Ok(())
+}
+
+/// The conjunction fold reports the raises its own clauses decided past, in a frame of its own, at the
+/// raising clause's position, with a verdict naming the sibling CLAUSE: a disjunct that holds decides the
+/// disjunction past another disjunct's raise beside a refused read ("passed by a sibling clause that
+/// holds", `A or B` with `A` raised and `B` true, in either role: asserted, `A` is a leaf FAIL on the
+/// refusal the pass swallows), and a conjunct's failure decides the conjunction past a held raise ("was
+/// decided by a sibling clause's failure", `AND(no, unknown)`, the gate role's hold). A conjunction that
+/// decides nothing past a raise hands its frame's entries up to the fold around it (a block fold, which
+/// writes them when a sibling ENTRY decides, "was decided by a sibling entry's failure" or "passed by a
+/// sibling entry that holds", or keeps a strict leaf FAIL for a `some` block that passes on another
+/// entry), so a raise decided past at any depth is written once, by the fold that decided, and a raise
+/// nobody decides past is reported by the raise itself. A rule body with no block around it has the same
+/// channel. The two sibling-entry verdicts are the block fold's; the comparison's own pass stays "passed
+/// by a value that holds", so a site decided both ways says so with a count each. A filter predicate's own
+/// conjunction writes what a disjunct decided past before the predicate drops its frame, and the raise
+/// the predicate turns into a marker is reported once, by the clause that reads the marker. Nothing is
+/// noted under a measurement, so a quiet run writes no line.
+#[test]
+fn the_conjunction_fold_reports_the_raises_its_own_clauses_decided_past() -> Result<()> {
+    let (_, document_two) = gate_role_documents();
+    // The gate role alone: a parameterized `gate(p)` referenced by `rule r when gate(1)`.
+    let gate_rules = |body: &str| -> String {
+        format!(
+            "{}\nrule r when gate(1) {GATE_ROLE_BODY}",
+            gate_role_block("rule gate(p)", &gate_role_refused_binds(), body)
+        )
+    };
+    // The assertion role alone: `rule gate { .. }` with no referencing rule; (`gate`'s status, the lines
+    // naming `%y`).
+    let alone = |body: &str, doc: &str| -> Result<(Status, Vec<String>)> {
+        let rules = gate_role_block("rule gate", &gate_role_refused_binds(), body);
+        rule_lines(&rules, doc, "gate", &|line| line.contains("%y"))
+    };
+    // How many of `lines` carry EXACTLY `clause` as their clause part (`clause_part`).
+    let naming = |lines: &[String], clause: &str| -> usize {
+        lines
+            .iter()
+            .filter(|line| clause_part(line) == Some(clause))
+            .count()
+    };
+    // Whether every line whose clause part is `clause` carries `phrase`, and whether any such line
+    // carries a count (` evaluation`); `(false, _)` when no line names the clause.
+    let worded = |lines: &[String], clause: &str, phrase: &str| -> (bool, bool) {
+        let named: Vec<&String> = lines
+            .iter()
+            .filter(|line| clause_part(line) == Some(clause))
+            .collect();
+        (
+            !named.is_empty() && named.iter().all(|line| line.contains(phrase)),
+            named.iter().any(|line| line.contains(" evaluation")),
+        )
+    };
+    let mut cells = CellFailures::default();
+
+    // A SIBLING CLAUSE'S FAILURE, gate role: I1 holds the raise (`Name == 'n1'` passes beside it) and the
+    // conjunction hands it up, so the block fold absorbs it; I2's `Name == 'n1'` FAILs past its own raise,
+    // so the conjunction writes that entry itself. I2's FAIL decides the block, which writes I1's entry.
+    // One site, two ways, each counted.
+    let (status, lines) = gate_role_lines(
+        &gate_rules("Items.* {\n some %y NOT IN %m\n Name == 'n1' }"),
+        &document_two,
+        "%y",
+    )?;
+    cells.check_with(
+        "a sibling clause's failure past one entry's raise and a sibling entry's failure past the other's: `r` not applicable, ONE line at the comparison's site, both phrases counted, the own-key refusal named",
+        (Status::SKIP, 1, 1, true, true, true),
+        (
+            status,
+            lines.len(),
+            naming(&lines, "some %y not in %m"),
+            lines
+                .iter()
+                .any(|line| line.contains("was decided by a sibling entry's failure on 1 evaluation")),
+            lines
+                .iter()
+                .any(|line| line.contains("was decided by a sibling clause's failure on 1 evaluation")),
+            lines.iter().all(|line| line.contains(THE_OWN_KEY_REFUSAL)),
+        ),
+        || format!("the lines read: {lines:?}"),
+    );
+    // The control: nothing decides past the raise (`Name exists` holds for both entries), the block
+    // raises, the gate fails closed on the refusal itself, and no line is owed.
+    let (status, lines) = gate_role_lines(
+        &gate_rules("Items.* {\n some %y NOT IN %m\n Name exists }"),
+        &document_two,
+        "%y",
+    )?;
+    cells.check_with(
+        "the control, nothing decides past the raise: `r` fails closed, no line",
+        (Status::FAIL, 0),
+        (status, lines.len()),
+        || format!("the lines read: {lines:?}"),
+    );
+    // Asserted, the same bodies: every entry's leaf FAIL is the block's own failure under `match_all`,
+    // and under `some` no entry passes, so the strict arm writes nothing on a failing block.
+    for body in [
+        "Items.* {\n some %y NOT IN %m\n Name == 'n1' }",
+        "some Items.* {\n some %y NOT IN %m\n Name == 'n1' }",
+    ] {
+        let (status, lines) = alone(body, &document_two)?;
+        cells.check_with(
+            &format!(
+                "asserted, `{}`: FAIL on the leaf FAILs, no line",
+                body.replace('\n', " ")
+            ),
+            (Status::FAIL, 0),
+            (status, lines.len()),
+            || format!("the lines read: {lines:?}"),
+        );
+    }
+
+    // A SIBLING CLAUSE THAT HOLDS: the disjunction `some %y NOT IN %m or Name exists` is decided by its
+    // second disjunct for both entries, past the first's raise (gate role) or leaf FAIL (assertion role):
+    // one line, "passed by a sibling clause that holds", two entries one way, so no count; `gate` passes
+    // and `r` is evaluated. The control puts the passing disjunct FIRST, so the comparison never runs
+    // (the `or` short-circuits) and no line is owed: the write is of a raise that was made.
+    let (status, lines) = gate_role_lines(
+        &gate_rules("Items.* {\n some %y NOT IN %m or Name exists }"),
+        &document_two,
+        "%y",
+    )?;
+    cells.check_with(
+        "a disjunction decided by a sibling clause that holds, gate role: `r` passes, ONE line at the comparison's site, \"passed by a sibling clause that holds\" with no count, the own-key refusal named",
+        (Status::PASS, 1, (true, false), true),
+        (
+            status,
+            lines.len(),
+            worded(
+                &lines,
+                "some %y not in %m",
+                "passed by a sibling clause that holds",
+            ),
+            lines.iter().all(|line| line.contains(THE_OWN_KEY_REFUSAL)),
+        ),
+        || format!("the lines read: {lines:?}"),
+    );
+    let (status, lines) = alone(
+        "Items.* {\n some %y NOT IN %m or Name exists }",
+        &document_two,
+    )?;
+    cells.check_with(
+        "the same disjunction asserted: PASS, ONE line, \"passed by a sibling clause that holds\" with no count (the leaf FAIL the pass swallowed)",
+        (Status::PASS, 1, (true, false)),
+        (
+            status,
+            lines.len(),
+            worded(
+                &lines,
+                "some %y not in %m",
+                "passed by a sibling clause that holds",
+            ),
+        ),
+        || format!("the lines read: {lines:?}"),
+    );
+    let (status, lines) = gate_role_lines(
+        &gate_rules("Items.* {\n Name exists or some %y NOT IN %m }"),
+        &document_two,
+        "%y",
+    )?;
+    cells.check_with(
+        "the control, the passing disjunct first, gate role: `r` passes, no line (the comparison never ran)",
+        (Status::PASS, 0),
+        (status, lines.len()),
+        || format!("the lines read: {lines:?}"),
+    );
+    let (status, lines) = alone(
+        "Items.* {\n Name exists or some %y NOT IN %m }",
+        &document_two,
+    )?;
+    cells.check_with(
+        "the control asserted: PASS, no line",
+        (Status::PASS, 0),
+        (status, lines.len()),
+        || format!("the lines read: {lines:?}"),
+    );
+
+    // A SIBLING ENTRY THAT HOLDS beside the comparison's OWN pass, one site two ways: `some %y NOT IN
+    // Deny` with I1's `Deny` listing every resolved key (no key passes, the marker's pair is unknown, the
+    // gate role raises beside the refused read) and I2's listing none (the keys pass beside the read, the
+    // comparison's own writer: "passed by a value that holds"); I2's pass settles the `some` block, which
+    // writes I1's entry as "passed by a sibling entry that holds". The control lists none on both, so
+    // both pass and the line reads the comparison's own phrase alone, no count.
+    let deny_every_key = document_two
+        .replace(
+            r#""I1": { "Name": "n1" }"#,
+            r#""I1": { "Name": "n1", "Deny": ["Other", "C", "D"] }"#,
+        )
+        .replace(
+            r#""I2": { "Name": "n2" }"#,
+            r#""I2": { "Name": "n2", "Deny": ["x"] }"#,
+        );
+    assert_ne!(
+        deny_every_key, document_two,
+        "the document holds the two `Deny` lists"
+    );
+    let deny_none = document_two
+        .replace(
+            r#""I1": { "Name": "n1" }"#,
+            r#""I1": { "Name": "n1", "Deny": ["x"] }"#,
+        )
+        .replace(
+            r#""I2": { "Name": "n2" }"#,
+            r#""I2": { "Name": "n2", "Deny": ["x"] }"#,
+        );
+    let (status, lines) = gate_role_lines(
+        &gate_rules("some Items.* {\n some %y NOT IN Deny }"),
+        &deny_every_key,
+        "%y",
+    )?;
+    cells.check_with(
+        "one entry raised beside the refused read and its sibling passing beside it, under `some`: `r` passes, ONE line at the comparison's site carrying \"passed by a value that holds on 1 evaluation\" and \"passed by a sibling entry that holds on 1 evaluation\"",
+        (Status::PASS, 1, 1, true, true),
+        (
+            status,
+            lines.len(),
+            naming(&lines, "some %y not in Deny"),
+            lines
+                .iter()
+                .any(|line| line.contains("passed by a value that holds on 1 evaluation")),
+            lines
+                .iter()
+                .any(|line| line.contains("passed by a sibling entry that holds on 1 evaluation")),
+        ),
+        || format!("the lines read: {lines:?}"),
+    );
+    let (status, lines) = gate_role_lines(
+        &gate_rules("some Items.* {\n some %y NOT IN Deny }"),
+        &deny_none,
+        "%y",
+    )?;
+    cells.check_with(
+        "the control, both entries passing beside the refused read: `r` passes, ONE line, \"passed by a value that holds\" alone, no count",
+        (Status::PASS, 1, (true, false), false),
+        (
+            status,
+            lines.len(),
+            worded(
+                &lines,
+                "some %y not in Deny",
+                "passed by a value that holds",
+            ),
+            lines.iter().any(|line| line.contains("sibling")),
+        ),
+        || format!("the lines read: {lines:?}"),
+    );
+
+    // TWO SITES, THREE MECHANISMS, in one body over a second refused marker `%c` (a map `Cfg` shaped like
+    // `Cfg2`, its own-key refusal a second registered sentence naming `Cfg`): `some %y NOT IN %m or Name
+    // exists` is decided by its disjunct for both entries (the `%y` site: "passed by a sibling clause that
+    // holds", one way, no count); `some %c NOT IN %m` raises for both, and the conjunction holds it: I1's
+    // `Name == 'n1'` passes, so the raise is handed up and the block fold absorbs it (I2's FAIL decides the
+    // block: "was decided by a sibling entry's failure"), while I2's `Name == 'n1'` FAILs past its held
+    // raise (the conjunction's own write: "was decided by a sibling clause's failure"). Two lines, the
+    // `%y` line naming `Cfg2`'s refusal and the `%c` line naming `Cfg`'s, never the block.
+    const CFG_LIKE_CFG2: &str = r#""Cfg": {
+        "Mode": { "Ref": "ModeParam" },
+        "Other": { "Kind": "k" },
+        "C": { "Kind": "k", "Sub": { "R1": { "Ref": "P" }, "P": { "Kind": "k" }, "Q": { "Kind": "k" } } },
+        "D": { "Kind": "k", "Sub": { "R1": { "Ref": "P" }, "P": { "Kind": "k" }, "Q": { "Kind": "k" } } }
+    },"#;
+    const REFUSED_WALK_INTO_C: &str = "Cfg[ c | Kind == 'k' ] !empty  Cfg[*][ c | Mode exists or Kind == 'k' ].Sub[*][ s | R1 !exists ] !empty or Cfg.Other exists";
+    let document_cfg = document_two.replacen(
+        r#""Cfg2": {"#,
+        &format!("{CFG_LIKE_CFG2}\n    \"Cfg2\": {{"),
+        1,
+    );
+    assert_ne!(
+        document_cfg, document_two,
+        "the document holds the second map"
+    );
+    let (status, lines) = gate_role_lines(
+        &format!(
+            "{}\nrule r when gate(1) {GATE_ROLE_BODY}",
+            gate_role_block(
+                "rule gate(p)",
+                &format!("{}  {REFUSED_WALK_INTO_C}", gate_role_refused_binds()),
+                "Items.* {\n some %y NOT IN %m or Name exists\n some %c NOT IN %m\n Name == 'n1' }",
+            )
+        ),
+        &document_cfg,
+        "",
+    )?;
+    // The two binds (`Cfg2`'s and `Cfg`'s) each write their own line at the bind's site, decided past by
+    // their `or` fallback: pinned at TWO by the helper and left out of the body's count.
+    let lines = without_the_refused_walks_lines_of(lines, 2);
+    cells.check_with(
+        "two sites in one body: `r` not applicable, TWO lines, the `%y` comparison's \"passed by a sibling clause that holds\" with no count naming `Cfg2`'s refusal, the `%c` comparison's carrying \"was decided by a sibling entry's failure on 1 evaluation\" and \"was decided by a sibling clause's failure on 1 evaluation\" naming `Cfg`'s refusal and never `Cfg2`, no line naming the block",
+        (Status::SKIP, 2, (true, false), true, 1, true, true, 0),
+        (
+            status,
+            lines.len(),
+            worded(
+                &lines,
+                "some %y not in %m",
+                "passed by a sibling clause that holds",
+            ),
+            lines
+                .iter()
+                .filter(|line| clause_part(line) == Some("some %y not in %m"))
+                .all(|line| line.contains("Cfg2")),
+            naming(&lines, "some %c not in %m"),
+            lines
+                .iter()
+                .filter(|line| clause_part(line) == Some("some %c not in %m"))
+                .all(|line| {
+                    line.contains("was decided by a sibling entry's failure on 1 evaluation")
+                        && line.contains("was decided by a sibling clause's failure on 1 evaluation")
+                }),
+            lines
+                .iter()
+                .filter(|line| clause_part(line) == Some("some %c not in %m"))
+                .all(|line| line.contains(THE_OWN_KEY_REFUSAL) && !line.contains("Cfg2")),
+            lines.iter().filter(|line| line_opens_with(line, "Items.*")).count(),
+        ),
+        || format!("the lines read: {lines:?}"),
+    );
+
+    // A FILTER PREDICATE'S OWN DISJUNCTION: `%cfg[ %y NOT IN ['x'] or Kind exists ] !empty` over `Cfg2`'s
+    // entries: for the three entries holding `Kind`, the predicate's comparison raises beside the refused
+    // read and `Kind exists` decides past it, so the predicate's conjunction writes "passed by a sibling
+    // clause that holds" at the predicate comparison's own position (three evaluations, one way, no
+    // count) before the predicate's frame closes; for `Mode`, which lacks `Kind`, nothing decides past the
+    // raise and the entry becomes a marker. The unary over the selection then raises on that marker,
+    // noted at the unary clause's position, and I2's FAIL writes it. Two lines, neither the block's.
+    let (status, lines) = gate_role_lines(
+        &format!(
+            "{}\nrule r when gate(1) {GATE_ROLE_BODY}",
+            gate_role_block(
+                "rule gate(p)",
+                &format!("{}\nlet cfg = Cfg2", gate_role_refused_binds()),
+                "Items.* {\n when Name == 'n1' {\n %cfg[ %y NOT IN ['x'] or Kind exists ] !empty }\n Name == 'n1' }",
+            )
+        ),
+        &document_two,
+        "%y",
+    )?;
+    let predicate_lines: Vec<&String> = lines
+        .iter()
+        .filter(|line| matches!(clause_part(line), Some(part) if part.starts_with("%y not in")))
+        .collect();
+    cells.check_with(
+        "a filter predicate's disjunction decided by a sibling clause: `r` not applicable, TWO lines, the predicate comparison's own \"passed by a sibling clause that holds\" with no count, and the unary clause's own (opening `%cfg[`) \"was decided by a sibling entry's failure\", none naming the block",
+        (Status::SKIP, 2, 1, true, 1, true, 0),
+        (
+            status,
+            lines.len(),
+            predicate_lines.len(),
+            predicate_lines.iter().all(|line| {
+                line.contains("passed by a sibling clause that holds")
+                    && !line.contains(" evaluation")
+            }),
+            lines
+                .iter()
+                .filter(|line| line_opens_with(line, "%cfg["))
+                .count(),
+            lines
+                .iter()
+                .filter(|line| line_opens_with(line, "%cfg["))
+                .all(|line| line.contains("was decided by a sibling entry's failure")),
+            lines.iter().filter(|line| line_opens_with(line, "Items.*")).count(),
+        ),
+        || format!("the lines read: {lines:?}"),
+    );
+
+    // RULE-BODY LEVEL, no block around the conjunction: the same two decisions write the same lines.
+    // Asserted, `some %y NOT IN %m or Cfg2 exists` passes on its second disjunct past the leaf FAIL; as a
+    // parameterized gate, `some %y NOT IN %m  Items.I1.Name == 'n2'` is decided FAIL by its second
+    // conjunct past the held raise; the control holds the raise (`Items.I1.Name exists`), so the gate
+    // fails closed on it and no line is owed.
+    let rule_level = |header: &str, body: &str| -> String {
+        format!(
+            "{header} {{ {}\n{GATE_ROLE_BUDGET_INTO_M}\n{body} }}",
+            gate_role_refused_binds()
+        )
+    };
+    let rules = rule_level("rule gate", "some %y NOT IN %m or Cfg2 exists");
+    let rules_file = RulesFile::try_from(rules.as_str())?;
+    let mut root = root_scope(
+        &rules_file,
+        Rc::new(PathAwareValue::try_from(document_two.as_str())?),
+    );
+    eval_rules_file(&rules_file, &mut root, None)?;
+    let lines: Vec<String> = refused_read_lines(&root)
+        .into_iter()
+        .filter(|line| line.contains("%y"))
+        .collect();
+    let top = root.reset_recorder().extract();
+    let (status, _) = rule_record(&top, "gate");
+    cells.check_with(
+        "a rule-body disjunction asserted, no block: PASS, ONE line, \"passed by a sibling clause that holds\" with no count",
+        (Status::PASS, 1, (true, false)),
+        (
+            status,
+            lines.len(),
+            worded(
+                &lines,
+                "some %y not in %m",
+                "passed by a sibling clause that holds",
+            ),
+        ),
+        || format!("the lines read: {lines:?}"),
+    );
+    let (status, lines) = gate_role_lines(
+        &format!(
+            "{}\nrule r when gate(1) {GATE_ROLE_BODY}",
+            rule_level("rule gate(p)", "some %y NOT IN %m\nItems.I1.Name == 'n2'")
+        ),
+        &document_two,
+        "%y",
+    )?;
+    cells.check_with(
+        "a rule-body conjunction as a parameterized gate, decided FAIL by its second conjunct past the held raise: `r` not applicable, ONE line, \"was decided by a sibling clause's failure\" with no count",
+        (Status::SKIP, 1, (true, false)),
+        (
+            status,
+            lines.len(),
+            worded(
+                &lines,
+                "some %y not in %m",
+                "was decided by a sibling clause's failure",
+            ),
+        ),
+        || format!("the lines read: {lines:?}"),
+    );
+    let (status, lines) = gate_role_lines(
+        &format!(
+            "{}\nrule r when gate(1) {GATE_ROLE_BODY}",
+            rule_level("rule gate(p)", "some %y NOT IN %m\nItems.I1.Name exists")
+        ),
+        &document_two,
+        "%y",
+    )?;
+    cells.check_with(
+        "the control, the conjunction holds its raise: `r` fails closed, no line",
+        (Status::FAIL, 0),
+        (status, lines.len()),
+        || format!("the lines read: {lines:?}"),
+    );
+
+    // THE MEASUREMENT GATE: the disjunction shape that writes one line in a real run writes none under a
+    // quiet measurement (nothing is noted into a frame and nothing is recorded), so a probe that runs a
+    // body leaves no line behind it.
+    let rules = gate_role_block(
+        "rule gate",
+        &gate_role_refused_binds(),
+        "Items.* {\n some %y NOT IN %m or Name exists }",
+    );
+    let rules_file = RulesFile::try_from(rules.as_str())?;
+    let mut quiet = root_scope(
+        &rules_file,
+        Rc::new(PathAwareValue::try_from(document_two.as_str())?),
+    );
+    quiet.set_measurement(crate::rules::Measurement::Quiet);
+    eval_rules_file(&rules_file, &mut quiet, None)?;
+    let quiet_lines = refused_read_lines(&quiet).len();
+    cells.check(
+        "the same disjunction under a quiet measurement: no line (the control run above read one)",
+        0,
+        quiet_lines,
+    );
+    cells.assert_all_agreed();
+    Ok(())
+}
+
+/// `UnraisedCounts::add` and the line's renderer carry the four sibling verdicts as they carry the five
+/// others: the counts of two cases sum field by field (the `test` fold's shape), and
+/// `unraised_refusal_notice` names each way met with its count in the fixed order (the pass before the
+/// sibling verdict, in one joined phrase), the sibling verdict alone with no count, each of the four
+/// sibling phrases by its own field, and closes with the position and the input as `validate` spells it.
+/// The counting of a site that met a sibling-settled block is the gate-role test's; the counts here are
+/// built by hand.
+#[test]
+fn the_refused_read_line_counts_a_sibling_settled_block_as_a_verdict_of_its_own() {
+    use crate::rules::eval_context::{unraised_refusal_notice, UnraisedCounts, WhereFound};
+    let one_case = UnraisedCounts {
+        sibling: 1,
+        passed: 1,
+        ..UnraisedCounts::default()
+    };
+    let summed = one_case + one_case;
+    let mut cells = CellFailures::default();
+    cells.check(
+        "two cases summed field by field: two sibling-settled evaluations and two passes, nothing else",
+        (2, 2, 0, 0, 0, 0, 0, 0, 0),
+        (
+            summed.sibling,
+            summed.passed,
+            summed.absent,
+            summed.mismatched,
+            summed.collided,
+            summed.kinds,
+            summed.passed_by_sibling,
+            summed.sibling_clause,
+            summed.passed_by_sibling_clause,
+        ),
+    );
+    // The four sibling phrases, one field each, in the renderer's fixed order after the kinds verdict.
+    let every_sibling_way = unraised_refusal_notice(
+        "some %y not in %m",
+        UnraisedCounts {
+            sibling: 1,
+            passed_by_sibling: 2,
+            sibling_clause: 3,
+            passed_by_sibling_clause: 4,
+            ..UnraisedCounts::default()
+        },
+        &[THE_OWN_KEY_REFUSAL.to_string()],
+        "rules.guard:3:5",
+        &WhereFound::Nowhere,
+    );
+    cells.check_with(
+        "the four sibling verdicts met at one site are four counted phrases in the fixed order: the entry's failure, the entry that holds, the clause's failure, the clause that holds",
+        true,
+        every_sibling_way.contains(
+            "was decided by a sibling entry's failure on 1 evaluation and passed by a sibling entry that holds on 2 evaluations and was decided by a sibling clause's failure on 3 evaluations and passed by a sibling clause that holds on 4 evaluations",
+        ),
+        || format!("the line read: {every_sibling_way}"),
+    );
+    let line = unraised_refusal_notice(
+        "some %y not in %m",
+        summed,
+        &[THE_OWN_KEY_REFUSAL.to_string()],
+        "rules.guard:3:5",
+        &WhereFound::DataFile("template.yaml".to_string()),
+    );
+    cells.check_with(
+        "the summed line opens with the clause, names the two ways met with their counts in one phrase (the pass before the sibling verdict), names the refusal once, and closes with the position in its data file (the typed origin rendered as ` in data file <name>`)",
+        (true, true, true, true),
+        (
+            line_opens_with_the_comparison(&line),
+            line.contains(
+                "passed by a value that holds on 2 evaluations and was decided by a sibling entry's failure on 2 evaluations",
+            ),
+            line.matches(THE_OWN_KEY_REFUSAL).count() == 1,
+            line.ends_with("The clause is at rules.guard:3:5 in data file template.yaml."),
+        ),
+        || format!("the line read: {line}"),
+    );
+    let alone = unraised_refusal_notice(
+        "some %y not in %m",
+        UnraisedCounts {
+            sibling: 1,
+            ..UnraisedCounts::default()
+        },
+        &[THE_OWN_KEY_REFUSAL.to_string()],
+        "rules.guard:3:5",
+        &WhereFound::DataFile("template.yaml".to_string()),
+    );
+    cells.check(
+        "the sibling verdict alone is one clause with no count",
+        (true, false),
+        (
+            alone.contains("was decided by a sibling entry's failure"),
+            alone.contains("on 1 evaluation"),
+        ),
+    );
+    cells.assert_all_agreed();
+}
+
+/// A refusal whose own sentence quotes the next numbering marker (a map named `C (2) x`, whose path
+/// `/Cfg2/C (2) x/Sub` the own-key refusal names) is still read as one part of the numbered text a raise
+/// beside TWO refusals writes, `(1) <Cfg2's> (2) <Cfg3's>`: the parser tries every occurrence of the next
+/// marker as the boundary and takes the one that leaves registered parts on both sides
+/// (`numbered_refusal_parts`), where a split at the FIRST ` (2) ` read two unregistered halves and the
+/// whole as a plain text, so inside a predicate the empty-selection arm beside the entries' markers
+/// answered not applicable at exit 0 with both refusals silent. Pinned both ways: the registry's two
+/// sentences joined in either order are accepted by the refusal test, and the gate over the empty left
+/// selection `NOT IN` the predicate's entries is raised (FAIL), its record flagged and naming both paths.
+#[test]
+fn a_refusal_quoting_the_next_numbering_marker_is_still_one_part() -> Result<()> {
+    let spends_the_budget = "a".repeat(30);
+    let document = format!(
+        r#"{{
+    "Cfg2": {{
+        "Mode": {{ "Ref": "ModeParam" }},
+        "Other": {{ "Kind": "k" }},
+        "{spends_the_budget}": {{ "Kind": "k" }},
+        "C (2) x": {{ "Kind": "k", "Sub": {{ "R1": {{ "Ref": "P" }}, "P": {{ "Kind": "k" }}, "Q": {{ "Kind": "k" }} }} }},
+        "D": {{ "Kind": "k", "Sub": {{ "R1": {{ "Ref": "P" }}, "P": {{ "Kind": "k" }}, "Q": {{ "Kind": "k" }} }} }}
+    }},
+    "Cfg3": {{
+        "Mode": {{ "Ref": "ModeParam" }},
+        "Other": {{ "Kind": "k" }},
+        "C": {{ "Kind": "k", "Sub": {{ "R1": {{ "Ref": "P" }}, "P": {{ "Kind": "k" }}, "Q": {{ "Kind": "k" }} }} }}
+    }},
+    "Items": {{ "I1": {{ "Name": "n1" }}, "I2": {{ "Name": "n2" }} }},
+    "Resources": {{ "Q": {{ "Type": "AWS::SQS::Queue" }} }}
+}}"#
+    );
+    const WALK_INTO_Y_OVER_CFG2: &str =
+        "Cfg2[*][ y | Mode exists or Kind == 'k' ].Sub[*][ s | R1 !exists ] !empty or Cfg2.Other exists";
+    const WALK_INTO_Y_OVER_CFG3: &str =
+        "Cfg3[*][ y | Mode exists or Kind == 'k' ].Sub[*][ s | R1 !exists ] !empty or Cfg3.Other exists";
+    const EMPTY_LEFT: &str = "Resources.*[ Type == 'AWS::S3::Bucket' ].Properties.BucketName";
+    const BODY: &str = "{ Resources.Q.Type == 'AWS::SQS::Queue' }";
+    let rules = format!(
+        "rule r when Cfg2[ y | Kind == 'k' ] !empty  {WALK_INTO_Y_OVER_CFG2}  {WALK_INTO_Y_OVER_CFG3}  {EMPTY_LEFT} NOT IN Items.*[ %y != /(?!x)((a+)+)b/ ] {BODY}"
+    );
+    let rules_file = RulesFile::try_from(rules.as_str())?;
+    let mut root = root_scope(
+        &rules_file,
+        Rc::new(PathAwareValue::try_from(document.as_str())?),
+    );
+    let status = eval_rules_file(&rules_file, &mut root, None)?;
+    let registered = crate::rules::eval_context::registered_refusals();
+    let quoting = registered
+        .iter()
+        .find(|text| text.contains("/Cfg2/C (2) x/"))
+        .cloned();
+    let other = registered
+        .iter()
+        .find(|text| text.contains("/Cfg3/C/"))
+        .cloned();
+    let joined_either_way = match (&quoting, &other) {
+        (Some(a), Some(b)) => {
+            crate::rules::eval_context::is_refusal_text(&format!("(1) {a} (2) {b}"))
+                && crate::rules::eval_context::is_refusal_text(&format!("(1) {b} (2) {a}"))
+        }
+        _ => false,
+    };
+    let extracted = root.reset_recorder().extract();
+    let mut under_the_clause = Vec::new();
+    record_containers_list(&extracted, "BucketName", &mut under_the_clause);
+    let block_record = under_the_clause
+        .iter()
+        .find(|record| record.contains("GuardClauseBlockCheck"));
+    let mut cells = CellFailures::default();
+    cells.check(
+        "both own-key refusals registered, one of them naming `/Cfg2/C (2) x/`; joined in either order the numbered text is accepted by the refusal test; the gate over the empty selection is raised (FAIL), its block record flagged and naming both paths",
+        (true, true, true, Status::FAIL, Some(true), Some(true)),
+        (
+            quoting.is_some(),
+            other.is_some(),
+            joined_either_way,
+            status,
+            block_record.map(|record| record.contains("refusal: true")),
+            block_record
+                .map(|record| record.contains("/Cfg2/C (2) x/") && record.contains("/Cfg3/C/")),
+        ),
+    );
+    cells.assert_all_agreed();
+    Ok(())
+}
+
+/// A `when` gate raised on a RESOLVED pair's own undecided reason beside a refused read (`%y != /re/`
+/// over keys one of which spends the regex engine's budget, beside the own-key walk's marker in `%y`)
+/// names the recorded reason FIRST, the engine's, and the refusal after it, `(1) <engine> (2) <refusal>`:
+/// the refusals lead a raise only where the recorded reason is no resolved pair's own. The record is
+/// flagged `refusal: true` by the bit (a refused read was met) and the console prints it whole.
+#[test]
+fn an_engine_led_gate_beside_a_refusal_names_its_reason_first_and_the_refusal_after_it(
+) -> Result<()> {
+    let spends_the_budget = "a".repeat(30);
+    let document = format!(
+        r#"{{
+    "Cfg2": {{
+        "Mode": {{ "Ref": "ModeParam" }},
+        "Other": {{ "Kind": "k" }},
+        "{spends_the_budget}": {{ "Kind": "k" }},
+        "C": {{ "Kind": "k", "Sub": {{ "R1": {{ "Ref": "P" }}, "P": {{ "Kind": "k" }}, "Q": {{ "Kind": "k" }} }} }},
+        "D": {{ "Kind": "k", "Sub": {{ "R1": {{ "Ref": "P" }}, "P": {{ "Kind": "k" }}, "Q": {{ "Kind": "k" }} }} }}
+    }},
+    "Resources": {{ "Q": {{ "Type": "AWS::SQS::Queue" }} }}
+}}"#
+    );
+    const REFUSED_WALK_INTO_Y: &str =
+        "Cfg2[*][ y | Mode exists or Kind == 'k' ].Sub[*][ s | R1 !exists ] !empty or Cfg2.Other exists";
+    const THE_ENGINE: &str = "Max limit for backtracking count exceeded";
+    const BODY: &str = "{ Resources.Q.Type == 'AWS::SQS::Queue' }";
+    let rules = format!(
+        "rule r when Cfg2[ y | Kind == 'k' ] !empty  {REFUSED_WALK_INTO_Y}  %y != /(?!x)((a+)+)b/ {BODY}"
+    );
+    let rules_file = RulesFile::try_from(rules.as_str())?;
+    let mut root = root_scope(
+        &rules_file,
+        Rc::new(PathAwareValue::try_from(document.as_str())?),
+    );
+    let status = eval_rules_file(&rules_file, &mut root, None)?;
+    let extracted = root.reset_recorder().extract();
+    let mut under_the_clause = Vec::new();
+    // The comparison's record names the capture `%y`; the bind clauses name `y |`, never `%y`.
+    record_containers_list(&extracted, "%y", &mut under_the_clause);
+    let block_record = under_the_clause
+        .iter()
+        .find(|record| record.contains("GuardClauseBlockCheck"))
+        .cloned()
+        .unwrap_or_default();
+    let engine_at = block_record.find(THE_ENGINE);
+    let refusal_at = block_record.find(THE_OWN_KEY_REFUSAL);
+    let mut cells = CellFailures::default();
+    cells.check(
+        "the gate raised on the engine's reason beside the refusal: FAIL; the block record numbered, the engine's reason before the refusal's sentence, flagged `refusal: true`",
+        (Status::FAIL, true, true, true),
+        (
+            status,
+            block_record.contains("(1) ") && block_record.contains(" (2) "),
+            matches!((engine_at, refusal_at), (Some(e), Some(r)) if e < r),
+            block_record.contains("refusal: true"),
+        ),
+    );
+    cells.assert_all_agreed();
+    Ok(())
+}
+
+/// The key filter's wrap of a right-hand absence under a resource whose key is a bidi override writes
+/// that key through the escaping renderer once: a string `Tags` under the override-keyed resource makes
+/// `Tags[ Key == 'Env' ].Value` an absence inside the predicate (the no-capture reading), the key
+/// filter's right-hand query stops there, and the wrap "did not resolve at <path>" names the path with
+/// the override as its escape, never raw; the entry's marker and the records that quote it carry one
+/// escaped spelling, where the raw path would have reached the console whole beside the inner reason's
+/// escaped spelling of the same key.
+#[test]
+fn a_wrap_naming_an_override_keyed_resource_escapes_the_key_once() -> Result<()> {
+    const RLO: char = '\u{202e}';
+    let document = format!(
+        r#"{{ "Resources": {{ "{RLO}R": {{ "Type": "AWS::SQS::Queue", "Properties": {{ "M": {{ "PROD": 1 }}, "Tags": "x" }} }} }} }}"#
+    );
+    let rules = "rule r { Resources.*[ Properties.M[ keys == Tags[ Key == 'Env' ].Value ] !empty ] !empty }";
+    let rules_file = RulesFile::try_from(rules)?;
+    let mut root = root_scope(
+        &rules_file,
+        Rc::new(PathAwareValue::try_from(document.as_str())?),
+    );
+    let status = eval_rules_file(&rules_file, &mut root, None)?;
+    let extracted = root.reset_recorder().extract();
+    let mut markers = Vec::new();
+    undecidable_markers(&extracted, &mut markers);
+    let records = format!("{:?}", extracted);
+    let mut cells = CellFailures::default();
+    cells.check(
+        "the entry is undecidable beside the wrap (FAIL); at least one marker's reason names the key as its escape; no marker's reason and no record carries the raw override",
+        (Status::FAIL, true, true, false, false),
+        (
+            status,
+            !markers.is_empty(),
+            markers
+                .iter()
+                .any(|(_, reason)| reason.contains("\\u{202e}")),
+            markers.iter().any(|(_, reason)| reason.contains(RLO)),
+            records.contains(RLO),
+        ),
+    );
+    cells.assert_all_agreed();
+    Ok(())
+}
+
+/// A positive `IN` that compares NOTHING (every right-hand value a refusal's marker: `%x` holds the
+/// own-key walk's marker and no key) is raised on the refusal in the FILTER role as in the gate role: the
+/// predicate `Items.*[ Name IN %x ]` leaves every entry undecidable with the refusal as its reason and the
+/// clause over the selection fails closed with its record flagged; the gate `when Items.*.Name IN %x`
+/// fails its rule closed the same way. The compared-nothing arm's text goes through the one builder the
+/// strict raise uses (the refusals first, then the markers' reasons beside a refusal, capped), so the
+/// filter role, the fail-open one, reads the refusal where it read a plain marker.
+#[test]
+fn a_compared_nothing_in_beside_a_refusal_is_raised_in_the_filter_and_gate_roles() -> Result<()> {
+    const DOCUMENT: &str = concat!(
+        "{\n        ",
+        captured_cfg_fragment!(),
+        r#",
+        "Items": { "I1": { "Name": "n1" } }
+    }"#
+    );
+    // Binds no key (`Kind == 'nope'` holds of no entry) and places the own-key walk's marker in `%x`.
+    const MARKER_ONLY_INTO_X: &str = "Cfg[ x | Kind == 'nope' ] !empty or Cfg.Fallback exists";
+    let run = |rules: &str| -> Result<(Status, bool, bool)> {
+        let rules_file = RulesFile::try_from(rules)?;
+        let mut root = root_scope(&rules_file, Rc::new(PathAwareValue::try_from(DOCUMENT)?));
+        let status = eval_rules_file(&rules_file, &mut root, None)?;
+        let records = format!("{:?}", root.reset_recorder().extract());
+        Ok((
+            status,
+            records.contains("refusal: true"),
+            records.contains(THE_OWN_KEY_REFUSAL),
+        ))
+    };
+    let mut cells = CellFailures::default();
+    cells.check(
+        "the filter role, `Items.*[ Name IN %x ] !empty` with the marker alone in `%x`: raised on the refusal, FAIL, a record flagged and carrying the refusal",
+        (Status::FAIL, true, true),
+        run(&format!(
+            "rule r {{ {MARKER_ONLY_INTO_X}  {REFUSED_WALK_INTO_X}  Items.*[ Name IN %x ] !empty }}"
+        ))?,
+    );
+    cells.check(
+        "the gate role, `when Items.*.Name IN %x` with the marker alone in `%x`: raised on the refusal, the rule fails closed (FAIL), a record flagged and carrying the refusal",
+        (Status::FAIL, true, true),
+        run(&format!(
+            "rule r when {MARKER_ONLY_INTO_X}  {REFUSED_WALK_INTO_X}  Items.*.Name IN %x {{ Cfg exists }}"
+        ))?,
+    );
+    cells.assert_all_agreed();
+    Ok(())
+}
+
+/// A filter predicate whose entry meets a RESOLVED pair's own undecided reason (the regex engine giving
+/// up on `%y != /(?!x)((a+)+)b/` over a key of thirty `a`s) beside a registered refused read (the own-key
+/// walk's marker in the same capture) raises the refusal ALONE, as it does when a key filter's marker
+/// leads: a predicate's raised text becomes the ENTRY's marker reason and is read by text against the
+/// registry wherever the entry is compared later, so a text led by the engine's reason, `(1) <engine>
+/// (2) <refusal>`, is no registered refusal's, the empty-selection arm beside it answered not applicable
+/// at exit 0, and the refusal was silent. The shape: `%y` holds the keys of `Cfg2`, one of them thirty
+/// `a`s, beside the refused own-key walk's marker (the promotion cells' fixture with one key added); the
+/// predicate `Items.*[ %y != /(?!x)((a+)+)b/ ]` meets the spent budget on that key's pair and the refusal
+/// on the marker's pair, so each entry of `Items` becomes a marker whose reason is the raise's text; a
+/// `when` over a template with no bucket compares the EMPTY left selection `NOT IN` those markers. Raised
+/// (FAIL): the markers' reason is the registered refusal, the empty-selection arm reads it registered and
+/// raises it, the rule fails closed, and the refusal is in the clause's block record; the asserted shape
+/// fails with the record flagged `refusal: true`. The engine's reason leaves the entry's marker and stays
+/// in the per-value record of its own pair. The control, the same predicate over the keys alone (`%k`, no
+/// refused walk), reads the engine's reason as a plain marker: the empty selection keeps its answer, not
+/// applicable as a gate, nothing registered, no record flagged.
+#[test]
+fn a_predicate_raised_on_an_engines_reason_beside_a_refusal_leaves_a_registered_marker(
+) -> Result<()> {
+    let spends_the_budget = "a".repeat(30);
+    let document = format!(
+        r#"{{
+    "Cfg2": {{
+        "Mode": {{ "Ref": "ModeParam" }},
+        "Other": {{ "Kind": "k" }},
+        "{spends_the_budget}": {{ "Kind": "k" }},
+        "C": {{ "Kind": "k", "Sub": {{ "R1": {{ "Ref": "P" }}, "P": {{ "Kind": "k" }}, "Q": {{ "Kind": "k" }} }} }},
+        "D": {{ "Kind": "k", "Sub": {{ "R1": {{ "Ref": "P" }}, "P": {{ "Kind": "k" }}, "Q": {{ "Kind": "k" }} }} }}
+    }},
+    "Items": {{ "I1": {{ "Name": "n1" }}, "I2": {{ "Name": "n2" }} }},
+    "Resources": {{ "Q": {{ "Type": "AWS::SQS::Queue" }} }}
+}}"#
+    );
+    const REFUSED_WALK_INTO_Y: &str =
+        "Cfg2[*][ y | Mode exists or Kind == 'k' ].Sub[*][ s | R1 !exists ] !empty or Cfg2.Other exists";
+    const EMPTY_LEFT: &str = "Resources.*[ Type == 'AWS::S3::Bucket' ].Properties.BucketName";
+    const ENGINE_LED_PREDICATE: &str = "Items.*[ %y != /(?!x)((a+)+)b/ ]";
+    const CONTROL_PREDICATE: &str = "Items.*[ %k != /(?!x)((a+)+)b/ ]";
+    const BODY: &str = "{ Resources.Q.Type == 'AWS::SQS::Queue' }";
+    // (status; the registry holds the own-key refusal; the empty-left clause's BLOCK record carries the
+    // refusal's sentence, and reads `refusal: true`, `None` when no such record is found; the refused-read
+    // lines; the block record reads `status: SKIP` (the control's "not applicable", read from the record
+    // and not inferred from the rule's PASS); the registry is EMPTY, the control's "nothing registered")
+    type Seen = (
+        Status,
+        bool,
+        Option<bool>,
+        Option<bool>,
+        usize,
+        Option<bool>,
+        bool,
+    );
+    let run = |rules: &str| -> Result<Seen> {
+        let rules_file = RulesFile::try_from(rules)?;
+        let mut root = root_scope(
+            &rules_file,
+            Rc::new(PathAwareValue::try_from(document.as_str())?),
+        );
+        let status = eval_rules_file(&rules_file, &mut root, None)?;
+        let registry = crate::rules::eval_context::registered_refusals();
+        let registered = registry
+            .iter()
+            .any(|text| text.contains(THE_OWN_KEY_REFUSAL));
+        // The clause's own lines: the refused walk's line at its own site is left out.
+        let lines = without_the_refused_walks_line(
+            root.warnings()
+                .filter(|line| line.contains("reported here instead"))
+                .cloned()
+                .collect(),
+        )
+        .len();
+        let extracted = root.reset_recorder().extract();
+        let mut under_the_clause = Vec::new();
+        record_containers_list(&extracted, "BucketName", &mut under_the_clause);
+        let block_record = under_the_clause
+            .iter()
+            .find(|record| record.contains("GuardClauseBlockCheck"));
+        Ok((
+            status,
+            registered,
+            block_record.map(|record| record.contains(THE_OWN_KEY_REFUSAL)),
+            block_record.map(|record| record.contains("refusal: true")),
+            lines,
+            block_record.map(|record| record.contains("status: SKIP")),
+            registry.is_empty(),
+        ))
+    };
+    let binds = format!("Cfg2[ y | Kind == 'k' ] !empty  {REFUSED_WALK_INTO_Y}");
+    let mut cells = CellFailures::default();
+    cells.check(
+        "the predicate raised on the engine's reason beside the refusal, as a `when` gate over the empty left selection `NOT IN` the entries: the markers' reason is the registered refusal, raised, the rule fails closed (FAIL); the refusal registered and in the clause's block record; no line",
+        (Status::FAIL, true, Some(true), 0),
+        {
+            let (status, registered, carries, _, lines, _, _) = run(&format!(
+                "rule r when {binds}  {EMPTY_LEFT} NOT IN {ENGINE_LED_PREDICATE} {BODY}"
+            ))?;
+            (status, registered, carries, lines)
+        },
+    );
+    cells.check(
+        "the same, asserted: FAIL with the refusal in the clause's block record, `refusal: true`; registered; no line; the record is not a SKIP; the registry not empty",
+        (Status::FAIL, true, Some(true), Some(true), 0, Some(false), false),
+        run(&format!(
+            "rule r {{ {binds}  {EMPTY_LEFT} NOT IN {ENGINE_LED_PREDICATE} }}"
+        ))?,
+    );
+    // The control: the keys alone, no refused read among the values the predicate compares. The
+    // predicate still raises on the engine's reason and the entries become plain markers; the empty
+    // left selection compared against them is not applicable (the clause's block record reads SKIP),
+    // and beside the passing bind clause that leaves the condition satisfied and the body's PASS the
+    // rule's answer in both roles, nothing registered and no record flagged. (A rule with no bind
+    // clause reads SKIP; this control keeps the bind so the marker is the same shape as the row's.)
+    const CONTROL_BINDS: &str = "Cfg2[ k | Kind == 'k' ] !empty";
+    cells.check(
+        "the control, the engine's reason with no refusal beside it, as a `when` gate: the entries' marker is plain, the empty selection keeps its answer (the clause's block record reads SKIP; beside the passing bind the body runs and the rule reads PASS), the registry empty, no line",
+        (Status::PASS, false, 0, Some(true), true),
+        {
+            let (status, registered, _, _, lines, skip, empty) = run(&format!(
+                "rule r when {CONTROL_BINDS}  {EMPTY_LEFT} NOT IN {CONTROL_PREDICATE} {BODY}"
+            ))?;
+            (status, registered, lines, skip, empty)
+        },
+    );
+    cells.check(
+        "the control, asserted: the empty selection keeps its answer beside the passing bind (PASS; the clause's block record reads SKIP), the registry empty, no record flagged",
+        (Status::PASS, false, Some(false), Some(true), true),
+        {
+            let (status, registered, _, flagged, _, skip, empty) = run(&format!(
+                "rule r {{ {CONTROL_BINDS}  {EMPTY_LEFT} NOT IN {CONTROL_PREDICATE} }}"
+            ))?;
+            (status, registered, flagged, skip, empty)
+        },
+    );
+    cells.assert_all_agreed();
+    Ok(())
+}
+
+/// A `when` NESTED in a filter predicate, raised beside a refused read, leaves the refusal as the entry's
+/// marker reason, as the predicate's own clauses do: the question a raise inside a predicate answers is
+/// where its text goes (it becomes the ENTRY's marker reason and is read by text against the registry
+/// wherever the entry is compared later), not which role raised it. `Items.*[ when %y != /(?!x)((a+)+)b/
+/// { Name exists } ]` with the keys of `Cfg2`, one of them thirty `a`s, and the refused own-key walk's
+/// marker in `%y`: the nested gate's comparison meets the engine's spent budget on the long key's pair
+/// and the refusal on the marker's pair, and whichever pair records its reason first, the raise is the
+/// refusal alone, so a `when` over a template with no bucket comparing the EMPTY left selection `NOT IN`
+/// those entries is raised (FAIL), the refusal registered and in the clause's block record, and the
+/// asserted shape fails with the record flagged `refusal: true`. Keyed on the `Filter` role alone, the
+/// nested gate raised `(1) <engine> (2) <refusal>` when the engine's pair recorded first, the entry read
+/// as a plain marker, and the empty-selection arm answered not applicable at exit 0 with the refusal
+/// silent. The predicate's own clause of the same shape is pinned beside this cell
+/// (`a_predicate_raised_on_an_engines_reason_beside_a_refusal_leaves_a_registered_marker`).
+#[test]
+fn a_when_nested_in_a_predicate_raised_beside_a_refusal_leaves_a_registered_marker() -> Result<()> {
+    let spends_the_budget = "a".repeat(30);
+    let document = format!(
+        r#"{{
+    "Cfg2": {{
+        "Mode": {{ "Ref": "ModeParam" }},
+        "Other": {{ "Kind": "k" }},
+        "{spends_the_budget}": {{ "Kind": "k" }},
+        "C": {{ "Kind": "k", "Sub": {{ "R1": {{ "Ref": "P" }}, "P": {{ "Kind": "k" }}, "Q": {{ "Kind": "k" }} }} }},
+        "D": {{ "Kind": "k", "Sub": {{ "R1": {{ "Ref": "P" }}, "P": {{ "Kind": "k" }}, "Q": {{ "Kind": "k" }} }} }}
+    }},
+    "Items": {{ "I1": {{ "Name": "n1" }}, "I2": {{ "Name": "n2" }} }},
+    "Resources": {{ "Q": {{ "Type": "AWS::SQS::Queue" }} }}
+}}"#
+    );
+    const REFUSED_WALK_INTO_Y: &str =
+        "Cfg2[*][ y | Mode exists or Kind == 'k' ].Sub[*][ s | R1 !exists ] !empty or Cfg2.Other exists";
+    const EMPTY_LEFT: &str = "Resources.*[ Type == 'AWS::S3::Bucket' ].Properties.BucketName";
+    const NESTED_WHEN_PREDICATE: &str = "Items.*[ when %y != /(?!x)((a+)+)b/ { Name exists } ]";
+    const BODY: &str = "{ Resources.Q.Type == 'AWS::SQS::Queue' }";
+    // (status; the registry holds the own-key refusal; the empty-left clause's BLOCK record carries the
+    // refusal's sentence, and reads `refusal: true`, `None` when no such record is found)
+    type Seen = (Status, bool, Option<bool>, Option<bool>);
+    let run = |rules: &str| -> Result<Seen> {
+        let rules_file = RulesFile::try_from(rules)?;
+        let mut root = root_scope(
+            &rules_file,
+            Rc::new(PathAwareValue::try_from(document.as_str())?),
+        );
+        let status = eval_rules_file(&rules_file, &mut root, None)?;
+        let registered = crate::rules::eval_context::registered_refusals()
+            .iter()
+            .any(|text| text.contains(THE_OWN_KEY_REFUSAL));
+        let extracted = root.reset_recorder().extract();
+        let mut under_the_clause = Vec::new();
+        record_containers_list(&extracted, "BucketName", &mut under_the_clause);
+        let block_record = under_the_clause
+            .iter()
+            .find(|record| record.contains("GuardClauseBlockCheck"));
+        Ok((
+            status,
+            registered,
+            block_record.map(|record| record.contains(THE_OWN_KEY_REFUSAL)),
+            block_record.map(|record| record.contains("refusal: true")),
+        ))
+    };
+    let binds = format!("Cfg2[ y | Kind == 'k' ] !empty  {REFUSED_WALK_INTO_Y}");
+    // A block body nested in the predicate: its clause is STRICT (an assertion inside the body), and
+    // inside a predicate it takes the refusal the same way, so the entry is marked by the refusal too.
+    const BLOCK_BODY_PREDICATE: &str = "Items.*[ this { %y != /(?!x)((a+)+)b/ } ]";
+    let mut cells = CellFailures::default();
+    for (shape, predicate) in [
+        ("the nested `when`", NESTED_WHEN_PREDICATE),
+        ("the nested block body", BLOCK_BODY_PREDICATE),
+    ] {
+        cells.check(
+            &format!("{shape} raised beside the refusal, as a `when` gate over the empty left selection `NOT IN` the entries: the entries' marker reason is the registered refusal, raised, the rule fails closed (FAIL); the refusal registered and in the clause's block record"),
+            (Status::FAIL, true, Some(true)),
+            {
+                let (status, registered, carries, _) = run(&format!(
+                    "rule r when {binds}  {EMPTY_LEFT} NOT IN {predicate} {BODY}"
+                ))?;
+                (status, registered, carries)
+            },
+        );
+        cells.check(
+            &format!("{shape}, asserted: FAIL with the refusal in the clause's block record, `refusal: true`; registered"),
+            (Status::FAIL, true, Some(true), Some(true)),
+            run(&format!("rule r {{ {binds}  {EMPTY_LEFT} NOT IN {predicate} }}"))?,
+        );
+    }
+    // The control: the keys alone, no refused read among the values the nested `when` compares; the
+    // entries become plain markers, the empty-left clause is not applicable beside the passing bind, the
+    // body runs, PASS in both roles, nothing registered, no record flagged.
+    const CONTROL_BINDS: &str = "Cfg2[ k | Kind == 'k' ] !empty";
+    const CONTROL_PREDICATE: &str = "Items.*[ when %k != /(?!x)((a+)+)b/ { Name exists } ]";
+    cells.check(
+        "the control, the nested `when` over the keys alone as a `when` gate: plain markers, the empty selection keeps its answer beside the passing bind (PASS), nothing registered",
+        (Status::PASS, false),
+        {
+            let (status, registered, _, _) = run(&format!(
+                "rule r when {CONTROL_BINDS}  {EMPTY_LEFT} NOT IN {CONTROL_PREDICATE} {BODY}"
+            ))?;
+            (status, registered)
+        },
+    );
+    cells.check(
+        "the control, asserted: PASS, nothing registered, no record flagged",
+        (Status::PASS, false, false),
+        {
+            let (status, registered, _, flagged) = run(&format!(
+                "rule r {{ {CONTROL_BINDS}  {EMPTY_LEFT} NOT IN {CONTROL_PREDICATE} }}"
+            ))?;
+            (status, registered, flagged == Some(true))
+        },
+    );
+    cells.assert_all_agreed();
+    Ok(())
+}
+
+/// A retrieval's reason for a key the document lacks writes the key and the path it names with each
+/// character that breaks or hides a line as its escape and the backslash as written: over a resource
+/// whose key holds a backslash and a right-to-left override (`R\a` followed by U+202E), the record of
+/// the refused marker `%x` compared against that resource's absent `Missing` leads with `The right-hand
+/// value is absent: Could not find key Missing inside struct at path /Resources/R\a\u{202e}/Properties`,
+/// the override spelled as its escape and the backslash once, where the raw override reached the console's
+/// `Error =` line and could reorder it, and the backslash doubled before the one-spelling fix spelled the
+/// resource two ways on one line. The refusal is printed after the lead, whole, as before.
+#[test]
+fn a_retrievals_reason_escapes_a_bidi_control_in_a_key_and_keeps_its_backslash() -> Result<()> {
+    const CFG: &str = "Cfg: { Mode: { Ref: 'ModeParam' }, Other: { Kind: 'k' }, C: { Kind: 'k', Sub: { R1: { Ref: 'P' }, P: { Kind: 'k' }, Q: { Kind: 'k' } } }, D: { Kind: 'k', Sub: { R1: { Ref: 'P' }, P: { Kind: 'k' }, Q: { Kind: 'k' } } } }";
+    const RLO: char = '\u{202e}';
+    // The resource is keyed by `key`, written as a YAML double-quoted scalar (`\\` in it is one backslash,
+    // a raw control character is kept as it is).
+    // Beside the status and the record's message, the path the retrieval names (the one resource's
+    // `Properties` map, under the key as the reader decoded it) rendered by `template_path`, the one
+    // renderer a refusal's path goes through, so a row can pin the message against that rendering exactly.
+    let run = |key: &str| -> Result<(Status, String, String)> {
+        let document = format!(
+            "{{ {CFG}, Resources: {{ \"{key}\": {{ Type: 'AWS::S3::Bucket', Properties: {{ Name: 'n' }} }} }} }}"
+        );
+        let value = Rc::new(PathAwareValue::try_from(document.as_str())?);
+        let properties_path = match value.as_ref() {
+            PathAwareValue::Map((_, top)) => match top.values.get("Resources") {
+                Some(PathAwareValue::Map((_, resources))) => match resources.values.values().next()
+                {
+                    Some(PathAwareValue::Map((_, resource))) => {
+                        resource.values.get("Properties").map(|properties| {
+                            crate::rules::eval_context::template_path(properties.self_path())
+                        })
+                    }
+                    _ => None,
+                },
+                _ => None,
+            },
+            _ => None,
+        }
+        .unwrap_or_default();
+        let rules = format!(
+            "rule r {{ Cfg[ x | Kind == 'k' ] !empty  {REFUSED_WALK_INTO_X}  %x != Resources.*.Properties.Missing }}"
+        );
+        let rules_file = RulesFile::try_from(rules.as_str())?;
+        let mut root = root_scope(&rules_file, Rc::clone(&value));
+        let status = eval_rules_file(&rules_file, &mut root, None)?;
+        let extracted = root.reset_recorder().extract();
+        let mut records = Vec::new();
+        unresolved_left_records(&extracted, "%x", &mut records);
+        let message = records
+            .iter()
+            .find_map(|(message, _, _)| message.clone())
+            .unwrap_or_default();
+        Ok((status, message, properties_path))
+    };
+    let mut cells = CellFailures::default();
+    let (status, message, _) = run(&format!("R\\\\a{RLO}"))?;
+    cells.check(
+        "a key holding a backslash and an override, the refused marker against the absent `Missing` under it: FAIL on the absence; the record's message names the path with the override escaped and the backslash once, carries no raw override, and ends with the refusal",
+        (Status::FAIL, true, false, false, true),
+        (
+            status,
+            message.contains("/Resources/R\\a\\u{202e}/Properties"),
+            message.contains(RLO),
+            message.contains("R\\\\a"),
+            message.contains(THE_OWN_KEY_REFUSAL),
+        ),
+    );
+    // The document's double-quoted scalar spells the two controls as the escapes `\n` and `\x1b`, which the
+    // reader decodes to a line feed and an ESC in the key; a raw line feed inside the quotes would end the
+    // scalar's line, and the reader refuses an unterminated literal.
+    let (status, message, rendered_path) = run("R\\nb\\x1bc")?;
+    cells.check(
+        "a key holding a line feed and an ESC: the message carries no raw line feed and no raw ESC, names the path EXACTLY as `template_path` renders it for that resource's `Properties` (the line feed as `\\n`, the ESC as `\\u{1b}`, the location after it), and ends with the refusal",
+        (Status::FAIL, false, false, true, true, true),
+        (
+            status,
+            message.contains('\n'),
+            message.contains('\u{1b}'),
+            rendered_path.starts_with("/Resources/R\\nb\\u{1b}c/Properties[L:"),
+            message.contains(rendered_path.as_str()),
+            message.contains(THE_OWN_KEY_REFUSAL),
+        ),
+    );
+    // Three hundred overrides in one key: escaped first and cut on the PRINTED width, so the path renders
+    // at most the part bound of escapes plus the cut marker with the leaf kept, where a cut on the source
+    // characters then escaped printed eight times the bound and pushed the refusal past the console's
+    // whole-line bound.
+    let long = RLO.to_string().repeat(300);
+    let (status, message, _) = run(&format!("R{long}x"))?;
+    cells.check(
+        "a key of three hundred overrides: the message is under the console's whole-line bound, names the path cut with its marker and its leaf `/Properties` kept, carries no raw override, and ends with the refusal",
+        (Status::FAIL, true, true, true, false, true),
+        (
+            status,
+            message.chars().count() < 4096,
+            message.contains("more characters cut"),
+            message.contains("x/Properties"),
+            message.contains(RLO),
+            message.contains(THE_OWN_KEY_REFUSAL),
+        ),
+    );
+    cells.assert_all_agreed();
+    Ok(())
+}
+
+/// A gate's plain raise names at most four of the markers' reasons it met BESIDE A REFUSAL, the rest
+/// counted once in a closing clause outside the numbering, so the text is bounded whatever the template
+/// holds; with no refusal met the markers' reasons do not join, and the raise is the one reason recorded.
+/// `when some %y NOT IN Resources.*.Properties.M[ keys == Missing ]` with the refused own-key walk's
+/// marker among `%y`'s keys, over six maps that lack the key the filter's right-hand query names (six
+/// marker reasons that differ: the key filter's reason for a right-hand side it could not resolve names
+/// the map's path, where the reason for a spent regex budget is the engine's one sentence whatever the
+/// map), is raised on the refusal first, then four of the markers' reasons, `(2) ` to `(5) `, then `; 2
+/// more undecided selections not named`, never a sixth numbered part; unbounded, the six reasons were a
+/// text six remedies long, and the count numbered as a part read as one more reason. The same gate over
+/// one such map beside the refusal names the refusal and the one reason, no count. With NO refusal (`when
+/// Resources.Q1.Properties.M.PROD NOT IN <the six markers>`) the gate is raised on the first marker's
+/// reason alone, unnumbered: joined, the text named one reason or several by which pair recorded first.
+/// The raised text is read from the gate clause's block record.
+#[test]
+fn a_gates_raise_names_at_most_four_marker_reasons_and_counts_the_rest() -> Result<()> {
+    // Six maps, each lacking `Missing`, so each key filter's right-hand query resolves to nothing and the
+    // filter leaves a marker whose reason names the map's own path: six texts, none registered.
+    let queue = |name: &str| {
+        format!("{name}: {{ Type: 'AWS::SQS::Queue', Properties: {{ M: {{ PROD: 1 }} }} }}")
+    };
+    let six = ["Q1", "Q2", "Q3", "Q4", "Q5", "Q6"]
+        .iter()
+        .map(|name| queue(name))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let one = queue("Q1");
+    const CFG2: &str = "Cfg2: { Mode: { Ref: 'ModeParam' }, Other: { Kind: 'k' }, C: { Kind: 'k', Sub: { R1: { Ref: 'P' }, P: { Kind: 'k' }, Q: { Kind: 'k' } } }, D: { Kind: 'k', Sub: { R1: { Ref: 'P' }, P: { Kind: 'k' }, Q: { Kind: 'k' } } } }";
+    // A key filter whose right-hand side the document lacks: each map it runs over is a marker whose reason
+    // names that map's path, so six maps are six distinct texts (a spent regex budget is ONE text for every
+    // map, which the dedup row below uses).
+    const ABSENT_RHS: &str = "Resources.*.Properties.M[ keys == Missing ]";
+    const BINDS: &str = "Cfg2[ y | Kind == 'k' ] !empty";
+    const REFUSED_WALK_INTO_Y: &str =
+        "Cfg2[*][ y | Mode exists or Kind == 'k' ].Sub[*][ s | R1 !exists ] !empty or Cfg2.Other exists";
+    const BODY: &str = "{ Resources.Q1.Type == 'AWS::SQS::Queue' }";
+    const THE_COUNT: &str = "more undecided selections not named";
+    // Two maps whose keys spend the regex budget: the engine's reason is ONE sentence whatever the map,
+    // so the two markers carry one text and the raise names it once (the dedup).
+    let budget_queue = |name: &str| {
+        format!(
+            "{name}: {{ Type: 'AWS::SQS::Queue', Properties: {{ M: {{ {}: 1, PROD: 1 }} }} }}",
+            "a".repeat(30)
+        )
+    };
+    let two_budget = format!("{}, {}", budget_queue("Q1"), budget_queue("Q2"));
+    const BUDGET_RHS_OVER_KEYS: &str = "Resources.*.Properties.M[ keys == /(?!x)((a+)+)b/ ]";
+    // (status; the gate clause's block record: holds a second numbered part; holds a third; holds a
+    // fifth; holds a sixth; the closing count it holds, "1 more", "2 more", another count, or none; its
+    // `refusal` flag, carried out of band from the text: true beside a refused read, false beside none;
+    // `None` when no block record is found under the membership clause)
+    type Seen = (
+        Status,
+        Option<bool>,
+        Option<bool>,
+        Option<bool>,
+        Option<bool>,
+        Option<&'static str>,
+        Option<bool>,
+    );
+    let run = |rules: &str, input: &str| -> Result<Seen> {
+        let rules_file = RulesFile::try_from(rules)?;
+        let mut root = root_scope(&rules_file, Rc::new(PathAwareValue::try_from(input)?));
+        let status = eval_rules_file(&rules_file, &mut root, None)?;
+        let extracted = root.reset_recorder().extract();
+        let mut under_the_clause = Vec::new();
+        record_containers_list(&extracted, " IN ", &mut under_the_clause);
+        let block_record = under_the_clause
+            .iter()
+            .find(|record| record.contains("GuardClauseBlockCheck"));
+        Ok((
+            status,
+            block_record.map(|record| record.contains("(2) ")),
+            block_record.map(|record| record.contains("(3) ")),
+            block_record.map(|record| record.contains("(5) ")),
+            block_record.map(|record| record.contains("(6) ")),
+            block_record.map(|record| {
+                if record.contains(&format!("; 1 {THE_COUNT}")) {
+                    "1 more"
+                } else if record.contains(&format!("; 2 {THE_COUNT}")) {
+                    "2 more"
+                } else if record.contains(THE_COUNT) {
+                    "another count"
+                } else {
+                    "none"
+                }
+            }),
+            block_record.map(|record| record.contains("refusal: true")),
+        ))
+    };
+    let mut cells = CellFailures::default();
+    cells.check(
+        "six undecided maps beside the refusal: raised (FAIL) on the refusal first, four marker reasons after it (`(2) ` to `(5) `), then the count of the two left outside the numbering, and no sixth part; the block record flagged `refusal: true` (the bit, not the text: the markers' parts are nobody's registry entry)",
+        (
+            Status::FAIL,
+            Some(true),
+            Some(true),
+            Some(true),
+            Some(false),
+            Some("2 more"),
+            Some(true),
+        ),
+        run(
+            &format!(
+                "rule r when {BINDS}  {REFUSED_WALK_INTO_Y}  some %y NOT IN {ABSENT_RHS} {BODY}"
+            ),
+            &format!("{{ {CFG2}, Resources: {{ {six} }} }}"),
+        )?,
+    );
+    cells.check(
+        "one undecided map beside the refusal: raised (FAIL) on the refusal and the one reason, numbered, no count, flagged",
+        (
+            Status::FAIL,
+            Some(true),
+            Some(false),
+            Some(false),
+            Some(false),
+            Some("none"),
+            Some(true),
+        ),
+        run(
+            &format!(
+                "rule r when {BINDS}  {REFUSED_WALK_INTO_Y}  some %y NOT IN {ABSENT_RHS} {BODY}"
+            ),
+            &format!("{{ {CFG2}, Resources: {{ {one} }} }}"),
+        )?,
+    );
+    cells.check(
+        "two budget maps beside the refusal, the markers carrying ONE text: raised (FAIL) on the refusal and that one reason, `(2) ` present and `(3) ` absent, no count, flagged",
+        (
+            Status::FAIL,
+            Some(true),
+            Some(false),
+            Some(false),
+            Some(false),
+            Some("none"),
+            Some(true),
+        ),
+        run(
+            &format!(
+                "rule r when {BINDS}  {REFUSED_WALK_INTO_Y}  some %y NOT IN {BUDGET_RHS_OVER_KEYS} {BODY}"
+            ),
+            &format!("{{ {CFG2}, Resources: {{ {two_budget} }} }}"),
+        )?,
+    );
+    cells.check(
+        "the control, six undecided maps and no refusal: raised (FAIL) on the first marker's reason alone, unnumbered, no count, `refusal: false`",
+        (
+            Status::FAIL,
+            Some(false),
+            Some(false),
+            Some(false),
+            Some(false),
+            Some("none"),
+            Some(false),
+        ),
+        run(
+            &format!("rule r when Resources.Q1.Properties.M.PROD NOT IN {ABSENT_RHS} {BODY}"),
+            &format!("{{ Resources: {{ {six} }} }}"),
+        )?,
+    );
     cells.assert_all_agreed();
     Ok(())
 }
@@ -50106,6 +58106,65 @@ fn a_registered_key_filter_marker_is_raised_behind_an_unregistered_one() -> Resu
         "the control, the refused query's marker first: the same answer",
         (Status::FAIL, true, true, 1),
         run(REFUSED, LACKING)?,
+    );
+    cells.assert_all_agreed();
+    Ok(())
+}
+
+/// The compared-nothing arm of `binary_operation` (a positive `IN` whose every right-hand value is a
+/// marker, so every pair files no status) answers with a REFUSAL's reason wherever that marker stands
+/// among the right-hand values, not only first: the first refusal's marker, else the first key filter's
+/// marker whose reason is a registered refusal (`rhs_refused_read_marker`), else the first marker of any
+/// kind, the choice the empty-selection arm makes. `Resources.A.Properties.M.PROD IN
+/// Resources.*.Properties.M[ keys == Statement[ Effect == 'Allow' ].Action ]` over `A` (its `M` lacks
+/// `Statement`: an unregistered marker), `L` (the same) and `R` (a one-object `Statement` of strings: the
+/// refused query's marker, registered) compares `'x'` against markers alone: asserted, FAIL as the
+/// registered refusal (`refusal: true`, the refusal in the records, one text collected), with the
+/// unregistered markers FIRST in the document as with `R` first. Read off the first marker of any kind,
+/// `R` behind `A` raised plain, `(1) <the lacking map's reason> (2) <the refusal>` with `refusal: false`,
+/// where `R` first raised the refusal: the record's flag depended on the resource order.
+#[test]
+fn an_in_over_markers_alone_raises_the_registered_refusal_behind_an_unregistered_marker(
+) -> Result<()> {
+    const A: &str = "A: { Type: 'AWS::SQS::Queue', Properties: { M: { PROD: 'x' } } }";
+    const LACKING: &str = "L: { Type: 'AWS::SQS::Queue', Properties: { M: { PROD: 1 } } }";
+    const REFUSED: &str = "R: { Type: 'AWS::SQS::Queue', Properties: { M: { PROD: 1, Statement: { Effect: 'Allow', Action: 'PROD' } } } }";
+    const RULE: &str = "rule r { Resources.A.Properties.M.PROD IN Resources.*.Properties.M[ keys == Statement[ Effect == 'Allow' ].Action ] }";
+    const THE_REFUSAL: &str = "selected nothing among the map's own entries";
+    // (status; a record reads `refusal: true`; the records carry the refusal's sentence; the refused-read
+    // texts the comparison collected)
+    let run = |order: [&str; 3]| -> Result<(Status, bool, bool, usize)> {
+        crate::rules::eval::REFUSAL_TEXTS_COLLECTED.with(|collected| collected.set(0));
+        let input = format!(
+            "{{ Resources: {{ {}, {}, {} }} }}",
+            order[0], order[1], order[2]
+        );
+        let rules_file = RulesFile::try_from(RULE)?;
+        let mut root = root_scope(
+            &rules_file,
+            Rc::new(PathAwareValue::try_from(input.as_str())?),
+        );
+        let status = eval_rules_file(&rules_file, &mut root, None)?;
+        let collected =
+            crate::rules::eval::REFUSAL_TEXTS_COLLECTED.with(|collected| collected.get());
+        let records = format!("{:?}", root.reset_recorder().extract());
+        Ok((
+            status,
+            records.contains("refusal: true"),
+            records.contains(THE_REFUSAL),
+            collected,
+        ))
+    };
+    let mut cells = CellFailures::default();
+    cells.check(
+        "the unregistered markers first (`A`, `L`), the refused query's marker last: raised as the refusal, FAIL, `refusal: true`, the refusal in the records, one text collected",
+        (Status::FAIL, true, true, 1),
+        run([A, LACKING, REFUSED])?,
+    );
+    cells.check(
+        "the control, the refused query's marker first: the same answer",
+        (Status::FAIL, true, true, 1),
+        run([REFUSED, A, LACKING])?,
     );
     cells.assert_all_agreed();
     Ok(())
@@ -50891,18 +58950,339 @@ fn a_left_markers_record_names_the_registered_right_marker_its_flag_was_set_for(
     Ok(())
 }
 
-/// The document the capture cells below share: `Cfg[ x | Kind == 'k' ]` captures the keys of the entries
-/// holding `Kind: k`, and the refused walk (`REFUSED_WALK`) adds the own-key refusal's marker to the same
-/// capture, so `%x` holds keys and a REFUSAL's marker; `Cfg` lacks `Missing`, and `Cfg.Mode.Ref` is among
-/// no key.
-const CAPTURED_KEYS_AND_A_REFUSAL: &str = r#"{
-    "Cfg": {
-        "Mode": { "Ref": "ModeParam" },
-        "Fallback": { "Kind": "k" },
-        "A": { "Kind": "k", "Sub": { "R1": { "Ref": "P" }, "P": { "Kind": "k" }, "Q": { "Kind": "k" } } },
-        "B": { "Kind": "k", "Sub": { "R1": { "Ref": "P" }, "P": { "Kind": "k" }, "Q": { "Kind": "k" } } }
+/// Every arm of `binary_operation` that asks "is this marker a refused read" reads a key filter's marker
+/// whose reason is a registered refusal (the marker a refused right-hand query leaves) as one, on either
+/// side, where the refused-read collection already did (`refused_read_text`, one predicate). The
+/// document: `A`'s `M` selects `PROD`, a string, through a list `Statement`; `B`'s `Statement` is a
+/// one-object map of strings, so its right-hand query is refused (the own-key refusal, registered) and its
+/// map leaves the registered marker. Three shapes, each red by the arm named and each with the control
+/// `B`'s `Statement` written as a list (no marker; the decided reading stays):
+///
+/// 1. The refusal-of-kinds read (`a_refusal_beside`): `A.Port != <the selection>` with `Port: 22` compares
+///    `22` with `'x'`, a refusal to compare kinds under a negated comparator beside the registered marker.
+///    Read as a refusal beside, the pair is a decided no of its own kind (`kinds_refused`), its record the
+///    kinds sentence with `refusal: true`, and the run's line is worded "was decided by a value of another
+///    kind"; read by kind alone it set `comparison_failed`, and the collected text then wrote "was decided
+///    by a value that matches a denied value" where `22` matched nothing.
+/// 2. The two `LhsUnresolved` branches (the marker on the LEFT): `some <the selection> NOT IN ['q']` is
+///    settled by `'x'`, PASS, and the marker's refusal, noted by its registered reason, is collected and
+///    written to the run's output as unraised (one line); `<the selection> NOT IN ['q']` under `match_all`
+///    fails on the marker's pair, whose record reads `refusal: true`, the one text collected and raised as a
+///    refusal. Read by kind alone, nothing was noted on the left: no line, nothing collected, the record and
+///    the raise plain.
+/// 3. The compared-nothing arm: `A.M.PROD IN <B's selection alone>` asserted, the marker alone among the
+///    right-hand values, FAILS as a refusal (`refusal: true`), as `NOT IN` and the gate already did; chosen
+///    by the first refusal's marker alone, it raised a plain undecidable error, `refusal: false`.
+/// 4. Two NON-empty-left answers the registered-reason collection moved, pinned where they stand: a
+///    passing `IN` beside the registered marker (`'x' IN {'x', the marker}`) writes the refused-read line
+///    for the refusal the pass never raised, and `some A.Name NOT IN <selection>` with `'n'` against `'x'`
+///    and the marker is raised as the REGISTERED refusal (`refusal: true`); before the collection read the
+///    marker's reason, the first wrote no line and the second raised plain.
+#[test]
+fn a_key_filters_registered_reason_is_a_refused_read_in_every_arm() -> Result<()> {
+    const KIND_LINE: &str = "was decided by a value of another kind";
+    const COLLISION_LINE: &str = "was decided by a value that matches a denied value";
+    const THE_LINE: &str = "was not raised by it";
+    const THE_REFUSAL: &str = "selected nothing among the map's own entries";
+    const THE_KINDS_SENTENCE: &str = "are kinds the comparator does not compare";
+    const SELECTION: &str =
+        "Resources.*.Properties.M[ keys == Statement[ Effect == 'Allow' ].Action ]";
+    // `statement`: `B`'s `Statement`, a one-object map (the refused query, the registered marker) or a list
+    // (decided, `'y'` selected).
+    let document = |statement: &str| {
+        format!(
+            "{{ Resources: {{ A: {{ Type: 'AWS::SQS::Queue', Properties: {{ Port: 22, Name: 'n', M: {{ PROD: 'x', Statement: [ {{ Effect: 'Allow', Action: 'PROD' }} ] }} }} }}, B: {{ Type: 'AWS::SQS::Queue', Properties: {{ M: {{ PROD: 'y', Statement: {statement} }} }} }} }} }}"
+        )
+    };
+    let refused = document("{ Effect: 'Allow', Action: 'PROD' }");
+    let decided = document("[ { Effect: 'Allow', Action: 'PROD' } ]");
+    struct Run {
+        status: Status,
+        kind_lines: usize,
+        collision_lines: usize,
+        lines: usize,
+        collected: usize,
+        flagged: bool,
+        // The marker's own PAIR record (the `RhsUnresolved` arm's, a left-hand value against the marker)
+        // reads `refusal: true`, apart from the block record a strict raise writes beside it; and how many
+        // such pair records there are, so a row asserting the flag false also asserts a record exists.
+        pair_flagged: bool,
+        pair_records: usize,
+        kinds_sentence_flagged: bool,
     }
-}"#;
+    let run = |rules: &str, input: &str| -> Result<Run> {
+        crate::rules::eval::REFUSAL_TEXTS_COLLECTED.with(|collected| collected.set(0));
+        let rules_file = RulesFile::try_from(rules)?;
+        let mut root = root_scope(&rules_file, Rc::new(PathAwareValue::try_from(input)?));
+        let status = eval_rules_file(&rules_file, &mut root, None)?;
+        let collected =
+            crate::rules::eval::REFUSAL_TEXTS_COLLECTED.with(|collected| collected.get());
+        let kind_lines = root
+            .warnings()
+            .filter(|line| line.contains(KIND_LINE) && line.contains(THE_REFUSAL))
+            .count();
+        let collision_lines = root
+            .warnings()
+            .filter(|line| line.contains(COLLISION_LINE))
+            .count();
+        let lines = root
+            .warnings()
+            .filter(|line| line.contains(THE_LINE))
+            .count();
+        let extracted = root.reset_recorder().extract();
+        let mut records = Vec::new();
+        record_containers_list(&extracted, "", &mut records);
+        let flagged = records
+            .iter()
+            .any(|record| record.contains("refusal: true"));
+        let mut pair_records = Vec::new();
+        unresolved_right_records(&extracted, "", &mut pair_records);
+        let pair_flagged = pair_records.iter().any(|(_, refusal)| *refusal);
+        let kinds_sentence_flagged = records
+            .iter()
+            .any(|record| record.contains(THE_KINDS_SENTENCE) && record.contains("refusal: true"));
+        Ok(Run {
+            status,
+            kind_lines,
+            collision_lines,
+            lines,
+            collected,
+            flagged,
+            pair_flagged,
+            pair_records: pair_records.len(),
+            kinds_sentence_flagged,
+        })
+    };
+    let mut cells = CellFailures::default();
+    // 1. The refusal of kinds beside the registered marker.
+    let kinds = run(
+        &format!("rule r {{ Resources.A.Properties.Port != {SELECTION} }}"),
+        &refused,
+    )?;
+    cells.check(
+        "`A.Port != <selection>`, `22` against `'x'` beside the registered marker: FAIL on the decided no of kinds, one kind line naming the refusal, no collision line, the kinds sentence recorded as a refusal",
+        (Status::FAIL, 1, 0, true),
+        (
+            kinds.status,
+            kinds.kind_lines,
+            kinds.collision_lines,
+            kinds.kinds_sentence_flagged,
+        ),
+    );
+    let kinds_control = run(
+        &format!("rule r {{ Resources.A.Properties.Port != {SELECTION} }}"),
+        &decided,
+    )?;
+    cells.check(
+        "the control, no marker: `22` against `'x'` and `'y'` is a decided no with the operators' reason (FAIL), no line, no record flagged",
+        (Status::FAIL, 0, 0, 0, false),
+        (
+            kinds_control.status,
+            kinds_control.kind_lines,
+            kinds_control.collision_lines,
+            kinds_control.lines,
+            kinds_control.flagged,
+        ),
+    );
+    // 2. The marker on the LEFT.
+    let some = run(
+        &format!("rule r {{ some {SELECTION} NOT IN ['q'] }}"),
+        &refused,
+    )?;
+    cells.check(
+        "`some <selection> NOT IN ['q']`, the registered marker among the left-hand values: `'x'` settles the `some` (PASS), the refusal is collected and its unraised line written",
+        (Status::PASS, 1, 1),
+        (some.status, some.collected, some.lines),
+    );
+    let all = run(&format!("rule r {{ {SELECTION} NOT IN ['q'] }}"), &refused)?;
+    cells.check(
+        "`<selection> NOT IN ['q']` under `match_all`: the marker's pair fails the clause (FAIL), its record reads `refusal: true`, the one text collected",
+        (Status::FAIL, true, 1),
+        (all.status, all.flagged, all.collected),
+    );
+    let left_control = run(&format!("rule r {{ {SELECTION} NOT IN ['q'] }}"), &decided)?;
+    cells.check(
+        "the control, no marker on the left: `'x'` and `'y'` pass (PASS), nothing collected, no line, no record flagged",
+        (Status::PASS, 0, 0, false),
+        (
+            left_control.status,
+            left_control.collected,
+            left_control.lines,
+            left_control.flagged,
+        ),
+    );
+    // 3. The compared-nothing arm.
+    let alone = run(
+        "rule r { Resources.A.Properties.M.PROD IN Resources.B.Properties.M[ keys == Statement[ Effect == 'Allow' ].Action ] }",
+        &refused,
+    )?;
+    cells.check(
+        "`A.M.PROD IN <B's selection alone>`, the registered marker alone on the right: raised as a refusal (FAIL, `refusal: true`), the one text collected",
+        (Status::FAIL, true, 1),
+        (alone.status, alone.flagged, alone.collected),
+    );
+    let alone_control = run(
+        "rule r { Resources.A.Properties.M.PROD IN Resources.B.Properties.M[ keys == Statement[ Effect == 'Allow' ].Action ] }",
+        &decided,
+    )?;
+    cells.check(
+        "the control, `'x' IN ['y']`: a decided no (FAIL), no record flagged, nothing collected",
+        (Status::FAIL, false, 0),
+        (
+            alone_control.status,
+            alone_control.flagged,
+            alone_control.collected,
+        ),
+    );
+    // 4. Two non-empty-left answers the text-read collection moved, pinned where they stand. A passing
+    // `IN` beside the registered marker: `'x' IN {'x', the marker}` passes on the listed value, and the
+    // refusal the pass never raised is collected and written to the run's output as unraised (one line);
+    // read by kind alone, the clause passed with nothing collected and no line. A `some` assertion with a
+    // non-empty left under `NOT IN`: `'n' NOT IN {'x', the marker}` passes against `'x'` but may equal the
+    // value the marker hides, so the clause is raised, and the raise is the REGISTERED refusal
+    // (`refusal: true`, the one text collected); read by kind alone it raised plain (`refusal: false`).
+    let passing_in = run(
+        &format!("rule r {{ Resources.A.Properties.M.PROD IN {SELECTION} }}"),
+        &refused,
+    )?;
+    cells.check(
+        "`A.M.PROD IN <selection>`, `'x'` listed beside the registered marker: PASS, the refusal collected and its unraised line written",
+        (Status::PASS, 1, 1, false),
+        (
+            passing_in.status,
+            passing_in.collected,
+            passing_in.lines,
+            passing_in.flagged,
+        ),
+    );
+    let passing_in_control = run(
+        &format!("rule r {{ Resources.A.Properties.M.PROD IN {SELECTION} }}"),
+        &decided,
+    )?;
+    cells.check(
+        "the control, `'x' IN ['x', 'y']`: PASS, nothing collected, no line",
+        (Status::PASS, 0, 0),
+        (
+            passing_in_control.status,
+            passing_in_control.collected,
+            passing_in_control.lines,
+        ),
+    );
+    let some_not_in = run(
+        &format!("rule r {{ some Resources.A.Properties.Name NOT IN {SELECTION} }}"),
+        &refused,
+    )?;
+    cells.check(
+        "`some A.Name NOT IN <selection>`, `'n'` against `'x'` and the registered marker: raised as a refusal (FAIL, `refusal: true`), the marker's own PAIR record flagged too, the one text collected",
+        (Status::FAIL, true, true, 1),
+        (
+            some_not_in.status,
+            some_not_in.flagged,
+            some_not_in.pair_flagged,
+            some_not_in.collected,
+        ),
+    );
+    // The pair record's flag reads whether the marker is a refused read (`refused_read_text`: by kind,
+    // by a registered reason, or by the `beside_a_refusal` flag), so a marker that is none of those,
+    // the one a spent regex budget leaves (`B`'s `M` holding a thirty-`a` key under `keys ==
+    // /(?!x)((a+)+)b/`), leaves its pair record `refusal: false` beside the plain raise: the flag moves
+    // with the refused read, not with the marker's kind alone, and this control is the one that would
+    // go green were the flag written `true` for every marker.
+    let budget = document("[ { Effect: 'Allow', Action: 'PROD' } ]").replace(
+        "PROD: 'y', Statement:",
+        &format!("{}: 1, PROD: 'y', Statement:", "a".repeat(30)),
+    );
+    let some_not_in_budget = run(
+        "rule r { some Resources.A.Properties.Name NOT IN Resources.*.Properties.M[ keys == /(?!x)((a+)+)b/ ] }",
+        &budget,
+    )?;
+    cells.check(
+        "`some A.Name NOT IN <the budget marker>`, `'n'` against the marker a spent regex budget left: raised plain (FAIL), no record flagged, the one pair record present and unflagged, nothing collected",
+        (Status::FAIL, false, false, true, 0),
+        (
+            some_not_in_budget.status,
+            some_not_in_budget.flagged,
+            some_not_in_budget.pair_flagged,
+            some_not_in_budget.pair_records >= 1,
+            some_not_in_budget.collected,
+        ),
+    );
+    let some_not_in_control = run(
+        &format!("rule r {{ some Resources.A.Properties.Name NOT IN {SELECTION} }}"),
+        &decided,
+    )?;
+    cells.check(
+        "the control, `some 'n' NOT IN ['x', 'y']`: PASS, no record flagged, no pair record flagged, nothing collected",
+        (Status::PASS, false, false, 0),
+        (
+            some_not_in_control.status,
+            some_not_in_control.flagged,
+            some_not_in_control.pair_flagged,
+            some_not_in_control.collected,
+        ),
+    );
+    cells.assert_all_agreed();
+    Ok(())
+}
+
+/// The document the capture cells below share, the one `Cfg` fragment (`captured_cfg_fragment!`) alone:
+/// `Cfg[ x | Kind == 'k' ]` captures the keys of the entries holding `Kind: k`, and the refused walk
+/// (`REFUSED_WALK`) adds the own-key refusal's marker to the same capture, so `%x` holds keys and a
+/// REFUSAL's marker; `Cfg` lacks `Missing`, and `Cfg.Mode.Ref` is among no key. Read by the capture cells
+/// that follow (`an_absent_left_value_beside_a_refusal_records_the_absence_and_the_refusal_whole`, the
+/// `Cfg.Mode.Ref` membership cells, the two-refusal document's `Cfg`) and by every cell that names it; the
+/// asserted empty-left cell and its absence guard build their documents from the same fragment beside
+/// more members.
+const CAPTURED_KEYS_AND_A_REFUSAL: &str = concat!("{\n    ", captured_cfg_fragment!(), "\n}");
+/// The document of the numbered-wrap cells: the captured `Cfg` beside a second refused walk's `Cfg2`;
+/// one `Items` entry, for the predicate whose raise beside the two refusals is numbered; the map `M` the
+/// wrap filters; a second collection `Items2` no bind touches, for a predicate read apart from the binds'
+/// own entry markers; and a map `Budget` whose one key spends the regex budget, a key filter's plain
+/// marker, the control for a refused read.
+const NUMBERED_WRAP_DOCUMENT: &str = concat!(
+    "{\n        ",
+    captured_cfg_fragment!(),
+    r#",
+        "Cfg2": {
+            "Mode": { "Ref": "ModeParam" },
+            "Other": { "Kind": "k" },
+            "C": { "Kind": "k", "Sub": { "R1": { "Ref": "P" }, "P": { "Kind": "k" }, "Q": { "Kind": "k" } } },
+            "D": { "Kind": "k", "Sub": { "R1": { "Ref": "P" }, "P": { "Kind": "k" }, "Q": { "Kind": "k" } } }
+        },
+        "Items": { "I1": { "Name": "n1" } },
+        "Items2": { "J1": { "Name": "n1" } },
+        "Maps": { "M": { "PROD": 1 } },
+        "Budget": { "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": 1 },
+        "Resources": { "Q": { "Type": "AWS::SQS::Queue" } }
+    }"#
+);
+/// The capture of the `Cfg` entries holding `Kind: k`; with the refused walk beside it, the own-key
+/// refusal's marker stands in `%x` among the keys.
+const CAPTURE_X: &str = "Cfg[ x | Kind == 'k' ] !empty";
+/// A second refused walk into the SAME capture, over `Cfg2`: its own-key refusal's marker joins `%x`
+/// beside the first's, so two distinct refusals stand among its values.
+const SECOND_WALK_INTO_X: &str = "Cfg2[*][ x | Mode exists or Kind == 'k' ].Sub[*][ s | R1 !exists ] !empty or Cfg2.Other exists";
+
+/// Rule `rule_name`'s own record among the top-level rule checks of `top`, with its status: a cell that
+/// reads a gate's run reads the subtree of the rule whose `when` made it, never the whole tree, where a
+/// top-level run of the same referenced rule is recorded in the assertion role.
+fn rule_record<'r, 'v>(top: &'r EventRecord<'v>, rule_name: &str) -> (Status, &'r EventRecord<'v>) {
+    let own = top
+        .children
+        .iter()
+        .find(|child| {
+            matches!(
+                &child.container,
+                Some(RecordType::RuleCheck(NamedStatus { name, .. })) if *name == rule_name
+            )
+        })
+        .unwrap_or_else(|| panic!("no rule named {} in the record tree", rule_name));
+    let status = match &own.container {
+        Some(RecordType::RuleCheck(NamedStatus { status, .. })) => *status,
+        _ => unreachable!("the record found is the rule's"),
+    };
+    (status, own)
+}
 const REFUSED_WALK_INTO_X: &str =
     "Cfg[*][ x | Mode exists or Kind == 'k' ].Sub[*][ s | R1 !exists ] !empty or Cfg.Fallback exists";
 const THE_OWN_KEY_REFUSAL: &str = "then no kept entry holds a key the predicate names";
@@ -51019,10 +59399,15 @@ fn a_left_refusal_marker_against_a_plain_right_hand_side_records_the_refusal_who
             Rc::new(PathAwareValue::try_from(CAPTURED_KEYS_AND_A_REFUSAL)?),
         );
         let status = eval_rules_file(&rules_file, &mut root, None)?;
-        let lines = root
-            .warnings()
-            .filter(|line| line.contains(THE_OWN_KEY_REFUSAL))
-            .count();
+        // The comparison's own lines naming the refusal: the refused walk's line at its own site is left
+        // out.
+        let lines = without_the_refused_walks_line(
+            root.warnings()
+                .filter(|line| line.contains(THE_OWN_KEY_REFUSAL))
+                .cloned()
+                .collect(),
+        )
+        .len();
         let registered = crate::rules::eval_context::registered_refusals()
             .iter()
             .any(|text| text.contains(THE_OWN_KEY_REFUSAL));
@@ -51114,21 +59499,30 @@ fn report_sentences(clauses: &[crate::rules::eval_context::ClauseReport<'_>]) ->
 #[test]
 fn a_left_refusal_marker_beside_an_absent_right_hand_side_leads_with_the_absence() -> Result<()> {
     const THE_LINE: &str = "was decided by a value the document lacks";
+    const THE_RIGHT_SIDE: &str = "The right-hand value is absent";
     const THE_ABSENCE: &str = "Could not find key Missing";
     const THE_MISSING_FROM: &str = "to compare from is missing";
+    // The report's sentence for the record names the refused LEFT read as its subject (the shared
+    // sentence builder reads a refused left-hand operand first, whatever the right holds), the error
+    // after it naming the side, the key and the refusal.
     const COULD_NOT_BE_READ: &str = "the value to compare from could not be read";
-    // The FAILING comparison records under `needle`: (the record's message, its `refusal` flag).
+    // The FAILING comparison records under `needle`: (the record's message, its `refusal` flag, whether
+    // its `to` is an unresolved value, the absent right-hand side the marker was compared with).
     fn failing_comparison_records(
         record: &EventRecord<'_>,
         needle: &str,
-        out: &mut Vec<(Option<String>, bool)>,
+        out: &mut Vec<(Option<String>, bool, bool)>,
     ) {
         if record.context.contains(needle) {
             if let Some(RecordType::ClauseValueCheck(ClauseCheck::Comparison(check))) =
                 &record.container
             {
                 if check.status == Status::FAIL {
-                    out.push((check.message.clone(), check.refusal));
+                    out.push((
+                        check.message.clone(),
+                        check.refusal,
+                        matches!(check.to, Some(QueryResult::UnResolved(_))),
+                    ));
                 }
             }
         }
@@ -51136,11 +59530,11 @@ fn a_left_refusal_marker_beside_an_absent_right_hand_side_leads_with_the_absence
             failing_comparison_records(child, needle, out);
         }
     }
-    // (status; the marker's record: its message names the absence before the refusal and holds the
-    // refusal once, with `refusal: true`; the report's sentences: one record says the value could not
-    // be read and names the absence with the refusal, and none carries the missing-property wording
-    // for the marker; the refused-read lines in the absence wording naming the refusal; the refusal
-    // registered)
+    // (status; the marker's record: its message names the right-hand side, then the absence, then the
+    // refusal, holds the refusal once, reads `refusal: true`, and carries the absent right-hand value as
+    // its `to`; the report's sentences: one record says the value could not be read and names the
+    // absence with the refusal, and none carries the missing-property wording for the marker; the
+    // refused-read lines in the absence wording naming the refusal; the refusal registered)
     type Seen = (Status, bool, bool, bool, usize, bool);
     let run = |rules: &str| -> Result<Seen> {
         let rules_file = RulesFile::try_from(rules)?;
@@ -51159,27 +59553,36 @@ fn a_left_refusal_marker_beside_an_absent_right_hand_side_leads_with_the_absence
         let extracted = root.reset_recorder().extract();
         let mut records = Vec::new();
         failing_comparison_records(&extracted, "%x", &mut records);
-        let absence_led = records.iter().any(|(message, refusal)| {
+        let absence_led = records.iter().any(|(message, refusal, to_is_absent)| {
             *refusal
+                && *to_is_absent
                 && message.as_deref().is_some_and(|message| {
                     message.matches(THE_OWN_KEY_REFUSAL).count() == 1
                         && matches!(
-                            (message.find(THE_ABSENCE), message.find(THE_OWN_KEY_REFUSAL)),
-                            (Some(absence), Some(refusal)) if absence < refusal
+                            (
+                                message.find(THE_RIGHT_SIDE),
+                                message.find(THE_ABSENCE),
+                                message.find(THE_OWN_KEY_REFUSAL),
+                            ),
+                            (Some(side), Some(absence), Some(refusal))
+                                if side < absence && absence < refusal
                         )
                 })
         });
         let report = crate::rules::eval_context::simplified_json_from_root(&extracted)?;
         let sentences = report_sentences(&report.not_compliant);
-        // ONE record's sentence says the value could not be read, and that sentence names the absence
-        // and the refusal: read per record, so two records cannot supply the strings between them.
-        let could_not_be_read: Vec<&String> = sentences
+        // ONE record's sentence says the value to compare from could not be read AND carries the refusal
+        // (the keys' own pairs say the right side is missing, with no refusal), and that sentence names
+        // the side and the absence in its error: read per record, so two records cannot supply the
+        // strings between them.
+        let with_the_refusal: Vec<&String> = sentences
             .iter()
-            .filter(|sentence| sentence.contains(COULD_NOT_BE_READ))
+            .filter(|sentence| sentence.contains(THE_OWN_KEY_REFUSAL))
             .collect();
-        let one_record_names_both = could_not_be_read.len() == 1
-            && could_not_be_read[0].contains(THE_ABSENCE)
-            && could_not_be_read[0].contains(THE_OWN_KEY_REFUSAL);
+        let one_record_names_both = with_the_refusal.len() == 1
+            && with_the_refusal[0].contains(COULD_NOT_BE_READ)
+            && with_the_refusal[0].contains(THE_RIGHT_SIDE)
+            && with_the_refusal[0].contains(THE_ABSENCE);
         let marker_read_as_missing = sentences
             .iter()
             .any(|sentence| sentence.contains(THE_MISSING_FROM));
@@ -51194,7 +59597,7 @@ fn a_left_refusal_marker_beside_an_absent_right_hand_side_leads_with_the_absence
     };
     let mut cells = CellFailures::default();
     cells.check(
-        "`%x != Cfg.Missing` asserted, `%x` the keys and the refusal's marker, `Missing` absent: FAIL on the absence; the marker's record names `Missing` before the refusal, once, `refusal: true`; one report record says the value could not be read and names both; no missing-property wording for the marker; one line in the absence wording naming the refusal; registered",
+        "`%x != Cfg.Missing` asserted, `%x` the keys and the refusal's marker, `Missing` absent: FAIL on the absence; the marker's record names the right side, `Missing` and the refusal in that order, once, `refusal: true`, and carries the absent value as its `to`; the one report sentence with the refusal says the value to compare from could not be read, with the side and the key in its error; no missing-property wording for the marker; one line in the absence wording naming the refusal; registered",
         (Status::FAIL, true, true, false, 1, true),
         run(&format!(
             "rule r {{ Cfg[ x | Kind == 'k' ] !empty  {REFUSED_WALK_INTO_X}  %x != Cfg.Missing }}"
@@ -51246,30 +59649,51 @@ fn failing_comparison_records_with_kind(
 /// ("Attempting to retrieve from key Missing but type is not an struct type at path ..., Value = ..."),
 /// so over a `Cfg.Mode.Ref` of five thousand characters the record's message, flagged `refusal: true` and
 /// printed by the console under its whole-line bound, held the template string and pushed the refusal
-/// past the console's cut, where it was shown nowhere. Now the lead is cut at the template-part bound
-/// with the count cut, and the refusal's text follows it inside the whole-line bound, in both shapes: the
-/// LEFT marker beside the absent right-hand read (`%x != Cfg.Mode.Ref.Missing`) and the mirror, the absent
-/// left read beside the right-hand marker (`Cfg.Mode.Ref.Missing == %x`).
+/// past the console's cut, where it was shown nowhere. Now only the template VALUE the reason quotes
+/// (its `Value = ...` part) is cut at the template-part bound with the count cut, the key and the path
+/// before it are kept whole, and the refusal's text follows inside the whole-line bound, in both shapes:
+/// the LEFT marker beside the absent right-hand read (`%x != Cfg.Mode.Ref.Missing`) and the mirror, the
+/// absent left read beside the right-hand marker (`Cfg.Mode.Ref.Missing == %x`). A third row reads the key
+/// off a string under a key of five thousand characters: the reason's head up to the quoted value is
+/// intact (the path is bounded as a template PATH where the retrieval writes it, `template_path`: cut in
+/// its MIDDLE with the top of the document and the leaf segment's end kept and the location appended
+/// whole, so the sentence after it, `Type = String, Value = ...`, survives and so does the end of the key
+/// the read failed under, beside its `[L:x,C:y]`), and the whole message stays under the console's
+/// whole-line bound, where a bound over the quoted value alone left a key of that length unbounded and
+/// the refusal fell past the console's cut, and where an END cut of the path kept the document's top and
+/// lost the leaf that said where the key was missed.
 #[test]
 fn an_absence_lead_beside_a_marker_is_bounded_as_a_template_part() -> Result<()> {
     const THE_READ_OFF_A_STRING: &str = "Attempting to retrieve from key Missing";
+    const THE_HEAD_SURVIVES: &str = ", Type = String, Value = ";
     const THE_CUT: &str = " more characters cut]";
     let long = "v".repeat(5000);
+    let long_key = "k".repeat(5000);
+    // The end of the path as `template_path` keeps it: the tail half of the bound (128 of the 256
+    // characters) is the leaf segment's last characters, and the location follows it whole.
+    let the_short_path_with_its_location = "/Cfg/Mode/Ref[L:";
+    let the_long_keys_end_with_its_location = format!("{}[L:", "k".repeat(128));
     let document = CAPTURED_KEYS_AND_A_REFUSAL.replace("\"ModeParam\"", &format!("\"{long}\""));
     assert!(
         document.contains(&long),
         "the fixture carries the long string"
     );
+    let under_a_long_key = CAPTURED_KEYS_AND_A_REFUSAL.replace(
+        "\"ModeParam\"",
+        &format!("{{ \"{long_key}\": \"{long}\" }}"),
+    );
+    assert!(
+        under_a_long_key.contains(&long_key),
+        "the fixture carries the long key"
+    );
     // (status; the clause's one refusal-flagged record: its message names the read off the string,
-    // carries the cut marker, holds the refusal, holds no 300-character run of the string, and is under
-    // the whole-line bound)
-    type Seen = (Status, bool, bool, bool, bool, bool);
-    let run = |rules: &str, needle: &str| -> Result<Seen> {
+    // keeps the reason's head up to the quoted value (the path whole), carries the cut marker, holds the
+    // refusal, holds no 300-character run of the string, is under the whole-line bound, names the END of
+    // the path it read off beside its location, and holds no 300-character run of the long key)
+    type Seen = (Status, bool, bool, bool, bool, bool, bool, bool, bool);
+    let run = |document: &str, rules: &str, needle: &str, the_paths_end: &str| -> Result<Seen> {
         let rules_file = RulesFile::try_from(rules)?;
-        let mut root = root_scope(
-            &rules_file,
-            Rc::new(PathAwareValue::try_from(document.as_str())?),
-        );
+        let mut root = root_scope(&rules_file, Rc::new(PathAwareValue::try_from(document)?));
         let status = eval_rules_file(&rules_file, &mut root, None)?;
         let mut records = Vec::new();
         failing_comparison_records_with_kind(
@@ -51294,63 +59718,112 @@ fn an_absence_lead_beside_a_marker_is_bounded_as_a_template_part() -> Result<()>
         Ok((
             status,
             message.contains(THE_READ_OFF_A_STRING),
+            message.contains(THE_HEAD_SURVIVES),
             message.contains(THE_CUT),
             message.contains(THE_OWN_KEY_REFUSAL),
             !message.contains(&"v".repeat(300)),
             message.chars().count() < 4096,
+            message.contains(the_paths_end),
+            !message.contains(&"k".repeat(300)),
         ))
     };
     let mut cells = CellFailures::default();
     cells.check(
-        "`%x != Cfg.Mode.Ref.Missing` asserted, the refusal's marker in `%x`, `Ref` a 5000-character string: FAIL on the absence; the marker's record leads with the read off the string, cut and marked, then the refusal; no 300-character run of the string; under the whole-line bound",
-        (Status::FAIL, true, true, true, true, true),
+        "`%x != Cfg.Mode.Ref.Missing` asserted, the refusal's marker in `%x`, `Ref` a 5000-character string: FAIL on the absence; the marker's record leads with the read off the string, its head whole up to the quoted value, the value cut and marked, then the refusal; no 300-character run of the string; under the whole-line bound; the short path whole with its location",
+        (Status::FAIL, true, true, true, true, true, true, true, true),
         run(
+            &document,
             &format!(
                 "rule r {{ Cfg[ x | Kind == 'k' ] !empty  {REFUSED_WALK_INTO_X}  %x != Cfg.Mode.Ref.Missing }}"
             ),
             "%x",
+            the_short_path_with_its_location,
         )?,
     );
     cells.check(
-        "the mirror, `Cfg.Mode.Ref.Missing == %x` asserted: FAIL on the absence; the absent left value's record leads with the read off the string, cut and marked, then the refusal; no 300-character run of the string; under the whole-line bound",
-        (Status::FAIL, true, true, true, true, true),
+        "the mirror, `Cfg.Mode.Ref.Missing == %x` asserted: FAIL on the absence; the absent left value's record leads with the read off the string, its head whole, the value cut and marked, then the refusal; no 300-character run of the string; under the whole-line bound; the short path whole with its location",
+        (Status::FAIL, true, true, true, true, true, true, true, true),
         run(
+            &document,
             &format!(
                 "rule r {{ Cfg[ x | Kind == 'k' ] !empty  {REFUSED_WALK_INTO_X}  Cfg.Mode.Ref.Missing == %x }}"
             ),
             "Cfg.Mode.Ref.Missing",
+            the_short_path_with_its_location,
         )?,
+    );
+    let under_the_long_key = run(
+        &under_a_long_key,
+        &format!(
+            "rule r {{ Cfg[ x | Kind == 'k' ] !empty  {REFUSED_WALK_INTO_X}  %x != Cfg.Mode.Ref.{long_key}.Missing }}"
+        ),
+        "%x",
+        &the_long_keys_end_with_its_location,
+    )?;
+    cells.check(
+        "`%x != Cfg.Mode.Ref.<5000-character key>.Missing` asserted, the string under the long key: FAIL on the absence; the record's head is intact up to the quoted value (the path cut in its middle where the retrieval wrote it), the value cut and marked, then the refusal; no 300-character run of the string; under the whole-line bound; the path's end, the last 128 characters of the long key, beside its location; no 300-character run of the key",
+        (Status::FAIL, true, true, true, true, true, true, true, true),
+        under_the_long_key,
     );
     cells.assert_all_agreed();
     Ok(())
 }
 
 /// The record of a KEY FILTER's marker on the left (the marker a key filter leaves for a map whose key
-/// spent the regex budget, no refusal) compared against a right-hand side the document lacks is decided
-/// by the absence and leads with it, naming the marker after it, with `refusal: false`: `%cfg !=
-/// Resources.R.Properties.Missing` with the marker and a listed value in `%cfg` fails asserted on the
-/// absence, and the marker's record reads "Could not find key Missing ..." then the marker's reason as a
-/// selection standing among the left-hand values; the right-hand refusal's twin beside an absent left
-/// value already read so. Before, that record carried no message, and the console read the marker as a
+/// spent the regex budget, no refusal) carries a message in both shapes, with `refusal: false`. Compared
+/// against a right-hand side the document lacks (`%cfg != Resources.R.Properties.Missing` with the marker
+/// and a listed value in `%cfg`), the pair is decided by the absence and its record leads with it, named
+/// with its side ("The right-hand value is absent: Could not find key Missing ...") then the marker's
+/// reason as a selection standing among the left-hand values, as the right-hand refusal's twin beside an
+/// absent left value reads, and carries the absent right-hand value as its `to`; the report's sentence
+/// for it is the missing-property sentence with that message as its error. Compared against a PRESENT
+/// right-hand side (`%cfg != 'zzz'`), the pair is a FAIL status asserted, decided by its record alone,
+/// and its record carries the marker's own reason as its message, so the report's sentence carries the
+/// reason in its error; before, both records carried no message, and the console read the marker as a
 /// property the template lacks with the reason nowhere in the output. No refused-read line and nothing
-/// registered: a key filter's reason is no refusal. The control with a plain key in the marker's place
-/// fails on the absence with no unresolved left-hand record at all.
+/// registered in either shape: a key filter's reason is no refusal. The control with a plain key in the
+/// marker's place fails on the absence with no unresolved left-hand record at all.
 #[test]
-fn a_key_filters_marker_beside_an_absent_right_hand_side_leads_with_the_absence() -> Result<()> {
-    const THE_LINE: &str = "reported here instead";
+fn a_key_filters_marker_on_the_left_carries_its_reason_in_both_shapes() -> Result<()> {
+    const THE_LINE: &str = THE_REFUSED_READ_MARKER;
+    const THE_RIGHT_SIDE: &str = "The right-hand value is absent";
+    const THE_LEFT_MARKER: &str = "stands among the left-hand values";
     let spends_the_budget = "a".repeat(30);
     let document = |m1_key: &str| {
         format!(
             "{{ Resources: {{ R: {{ Type: 'AWS::IAM::Role', Properties: {{ Maps: {{ M1: {{ {m1_key}: 'z' }}, M2: {{ aab: 'x' }} }} }} }} }} }}"
         )
     };
-    const RULES: &str = "let cfg = Resources.R.Properties.Maps.*[ keys == /(?!x)((a+)+)b/ ].*\nrule r { %cfg != Resources.R.Properties.Missing }";
-    // (status; the clause's failing records with an unresolved left-hand operand: how many; one whose
-    // message names `Missing` first and the marker as a left-hand selection after it; one with
-    // `refusal: true`; the refused-read lines; the texts registered)
-    type Seen = (Status, usize, bool, bool, usize, usize);
-    let run = |m1_key: &str| -> Result<Seen> {
-        let rules_file = RulesFile::try_from(RULES)?;
+    const BINDING: &str = "let cfg = Resources.R.Properties.Maps.*[ keys == /(?!x)((a+)+)b/ ].*";
+    // What the marker's record says, read from its message and its `to`.
+    #[derive(Debug, PartialEq)]
+    enum Record {
+        /// The message names the right-hand side, then the missing key, then the marker as a left-hand
+        /// selection, and the record carries the absent right-hand value as its `to`.
+        AbsenceLedWithTheAbsentValue,
+        /// The message is the marker's own reason (no absence, no side), and the record has no `to`.
+        TheMarkersReasonAlone,
+        /// No message, or another shape.
+        Other,
+    }
+    // What the report's sentence for the marker's record says.
+    #[derive(Debug, PartialEq)]
+    enum Sentence {
+        /// "property [Missing] to compare to is missing": the right side named as the missing one.
+        RightSideMissing,
+        /// "the value to compare from could not be decided": the marker named as undecided, never as a
+        /// missing property or a refused read.
+        CouldNotBeDecided,
+        /// No sentence carries the record's message, or another wording.
+        Other,
+    }
+    // (status; the clause's failing records with an unresolved left-hand operand: how many; what the
+    // one such record says; one with `refusal: true`; what the report's sentence carrying the record's
+    // message says; the refused-read lines; the texts registered)
+    type Seen = (Status, usize, Record, bool, Sentence, usize, usize);
+    let run = |m1_key: &str, clause: &str| -> Result<Seen> {
+        let rules = format!("{BINDING}\nrule r {{ {clause} }}");
+        let rules_file = RulesFile::try_from(rules.as_str())?;
         let mut root = root_scope(
             &rules_file,
             Rc::new(PathAwareValue::try_from(document(m1_key).as_str())?),
@@ -51361,50 +59834,166 @@ fn a_key_filters_marker_beside_an_absent_right_hand_side_leads_with_the_absence(
             .warnings()
             .filter(|line| line.contains(THE_LINE))
             .count();
+        let extracted = root.reset_recorder().extract();
         let mut records = Vec::new();
-        failing_comparison_records_with_kind(
-            &root.reset_recorder().extract(),
-            "%cfg",
-            &mut records,
-        );
-        let unresolved: Vec<&(bool, Option<String>, bool)> = records
-            .iter()
-            .filter(|(unresolved, _, _)| *unresolved)
-            .collect();
-        let absence_led = unresolved.iter().any(|(_, message, _)| {
-            message.as_deref().is_some_and(|message| {
-                matches!(
-                    (
-                        message.find("Could not find key Missing"),
-                        message.find("stands among the left-hand values"),
-                    ),
-                    (Some(absence), Some(marker)) if absence < marker
-                )
-            })
-        });
-        let flagged = unresolved.iter().any(|(_, _, refusal)| *refusal);
+        unresolved_left_records(&extracted, "%cfg", &mut records);
+        let record = match records.as_slice() {
+            [(Some(message), _, to_is_absent)] => {
+                let side = message.find(THE_RIGHT_SIDE);
+                let absence = message.find("Could not find key Missing");
+                let marker = message.find(THE_LEFT_MARKER);
+                match (side, absence, marker, to_is_absent) {
+                    (Some(side), Some(absence), Some(marker), true)
+                        if side < absence && absence < marker =>
+                    {
+                        Record::AbsenceLedWithTheAbsentValue
+                    }
+                    (None, None, None, false) if !message.is_empty() => {
+                        Record::TheMarkersReasonAlone
+                    }
+                    _ => Record::Other,
+                }
+            }
+            _ => Record::Other,
+        };
+        let flagged = records.iter().any(|(_, refusal, _)| *refusal);
+        let report = crate::rules::eval_context::simplified_json_from_root(&extracted)?;
+        // The report's sentence for the marker's record (the one that carries the record's message in
+        // its error): beside an absent right-hand side the right side is named as the missing one, and
+        // beside a present one the marker is named as a value that could not be decided, never as a
+        // property the template lacks ("to compare from is missing") and never as a refused read. The
+        // wording is read from the sentence's HEAD, the part before the record's message is opened with
+        // ` Error = [`. The marker's record is not the only one that carries the message: the key
+        // filter's reason for the budget is the engine's own text, and the RESOLVED pair of the
+        // thirty-`a` key against the regex carries the same text in its own error, worded as a decided
+        // comparison ("not equal to value") and listed before the marker's; so that one wording, the
+        // decided pair's, is skipped by name, and the FIRST other sentence carrying the message is
+        // classed, whatever it reads: a carrying sentence with a wording the cell does not expect is
+        // `Other`, never skipped (skipping every unclassified sentence let a wrong wording on the marker's
+        // own record pass as long as some later sentence read right). Read over the whole sentence, the
+        // marker's own reason made the head's "could not be decided" read as a refused read; read from
+        // the first carrying sentence alone, the pair's decided wording read as "another wording".
+        let sentence = match records.as_slice() {
+            [(Some(message), _, _)] => report_sentences(&report.not_compliant)
+                .into_iter()
+                .filter(|sentence| sentence.contains(message.as_str()))
+                .find(|sentence| {
+                    let head = sentence.split(" Error = [").next().unwrap_or_default();
+                    !head.contains("not equal to value")
+                })
+                .map_or(Sentence::Other, |sentence| {
+                    let head = sentence.split(" Error = [").next().unwrap_or_default();
+                    if head.contains("property [Missing] to compare to is missing") {
+                        Sentence::RightSideMissing
+                    } else if head.contains("the value to compare from could not be decided")
+                        && !head.contains("to compare from is missing")
+                        && !head.contains("could not be read")
+                    {
+                        Sentence::CouldNotBeDecided
+                    } else {
+                        Sentence::Other
+                    }
+                }),
+            _ => Sentence::Other,
+        };
         Ok((
             status,
-            unresolved.len(),
-            absence_led,
+            records.len(),
+            record,
             flagged,
+            sentence,
             lines,
             registered,
         ))
     };
     let mut cells = CellFailures::default();
     cells.check(
-        "`%cfg != Resources.R.Properties.Missing` asserted, the key filter's marker and `x` in `%cfg`, `Missing` absent: FAIL on the absence; one unresolved left-hand record, its message naming `Missing` before the marker, `refusal: false`; no line; nothing registered",
-        (Status::FAIL, 1, true, false, 0, 0),
-        run(spends_the_budget.as_str())?,
+        "`%cfg != Resources.R.Properties.Missing` asserted, the key filter's marker and `x` in `%cfg`, `Missing` absent: FAIL on the absence; one unresolved left-hand record, absence-led with its side and carrying the absent value as its `to`, `refusal: false`; the report's sentence names the right side as the missing one with the message in its error; no line; nothing registered",
+        (
+            Status::FAIL,
+            1,
+            Record::AbsenceLedWithTheAbsentValue,
+            false,
+            Sentence::RightSideMissing,
+            0,
+            0,
+        ),
+        run(
+            spends_the_budget.as_str(),
+            "%cfg != Resources.R.Properties.Missing",
+        )?,
     );
     cells.check(
-        "the control, a plain key `c` in the marker's place: FAIL on the absence; no unresolved left-hand record; no line; nothing registered",
-        (Status::FAIL, 0, false, false, 0, 0),
-        run("c")?,
+        "`%cfg != 'zzz'` asserted, the same capture against a present value: FAIL on the marker's pair; one unresolved left-hand record carrying the marker's own reason, no `to`, `refusal: false`; the report's sentence says the value to compare from could not be decided, with the reason in its error; no line; nothing registered",
+        (
+            Status::FAIL,
+            1,
+            Record::TheMarkersReasonAlone,
+            false,
+            Sentence::CouldNotBeDecided,
+            0,
+            0,
+        ),
+        run(spends_the_budget.as_str(), "%cfg != 'zzz'")?,
+    );
+    cells.check(
+        "the control, a plain key `c` in the marker's place against the absent `Missing`: FAIL on the absence; no unresolved left-hand record; no line; nothing registered",
+        (Status::FAIL, 0, Record::Other, false, Sentence::Other, 0, 0),
+        run("c", "%cfg != Resources.R.Properties.Missing")?,
     );
     cells.assert_all_agreed();
     Ok(())
+}
+
+/// The FAILING comparison records under `needle` whose `from` is unresolved: (the record's message, its
+/// `refusal` flag, whether its `to` is an unresolved value), one per record.
+fn unresolved_left_records(
+    record: &EventRecord<'_>,
+    needle: &str,
+    out: &mut Vec<(Option<String>, bool, bool)>,
+) {
+    if record.context.contains(needle) {
+        if let Some(RecordType::ClauseValueCheck(ClauseCheck::Comparison(check))) =
+            &record.container
+        {
+            if check.status == Status::FAIL && matches!(check.from, QueryResult::UnResolved(_)) {
+                out.push((
+                    check.message.clone(),
+                    check.refusal,
+                    matches!(check.to, Some(QueryResult::UnResolved(_))),
+                ));
+            }
+        }
+    }
+    for child in &record.children {
+        unresolved_left_records(child, needle, out);
+    }
+}
+
+/// The FAIL comparison records whose RIGHT-hand operand is unresolved (the `RhsUnresolved` arm's pair
+/// records: a left-hand value against a marker), under the records whose context holds `needle`: each
+/// record's message and its `refusal` flag, so a cell can read the PAIR record's flag apart from the
+/// block record a strict raise writes beside it.
+fn unresolved_right_records(
+    record: &EventRecord<'_>,
+    needle: &str,
+    out: &mut Vec<(Option<String>, bool)>,
+) {
+    if record.context.contains(needle) {
+        if let Some(RecordType::ClauseValueCheck(ClauseCheck::Comparison(check))) =
+            &record.container
+        {
+            if check.status == Status::FAIL
+                && matches!(check.from, QueryResult::Resolved(_))
+                && matches!(check.to, Some(QueryResult::UnResolved(_)))
+            {
+                out.push((check.message.clone(), check.refusal));
+            }
+        }
+    }
+    for child in &record.children {
+        unresolved_right_records(child, needle, out);
+    }
 }
 
 /// The record of a left-hand value no listed entry accepted under a positive `IN`, paired with a REFUSAL's
@@ -51426,10 +60015,14 @@ fn an_unmatched_value_beside_a_refusal_under_a_positive_in_records_the_refusal_w
             Rc::new(PathAwareValue::try_from(CAPTURED_KEYS_AND_A_REFUSAL)?),
         );
         let status = eval_rules_file(&rules_file, &mut root, None)?;
-        let lines = root
-            .warnings()
-            .filter(|line| line.contains("reported here instead"))
-            .count();
+        // The membership's own lines: the refused walk's line at its own site is left out.
+        let lines = without_the_refused_walks_line(
+            root.warnings()
+                .filter(|line| line.contains("reported here instead"))
+                .cloned()
+                .collect(),
+        )
+        .len();
         let mut records = String::new();
         record_containers_under(
             &root.reset_recorder().extract(),
@@ -51678,7 +60271,7 @@ fn a_capture_beside_a_refused_walk_not_in_a_document_empty_list_is_raised_not_sk
     Ok(())
 }
 
-/// The rule the two `%x NOT IN Denied` cells share: the capture of the keys holding `Kind: k`, the walk
+/// The rule the `%x NOT IN Denied` cells share (every cell that names it): the capture of the keys holding `Kind: k`, the walk
 /// whose continuation names the own key `R1` (refused where a `Sub` holds `R1`, read where none does),
 /// the comparison of the capture `NOT IN Denied`, and a body that holds on `Mode.Ref == 'Other'` alone,
 /// so a condition wrongly read as not applicable shows as SKIP, a condition that held shows the body's own
@@ -51686,7 +60279,7 @@ fn a_capture_beside_a_refused_walk_not_in_a_document_empty_list_is_raised_not_sk
 /// would say.
 const CAPTURE_NOT_IN_DENIED_RULES: &str = "rule r when Cfg[ x | Kind == 'k' ] !empty  Cfg[*][ x | Mode exists or Kind == 'k' ].Sub[*][ s | R1 !exists ] !empty or Cfg.Fallback exists  %x NOT IN Denied { Cfg.Mode.Ref == 'Other' }";
 
-/// The document the two `%x NOT IN Denied` cells run over: `Cfg` with `Mode.Ref` as given and `Sub` maps
+/// The document the `%x NOT IN Denied` cells run over: `Cfg` with `Mode.Ref` as given and `Sub` maps
 /// that hold the own key `R1` (`sub_has_r1`, the walk refused and the marker left in `%x`) or lack it (the
 /// walk read, the keys alone in `%x`), and `Denied: []` present or absent.
 fn capture_not_in_denied_document(sub_has_r1: bool, mode_ref: &str, denied: bool) -> String {
@@ -51708,10 +60301,14 @@ fn capture_not_in_denied_run(input: &str) -> Result<(Status, usize, usize, bool)
     let mut root = root_scope(&rules_file, Rc::new(PathAwareValue::try_from(input)?));
     let status = eval_rules_file(&rules_file, &mut root, None)?;
     let registered = crate::rules::eval_context::registered_refusals().len();
-    let lines = root
-        .warnings()
-        .filter(|line| line.contains("reported here instead"))
-        .count();
+    // The gate's own lines: the refused walk's line at its own site is left out.
+    let lines = without_the_refused_walks_line(
+        root.warnings()
+            .filter(|line| line.contains("reported here instead"))
+            .cloned()
+            .collect(),
+    )
+    .len();
     let records = format!("{:?}", root.reset_recorder().extract());
     Ok((status, registered, lines, records.contains("refusal: true")))
 }
@@ -51837,6 +60434,11 @@ fn the_key_filter_selection_shape_beside_an_empty_list_entry_is_read_from_the_va
 /// the SHAPE the filter hands on, settled where the `[]` itself is compared (a kinds refusal, a decided
 /// no) and raised where a key read on the `[]` leaves an absence beside the marker; each arm of the
 /// `Shape` match below says why its row reads as it does, and its `why` is printed in the row's label.
+/// The settled rows are the point the cell was first written for: a `some` under a negated comparator
+/// whose every left-hand value is decided NO beside the marker is settled, not raised, because the value
+/// the marker hides cannot change a comparison every value already lost, so the gate declines and the
+/// entry deselects where a raise would fail a rule the data decided; a key filter's marker is no refusal,
+/// so nothing is registered and no line is written either way.
 #[test]
 fn a_some_clause_beside_a_key_filters_marker_and_an_empty_list_entry_reads_by_the_shape_handed_on(
 ) -> Result<()> {
@@ -52057,8 +60659,7 @@ fn a_refusal_of_kinds_beside_a_key_filters_marker_is_no_refusal_record() -> Resu
 /// (the table cell in `a_refusal_of_kinds_bounds_the_values_it_quotes_from_the_template` pins the
 /// spelling for both flags directly). A kinds refusal with NO refusal's marker beside it (`not
 /// Properties.Size > 5` over a string `Size`) writes no kinds sentence either, so the clause-level `not`
-/// reaches this spelling only beside a marker. Before this the ordering arm of `comparator_as_written`
-/// asserted the negation flag clear, so the `not` spelling stopped a debug build on that assertion.
+/// reaches this spelling only beside a marker.
 #[test]
 fn a_kinds_refusal_under_a_negated_ordering_spells_the_comparator_as_written() -> Result<()> {
     const THE_SENTENCE: &str = "kinds the comparator does not compare";
@@ -52567,7 +61168,7 @@ fn a_key_filter_registers_the_kept_pairing_sentence_once_and_never_a_numbered_wr
         (
             selection.selected,
             selection.undecided.is_some(),
-            selection.refusal.is_none(),
+            selection.timing.token().is_none(),
             selection.register,
         ),
     );
@@ -52600,7 +61201,11 @@ fn a_key_filter_registers_the_kept_pairing_sentence_once_and_never_a_numbered_wr
     cells.check(
         "(b) the selection is undecided under the refusal's token, with a sentence to register",
         (false, Some(long_token), true),
-        (selection.selected, selection.refusal, selection.register),
+        (
+            selection.selected,
+            selection.timing.own(),
+            selection.register,
+        ),
     );
     cells.check(
         &format!("(b) the kept sentence embeds the inner sentence byte for byte: {wrap}"),
@@ -52647,7 +61252,7 @@ fn a_key_filter_registers_the_kept_pairing_sentence_once_and_never_a_numbered_wr
         (
             selection.selected,
             selection.undecided.is_none(),
-            selection.refusal.is_none(),
+            selection.timing.token().is_none(),
             selection.register,
         ),
     );
@@ -52676,7 +61281,11 @@ fn a_key_filter_registers_the_kept_pairing_sentence_once_and_never_a_numbered_wr
     cells.check(
         "(a) the selection is undecided, carries the token on, and its wrap is not one to register",
         (false, Some(carried), false),
-        (selection.selected, selection.refusal, selection.register),
+        (
+            selection.selected,
+            selection.timing.own(),
+            selection.register,
+        ),
     );
     cells.check(
         &format!(
@@ -52692,8 +61301,13 @@ fn a_key_filter_registers_the_kept_pairing_sentence_once_and_never_a_numbered_wr
         ),
     );
 
-    // (e) The same numbered text on a marker with NO token: nothing but the registry can say the map's
-    // marker is a refused read, so the wrap is one to register.
+    // (e) The same numbered text on a marker with NO token: the registry holds its parts, so the token
+    // is RECOVERED from them (`token_of_registered`, every live registry read for a numbered text's
+    // parts: the later part's, `Rc`'s) and travels on the selection as a recovered token, and the wrap is
+    // NOT one to register (`registers_wrap`: a token carries the refusal). The row once expected the
+    // wrap registered, from the reading that a numbered text with no own token had no token at all; the
+    // recovered token is the fact, and a wrap registered beside it would have made the registry count a
+    // read nobody made.
     let before = registered_refusals().len();
     let selection = key_filter::select_key(
         MapKeyComparator::In,
@@ -52702,9 +61316,14 @@ fn a_key_filter_registers_the_kept_pairing_sentence_once_and_never_a_numbered_wr
         &no_frame_ranking,
     );
     cells.check(
-        "(e) a numbered text with no token leaves the selection undecided, with no token, and its wrap is one to register",
-        (false, None, true),
-        (selection.selected, selection.refusal, selection.register),
+        "(e) a numbered text with no token leaves the selection undecided, with no own token, the later part's token recovered from the registry, and its wrap is not one to register",
+        (false, None, Some(carried), false),
+        (
+            selection.selected,
+            selection.timing.own(),
+            selection.timing.token(),
+            selection.register,
+        ),
     );
     cells.check(
         &format!(
@@ -52720,8 +61339,8 @@ fn a_key_filter_registers_the_kept_pairing_sentence_once_and_never_a_numbered_wr
 
 /// Where the key filter's pairing sentence enters the registry: once, in `real_binary_operation`, for the
 /// one key its fold over every key kept, and only when that key's kept pairing is one to register
-/// (`KeySelection::register`). Five cells, each a direct call of the filter over its keys and right-hand
-/// values under a fresh root scope, read with the registry. (1) Two refusal markers on one right-hand side
+/// (`KeySelection::register`). Ten numbered cells, each a direct call of the filter over its keys and
+/// right-hand values under a fresh root scope, read with the registry ((9) reads the fold itself). (1) Two refusal markers on one right-hand side
 /// (`Ra` minted first, `Rb` after it, each registered): the fold keeps the later-minted pairing, the error
 /// carries its token and its wrap, and the registry gains that wrap alone; the earlier marker's wrap enters
 /// it nowhere. (2) Two keys whose kept pairings differ: a regex the first key spends its budget on
@@ -52751,7 +61370,21 @@ fn a_key_filter_registers_the_kept_pairing_sentence_once_and_never_a_numbered_wr
 /// they would have met alone; the same wrap on a marker with no token keeps the decided answer (not
 /// applicable). Read by kind and by text alone on the right, the tokened marker was a budget marker
 /// there: `<empty> NOT IN %m` was not applicable with the refusal silent, while the same marker on the
-/// left was collected and raised; and the asserted raise registered the wrap through `refuse`.
+/// left was collected and raised; and the asserted raise registered the wrap through `refuse`. (7) Two
+/// token-less markers whose sentences the registry holds (`Ra` registered first, `Rb` after it), over one
+/// key and over two, in both orders each: the folds rank a token-less registered marker by the token
+/// recovered for its sentence, so the later-minted `Rb`'s wrap is the raise, carrying `Rb`'s token and
+/// registered under it, whichever was met first (ranked by the marker's own token alone the two tied, the
+/// first met won, and the map's marker read REFUSED in one right-hand order and PLAIN in the other); the
+/// two-key rows are ties by construction (every key is compared against every value). (10), placed right
+/// after (7) in the body: under a live filter predicate run, a marker's own PRE-RUN token (`Ra`) beside a
+/// token-less marker whose sentence was delivered INSIDE the run (`Rq`): the run's ownership ranks first, so
+/// `Rq`'s wrap is the raise under `Rq`'s token in both orders (REFUSED). (8) At equal rank, a marker's own
+/// token (`Ra`, minted first) beside a token-less registered marker whose recovered token is later (`Rq`),
+/// in both orders, over one key and two: the tokened pairing is kept, its wrap the raise under `Ra`'s token
+/// (the recovered token is the registry's latest for a text and ranks below a marker's own at equal rank).
+/// (9) The fold both callers share, read directly over kept/met rows: the one order (run, kind, mint; the
+/// bit among pairings with no token; first met on a tie), which the filter harness cannot reach across keys.
 #[test]
 fn a_key_filter_registers_the_kept_keys_sentence_once_after_the_fold_over_its_keys() -> Result<()> {
     use crate::rules::errors::RefusalToken;
@@ -52861,6 +61494,14 @@ fn a_key_filter_registers_the_kept_keys_sentence_once_after_the_fold_over_its_ke
                     .any(|text| text.starts_with(WRAP_OPENS) && text.contains(": Ra")),
             ),
         );
+        cells.check(
+            "(1) the wrap is registered under the kept refusal's OWN token, no mint made for it (the registry's token for the wrap is `Rb`'s)",
+            Some(rb),
+            crate::rules::eval_context::token_of_registered(
+                &reason,
+                &crate::rules::eval::no_frame_ranking,
+            ),
+        );
     }
 
     // (2) Two keys whose kept pairings differ: the fold over the keys decides what is registered.
@@ -52878,7 +61519,7 @@ fn a_key_filter_registers_the_kept_keys_sentence_once_after_the_fold_over_its_ke
                 &rules_file,
                 Rc::new(PathAwareValue::try_from("{ Other: 'o' }")?),
             );
-            let _ = register_refusal("Rq");
+            let rq = register_refusal("Rq");
             let before = registered_refusals().len();
             let raised = filter(
                 &mut root,
@@ -52887,9 +61528,13 @@ fn a_key_filter_registers_the_kept_keys_sentence_once_after_the_fold_over_its_ke
             )?;
             let (reason, token) = raised.clone().unwrap_or_default();
             let registered = registered_refusals();
+            // The raise carries the token the wrap was registered under (`Rq`'s own, recovered from the
+            // registry for the token-less marker's sentence), so a reader by the marker's token (a unary
+            // raise, a filter run's frame, a capture cut back on `carried`) reads the inner refusal's
+            // timing as a reader by text does; carrying the kept marker's own token alone left them PLAIN.
             cells.check(
-                &format!("(2) {label}: the raise is the registered marker's wrap, never the budget text, with no token: {raised:?}"),
-                (false, true, None),
+                &format!("(2) {label}: the raise is the registered marker's wrap, never the budget text, carrying `Rq`'s recovered token: {raised:?}"),
+                (false, true, Some(rq)),
                 (
                     reason.starts_with(BUDGET_OPENS),
                     reason.starts_with(WRAP_OPENS) && reason.contains(": Rq"),
@@ -52903,6 +61548,26 @@ fn a_key_filter_registers_the_kept_keys_sentence_once_after_the_fold_over_its_ke
                     registered.len(),
                     registered.iter().any(|text| *text == reason),
                 ),
+            );
+            // The wrap of a token-less registered marker enters the registry under the token the
+            // registry held for the marker's own sentence (recovered where the marker was classified),
+            // never under a mint made where the wrap was built, so a run that reads the wrap by text
+            // reads `Rq`'s timing.
+            let registry_token = crate::rules::eval_context::token_of_registered(
+                &reason,
+                &crate::rules::eval::no_frame_ranking,
+            );
+            cells.check(
+                &format!("(2) {label}: the wrap is registered under `Rq`'s own token, recovered, not a fresh mint"),
+                Some(rq),
+                registry_token,
+            );
+            // One timing: a reader of the marker by its token and a reader of the wrap through the
+            // registry read the same token.
+            cells.check(
+                &format!("(2) {label}: the error's token is the registry's token for the wrap"),
+                registry_token,
+                token,
             );
         }
     }
@@ -53160,6 +61825,401 @@ fn a_key_filter_registers_the_kept_keys_sentence_once_after_the_fold_over_its_ke
             ),
         );
     }
+
+    // (7) Two token-less registered markers (`Ra` registered first, `Rb` after it): ranked by the tokens
+    // recovered for their sentences, so the later-minted `Rb`'s wrap is the raise in both orders, over one
+    // key and over two. Every key is compared against every right-hand value, so with two keys each key's
+    // fold keeps `Rb`'s pairing and the fold over the keys ranks two equal kept pairings (a tie, the first
+    // key's kept): the answer must still be `Rb`'s in both orders. The cross-key ranking of UNEQUAL
+    // timings is the helper's own, read directly by (9): two keys of one filter cannot be handed kept
+    // pairings of unequal timing, since a budget pairing loses within its own key to any marker's.
+    {
+        for (label, lhs, rhs) in [
+            (
+                "one key, `Ra` then `Rb`",
+                vec![key("Name")],
+                vec![marker("Ra", plain), marker("Rb", plain)],
+            ),
+            (
+                "one key, `Rb` then `Ra`",
+                vec![key("Name")],
+                vec![marker("Rb", plain), marker("Ra", plain)],
+            ),
+            (
+                "two keys, `Ra` then `Rb`",
+                vec![key("Name"), key("Other")],
+                vec![marker("Ra", plain), marker("Rb", plain)],
+            ),
+            (
+                "two keys, `Rb` then `Ra`",
+                vec![key("Name"), key("Other")],
+                vec![marker("Rb", plain), marker("Ra", plain)],
+            ),
+        ] {
+            let mut root = root_scope(
+                &rules_file,
+                Rc::new(PathAwareValue::try_from("{ Other: 'o' }")?),
+            );
+            let _ra = register_refusal("Ra");
+            let rb = register_refusal("Rb");
+            let before = registered_refusals().len();
+            let raised = filter(&mut root, &lhs, &rhs)?;
+            let (reason, token) = raised.clone().unwrap_or_default();
+            cells.check(
+                &format!("(7) {label}: the raise is the later-minted `Rb`'s wrap carrying `Rb`'s recovered token: {raised:?}"),
+                (true, Some(rb)),
+                (
+                    reason.starts_with(WRAP_OPENS) && reason.ends_with(": Rb, so the keys it selects cannot be decided"),
+                    token,
+                ),
+            );
+            cells.check(
+                &format!("(7) {label}: that wrap alone is registered, under `Rb`'s token"),
+                (before + 1, Some(rb)),
+                (
+                    registered_refusals().len(),
+                    crate::rules::eval_context::token_of_registered(
+                        &reason,
+                        &crate::rules::eval::no_frame_ranking,
+                    ),
+                ),
+            );
+        }
+    }
+
+    // (10) Under a live filter predicate run (a frame pushed on the root), a marker carrying its OWN
+    // PRE-RUN token (`Ra`, minted before the frame opened, so no run owns it) beside a token-less registered
+    // marker whose sentence a producer delivered INSIDE the run (`Rq`, recovered at rank 1): the run's
+    // ownership ranks first, whatever the kind, so the in-run `Rq`'s wrap is the raise carrying `Rq`'s token
+    // in both orders, and the run reads its entry REFUSED; ranked kind first, the older own token won, the
+    // wrap carried a token the run could not read as its own, and the entry read PLAIN (a `some` then
+    // passing on a decided sibling), where a lone `Rq` read REFUSED: the fold is monotone again.
+    {
+        use crate::rules::eval_context::with_refusal_frame;
+        for rq_first in [false, true] {
+            let label = if rq_first {
+                "`Rq` then `Ra`"
+            } else {
+                "`Ra` then `Rq`"
+            };
+            let mut root = root_scope(
+                &rules_file,
+                Rc::new(PathAwareValue::try_from("{ Other: 'o' }")?),
+            );
+            let ra = register_refusal("Ra");
+            let frame = RefusalFrame::open();
+            let (rq, before, raised) = with_refusal_frame(&mut root, frame, |ctx| {
+                let rq = register_refusal("Rq");
+                let own = marker(
+                    "Ra",
+                    UnResolvedKind::Undecidable {
+                        refusal: Some(ra),
+                        carried: None,
+                    },
+                );
+                let recovered = marker("Rq", plain);
+                let rhs = if rq_first {
+                    vec![recovered, own]
+                } else {
+                    vec![own, recovered]
+                };
+                let before = registered_refusals().len();
+                let raised = match real_binary_operation(
+                    &[key("Name")],
+                    &rhs,
+                    RhsEnumeration::Names,
+                    &PassedOn::default(),
+                    MapKeyComparator::In,
+                    &site,
+                    String::new(),
+                    None,
+                    ctx,
+                ) {
+                    Ok(_) => Ok(None),
+                    Err(Error::UndecidableComparison(reason, token)) => Ok(Some((reason, token))),
+                    Err(other) => Err(other),
+                };
+                (rq, before, raised)
+            });
+            let raised = raised?;
+            let (reason, token) = raised.clone().unwrap_or_default();
+            cells.check(
+                &format!("(10) {label}: under the run the in-run `Rq`'s wrap is the raise, carrying `Rq`'s token (minted inside the run) over `Ra`'s own pre-run token: {raised:?}"),
+                (true, Some(rq), true),
+                (
+                    reason.starts_with(WRAP_OPENS)
+                        && reason.ends_with(": Rq, so the keys it selects cannot be decided"),
+                    token,
+                    rq.later_than(ra),
+                ),
+            );
+            cells.check(
+                &format!("(10) {label}: that wrap alone is registered, under `Rq`'s token"),
+                (before + 1, Some(rq)),
+                (
+                    registered_refusals().len(),
+                    crate::rules::eval_context::token_of_registered(
+                        &reason,
+                        &crate::rules::eval::no_frame_ranking,
+                    ),
+                ),
+            );
+        }
+    }
+
+    // (8) A marker carrying a token of its OWN (`Ra`, minted FIRST) against a token-less registered marker
+    // whose recovered token is LATER (`Rq`): the tokened pairing wins in both orders, among one key's values
+    // and across two keys, so a re-registration of a sentence elsewhere never outranks a marker's own token.
+    {
+        for (label, lhs, rhs_order) in [
+            ("one key, `Ra` then `Rq`", vec![key("Name")], false),
+            ("one key, `Rq` then `Ra`", vec![key("Name")], true),
+            (
+                "two keys, the `Ra` key first",
+                vec![key("Name"), key("Other")],
+                false,
+            ),
+            (
+                "two keys, the `Rq` key first",
+                vec![key("Name"), key("Other")],
+                true,
+            ),
+        ] {
+            let mut root = root_scope(
+                &rules_file,
+                Rc::new(PathAwareValue::try_from("{ Other: 'o' }")?),
+            );
+            let ra = register_refusal("Ra");
+            let _rq = register_refusal("Rq");
+            let own = marker(
+                "Ra",
+                UnResolvedKind::Undecidable {
+                    refusal: Some(ra),
+                    carried: None,
+                },
+            );
+            let recovered = marker("Rq", plain);
+            let rhs = if rhs_order {
+                vec![recovered, own]
+            } else {
+                vec![own, recovered]
+            };
+            let before = registered_refusals().len();
+            let raised = filter(&mut root, &lhs, &rhs)?;
+            let (reason, token) = raised.clone().unwrap_or_default();
+            cells.check(
+                &format!("(8) {label}: the raise is the tokened `Ra`'s wrap carrying `Ra`'s own token, the later recovered `Rq` ranked below it: {raised:?}"),
+                (true, Some(ra)),
+                (
+                    reason.starts_with(WRAP_OPENS)
+                        && reason.ends_with(": Ra, so the keys it selects cannot be decided"),
+                    token,
+                ),
+            );
+            cells.check(
+                &format!("(8) {label}: that wrap alone is registered, under `Ra`'s token"),
+                (before + 1, Some(ra)),
+                (
+                    registered_refusals().len(),
+                    crate::rules::eval_context::token_of_registered(
+                        &reason,
+                        &crate::rules::eval::no_frame_ranking,
+                    ),
+                ),
+            );
+        }
+    }
+
+    // (9) The fold both callers share (`keep_latest_refusal_else_registered_else_first_ranking`), read
+    // directly, since a filter compares every key against every right-hand value and so never hands the
+    // fold over the keys two kept pairings of UNEQUAL timing: a token outranks none; between tokens the
+    // runs' ownership ranks first (the rows after the table), then at equal rank the kinds (own over
+    // recovered, whatever the counts), then minting; among pairings with no token the registration bit
+    // decides, else the first met is kept. Each row folds the met pairing onto the kept one and reads what
+    // is kept after; the table runs under no frame (every token at rank 0) and again at EQUAL NON-ZERO
+    // rank (a run that owns both tokens, rank 1 each): the run's ownership ranks only tokens of different
+    // runs, so two tokens one run owns are ranked by kind, then by minting, the order `PairingTiming`
+    // states, and every row holds under the run as under none (the rows after the table rank tokens of
+    // DIFFERENT runs).
+    {
+        use crate::rules::eval::{
+            keep_latest_refusal_else_registered_else_first_ranking, no_frame_ranking,
+            PairingTiming, Ranking,
+        };
+        let early = register_refusal("early");
+        let late = register_refusal("late");
+        let both_owned = |_: crate::rules::errors::RefusalToken| 1usize;
+        for (under, ranking) in [
+            ("under no frame", &no_frame_ranking as Ranking<'_>),
+            ("at equal non-zero rank", &both_owned as Ranking<'_>),
+        ] {
+            // (kept timing, kept bit, met timing, met bit, the reason kept after, the own and recovered tokens kept after)
+            for (label, kept, kept_bit, met, met_bit, reason_after, own_after, recovered_after) in [
+                (
+                    "a later recovered token never outranks a marker's own, earlier token",
+                    PairingTiming::Own(early),
+                    true,
+                    PairingTiming::Recovered(late),
+                    true,
+                    "kept",
+                    Some(early),
+                    None,
+                ),
+                (
+                    "a marker's own token replaces a kept recovered one, however late",
+                    PairingTiming::Recovered(late),
+                    true,
+                    PairingTiming::Own(early),
+                    true,
+                    "met",
+                    Some(early),
+                    None,
+                ),
+                (
+                    "two recovered tokens: the later replaces the earlier",
+                    PairingTiming::Recovered(early),
+                    true,
+                    PairingTiming::Recovered(late),
+                    true,
+                    "met",
+                    None,
+                    Some(late),
+                ),
+                (
+                    "two recovered tokens: the earlier does not replace the later",
+                    PairingTiming::Recovered(late),
+                    true,
+                    PairingTiming::Recovered(early),
+                    true,
+                    "kept",
+                    None,
+                    Some(late),
+                ),
+                (
+                    "two own tokens: the later replaces the earlier",
+                    PairingTiming::Own(early),
+                    true,
+                    PairingTiming::Own(late),
+                    true,
+                    "met",
+                    Some(late),
+                    None,
+                ),
+                (
+                    "a recovered token replaces a kept budget (no token, bit clear)",
+                    PairingTiming::None,
+                    false,
+                    PairingTiming::Recovered(early),
+                    true,
+                    "met",
+                    None,
+                    Some(early),
+                ),
+                (
+                    "no token on either side: a set bit replaces a kept clear one",
+                    PairingTiming::None,
+                    false,
+                    PairingTiming::None,
+                    true,
+                    "met",
+                    None,
+                    None,
+                ),
+                (
+                    "no token on either side, both bits set: the first met is kept",
+                    PairingTiming::None,
+                    true,
+                    PairingTiming::None,
+                    true,
+                    "kept",
+                    None,
+                    None,
+                ),
+                (
+                    "a budget never replaces a kept own token",
+                    PairingTiming::Own(early),
+                    true,
+                    PairingTiming::None,
+                    false,
+                    "kept",
+                    Some(early),
+                    None,
+                ),
+            ] {
+                let mut kept_reason: Option<(&str, bool)> = Some(("kept", kept_bit));
+                let mut kept_timing = kept;
+                keep_latest_refusal_else_registered_else_first_ranking(
+                    &mut kept_reason,
+                    &mut kept_timing,
+                    "met",
+                    met_bit,
+                    met,
+                    ranking,
+                );
+                cells.check(
+                    &format!("(9) {label}, {under}"),
+                    (Some(reason_after), own_after, recovered_after),
+                    (
+                        kept_reason.map(|(reason, _)| reason),
+                        kept_timing.own(),
+                        kept_timing.recovered(),
+                    ),
+                );
+            }
+        }
+        // Nothing kept yet: whatever is met is kept, a token-less pairing with a clear bit included.
+        let mut kept_reason: Option<(&str, bool)> = None;
+        let mut kept_timing = PairingTiming::None;
+        keep_latest_refusal_else_registered_else_first_ranking(
+            &mut kept_reason,
+            &mut kept_timing,
+            "met",
+            false,
+            PairingTiming::None,
+            &no_frame_ranking,
+        );
+        cells.check(
+            "(9) with nothing kept yet the first pairing met is kept, token or none",
+            Some(("met", false)),
+            kept_reason,
+        );
+        // Under a run that owns `late` and not `early` (rank 1 against 0), the run's ownership ranks
+        // before the kind: a recovered token the run owns replaces a kept own token it does not, and an
+        // own token the run does not own never replaces a kept recovered one it does.
+        let in_run = |token: crate::rules::errors::RefusalToken| usize::from(token == late);
+        for (label, kept, met, own_after, recovered_after) in [
+            (
+                "a recovered token the run owns replaces a kept own token it does not",
+                PairingTiming::Own(early),
+                PairingTiming::Recovered(late),
+                None,
+                Some(late),
+            ),
+            (
+                "an own token the run does not own never replaces a kept recovered one it does",
+                PairingTiming::Recovered(late),
+                PairingTiming::Own(early),
+                None,
+                Some(late),
+            ),
+        ] {
+            let mut kept_reason: Option<(&str, bool)> = Some(("kept", true));
+            let mut kept_timing = kept;
+            keep_latest_refusal_else_registered_else_first_ranking(
+                &mut kept_reason,
+                &mut kept_timing,
+                "met",
+                true,
+                met,
+                &in_run,
+            );
+            cells.check(
+                &format!("(9) under a run, {label}"),
+                (own_after, recovered_after),
+                (kept_timing.own(), kept_timing.recovered()),
+            );
+        }
+    }
     cells.assert_all_agreed();
     Ok(())
 }
@@ -53351,20 +62411,546 @@ fn a_numbered_texts_parser_backtracks_and_a_mixed_sets_raise_keeps_its_token() -
     Ok(())
 }
 
-/// Where a comparison's raise IS promoted (a kept marker's reason the registry does not know: a key
-/// filter's budget marker in `%b`, beside refused reads), the refused reads met are token-less, since a
-/// marker that carries a token is a refused read by that token and would have been kept by the pair rule
-/// itself; the
-/// promoted text is the FIRST met among them, numbered with the rest (`eval::latest_refused_pair`'s
-/// token-less arm). Two key filters whose right-hand queries are refused outside a predicate
-/// (`Resources.*.Props.M[ keys == Statement[ Effect == 'Allow' ].Action ]` over two resources holding a
-/// one-object `Statement` of strings) leave two registered markers with no token; `when some %b NOT IN
-/// <that query>` names the first resource's wrapped sentence as `(1)` and the second's as `(2)` in document
-/// order, and the resources reversed name them reversed; the record is flagged by the registered parts. The
-/// cell pins the one arm of the selector a run reaches; its token arms are the pair rule's, kept whole for a
-/// tokened pair no builder writes.
+/// A key filter whose right-hand query is a `let`-bound REGISTERED refusal, read inside a filter predicate
+/// run, leaves a marker carrying the refusal's token recovered from the registry
+/// (`eval_context::token_of_registered`, the key-filter arm over `Unevaluatable`), so the marker is a
+/// refused read by token and the record over it reads `refusal: true`; the token was minted where the `let`
+/// was first read, before the run opened, so the run leaves its entry PLAIN with the token carried, as it
+/// leaves every marker whose refusal predates it (`RefusalFrame::minted_inside`). `let sel =
+/// Resources.C.Properties.M.Tags[ Key == 'Env' ].Value` over `Tags: 'x'` is refused as `Unevaluatable`
+/// (`refuse`: registered, with no payload for the token it minted); `%sel exists or Other exists` in the
+/// rule body reads it once, the `or` deciding past the raise; `Resources[ x | Properties.M[ keys == %sel ]
+/// !empty ] !empty` then meets the memoized failure (`Error::repeated`, the same `Unevaluatable`) at the
+/// arm, which hands `rhs_undecided` the registered sentence's token. Handed `None`, the marker was a refused
+/// read by its wrapped sentence alone and the raise over it carried no token. The control, a right-hand
+/// regex that spends its backtracking budget on a thirty-character key: no refusal, nothing registered for
+/// the marker's reason, the marker and the entry carry no token, and no record is flagged.
 #[test]
-fn a_promoted_raise_names_the_first_met_of_two_token_less_refused_reads() -> Result<()> {
+fn a_key_filters_let_bound_refused_right_hand_query_recovers_its_token_inside_a_run() -> Result<()>
+{
+    const A_STRING_TAGS: &str =
+        r#"{ Other: 'o', Resources: { C: { Properties: { M: { PROD: 1, Tags: 'x' } } } } }"#;
+    const REFUSED: &str = "let sel = Resources.C.Properties.M.Tags[ Key == 'Env' ].Value\nrule r { %sel exists or Other exists  Resources[ x | Properties.M[ keys == %sel ] !empty ] !empty }";
+    const BUDGET: &str =
+        "rule r { Resources[ x | Properties.M[ keys == /(?!x)((a+)+)b/ ] !empty ] !empty }";
+    const THE_WRAP: &str =
+        "the right-hand side of the key filter could not be evaluated at /Resources/C/Properties/M";
+    let spends_the_budget = "a".repeat(30);
+    let a_budget_key = format!(
+        "{{ Other: 'o', Resources: {{ C: {{ Properties: {{ M: {{ {spends_the_budget}: 1 }} }} }} }} }}"
+    );
+    let mut cells = CellFailures::default();
+    for (label, rules, input, carries) in [
+        (
+            "the `let`-bound refusal: the marker and the entry carry the recovered token",
+            REFUSED,
+            A_STRING_TAGS,
+            true,
+        ),
+        (
+            "control: a spent regex budget: no token anywhere, no record flagged",
+            BUDGET,
+            a_budget_key.as_str(),
+            false,
+        ),
+    ] {
+        let rules_file = RulesFile::try_from(rules)?;
+        let mut root = root_scope(&rules_file, Rc::new(PathAwareValue::try_from(input)?));
+        let status = eval_rules_file(&rules_file, &mut root, None)?;
+        cells.check(
+            &format!("{label}: fails closed, FAIL"),
+            Status::FAIL,
+            status,
+        );
+        let tree = root.reset_recorder().extract();
+        let mut read = Vec::new();
+        undecidable_markers_with_kinds(&tree, &mut read);
+        let mut messages = Vec::new();
+        recorded_messages_with_kind(&tree, &mut messages);
+        // (the marker is a refusal's own; it carries a token) at a path.
+        let kind_at = |at: &str| {
+            read.iter()
+                .find(|(path, _, _)| path == at)
+                .map(|(_, _, kind)| (kind.is_refusal(), kind.refusal().is_some()))
+        };
+        cells.check(
+            &format!(
+                "{label}: the key filter's marker at the map is PLAIN, the token carried: {read:?}"
+            ),
+            Some((false, carries)),
+            kind_at("/Resources/C/Properties/M"),
+        );
+        cells.check(
+            &format!("{label}: the entry /Resources/C is PLAIN, the token carried through the run: {read:?}"),
+            Some((false, carries)),
+            kind_at("/Resources/C"),
+        );
+        if carries {
+            cells.check(
+                &format!("{label}: a record over the wrapped sentence reads `refusal: true`: {messages:?}"),
+                true,
+                messages
+                    .iter()
+                    .any(|(refusal, message)| *refusal && message.contains(THE_WRAP)),
+            );
+        } else {
+            cells.check(
+                &format!("{label}: no record reads `refusal: true`: {messages:?}"),
+                false,
+                messages.iter().any(|(refusal, _)| *refusal),
+            );
+        }
+    }
+    cells.assert_all_agreed();
+    Ok(())
+}
+
+/// The one residual of the token carrier, pinned as the design: `Error::repeated` rebuilds an
+/// `UndecidableComparison` with its text and NO token (a later read of a failed assignment is a later
+/// raise, not the refusal's own), so a `let`-bound refusal re-read reads its record flag off its TEXT alone
+/// (`is_refusal`). The sentence re-read whole is the registered refusal it is, `refusal: true`; the same
+/// sentence re-read inside a NUMBERED text beside an unregistered marker's reason (`(1) <refusal> (2)
+/// <spent budget>`, the shape a raise over a refusal and a budget marker writes) parses to no registered
+/// set and reads `refusal: false`, where the original raise, carrying its token, read `true`. Recorded here
+/// as the residual the token carrier keeps; the token the key-filter arms recover from the registry
+/// (`token_of_registered`) and the one a comparison's registrations return close every other token-less
+/// registered read.
+#[test]
+fn a_let_bound_refusal_re_read_keeps_its_flag_by_text_alone() -> Result<()> {
+    use crate::rules::eval_context::register_refusal;
+    const NO_BUCKET: &str = "{ Resources: { Q: { Type: 'AWS::SQS::Queue' } } }";
+    const RE: &str = "the key `Kind` was refused at path /Resources/Q";
+    const BUDGET: &str = "the regular expression spent its backtracking budget at /Resources/Q";
+    let rules_file = RulesFile::try_from("rule r { Other exists }")?;
+    let _root = root_scope(&rules_file, Rc::new(PathAwareValue::try_from(NO_BUCKET)?));
+    let token = register_refusal(RE);
+    let mut cells = CellFailures::default();
+    let whole = Error::UndecidableComparison(RE.to_string(), Some(token)).repeated();
+    cells.check(
+        "re-read whole: the rebuilt error carries no token and is the refusal by its registered text",
+        (true, true),
+        (
+            matches!(&whole, Error::UndecidableComparison(text, None) if text == RE),
+            is_refusal(&whole),
+        ),
+    );
+    let numbered = Error::UndecidableComparison(format!("(1) {RE} (2) {BUDGET}"), Some(token));
+    cells.check(
+        "the original numbered raise, its token carried: a refusal by the token",
+        true,
+        is_refusal(&numbered),
+    );
+    let re_read = numbered.repeated();
+    cells.check(
+        "the residual: re-read beside the unregistered budget text, no token and no registered set, no refusal",
+        (true, false),
+        (
+            matches!(&re_read, Error::UndecidableComparison(_, None)),
+            is_refusal(&re_read),
+        ),
+    );
+    cells.assert_all_agreed();
+    Ok(())
+}
+
+/// The registry mints on EVERY registration and holds each sentence's LATEST token: a sentence delivered
+/// again inside a filter predicate run is read as that run's own refusal however often it was registered
+/// before the run opened. (1) Two rules in one file both running `Resources.*[ x | Properties.Statement[
+/// Effect == 'Allow' ].Action == '*' ] empty` over `R1`, whose one-object `Statement` the filter refuses, and
+/// `R2`, decided: the predicate's own-key refusal over the one-object map is an unevaluatable that fails
+/// the WHOLE filter by design (`run_filter_predicate`'s `Err` arm), so each rule's clause carries the
+/// refusal in its OWN block record (`GuardAccessClause#block<clause>`, flagged and naming the key and the
+/// map) and files no per-entry marker for `/Resources/R1`; the rows read that block record and not the
+/// rule's whole dump, in which any flagged record met the first test and the message of any record the
+/// second. (1b) Two
+/// rules each wrapping the same refused right-hand query (`Properties.M[ keys == Tags[ Key == 'Env' ].Value ]`
+/// over a string `Tags`) in a key filter: the wrap's one text is registered under each run's own inner
+/// token in turn (the later overwrites) and the marker carries the token the registration returned, so the
+/// entry is REFUSED under both rules in both declaration orders (held to the first wrap's token, the second
+/// rule's entry read PLAIN by declaration order). (2) The
+/// same sentence produced at the top level first (`Resources.R1.Properties.Statement[ Effect == 'Allow'
+/// ].Action == '*' or Other exists`, `refuse` registering it, the `or` deciding past the raise) and again
+/// inside `some Resources[ x | .. ] !empty`: the `some` clause fails closed on the whole-filter refusal,
+/// its own block record flagged and naming the key, instead of passing on `R2`; the `or` disjunct's record
+/// is flagged too, so the rows read the `some` clause's block record alone. Held to the FIRST token per
+/// sentence, the registry handed the second run a token minted before it opened
+/// (`RefusalFrame::minted_inside` reads only tokens at or past the run's start), the entry read PLAIN, and
+/// the `some` passed on the decided sibling: fail-open. (2b) The same refused walk as a key filter's
+/// RIGHT-hand query inside the `some` (`Properties.M[ keys == Statement[ Effect == 'Allow' ].Action ]
+/// !empty`, the right-hand query resolved against `M`, so each `Statement` sits inside its `M`): the key
+/// filter's wrap carries the refusal the run delivered, the entry is REFUSED and the `some` fails closed
+/// where `R2`'s map, whose `*` key the decided `Action` selects, would have passed it. (3) The unit: a second
+/// registration of one sentence mints a later token and the registry's read (`token_of_registered`)
+/// returns it; one key is registered. (4) `token_of_registered` over a numbered text of registered parts
+/// returns the later-minted part's token in either order, and `None` where a part is unregistered.
+#[test]
+fn a_sentence_registered_again_inside_a_run_is_the_runs_own_refusal() -> Result<()> {
+    use crate::rules::eval::no_frame_ranking;
+    use crate::rules::eval_context::{register_refusal, registered_refusals, token_of_registered};
+    const ONE_OBJECT_BESIDE_A_LIST: &str = r#"{ Other: 'o', Resources: { R1: { Properties: { Statement: { Effect: 'Allow', Action: '*', Resource: '*' } } }, R2: { Properties: { Statement: [ { Effect: 'Allow', Action: '*' } ] } } } }"#;
+    const THE_CLAUSE: &str =
+        "Resources.*[ x | Properties.Statement[ Effect == 'Allow' ].Action == '*' ] empty";
+    let mut cells = CellFailures::default();
+    /// A marker read off a rule's record tree: its path, its reason and its kind.
+    type Marker = (String, String, UnResolvedKind);
+    /// The markers of one rule's record (`undecidable_markers_with_kinds` under that rule's record) with
+    /// its status, and the Debug dumps of the access-clause BLOCK records under the rule whose context
+    /// holds `clause_needle` (`access_clause_blocks`, one walk over `GuardAccessClause#block<clause>`
+    /// records; a clause's context renders its query through the parts' `Display`, so a capturing filter
+    /// reads `<capture> (filter-clauses)` and `x (filter-clauses)` names the `x`-capturing clause and no
+    /// other, where an unnamed filter reads ` (filter-clauses)` and names nothing), one per record, for
+    /// the rows that read the clause's own record: the rule's whole dump holds every record's message, so
+    /// a word of the refusal in it tells nothing about which record carries it. A row asserts that its
+    /// needle matched exactly one record before it reads the dump (`one_flagged_block`).
+    fn rule_markers_and_records(
+        rules: &str,
+        input: &str,
+        rule_name: &str,
+        clause_needle: &str,
+    ) -> Result<(Status, Vec<Marker>, Vec<String>)> {
+        let rules_file = RulesFile::try_from(rules)?;
+        let mut root = root_scope(&rules_file, Rc::new(PathAwareValue::try_from(input)?));
+        eval_rules_file(&rules_file, &mut root, None)?;
+        let tree = root.reset_recorder().extract();
+        let rule = tree
+            .children
+            .iter()
+            .find(|child| {
+                matches!(&child.container, Some(RecordType::RuleCheck(NamedStatus { name, .. })) if *name == rule_name)
+            })
+            .expect("the rule's record");
+        let status = match &rule.container {
+            Some(RecordType::RuleCheck(NamedStatus { status, .. })) => *status,
+            _ => unreachable!("found by its RuleCheck container"),
+        };
+        let mut markers = Vec::new();
+        undecidable_markers_with_kinds(rule, &mut markers);
+        let blocks = access_clause_blocks(rule)
+            .into_iter()
+            .filter(|(context, _)| context.contains(clause_needle))
+            .map(|(_, dump)| dump)
+            .collect();
+        Ok((status, markers, blocks))
+    }
+    /// The access-clause block records under `record`, each as its context beside its container's
+    /// Debug dump, read off each record in ONE walk (a context list zipped with a dump list from two
+    /// walks pairs by position and misaligns in silence when the walks differ).
+    fn access_clause_blocks(record: &EventRecord<'_>) -> Vec<(String, String)> {
+        fn walk(record: &EventRecord<'_>, out: &mut Vec<(String, String)>) {
+            if record
+                .context
+                .contains(crate::rules::eval::ACCESS_CLAUSE_BLOCK_CONTEXT_PREFIX)
+            {
+                out.push((record.context.clone(), format!("{:?}", record.container)));
+            }
+            for child in &record.children {
+                walk(child, out);
+            }
+        }
+        let mut out = Vec::new();
+        walk(record, &mut out);
+        out
+    }
+    fn rule_markers(rules: &str, input: &str, rule_name: &str) -> Result<(Status, Vec<Marker>)> {
+        rule_markers_and_records(rules, input, rule_name, "")
+            .map(|(status, markers, _)| (status, markers))
+    }
+    // Whether exactly one block record was found and it is a flagged refusal naming the key `Effect`
+    // and the map `Statement` the predicate read (the own-key refusal's sentence names both).
+    let one_flagged_block = |blocks: &[String]| {
+        blocks.len() == 1
+            && blocks[0].contains("refusal: true")
+            && blocks[0].contains("Effect")
+            && blocks[0].contains("Statement")
+    };
+    let refused_at = |markers: &[Marker], at: &str| {
+        markers
+            .iter()
+            .find(|(path, _, _)| path == at)
+            .map(|(_, _, kind)| kind.is_refusal())
+    };
+    // (1) Two rules, one sentence. The predicate's own-key refusal over the one-object `Statement` is an
+    // unevaluatable that fails the WHOLE filter by design (`run_filter_predicate`'s `Err` arm after the
+    // undecidable-comparison arm): the clause's OWN block record carries the refusal, flagged and naming
+    // the key and the map, and no per-entry marker is filed for `/Resources/R1`. Re-pinned to that shape;
+    // an earlier cut read a per-entry marker at `/Resources/R1`, which this routing never writes, and a
+    // later one read `refusal: true` and `Statement` off the rule's whole dump, where any flagged record
+    // met the first and any record's message the second.
+    let two_rules = format!("rule a {{ {THE_CLAUSE} }}\nrule b {{ {THE_CLAUSE} }}");
+    for rule_name in ["a", "b"] {
+        let (status, markers, blocks) = rule_markers_and_records(
+            &two_rules,
+            ONE_OBJECT_BESIDE_A_LIST,
+            rule_name,
+            "x (filter-clauses)",
+        )?;
+        cells.check(
+            &format!("(1) `rule {rule_name}`: fails closed on the refused selection, FAIL"),
+            Status::FAIL,
+            status,
+        );
+        cells.check_with(
+            &format!("(1) `rule {rule_name}`: the whole filter is refused by its own run: the clause's one block record is flagged `refusal: true` and names the key `Effect` and the map `Statement`, and no per-entry marker is filed at /Resources/R1"),
+            (true, None),
+            (one_flagged_block(&blocks), refused_at(&markers, "/Resources/R1")),
+            || format!("the markers read {markers:?}; the clause's block records: {blocks:?}"),
+        );
+    }
+    // (1b) Two rules, one key filter's wrap of one refusal: the right-hand `Tags[ Key == 'Env' ].Value`
+    // is resolved against the map the key filter reads (`M`), so the string `Tags` sits INSIDE `M` (beside
+    // `M` it is an absence to the right-hand query, and the wrap carries no refusal; an earlier cut of this
+    // document put it beside); over the string it is refused afresh in each rule's run (`refuse` mints per
+    // delivery), the wrap's text is one and the same, and each run reads its own refusal's timing on the
+    // wrap (the registry entry overwritten by the later token, the marker carrying the token the
+    // registration returned), so the entry is REFUSED under both rules in both declaration orders; held to
+    // the first wrap's token, the second rule read a token minted before its run and its entry PLAIN by
+    // declaration order.
+    const STRING_TAGS_WITH_A_MAP: &str =
+        r#"{ Other: 'o', Resources: { Q: { Properties: { M: { PROD: 1, Tags: 'x' } } } } }"#;
+    const THE_WRAP_CLAUSE: &str =
+        "Resources.*[ x | Properties.M[ keys == Tags[ Key == 'Env' ].Value ] !empty ] !empty";
+    for (order, two_rules) in [
+        (
+            "`a` then `b`",
+            format!("rule a {{ {THE_WRAP_CLAUSE} }}\nrule b {{ {THE_WRAP_CLAUSE} }}"),
+        ),
+        (
+            "`b` then `a`",
+            format!("rule b {{ {THE_WRAP_CLAUSE} }}\nrule a {{ {THE_WRAP_CLAUSE} }}"),
+        ),
+    ] {
+        for rule_name in ["a", "b"] {
+            let (status, markers) = rule_markers(&two_rules, STRING_TAGS_WITH_A_MAP, rule_name)?;
+            cells.check(
+                &format!("(1b) {order}, `rule {rule_name}`: fails closed on the wrapped refusal, FAIL, and the entry /Resources/Q is REFUSED by its own run's mint: {markers:?}"),
+                (Status::FAIL, Some(true)),
+                (status, refused_at(&markers, "/Resources/Q")),
+            );
+        }
+    }
+    // (2) The top level first, then a `some` filter predicate.
+    let top_level_then_some = "rule r { Resources.R1.Properties.Statement[ Effect == 'Allow' ].Action == '*' or Other exists  some Resources[ x | Properties.Statement[ Effect == 'Allow' ].Action == '*' ] !empty }";
+    let (status, markers, blocks) = rule_markers_and_records(
+        top_level_then_some,
+        ONE_OBJECT_BESIDE_A_LIST,
+        "r",
+        "x | Properties.Statement",
+    )?;
+    cells.check(
+        "(2) the sentence refused at the top level and delivered again inside the `some` filter: the clause fails closed, FAIL",
+        Status::FAIL,
+        status,
+    );
+    // As in (1): the own-key refusal fails the whole filter, so the refusal is in the `some` clause's
+    // OWN block record (read by its clause text; the top-level disjunct's record is flagged too and is
+    // not what this row pins) and no per-entry marker is filed; re-pinned from a per-entry read, then
+    // from a read of the rule's whole dump.
+    cells.check_with(
+        "(2) the whole filter is refused inside the `some`: the `some` clause's one block record is flagged and names the key `Effect` and the map `Statement`, no per-entry marker at /Resources/R1",
+        (true, None),
+        (one_flagged_block(&blocks), refused_at(&markers, "/Resources/R1")),
+        || format!("the markers read {markers:?}; the `some` clause's block records: {blocks:?}"),
+    );
+    // (2b) The refused walk as a key filter's right-hand query inside the `some`: the right-hand query is
+    // resolved against the map the key filter reads (`M`), so each resource's `Statement` sits INSIDE `M`
+    // (an earlier cut of this document put it beside `M`, where the right-hand query met an absence and
+    // the wrap carried no refusal); `M` holds the key `*` under both resources, so `R2`'s decided `Action`
+    // selects it and the `some` would pass on `R2`; `R1`'s refused walk is wrapped by the key filter and
+    // the entry is REFUSED, so the clause fails closed.
+    const ONE_OBJECT_BESIDE_A_LIST_WITH_MAPS: &str = r#"{ Other: 'o', Resources: { R1: { Properties: { M: { '*': 1, Statement: { Effect: 'Allow', Action: '*', Resource: '*' } } } }, R2: { Properties: { M: { '*': 1, Statement: [ { Effect: 'Allow', Action: '*' } ] } } } } }"#;
+    let key_filter_in_some = "rule r { some Resources[ x | Properties.M[ keys == Statement[ Effect == 'Allow' ].Action ] !empty ] !empty }";
+    let (status, markers) =
+        rule_markers(key_filter_in_some, ONE_OBJECT_BESIDE_A_LIST_WITH_MAPS, "r")?;
+    cells.check(
+        "(2b) the refused walk as a key filter's right-hand query inside the `some`: the clause fails closed, FAIL",
+        Status::FAIL,
+        status,
+    );
+    cells.check(
+        &format!(
+            "(2b) the entry /Resources/R1 is REFUSED through the key filter's wrap by the run's own mint: {markers:?}"
+        ),
+        Some(true),
+        refused_at(&markers, "/Resources/R1"),
+    );
+    // (3) and (4) The unit, the root scope alive for the registry.
+    const NO_BUCKET: &str = "{ Resources: { Q: { Type: 'AWS::SQS::Queue' } } }";
+    let rules_file = RulesFile::try_from("rule r { Other exists }")?;
+    let _root = root_scope(&rules_file, Rc::new(PathAwareValue::try_from(NO_BUCKET)?));
+    let first = register_refusal("S");
+    let keys = registered_refusals().len();
+    let second = register_refusal("S");
+    cells.check(
+        "(3) a second registration of one sentence mints a later token, the registry reads it, one key",
+        (true, Some(second), keys),
+        (
+            second.later_than(first),
+            token_of_registered("S", &no_frame_ranking),
+            registered_refusals().len(),
+        ),
+    );
+    let _earlier = register_refusal("A");
+    let later = register_refusal("B");
+    cells.check(
+        "(4) a numbered text of registered parts reads the later-minted part's token in either order; an unregistered part reads nothing",
+        (Some(later), Some(later), None),
+        (
+            token_of_registered("(1) A (2) B", &no_frame_ranking),
+            token_of_registered("(1) B (2) A", &no_frame_ranking),
+            token_of_registered("(1) A (2) Rx", &no_frame_ranking),
+        ),
+    );
+    cells.assert_all_agreed();
+    Ok(())
+}
+
+/// The two registration helpers a COMPARISON site uses, against the producers' `register_refusal` (which
+/// mints on every call), under ONE rule: each keeps the LATER by minting of the stored token and the
+/// passed-in one (a marker's later token replaces the stored one, an earlier or absent one keeps it),
+/// takes the passed-in token for a text the registry lacks, and mints only where neither exists; a wrap's
+/// text is one and the same across runs, each run's inner refusal its own, and a read's own sentence
+/// follows the same rule (a sentence refused earlier and raised again inside a quiet probe arrives with a
+/// later token and keeps it); with no root scope alive neither registers anything and the passed-in token
+/// comes back. And `raised_refusal` over one registered read re-raises it as the producers'
+/// `Unevaluatable` with no entry added (the registry's token is the pin: the later one, where the raise
+/// brought a later token). Rows "N" (no root), "E" (`ensure_registered`), "W" (`ensure_registered_wrap`)
+/// and "A" (the asserted re-raise). Row (E) once pinned the stored token kept over a later passed-in one,
+/// the newest-registry reading that handed an older token back as a run's own; re-pinned to the one rule.
+#[test]
+fn a_comparisons_registration_keeps_a_refusals_token_and_a_wrap_follows_the_later_one() -> Result<()>
+{
+    use crate::rules::eval::no_frame_ranking;
+    use crate::rules::eval_context::{
+        ensure_registered, ensure_registered_wrap, register_refusal, registered_refusals,
+        token_of_registered,
+    };
+    let mut cells = CellFailures::default();
+    // (N) No root scope alive on this thread yet: a mint still counts, nothing is registered, and each
+    // helper hands the passed-in token back (or a mint where none was passed).
+    let pre = register_refusal("pre");
+    let no_root = ensure_registered("no root", Some(pre));
+    let no_root_wrap = ensure_registered_wrap("no root wrap", Some(pre), &no_frame_ranking);
+    let no_root_mint = ensure_registered("no root mint", None);
+    cells.check(
+        "(N) with no root scope alive each helper hands the passed-in token back, and mints where none was passed",
+        (pre, pre, true),
+        (no_root, no_root_wrap, no_root_mint.later_than(pre)),
+    );
+    let rules_file = RulesFile::try_from("rule r { Other exists }")?;
+    let _root = root_scope(
+        &rules_file,
+        Rc::new(PathAwareValue::try_from("{ Other: 'o' }")?),
+    );
+    cells.check(
+        "(N) nothing of it was registered: the registry opened with the root holds none of the three",
+        (None, None, None),
+        (
+            token_of_registered("no root", &no_frame_ranking),
+            token_of_registered("no root wrap", &no_frame_ranking),
+            token_of_registered("no root mint", &no_frame_ranking),
+        ),
+    );
+    // (E) `ensure_registered`: the later of the stored token and the passed-in one is kept (the one
+    // rule); a text the registry lacks takes the passed-in token; a text nobody registered and no
+    // marker vouched for takes a mint.
+    let w = register_refusal("W");
+    let later = register_refusal("later");
+    cells.check(
+        "(E) a registered text takes a LATER passed-in token over its stored one, keeps it over none, and an earlier one does not displace it",
+        (later, later, later, Some(later)),
+        (
+            ensure_registered("W", Some(later)),
+            ensure_registered("W", None),
+            ensure_registered("W", Some(w)),
+            token_of_registered("W", &no_frame_ranking),
+        ),
+    );
+    cells.check(
+        "(E) a text the registry lacks is registered under the passed-in token",
+        (later, Some(later)),
+        (
+            ensure_registered("W2", Some(later)),
+            token_of_registered("W2", &no_frame_ranking),
+        ),
+    );
+    let minted = ensure_registered("W3", None);
+    cells.check(
+        "(E) a text nobody registered and no marker vouched for is registered under a fresh mint",
+        (true, Some(minted)),
+        (
+            minted.later_than(later),
+            token_of_registered("W3", &no_frame_ranking),
+        ),
+    );
+    // (W) `ensure_registered_wrap`: a wrap the registry lacks takes the passed-in token; a stored token is
+    // overwritten by a LATER passed-in one and kept over an earlier or an absent one; a wrap with no
+    // token anywhere takes a mint.
+    let inner_early = register_refusal("inner early");
+    cells.check(
+        "(W) a wrap the registry lacks is registered under the inner refusal's token",
+        (inner_early, Some(inner_early)),
+        (
+            ensure_registered_wrap("WRAP", Some(inner_early), &no_frame_ranking),
+            token_of_registered("WRAP", &no_frame_ranking),
+        ),
+    );
+    let inner_late = register_refusal("inner late");
+    cells.check(
+        "(W) a later inner token overwrites the stored one: the wrap reads the later run's refusal",
+        (inner_late, Some(inner_late)),
+        (
+            ensure_registered_wrap("WRAP", Some(inner_late), &no_frame_ranking),
+            token_of_registered("WRAP", &no_frame_ranking),
+        ),
+    );
+    cells.check(
+        "(W) an earlier inner token, or none, keeps the stored one",
+        (inner_late, inner_late, Some(inner_late)),
+        (
+            ensure_registered_wrap("WRAP", Some(inner_early), &no_frame_ranking),
+            ensure_registered_wrap("WRAP", None, &no_frame_ranking),
+            token_of_registered("WRAP", &no_frame_ranking),
+        ),
+    );
+    let wrap_minted = ensure_registered_wrap("WRAP2", None, &no_frame_ranking);
+    cells.check(
+        "(W) a wrap no registry holds and no token vouches for is registered under a fresh mint",
+        (true, Some(wrap_minted)),
+        (
+            wrap_minted.later_than(inner_late),
+            token_of_registered("WRAP2", &no_frame_ranking),
+        ),
+    );
+    // (A) `raised_refusal` over ONE registered read: re-raised as the producers' variant, no entry
+    // added (the read's token is the later one the earlier rows left it with).
+    let keys = registered_refusals().len();
+    let raised = raised_refusal("W".to_string(), Some(later), &["W".to_string()]);
+    cells.check(
+        "(A) one registered read is re-raised as `Unevaluatable` with the later token kept and no new entry",
+        (true, Some(later), keys),
+        (
+            matches!(&raised, Error::Unevaluatable(text) if text == "W"),
+            token_of_registered("W", &no_frame_ranking),
+            registered_refusals().len(),
+        ),
+    );
+    cells.assert_all_agreed();
+    Ok(())
+}
+
+/// Where a comparison's kept marker's reason is one the registry does not know (a key filter's budget
+/// marker in `%b`) beside refused reads, the raise names the refused read the pair rule ranks highest
+/// (`eval::latest_refused_pair`, `rhs_refused_read_pair`), numbered with the rest. Two key filters whose
+/// right-hand queries are refused outside a predicate (`Resources.*.Props.M[ keys == Statement[ Effect ==
+/// 'Allow' ].Action ]` over two resources holding a one-object `Statement` of strings) leave two registered
+/// markers, each carrying the token the key-filter arm recovered from the registry for its refused query
+/// (`eval_context::token_of_registered`), the second resource's minted after the first's; `when some %b NOT
+/// IN <that query>` names the LATER-minted sentence as `(1)`, the second resource's in document order, and
+/// the first's as `(2)`, and the resources reversed name them reversed; the record is flagged by the token
+/// and by the registered parts alike. Handed no token, the two markers were token-less and the FIRST met
+/// led the raise; the pair rule now ranks them by minting, as it ranks every tokened pair.
+#[test]
+fn a_promoted_raise_names_the_later_minted_of_two_recovered_refused_reads() -> Result<()> {
     const R1: &str =
         "R1: { Props: { M: { PROD: 1, Statement: { Effect: 'Allow', Action: 'PROD' } } } }";
     const R2: &str =
@@ -53398,18 +62984,18 @@ fn a_promoted_raise_names_the_first_met_of_two_token_less_refused_reads() -> Res
     let mut cells = CellFailures::default();
     for (label, first, second, leads, follows) in [
         (
-            "`R1` first in the document",
+            "`R1` first in the document: `R2`'s token minted later, its sentence leads",
             R1,
             R2,
-            FIRST_R1,
-            "/Resources/R2/Props/M",
-        ),
-        (
-            "`R2` first in the document",
-            R2,
-            R1,
             FIRST_R2,
             "/Resources/R1/Props/M",
+        ),
+        (
+            "`R2` first in the document: `R1`'s token minted later, its sentence leads",
+            R2,
+            R1,
+            FIRST_R1,
+            "/Resources/R2/Props/M",
         ),
     ] {
         let (status, flagged, numbered) = run(first, second)?;
@@ -53424,7 +63010,7 @@ fn a_promoted_raise_names_the_first_met_of_two_token_less_refused_reads() -> Res
             flagged,
         );
         cells.check(
-            &format!("{label}: the promoted raise leads with the first resource's sentence and numbers the second's: {numbered:?}"),
+            &format!("{label}: the raise leads with the later-minted wrap and numbers the other: {numbered:?}"),
             true,
             numbered.iter().any(|raise| {
                 raise.contains(leads) && raise.contains(" (2) ") && raise.contains(follows)
@@ -53445,7 +63031,8 @@ fn a_promoted_raise_names_the_first_met_of_two_token_less_refused_reads() -> Res
 /// pair. Read from the comparison records whose `from` is the marker at /Sub2/S1, never from the whole
 /// tree, whose binding clause's records are flagged whatever this record holds. The control, a budget
 /// marker in `%b` (`M2[ b | keys == /(?!x)((a+)+)b/ ]` over a key the pattern spends its budget on): the
-/// same pair writes the message-less record and nothing in the run reads `refusal: true`. The passing
+/// same pair writes a record carrying the marker's own reason, unflagged, and nothing in the run reads
+/// `refusal: true`. The passing
 /// row, `some Sub3.%t.v == '4'` with `Sub3[ t | %c exists or v == '4' ]` binding `T1`'s marker beside the
 /// KEY `T2` (a map filter's capture holds the keys it kept, the entry's marker where the entry was left
 /// undecided, so `%t.v` read `.v` off the string `T2` and failed; `Sub3.%t.v` reads each key's own `v`):
@@ -53458,10 +63045,11 @@ fn a_plain_marker_carrying_a_refusals_sentence_is_the_refusal_at_its_own_record(
     const DOC: &str = r#"{ Cfg: { C1: { Limits: { K: { v: '1' }, Other: { v: '2' } } } }, Other: 'o', Sub2: { S1: { v: '3' } }, Sub3: { T1: { v: '3' }, T2: { v: '4' } }, M2: { aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: 1 } }"#;
     const THE_KEY_ARM: &str = "handed the map at path /Cfg/C1/Limits";
     const BINDS: &str = "Cfg[ c | Limits[*].K exists ] !empty or Other exists";
-    /// Every comparison record whose `from` is a marker: (its path, the message, the flag).
+    /// Every comparison record whose `from` is a marker: (its path, the message, the flag, the marker's
+    /// own reason as the unresolved value carries it, so a row can hold the message against it).
     fn marker_pair_records(
         record: &EventRecord<'_>,
-        out: &mut Vec<(String, Option<String>, bool)>,
+        out: &mut Vec<(String, Option<String>, bool, Option<String>)>,
     ) {
         if let Some(RecordType::ClauseValueCheck(ClauseCheck::Comparison(check))) =
             &record.container
@@ -53471,6 +63059,7 @@ fn a_plain_marker_carrying_a_refusals_sentence_is_the_refusal_at_its_own_record(
                     unresolved.traversed_to.self_path().0.clone(),
                     check.message.clone(),
                     check.refusal,
+                    unresolved.reason.clone(),
                 ));
             }
         }
@@ -53485,7 +63074,7 @@ fn a_plain_marker_carrying_a_refusals_sentence_is_the_refusal_at_its_own_record(
         Status,
         usize,
         bool,
-        Vec<(String, Option<String>, bool)>,
+        Vec<(String, Option<String>, bool, Option<String>)>,
         String,
     );
     let run = |rules: &str| -> Result<Run> {
@@ -53512,8 +63101,8 @@ fn a_plain_marker_carrying_a_refusals_sentence_is_the_refusal_at_its_own_record(
     ))?;
     let at_s1 = records
         .iter()
-        .filter(|(path, _, _)| path == "/Sub2/S1")
-        .map(|(_, message, refusal)| (message.clone(), *refusal))
+        .filter(|(path, _, _, _)| path == "/Sub2/S1")
+        .map(|(_, message, refusal, _)| (message.clone(), *refusal))
         .collect::<Vec<_>>();
     cells.check(
         &format!("strict `%s == 'x'`: FAIL on the marker's pair, one read collected, and the pair's own record carries the sentence flagged: {at_s1:?}; {diagnostic}"),
@@ -53540,20 +63129,25 @@ fn a_plain_marker_carrying_a_refusals_sentence_is_the_refusal_at_its_own_record(
         run("rule r { M2[ b | keys == /(?!x)((a+)+)b/ ] !empty or Other exists  %b == 'x' }")?;
     let at_m2 = records
         .iter()
-        .filter(|(path, _, _)| path == "/M2")
-        .map(|(_, message, refusal)| (message.clone(), *refusal))
+        .filter(|(path, _, _, _)| path == "/M2")
+        .map(|(_, message, refusal, reason)| (message.clone(), *refusal, reason.clone()))
         .collect::<Vec<_>>();
+    // The pair's record carries the marker's OWN reason as its message, byte for byte, unflagged (the
+    // left-hand plain marker's record names the marker's reason in both shapes,
+    // `a_left_markers_record_names_the_registered_right_marker_its_flag_was_set_for`), so the console
+    // names the budget where a message-less record read as a property the template lacks. Held against
+    // the marker's `reason` as the unresolved value carries it, not against a word of it.
     cells.check(
-        &format!("control, the budget marker: FAIL on its pair, nothing collected, nothing flagged in the run, the pair's record message-less and plain: {at_m2:?}"),
+        &format!("control, the budget marker: FAIL on its pair, nothing collected, nothing flagged in the run, the pair's record carrying the marker's own reason as its message, byte for byte, unflagged: {at_m2:?}"),
         (Status::FAIL, 0, false, true),
         (
             status,
             collected,
             flagged_anywhere,
             !at_m2.is_empty()
-                && at_m2
-                    .iter()
-                    .all(|(message, refusal)| message.is_none() && !*refusal),
+                && at_m2.iter().all(|(message, refusal, reason)| {
+                    message.is_some() && message == reason && !*refusal
+                }),
         ),
     );
     let (status, collected, _, records, diagnostic) = run(&format!(
@@ -53561,12 +63155,12 @@ fn a_plain_marker_carrying_a_refusals_sentence_is_the_refusal_at_its_own_record(
     ))?;
     let of_the_sentence = records
         .iter()
-        .filter(|(_, message, _)| {
+        .filter(|(_, message, _, _)| {
             message
                 .as_deref()
                 .is_some_and(|message| message.contains(THE_KEY_ARM))
         })
-        .map(|(path, _, refusal)| (path.clone(), *refusal))
+        .map(|(path, _, refusal, _)| (path.clone(), *refusal))
         .collect::<Vec<_>>();
     cells.check(
         &format!("passing `some Sub3.%t.v == '4'` beside the marker (`%t` holds the keys the filter kept, `T1`'s marker and `T2`): PASS on `T2`, the sentence collected once, and the marker's pair record carries it flagged: {of_the_sentence:?}; every marker pair record (a `/Sub3/T1` record with a FAIL status beside a passing `T2` = the `some` fold reading the left marker fail-closed; a `/Sub3/T2` marker record = `Sub3.%t` not reaching `T2`'s own `v`; none for `T1` = the marker raising out of the left retrieval): {records:?}; {diagnostic}"),
@@ -54079,30 +63673,247 @@ fn a_refused_read_collected_twice_keeps_the_later_token_and_a_numbered_text_its_
     Ok(())
 }
 
-/// The two report arms read one marker kind differently, a SENTENCE choice and not a verdict, pinned as it
-/// reads today, and the comparison's own records of the marker's pairs differ by spelling too, pinned
-/// flag by flag. A PLAIN left-hand marker (a key filter's budget marker in `%b`) compared against the keys
-/// and the refusal's marker in `%x` (`%b != %x`, under `match_all`) is the comparison's one left-hand value,
-/// so the `LhsUnresolved` arm writes its ONE per-pair record, the marker as `from`, carrying the refusal's
-/// sentence beside the marker's own and flagged `refusal: true` by the refused read among the right-hand
-/// values it was compared against (`a_refused_read_on_the_right`); the LEFT report arm reads that flag,
-/// so the marker is reported as a value that could not be read, the refusal wording, though the evaluator
-/// refused nothing of it. In the MIRROR (`%x != %b`: the keys compared against the plain marker) the
-/// `RhsUnresolved` arm writes one record per key, the marker as `to`, each carrying the marker's own
-/// sentence and flagged `refusal: false` by the marker's OWN kind (`refused_read_text`), beside the
-/// refusal marker's own record as `from`, flagged true; the RIGHT arm and the console read the OPERAND's
-/// kind (`names_a_refused_read`), so the marker is reported with the missing-property wording, "to compare
-/// to is missing", while the pair of the refusal's marker in `%x` against it keeps the refusal wording for
-/// its own side. Whether a record should be flagged by its right-hand company or by its own operand alone
-/// is as open as the wording; the clause's verdict is FAIL in both spellings (the gate raises on the
-/// refusal), and no exit or registry entry moves with either reading. The arms unify where the record's
-/// flag becomes the console's print-whole switch alone.
+/// A numbered text of registered sentences is a refusal's text to `is_refusal_text` whichever LIVE
+/// registry holds its parts (two root scopes alive on one thread, the parts registered under the older),
+/// and `token_of_registered` recovers its token from the same registry: the later of its parts' tokens
+/// (`Rb`'s). Read from the newest registry alone, the text was a refusal's with no token to recover,
+/// the shape the key filter's wrap asserts against (`rhs_undecided`). The key filter's classifier then
+/// reads a token-less marker carrying that text as a refused read whose wrap is NOT registered
+/// (`register` false: the recovered token carries the refusal, as a tokened numbered marker's own does)
+/// with `Rb`'s token recovered (`key_filter::outcome_of`). The text WHOLE reads the same set: `Ra`
+/// registered under the older scope recovers its own token under the newer, the one registry rule for a
+/// text whole and for a numbered text's parts, so the same refusal arriving whole and arriving numbered
+/// read one timing (read from the newest registry alone, the whole text recovered none and its wrap
+/// minted a token of the newer run, marking that run's entry REFUSED for a refusal it never raised).
 #[test]
-fn a_plain_left_marker_beside_a_right_refusal_is_reported_as_unreadable_where_its_mirror_is_missing(
+fn a_numbered_texts_token_is_recovered_from_whichever_live_registry_holds_its_parts() -> Result<()>
+{
+    use crate::rules::eval_context::{is_refusal_text, register_refusal, token_of_registered};
+    let rules_file = RulesFile::try_from("rule r { Other exists }")?;
+    let document = || Rc::new(PathAwareValue::try_from("{ Other: 'o' }").expect("one map parses"));
+    let older = root_scope(&rules_file, document());
+    let ra = register_refusal("Ra");
+    let rb = register_refusal("Rb");
+    // The newer scope opens an empty registry on top of the older one's, which stays alive.
+    let newer = root_scope(&rules_file, document());
+    const NUMBERED: &str = "(1) Ra (2) Rb";
+    let marker = UnResolved {
+        kind: UnResolvedKind::Undecidable {
+            refusal: None,
+            carried: None,
+        },
+        traversed_to: Rc::new(PathAwareValue::try_from(r#""Allowed""#)?),
+        remaining_query: String::new(),
+        reason: Some(NUMBERED.to_string()),
+    };
+    let evidence = ComparisonResult::UnResolvedRhs(UnResolvedRhs {
+        rhs: QueryResult::UnResolved(marker),
+        lhs: Rc::new(PathAwareValue::try_from(r#""Name""#)?),
+    });
+    let classified = match key_filter::outcome_of(&evidence, &no_frame_ranking) {
+        key_filter::KeyPairOutcome::Unfinished {
+            token,
+            register,
+            recovered,
+            ..
+        } => Some((token, register, recovered)),
+        _ => None,
+    };
+    let mut cells = CellFailures::default();
+    cells.check(
+        "under the newer scope the numbered text is a refusal's text (every live registry read) and its token is recovered from the older registry: the later part's, `Rb`'s",
+        (true, Some(rb)),
+        (
+            is_refusal_text(NUMBERED),
+            token_of_registered(NUMBERED, &no_frame_ranking),
+        ),
+    );
+    cells.check(
+        "the key filter's classifier over a token-less marker carrying the text: a refused read with no own token, its wrap not registered, `Rb`'s token recovered",
+        Some((None, false, Some(rb))),
+        classified,
+    );
+    cells.check(
+        "the text whole, registered under the older scope alone, recovers its own token under the newer (every live registry is read for a whole text, as for a numbered text's parts; no mint)",
+        Some(ra),
+        token_of_registered("Ra", &no_frame_ranking),
+    );
+    drop(newer);
+    drop(older);
+    cells.assert_all_agreed();
+    Ok(())
+}
+
+/// The comparison's registration of a refused read it met (`ensure_registered`) under two live root
+/// scopes: ONE rule for every registry, the later by minting of the stored token and the marker's own, a
+/// recovered token returned and never copied into the newest registry. A text the OLDER scope
+/// registered, met under the newer one with a marker carrying its OWN token minted later (a refusal
+/// raised inside the newer evaluation's run): the registration keeps the marker's token, the later by
+/// minting, and registers the text in the newest registry under it, so the raise carries the run's own
+/// refusal and the entry reads REFUSED; read with no token, the older scope's token is recovered with no
+/// mint and NOTHING is written to the newest registry (its texts are the reads this evaluation
+/// registered, the count the run's output reports). A text the NEWEST registry holds is under the same
+/// rule: a marker's later token replaces the stored one (a sentence refused earlier in this evaluation
+/// and raised again inside a quiet probe, whose registration the probe dropped, arrives with a later token
+/// and keeps it), an earlier one never displaces a later registration, and a token-less read keeps the
+/// later token in either order. A reader that returned the older token for both read the tokened
+/// marker's refusal as minted before the run and filed the entry PLAIN where it was REFUSED (a `some`
+/// then passing on a sibling); a reader of the newest registry alone minted a fresh token for the
+/// token-less read, a refusal of a run that raised none; and a reader that kept the newest registry's
+/// stored token unranked handed an older token back as this evaluation's own.
+#[test]
+fn a_met_refusals_registration_under_two_live_scopes_keeps_the_later_token_and_mints_none(
 ) -> Result<()> {
+    use crate::rules::eval_context::{
+        ensure_registered, mint_refusal_token, register_refusal, registered_refusals,
+        token_of_registered,
+    };
+    let rules_file = RulesFile::try_from("rule r { Other exists }")?;
+    let document = || Rc::new(PathAwareValue::try_from("{ Other: 'o' }").expect("one map parses"));
+    let older = root_scope(&rules_file, document());
+    let older_t = register_refusal("T");
+    let older_u = register_refusal("U");
+    let newer = root_scope(&rules_file, document());
+    let own = mint_refusal_token();
+    let mut cells = CellFailures::default();
+    cells.check(
+        "a tokened marker under the newer scope: the registration keeps the marker's own, later token and registers the text in the newest registry under it",
+        (own, true),
+        (
+            ensure_registered("T", Some(own)),
+            registered_refusals().iter().any(|text| text == "T"),
+        ),
+    );
+    cells.check(
+        "a token-less read under the newer scope: the older scope's token is recovered, no mint, and NOTHING is written to the newest registry (a recovered token is never copied into it: its texts are the reads this evaluation registered)",
+        (older_u, false),
+        (
+            ensure_registered("U", None),
+            registered_refusals().iter().any(|text| text == "U"),
+        ),
+    );
+    // ONE rule for every registry, the newest included: a marker's own LATER token replaces the stored
+    // one (a sentence refused earlier in this evaluation and raised again inside a quiet probe, whose
+    // registration the probe dropped, arrives with the later token and keeps it, so the run reads its own
+    // refusal as its own), and a marker's EARLIER token never displaces a later registration.
+    let before_v = mint_refusal_token();
+    let v = register_refusal("V");
+    let later = mint_refusal_token();
+    let later_u = mint_refusal_token();
+    cells.check(
+        "a text the newest registry holds: a marker's own later token replaces the stored one and is registered; an earlier one does not displace it; a token-less read of `U` after a later tokened one keeps the later token in either order",
+        (later, v, later, later_u, later_u),
+        (
+            ensure_registered("T", Some(later)),
+            ensure_registered("V", Some(before_v)),
+            ensure_registered("T", None),
+            ensure_registered("U", Some(later_u)),
+            ensure_registered("U", None),
+        ),
+    );
+    drop(newer);
+    cells.check(
+        "the older scope's own registration of `T` is untouched: with the newer scope gone, `T` reads its older token again",
+        Some(older_t),
+        token_of_registered("T", &no_frame_ranking),
+    );
+    drop(older);
+    cells.assert_all_agreed();
+    Ok(())
+}
+
+/// The identity contract `operators::ComparisonResult` states, read on the one reader that drops a pair
+/// by it: under a positive `IN` beside a marker among the right-hand values, the marker's pair for a left
+/// value a listed entry ACCEPTED is dropped (`marker_pair_under_in`, keyed on `accepted_left_values`),
+/// and "accepted" is decided by the left value's ADDRESS (`Rc::as_ptr`), never by its contents. The
+/// re-box control: the same value in a fresh box reads as a value no entry accepted, so its pair is kept
+/// and the clause would fail closed on it, which is why a `Success` must carry the operand's own `Rc`.
+/// With no listed entry among the right-hand values the pair is dropped whatever its address, and under
+/// every other comparator it is kept.
+#[test]
+fn the_marker_pair_under_in_is_dropped_by_the_left_values_address_not_its_contents() -> Result<()> {
+    use crate::rules::eval::operators::{Compare, ComparisonResult, LhsRhsPair, ValueEvalResult};
+    let name = Rc::new(PathAwareValue::try_from(r#""n1""#)?);
+    let listed = Rc::new(PathAwareValue::try_from(r#""n1""#)?);
+    let marker = UnResolved {
+        kind: UnResolvedKind::Undecidable {
+            refusal: None,
+            carried: None,
+        },
+        traversed_to: Rc::clone(&listed),
+        remaining_query: String::new(),
+        reason: Some("the budget".to_string()),
+    };
+    // One listed entry matched the left value, by the comparison's own `Rc` of it.
+    let results = [ValueEvalResult::ComparisonResult(
+        ComparisonResult::Success(Compare::ValueIn(LhsRhsPair {
+            lhs: Rc::clone(&name),
+            rhs: Rc::clone(&listed),
+        })),
+    )];
+    let accepted = accepted_left_values(&results);
+    let positive_in = (CmpOperator::In, false);
+    let own_rc = ValueEvalResult::ComparisonResult(ComparisonResult::RhsUnresolved(
+        marker.clone(),
+        Rc::clone(&name),
+    ));
+    let reboxed = ValueEvalResult::ComparisonResult(ComparisonResult::RhsUnresolved(
+        marker,
+        Rc::new((*name).clone()),
+    ));
+    let mut cells = CellFailures::default();
+    cells.check(
+        "the marker's pair for the accepted value, named by the operand's own `Rc`: dropped",
+        true,
+        marker_pair_under_in(positive_in, &own_rc, &accepted, true),
+    );
+    cells.check(
+        "the re-box control: the same value in a fresh box is a value no entry accepted, so its pair is kept",
+        false,
+        marker_pair_under_in(positive_in, &reboxed, &accepted, true),
+    );
+    cells.check(
+        "with no listed entry among the right-hand values the pair is dropped whatever its address",
+        true,
+        marker_pair_under_in(positive_in, &reboxed, &accepted, false),
+    );
+    cells.check(
+        "under `NOT IN` the pair is kept, address or not",
+        false,
+        marker_pair_under_in((CmpOperator::In, true), &own_rc, &accepted, true),
+    );
+    cells.assert_all_agreed();
+    Ok(())
+}
+
+/// The two report arms read one marker kind the SAME way, a sentence choice pinned as it reads today, while
+/// the comparison's own records of the marker's pairs still differ by their flag, pinned flag by flag. A
+/// PLAIN left-hand marker (a key filter's budget marker in `%b`) compared against the keys and the
+/// refusal's marker in `%x` (`%b != %x`, under `match_all`) is the comparison's one left-hand value, so the
+/// `LhsUnresolved` arm writes its ONE per-pair record, the marker as `from`, carrying the refusal's sentence
+/// beside the marker's own and flagged `refusal: true` by the refused read among the right-hand values it
+/// was compared against (`a_refused_read_on_the_right`). The report arms read the OPERAND's kind, not the
+/// flag (`unresolved_comparison_sentence`: `names_a_refused_read` on the marker, then its `Undecidable`
+/// kind), so the plain marker is reported as a value that "could not be decided", the undecidable
+/// wording, on the left and on the right alike: never "could not be read", the refusal wording the flag
+/// alone read into it, and never "is missing", the released missing-property wording the right arm once
+/// gave it. In the MIRROR (`%x != %b`: the keys compared against the plain marker) the `RhsUnresolved` arm
+/// writes one record per key, the marker as `to`, each carrying the marker's own sentence and flagged
+/// `refusal: false` by the marker's OWN kind (`refused_read_text`), beside the refusal marker's own record
+/// as `from`, flagged true and reported with the refusal wording for its own side. Whether a record
+/// should be flagged by its right-hand company or by its own operand alone stays open (the flag is the
+/// console's print-whole switch); the clause's verdict is FAIL in both spellings (the gate raises on the
+/// refusal), and no exit or registry entry moves with either reading. The two rows were re-pinned from
+/// "could not be read" (left) and "is missing" (right) to the one undecidable wording when the arms were
+/// unified on the operand's kind, and the test was renamed from "reported as unreadable where its mirror
+/// is missing", the two wordings it pinned before.
+#[test]
+fn a_plain_left_marker_beside_a_right_refusal_is_reported_as_undecided_on_both_sides() -> Result<()>
+{
     const DOC: &str = r#"{ "Cfg": { "Mode": { "Ref": "ModeParam" }, "Fallback": { "Kind": "k" }, "A": { "Kind": "k", "Sub": { "R1": { "Ref": "P" }, "P": { "Kind": "k" }, "Q": { "Kind": "k" } } }, "B": { "Kind": "k", "Sub": { "R1": { "Ref": "P" }, "P": { "Kind": "k" }, "Q": { "Kind": "k" } } } }, "M2": { "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": 1 } }"#;
     const COULD_NOT_BE_READ_FROM: &str = "the value to compare from could not be read";
-    const MISSING_TO: &str = "to compare to is missing";
+    const COULD_NOT_BE_DECIDED_FROM: &str = "the value to compare from could not be decided";
+    const COULD_NOT_BE_DECIDED_TO: &str = "the value to compare to could not be decided";
     /// One per-pair record of the comparison that holds a marker as an operand.
     #[derive(Debug)]
     struct MarkerPair {
@@ -54203,9 +64014,12 @@ fn a_plain_left_marker_beside_a_right_refusal_is_reported_as_unreadable_where_it
         ),
     );
     cells.check(
-        &format!("the left arm reports the plain marker as a value that could not be read, the flag's wording, and never as a missing property: {sentences:?}"),
-        (true, false),
+        &format!("the left arm reports the plain marker as a value that could not be decided, the operand's own wording, never as a refused read (the flag's) and never as a missing property: {sentences:?}"),
+        (true, false, false),
         (
+            sentences
+                .iter()
+                .any(|sentence| sentence.contains(COULD_NOT_BE_DECIDED_FROM)),
             sentences
                 .iter()
                 .any(|sentence| sentence.contains(COULD_NOT_BE_READ_FROM)),
@@ -54237,10 +64051,15 @@ fn a_plain_left_marker_beside_a_right_refusal_is_reported_as_unreadable_where_it
         ),
     );
     cells.check(
-        &format!("the right arm reports the plain marker with the missing-property wording, the refusal's own pair with the refusal wording: {sentences:?}"),
-        (true, true),
+        &format!("the right arm reports the plain marker as a value that could not be decided, never with the missing-property wording; the refusal's own pair keeps the refusal wording: {sentences:?}"),
+        (true, false, true),
         (
-            sentences.iter().any(|sentence| sentence.contains(MISSING_TO)),
+            sentences
+                .iter()
+                .any(|sentence| sentence.contains(COULD_NOT_BE_DECIDED_TO)),
+            sentences
+                .iter()
+                .any(|sentence| sentence.contains("to compare to is missing")),
             sentences
                 .iter()
                 .any(|sentence| sentence.contains(COULD_NOT_BE_READ_FROM)),
@@ -54411,6 +64230,83 @@ fn a_nested_runs_marker_carries_the_later_token_up_past_an_older_capture() -> Re
                     &format!("{label}: no plain marker at {entry}: {read:?}"),
                     false,
                     entry_kind_at(&read, entry, false),
+                );
+            }
+        }
+    }
+    cells.assert_all_agreed();
+    Ok(())
+}
+
+/// A refusal's timing is its producer's mint, never a comparison's re-registration: the comparison sites
+/// that register a refused read they met (`binary_operation`'s collection and compared-nothing arm, the
+/// asserted re-raise of one registered read, the key filter's wrap of a kept pairing) go through
+/// `eval_context::ensure_registered`, which keeps the later by minting of the stored token and the
+/// marker's own and mints only for a text nobody registered and no marker vouched for, so a comparison
+/// that re-registers a sentence with no later token moves its timing not at all, and a refusal minted
+/// BEFORE a filter predicate run opened keeps reading as minted before it however many comparisons inside
+/// the run re-register its sentence. Rows: "C1" `%c`
+/// bound BEFORE the run (`Cfg0[ c | Limits[*].K exists ] !empty` binds the own-key refusal's marker, minted
+/// in the `Cfg0` run) and read inside `Resources[ x | %c exists ]`: both entries read PLAIN markers in both
+/// resource orders, where a re-mint at the comparison's registration read them REFUSED; "C2" the same
+/// refusal produced INSIDE the run (`Resources[ x | Cfg[ c | Limits[*].K exists ] !empty ]`): both entries
+/// REFUSED; "L1" a `let` whose resolution is refused and memoized (`let c = Cfg0[ c0 | Limits[*].K exists
+/// ]`), read inside `Resources[ x | %c !empty ]`: the first entry's run resolves the binding (a token minted
+/// during a binding's resolution marks no run, `BINDING_MINTED`) and the second re-reads the memoized
+/// failure (`Error::repeated`, no token; the walk's marker takes the registration's token back from the
+/// registry, `refusal_marker`), so both entries read PLAIN in both orders; the rule FAILs closed in every
+/// row. Those rows are unary (`exists`, `!empty`), so the registrations they reach are the unary
+/// operators'; the "B" rows take the same before-the-run marker through `binary_operation`, whose
+/// collection and compared-nothing arm are the registering sites this test exists to pin: "B1" the marker
+/// compared on the LEFT (`%c == 'zzz'`), "B2" the marker among the RIGHT-hand values under `IN`
+/// (`Cfg.C1.Limits.K.v IN %c`, a resolved left value beside it), "B3" the marker on the left of a `some ..
+/// NOT IN <literal>` inside a `some` filter (`some Resources[ x | some %c NOT IN ['z'] ] !empty`); each
+/// reads PLAIN in both resource orders, where a re-mint at the comparison's registration would read the
+/// entry REFUSED. The compared-nothing arm's fold with a `register == false` read (the wrap of a numbered
+/// text on a marker that carries a token) has no row here: that read is built only by a nested predicate's
+/// raise and the arm needs an empty left-hand collection beside it; its registration helper is pinned by
+/// the kept-keys rows of
+/// `a_key_filter_registers_the_kept_keys_sentence_once_after_the_fold_over_its_keys`.
+#[test]
+fn a_comparisons_re_registration_keeps_a_refusals_timing() -> Result<()> {
+    const BOUND_BEFORE_THE_RUN: &str =
+        "rule r { Cfg0[ c | Limits[*].K exists ] !empty  Resources[ x | %c exists ] !empty }";
+    const PRODUCED_INSIDE_THE_RUN: &str =
+        "rule r { Resources[ x | Cfg[ c | Limits[*].K exists ] !empty ] !empty }";
+    const MEMOIZED_LET: &str =
+        "let c = Cfg0[ c0 | Limits[*].K exists ]\nrule r { Resources[ x | %c !empty ] !empty }";
+    const LEFT_MARKER_COMPARED: &str =
+        "rule r { Cfg0[ c | Limits[*].K exists ] !empty  Resources[ x | %c == 'zzz' ] !empty }";
+    const RIGHT_MARKER_UNDER_IN: &str =
+        "rule r { Cfg0[ c | Limits[*].K exists ] !empty  Resources[ x | Cfg.C1.Limits.K.v IN %c ] !empty }";
+    const SOME_LEFT_MARKER_NOT_IN: &str =
+        "rule r { Cfg0[ c | Limits[*].K exists ] !empty  some Resources[ x | some %c NOT IN ['z'] ] !empty }";
+    let mut cells = CellFailures::default();
+    for (order, template) in [
+        ("`A` then `B`", NESTED_RUN_A_THEN_B),
+        ("`B` then `A`", NESTED_RUN_B_THEN_A),
+    ] {
+        for (label, rules, refused) in [
+            ("C1", BOUND_BEFORE_THE_RUN, false),
+            ("C2", PRODUCED_INSIDE_THE_RUN, true),
+            ("L1", MEMOIZED_LET, false),
+            ("B1", LEFT_MARKER_COMPARED, false),
+            ("B2", RIGHT_MARKER_UNDER_IN, false),
+            ("B3", SOME_LEFT_MARKER_NOT_IN, false),
+        ] {
+            let label = format!("({label}, {order})");
+            let read = entry_marker_kinds(&mut cells, &label, rules, template)?;
+            for entry in ["/Resources/A", "/Resources/B"] {
+                cells.check(
+                    &format!(
+                        "{label}: {entry} reads a {} marker: {read:?}",
+                        if refused { "REFUSED" } else { "PLAIN" }
+                    ),
+                    (true, false),
+                    (
+                        entry_kind_at(&read, entry, refused),
+                        entry_kind_at(&read, entry, !refused),
+                    ),
                 );
             }
         }
@@ -54977,12 +64873,15 @@ fn the_raised_text_numbers_a_leading_reason_and_several_reads_and_keeps_one_text
     cells.check(
         "the first of two reads as the reason: both numbered in the order met, the reason not repeated",
         format!("(1) {REFUSAL} (2) {SECOND}"),
-        raised_refusal_text(REFUSAL.to_string(), &[REFUSAL.to_string(), SECOND.to_string()]),
+        raised_refusal_text(
+            REFUSAL.to_string(),
+            &[REFUSAL.to_string(), SECOND.to_string()],
+        ),
     );
     cells.check(
         "no reads: the reason as it is",
         BUDGET.to_string(),
-        raised_refusal_text(BUDGET.to_string(), &[]),
+        raised_refusal_text(BUDGET.to_string(), &Vec::<String>::new()),
     );
     cells.assert_all_agreed();
 }
@@ -55591,15 +65490,20 @@ fn an_absences_reason_leading_a_left_refusals_record_prints_a_backslash_as_writt
 }
 
 /// `UnResolvedRhs::did_not_resolve_reason`, the key filter's sentence for a right-hand value it could not
-/// pair a key with, read on the builder alone: the retrieval arm renders the path as a template path and
-/// bounds the retrieval's own text as a marker's sentence (`marker_part`: the backslash kept as written,
-/// `a\\b` once and not doubled; a control character as its escape, never raw; the trailing line break
-/// trimmed), naming the remaining query; the function arm ("had no value") bounds the function's reason the
-/// same way, so a five-thousand-character value is cut with the marker and never quoted whole; the marker
-/// arm names the marker's own reason after the path; a resolved value has no sentence.
+/// pair a key with, read on the builder alone: every arm renders the path as a template path and writes
+/// the value's own reason AS HANDED, since each reason's template-derived parts are bounded where its
+/// builder wrote them (`query_retrieval_with_converter`, `general_no_answer_reason`), and bounding the
+/// whole reason again here, as one part, cut a sentence of several bounded parts in its middle (under a
+/// long key the path alone filled the part bound, and the path's end, the type and the quoted value fell
+/// past a second cut whose marker counted the first marker's text). The retrieval arm names the remaining
+/// query and trims the reason's trailing line break; a reason bounded at its source keeps its one
+/// backslash (`a\\b` as `Debug` wrote it) and its escaped control (`\u{1b}` as six characters), and the
+/// arm adds no escape and no cut of its own: a source-bounded reason wider than one part arrives whole,
+/// its two cut markers and no third. The function arm ("had no value") writes the function's reason as
+/// handed, its path bounded where the reason was built; the marker arm names the marker's own reason
+/// after the path; a resolved value has no sentence.
 #[test]
-fn the_key_filters_did_not_resolve_sentence_is_built_bounded_with_the_backslash_kept() {
-    use crate::rules::eval_context::LONGEST_TEMPLATE_PART_IN_A_REFUSAL;
+fn the_key_filters_did_not_resolve_sentence_writes_each_reason_as_its_builder_bounded_it() {
     let tags = || {
         PathAwareValue::String((
             path_value::Path::new("/M/Tags".to_string(), 0, 0),
@@ -55619,44 +65523,111 @@ fn the_key_filters_did_not_resolve_sentence_is_built_bounded_with_the_backslash_
         .did_not_resolve_reason()
     };
     let mut cells = CellFailures::default();
+    // A reason as the retrieval writes it: the value quote bounded and escaped at the source
+    // (`marker_part` over the `Debug` form of a value `a\b` holding an ESC: the backslash doubled once by
+    // `Debug`, the ESC as the six characters `\u{1b}`), with a trailing line break the arm trims.
     let retrieval = sentence_for(
         "Names",
         Some(
-            "Attempting to retrieve from key Names but type is not an struct type at path /M/Tags, \
-             Type = String, Value = \"a\\\\b\"\u{1b}\n"
+            "Attempting to retrieve from key Names but type is not an struct type at path \
+             /M/Tags[L:0,C:0], Type = String, Value = \"a\\\\b\\u{1b}\"\n"
                 .to_string(),
         ),
         UnResolvedKind::Absent,
     )
     .unwrap_or_default();
     cells.check(
-        &format!("the retrieval arm: the path as a template path, the remaining query, the reason with its backslash kept once, the ESC escaped, the line break trimmed: {retrieval}"),
-        (true, true, true, false, true, false, true),
+        &format!("the retrieval arm: the path as a template path, the remaining query, the reason as handed (its backslash once, its escaped control as the six characters), the line break trimmed: {retrieval}"),
+        (true, true, true, false, false, true),
         (
             retrieval.contains("did not resolve at /M/Tags[L:0,C:0] (remaining query Names): "),
             retrieval.contains(r"a\\b"),
             retrieval.contains("\\u{1b}"),
             retrieval.contains(r"a\\\\b"),
-            !retrieval.contains('\u{1b}'),
             retrieval.contains('\n'),
             retrieval.ends_with(", so the keys it selects cannot be decided"),
         ),
     );
-    let value = "v".repeat(5000);
+    // A source-bounded reason wider than one part: a path of a thousand characters as `template_path`
+    // renders it (cut in its middle) and a value of a thousand as `marker_part` renders it (cut at its
+    // end). The arm cuts nothing a second time: the whole reason is in the sentence, the path's end,
+    // the type and the quoted value included, with the source's two markers and no third.
+    let long_reason = format!(
+        "Attempting to retrieve from key Names but type is not an struct type at path {}, Type = \
+         String, Value = {}",
+        crate::rules::eval_context::template_path(&path_value::Path::new(
+            format!("/M/{}/Tags", "k".repeat(1000)),
+            0,
+            0
+        )),
+        crate::rules::eval_context::marker_part(&format!("{:?}", "v".repeat(1000)))
+    );
+    let whole = sentence_for("Names", Some(long_reason.clone()), UnResolvedKind::Absent)
+        .unwrap_or_default();
+    cells.check(
+        &format!("a source-bounded reason wider than one part is written whole, never cut a second time: {} chars", whole.chars().count()),
+        (true, true, 2),
+        (
+            whole.contains(&long_reason),
+            whole.contains("/Tags[L:0,C:0], Type = String, Value = "),
+            whole.matches("more characters cut]").count(),
+        ),
+    );
+    // The function arm: the reason as handed (its path was bounded where `no_answer_for` built it), in
+    // the sentence `general_no_answer_reason` writes for a kind the function does not take (`parse_int`
+    // over a list; a string it cannot parse leaves through the function's own `Err`, never this arm).
     let had_no_value = sentence_for(
         "",
-        Some(format!("{value} is no integer")),
+        Some(
+            "parse_int has no answer for the value at /M/Tags[L:0,C:0]: it is array, which the \
+             function does not take"
+                .to_string(),
+        ),
+        UnResolvedKind::Absent,
+    );
+    cells.check(
+        "the function arm: \"had no value\" at the path, the function's reason as handed",
+        Some(
+            "the right-hand side of the key filter had no value at /M/Tags[L:0,C:0]: parse_int has no \
+             answer for the value at /M/Tags[L:0,C:0]: it is array, which the function does not take, \
+             so the keys it selects cannot be decided"
+                .to_string(),
+        ),
+        had_no_value,
+    );
+    // A control that slipped RAW into a reason (a producer the source bounds missed) is escaped by the
+    // net where the marker's sentence is built, in the retrieval arm and in the function arm alike, so
+    // the key filter's marker, the records that quote it, `-o json` and the raise's text carry the
+    // escape and never the control. A MARKER's text beside an absence is escaped the same way and never
+    // cut on BOTH paths that write such a record (`absence_beside_a_marker`: the left-hand marker beside
+    // an absent right-hand side, `left_marker_beside_an_absence`, and the right-hand marker beside an
+    // absent left value, `marker_beside_an_absence`); the reason is STORED raw (the registry matches it
+    // by exact text), and the console strips the escaped form off the record to split it.
+    let raw_control = "Could not find key \u{1b}[31mNames inside struct at path /M/Tags[L:0,C:0]";
+    let escaped_control = crate::utils::writer::escaped_controls_for_display(raw_control);
+    let retrieval_arm = sentence_for(
+        "Names",
+        Some(raw_control.to_string()),
         UnResolvedKind::Absent,
     )
     .unwrap_or_default();
+    let function_arm =
+        sentence_for("", Some(raw_control.to_string()), UnResolvedKind::Absent).unwrap_or_default();
+    let beside_an_absence = crate::rules::eval::left_marker_beside_an_absence(raw_control, None);
+    let right_marker_beside_an_absence =
+        super::marker_beside_an_absence(Some((raw_control, 1)), None).unwrap_or_default();
     cells.check(
-        &format!("the function arm: \"had no value\" at the path, the reason cut with the marker, the value never whole: {} chars", had_no_value.chars().count()),
-        (true, true, false, true),
+        &format!("a raw control in a reason is escaped in the marker's sentence and in the record beside an absence on both paths, never carried raw and never cut: {retrieval_arm} / {function_arm} / {beside_an_absence} / {right_marker_beside_an_absence}"),
+        (true, false, true, false, true, false, true, false),
         (
-            had_no_value.contains("had no value at /M/Tags[L:0,C:0]: "),
-            had_no_value.contains("more characters cut]"),
-            had_no_value.contains(&value),
-            had_no_value.chars().count() < LONGEST_TEMPLATE_PART_IN_A_REFUSAL + 200,
+            retrieval_arm.contains("key \\u{1b}[31mNames"),
+            retrieval_arm.contains('\u{1b}'),
+            function_arm.contains("key \\u{1b}[31mNames"),
+            function_arm.contains('\u{1b}'),
+            beside_an_absence.ends_with(&format!(": {escaped_control}")),
+            beside_an_absence.contains('\u{1b}'),
+            right_marker_beside_an_absence.ends_with(&format!(": {escaped_control}")),
+            right_marker_beside_an_absence.contains('\u{1b}'),
         ),
     );
     cells.check(
@@ -55685,6 +65656,937 @@ fn the_key_filters_did_not_resolve_sentence_is_built_bounded_with_the_backslash_
         .did_not_resolve_reason(),
     );
     cells.assert_all_agreed();
+}
+
+/// The lead of a record beside a REFUSAL's marker is bounded where the retrieval writes it, read at the
+/// evaluator (the console reporter's unit test rebuilds the expected lead itself, so a reporter cell
+/// cannot catch drift): the records of `Resources.%names.Type == %x` and `Cfg3.*[0] == %x`, each a
+/// LEFT value the document lacks beside the refused walk's marker in `%x`, carry the retrieval's reason
+/// as their lead, flagged as the refusal and followed by the refusal's text. (1) A key of five thousand
+/// characters a variable resolved to ("Could not locate key = ... inside struct at path = ..."): the key
+/// cut once at its end with the count cut, never whole, the refusal after it and the whole message inside
+/// the console's 4096-character bound. (2) A key holding a bidirectional override: the control as its
+/// six-character escape, never raw. (3) An index read off a string at a path of five thousand characters
+/// ("Attempting to retrieve from index 0 but type is not an array at path ..."): the path cut once in its
+/// middle, both ends and the location kept. The key-shaped index arm (`Rules."0"` over a value that is
+/// not a list) renders its path the same way and is reached by no query: a key reads as an index only
+/// over a list (`list_index_of`), so no cell drives it. Raw, each of these reasons reached the record
+/// whole, flagged as the refusal and printed under the console's whole-line bound, and pushed the refusal
+/// after it past the cut; a bidirectional character reached the console's `Error =` line unescaped.
+#[test]
+fn an_absence_lead_beside_a_refusal_is_bounded_where_the_retrieval_writes_it() -> Result<()> {
+    use crate::rules::eval_context::LONGEST_TEMPLATE_PART_IN_A_REFUSAL;
+    let long_key = "k".repeat(5000);
+    // The right-to-left override, built from its code point so the source holds no raw control.
+    let bidi = char::from_u32(0x202e).expect("a bidirectional override");
+    let document = format!(
+        r#"{{ "Cfg": {{ "Mode": {{ "Ref": "ModeParam" }}, "Fallback": {{ "Kind": "k" }}, "A": {{ "Kind": "k", "Sub": {{ "R1": {{ "Ref": "P" }}, "P": {{ "Kind": "k" }}, "Q": {{ "Kind": "k" }} }} }}, "B": {{ "Kind": "k", "Sub": {{ "R1": {{ "Ref": "P" }}, "P": {{ "Kind": "k" }}, "Q": {{ "Kind": "k" }} }} }} }}, "Resources": {{ "R": {{ "Type": "t" }} }}, "Names": [ "{long_key}" ], "Bidi": [ "a{bidi}b" ], "Cfg3": {{ "{long_key}": "s" }} }}"#
+    );
+    // (the rule's status; the message of the record flagged as the refusal whose text holds `head`)
+    let led_by = |rules: &str, head: &str| -> Result<(Status, String)> {
+        let rules_file = RulesFile::try_from(rules)?;
+        let mut root = root_scope(
+            &rules_file,
+            Rc::new(PathAwareValue::try_from(document.as_str())?),
+        );
+        let status = eval_rules_file(&rules_file, &mut root, None)?;
+        let tree = root.reset_recorder().extract();
+        let mut messages = Vec::new();
+        recorded_messages_with_kind(&tree, &mut messages);
+        let found = messages
+            .into_iter()
+            .find(|(refusal, message)| *refusal && message.contains(head))
+            .map(|(_, message)| message)
+            .unwrap_or_default();
+        Ok((status, found))
+    };
+    let mut cells = CellFailures::default();
+    let (status, message) = led_by(
+        &format!(
+            "rule r {{ {REFUSED_WALK_INTO_X}  let names = Names[*]  Resources.%names.Type == %x }}"
+        ),
+        "Could not locate key = ",
+    )?;
+    cells.check(
+        &format!("(1) a five-thousand-character key a variable resolved to: the clause fails on the absence; the record flagged as the refusal leads with the retrieval's reason, the key cut once at its end, never whole, the refusal after it, the message inside the console's bound: {} chars", message.chars().count()),
+        (Status::FAIL, true, 1, false, true, true),
+        (
+            status,
+            message.contains(&format!(
+                "Could not locate key = {}",
+                "k".repeat(LONGEST_TEMPLATE_PART_IN_A_REFUSAL)
+            )),
+            message.matches("more characters cut]").count(),
+            message.contains(&long_key),
+            message.contains(THE_OWN_KEY_REFUSAL),
+            message.chars().count() < 4096,
+        ),
+    );
+    let (status, message) = led_by(
+        &format!(
+            "rule r {{ {REFUSED_WALK_INTO_X}  let names = Bidi[*]  Resources.%names.Type == %x }}"
+        ),
+        "Could not locate key = ",
+    )?;
+    cells.check(
+        &format!("(2) a key holding a bidirectional override: the control as its escape in the lead, never raw: {message}"),
+        (Status::FAIL, true, false, true),
+        (
+            status,
+            message.contains(&format!(
+                "Could not locate key = a{}b inside struct at path = /Resources",
+                bidi.escape_debug()
+            )),
+            message.contains(bidi),
+            message.contains(THE_OWN_KEY_REFUSAL),
+        ),
+    );
+    let (status, message) = led_by(
+        &format!("rule r {{ {REFUSED_WALK_INTO_X}  Cfg3.*[0] == %x }}"),
+        "Attempting to retrieve from index 0 but type is not an array at path ",
+    )?;
+    cells.check(
+        &format!("(3) an index read off a string at a five-thousand-character path: the path cut once in its middle, its head and its location kept, the refusal after it, inside the console's bound: {} chars", message.chars().count()),
+        (Status::FAIL, true, 1, false, true, true, true),
+        (
+            status,
+            message.contains("Attempting to retrieve from index 0 but type is not an array at path /Cfg3/kkk"),
+            message.matches("more characters cut]...").count(),
+            message.contains(&long_key),
+            message.contains("[L:"),
+            message.contains(THE_OWN_KEY_REFUSAL),
+            message.chars().count() < 4096,
+        ),
+    );
+    // (4) A join index past the keys a variable resolved to ("Index 5 on the set of values returned for
+    // variable names on the join, is out of bounds. Length 1, Values = [...]"): the key list quoted
+    // through the part bound, the five-thousand-character key never whole.
+    let (status, message) = led_by(
+        &format!(
+            "rule r {{ {REFUSED_WALK_INTO_X}  let names = Names[*]  Resources.%names[5].Type == %x }}"
+        ),
+        "on the join, is out of bounds. Length 1, Values = ",
+    )?;
+    cells.check(
+        &format!("(4) a join index out of bounds: the key list quoted bounded, the key never whole, the refusal after it, inside the console's bound: {} chars", message.chars().count()),
+        (Status::FAIL, 1, false, true, true),
+        (
+            status,
+            message.matches("more characters cut]").count(),
+            message.contains(&long_key),
+            message.contains(THE_OWN_KEY_REFUSAL),
+            message.chars().count() < 4096,
+        ),
+    );
+    // (5) Keys a variable resolved to that did not resolve themselves (`let names = Cfg3.*.Missing`: a
+    // key read off the string at the five-thousand-character path): "Keys returned for variable names
+    // could not completely resolve. Path traversed until <path>: <the inner reason>", the path cut in its
+    // middle and the inner reason as its own retrieval bounded it (its path cut the same way), separated
+    // from the path by a colon.
+    let (status, message) = led_by(
+        &format!(
+            "rule r {{ {REFUSED_WALK_INTO_X}  let names = Cfg3.*.Missing  Resources.%names.Type == %x }}"
+        ),
+        "could not completely resolve. Path traversed until /Cfg3/kkk",
+    )?;
+    cells.check(
+        &format!("(5) keys that did not resolve: the path traversed cut in its middle, a colon before the inner reason, the inner reason's own path cut once more and never whole, the refusal after it, inside the console's bound: {} chars", message.chars().count()),
+        (Status::FAIL, 2, false, true, true, true),
+        (
+            status,
+            message.matches("more characters cut]...").count(),
+            message.contains(&long_key),
+            message.contains("]: Attempting to retrieve from key Missing but type is not an struct type at path /Cfg3/kkk"),
+            message.contains(THE_OWN_KEY_REFUSAL),
+            message.chars().count() < 4096,
+        ),
+    );
+    // (6) A variable resolved to a LIST of keys (`let names = Names`, the list itself, not its elements):
+    // the list arm names the STRUCT the key was missing from (`/Resources`), never the key element's own
+    // path in the list (`/Names/0`), which once shadowed it.
+    let (status, message) = led_by(
+        &format!(
+            "rule r {{ {REFUSED_WALK_INTO_X}  let names = Names  Resources.%names.Type == %x }}"
+        ),
+        "Could not locate key = ",
+    )?;
+    cells.check(
+        &format!("(6) a key from a variable that resolved to a list: the reason names the struct's path, not the list element's, the key cut once: {} chars", message.chars().count()),
+        (Status::FAIL, true, false, 1, true),
+        (
+            status,
+            message.contains(" inside struct at path = /Resources["),
+            message.contains("/Names/0"),
+            message.matches("more characters cut]").count(),
+            message.contains(THE_OWN_KEY_REFUSAL),
+        ),
+    );
+    cells.assert_all_agreed();
+    Ok(())
+}
+
+/// The refused walk's OWN refused-read line, the one fact the per-clause counting cells assert before they
+/// leave it out (`without_the_refused_walks_line`): the bind `Cfg[*][ x | Mode exists or Kind == 'k' ]
+/// .Sub[*][ s | R1 !exists ] !empty or Cfg.Fallback exists` raises the own-key refusal in its first
+/// disjunct (the own-key filter under `A`), its `or` sibling holds, and the disjunction writes the walk's
+/// refusal at the BIND's own site: exactly ONE line, "passed by a sibling clause that holds", naming the
+/// own-key refusal, whose clause part is the bind's text up to `!empty`. The rule's leading clause,
+/// `Cfg[ x | Kind == 'k' ] !empty`, binds `x` to the keys the bind's walk is then made under and meets no
+/// refusal, and the sibling clause `Cfg.Fallback exists` writes no line of its own, so the bind's line is
+/// the run's only one, and the rule passes. The line is the designed disjunction line (an earlier
+/// disjunct's entry written at the disjunction's site when a later disjunct passes, the fold's "passed by
+/// a sibling clause that holds" wording, which `docs/CLAUSES.md` documents under the refused-read line);
+/// it predates the registry's one-rule change, so it is not that change's. The cells that count another
+/// clause's lines in the same rule once read this line as that clause's.
+#[test]
+fn the_refused_walks_own_line_is_written_once_at_the_binds_site() -> Result<()> {
+    const DOC: &str = r#"{ "Cfg": { "Mode": { "Ref": "ModeParam" }, "Fallback": { "Kind": "k" }, "A": { "Kind": "k", "Sub": { "R1": { "Ref": "P" }, "P": { "Kind": "k" }, "Q": { "Kind": "k" } } }, "B": { "Kind": "k", "Sub": { "R1": { "Ref": "P" }, "P": { "Kind": "k" }, "Q": { "Kind": "k" } } } } }"#;
+    let rules = format!(
+        "rule r {{ Cfg[ x | Kind == 'k' ] !empty  {REFUSED_WALK_INTO_X}  Cfg.Fallback exists }}"
+    );
+    let rules_file = RulesFile::try_from(rules.as_str())?;
+    let mut root = root_scope(&rules_file, Rc::new(PathAwareValue::try_from(DOC)?));
+    let status = eval_rules_file(&rules_file, &mut root, None)?;
+    let lines = refused_read_lines(&root);
+    let mut cells = CellFailures::default();
+    cells.check(
+        &format!("the walk's own line, once, at the bind's site, in the sibling-clause wording, naming the own-key refusal; the rule passes: {lines:?}"),
+        (Status::PASS, 1, true, true, true),
+        (
+            status,
+            lines.len(),
+            lines.iter().all(|line| is_the_refused_walks_own_line(line)),
+            lines
+                .iter()
+                .all(|line| line.contains("passed by a sibling clause that holds")),
+            lines.iter().all(|line| line.contains(THE_OWN_KEY_REFUSAL)),
+        ),
+    );
+    cells.assert_all_agreed();
+    Ok(())
+}
+
+/// An undecided member of a selection is read under `!empty` as its role reads every undecided value,
+/// whatever the kept members beside it hold: the assertion fails closed on it, the gate raises. The four
+/// rows were cut as the BOUNDS of a pass-over (a kept member of the final selection deciding `!empty` past
+/// a refused member when every other value passed); the pass-over is withdrawn for refusal markers (the
+/// tool's settled posture is a hard refusal that fails closed), so the rows now pin the one reading for
+/// every shape, each still a fail-open the deselection reading had. (a) A marker made at an EARLIER filter (`Resources.*[ Properties.Tags[ Key
+/// == 'Env' ] exists ].Properties.Cfg[ Mode == 'x' ] !empty`, resource A string-tagged and without `Cfg`,
+/// B list-tagged with a matching `Cfg`): A's marker stands for a branch whose later part could have been
+/// absent, so the clause fails closed on it with its flagged record, in both roles. (b) The same at an
+/// earlier filter with a spent regex budget in place of the refusal (`Maps.M[ keys == /(?!x)((a+)+)b/
+/// ].Sub[ Kind == 'k' ] !empty` over a map whose one key spends the budget and whose other key matches):
+/// undecidable in both roles, the budget's sentence in the record, never a silent pass. (c) A kept member
+/// that does not hold: `some Maps.M[ keys == /(?!x)((a+)+)b/ ] !empty` over `aab: null` beside the
+/// budget key: the null is empty under the selection reading, so the marker is read as before and the
+/// clause is undecidable in both roles. (d) The clause fails on ANOTHER value: `Resources.*.Properties.Items[
+/// Tags[ Key == 'Env' ] exists ] !empty` over one resource lacking `Items` (absent, a decided FAIL) and
+/// another holding a string-tagged member beside a list-tagged one: FAIL, and the refused member's record
+/// stands, flagged and carrying the sentence, as every undecided member's does. Named for what the rows
+/// pin; an earlier name said the member decides nothing unless a kept member holds, the withdrawn
+/// pass-over.
+#[test]
+fn an_undecided_member_fails_not_empty_closed_beside_any_kept_member() -> Result<()> {
+    // (the verdict asserted; the verdict as a `when` gate; a record is flagged a refusal; the records
+    // carry `needle`)
+    fn run(clause: &str, needle: &str, document: &str) -> Result<(Status, Status, bool, bool)> {
+        let asserted_rules = format!("rule r {{ {clause} }}");
+        let asserted = RulesFile::try_from(asserted_rules.as_str())?;
+        let mut root = root_scope(&asserted, Rc::new(PathAwareValue::try_from(document)?));
+        let status = eval_rules_file(&asserted, &mut root, None)?;
+        let records = format!("{:?}", root.reset_recorder().extract());
+        let gated_rules = format!("rule r when {clause} {{ Other exists }}");
+        let gated = RulesFile::try_from(gated_rules.as_str())?;
+        let mut root = root_scope(&gated, Rc::new(PathAwareValue::try_from(document)?));
+        let gate = eval_rules_file(&gated, &mut root, None)?;
+        Ok((
+            status,
+            gate,
+            records.contains("refusal: true"),
+            records.contains(needle),
+        ))
+    }
+    const EARLIER_STEP: &str = r#"{ "Other": "o", "Resources": { "A": { "Properties": { "Tags": "x" } }, "B": { "Properties": { "Tags": [ { "Key": "Env" } ], "Cfg": { "Mode": "x" } } } } }"#;
+    const BUDGET: &str = r#"{ "Other": "o", "Maps": { "M": { "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": { "Sub": { "Kind": "k" } }, "aab": { "Sub": { "Kind": "k" } } } } }"#;
+    const NULL_MEMBER: &str = r#"{ "Other": "o", "Maps": { "M": { "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": 1, "aab": null } } }"#;
+    const ANOTHER_FAILS: &str = r#"{ "Other": "o", "Resources": { "R1": { "Properties": { "Name": "n" } }, "R2": { "Properties": { "Items": [ { "Tags": "x" }, { "Tags": [ { "Key": "Env" } ] } ] } } } }"#;
+    let mut cells = CellFailures::default();
+    for (label, clause, needle, document, expected) in [
+        (
+            "(a) an earlier filter's refused member beside a later match: the clause fails closed on it in both roles, the record flagged with the sentence",
+            "Resources.*[ Properties.Tags[ Key == 'Env' ] exists ].Properties.Cfg[ Mode == 'x' ] !empty",
+            "filters the entries of a String",
+            EARLIER_STEP,
+            (Status::FAIL, Status::FAIL, true, true),
+        ),
+        (
+            "(b) an earlier filter's spent-budget marker beside a later match: undecidable in both roles, the budget's sentence in the record, never a silent pass",
+            "Maps.M[ keys == /(?!x)((a+)+)b/ ].Sub[ Kind == 'k' ] !empty",
+            "backtracking",
+            BUDGET,
+            (Status::FAIL, Status::FAIL, false, true),
+        ),
+        (
+            "(c) a null kept member beside the budget marker in the final selection: the null does not hold, so the clause is undecidable in both roles",
+            "some Maps.M[ keys == /(?!x)((a+)+)b/ ] !empty",
+            "backtracking",
+            NULL_MEMBER,
+            (Status::FAIL, Status::FAIL, false, true),
+        ),
+        (
+            "(d) the clause fails on another value's absence: the marker is read as before (the assertion FAILS, the gate raises and its rule fails closed), and the refused member's record stands, flagged and carrying the sentence",
+            "Resources.*.Properties.Items[ Tags[ Key == 'Env' ] exists ] !empty",
+            "filters the entries of a String",
+            ANOTHER_FAILS,
+            (Status::FAIL, Status::FAIL, true, true),
+        ),
+    ] {
+        cells.check(label, expected, run(clause, needle, document)?);
+    }
+    cells.assert_all_agreed();
+    Ok(())
+}
+
+/// The scalar filter met inside a predicate with no capture announces the reading it replaces ONLY where
+/// the verdict moved, once per filter site, as a notice names the rule and not one evaluation of it. The
+/// notice is held under the refusal's token when the scalar is met (`EvalContext::pend_scalar_filter_
+/// notice`), confirmed by the predicate clause that reads the marker as its own operand, and written by the
+/// clause over the selection whose verdict rests on the undecided member (`EvalContext::undecided_member_
+/// read`); it names the filter and the key it follows, with no member's path (one notice stands for every
+/// member the filter refused). Rows: (S) `Resources.*[ Properties.Tags[ Key == 'Env' ] exists ] !empty`
+/// over a string `Tags` alone: FAIL and ONE notice, since the member once deselected (the clause FAILing on
+/// an empty selection) is now undecided and the clause fails closed on it; (S2) two string-tagged resources
+/// alone: FAIL and still ONE notice, not one per member; (L) the control over list-shaped tags: PASS, none;
+/// (M) a string-tagged resource beside a list-tagged one: the refused member fails `!empty` closed whatever
+/// the kept member holds (the pass-over of a kept member is withdrawn for refusal markers), a member once
+/// deselected with the clause passing now fails it, so the verdict moved: FAIL, ONE notice and no
+/// refused-read line (the failing record is the report); (C) the same mixed document under a COMPARISON
+/// over the selection, `Resources.*[ Properties.Tags[ Key == 'Env' ] exists ].Type == 'X'`: the clause
+/// fails closed on the undecided member, FAIL and ONE notice; (K) the scalar met inside a key filter's RIGHT-hand query inside the
+/// predicate, `Resources.*[ Properties.M[ keys == Tags[ Key == 'Env' ].Value ] !empty ] !empty` over the
+/// string-tagged resource alone: the key filter was already undecidable and the clause already failed
+/// closed, the predicate clause reads the key filter's wrap and not the scalar's marker, so FAIL and NO
+/// notice; (F) the scalar met inside a function argument, `to_upper(Tags[ Key == 'Env' ].Value)`, the same
+/// way: FAIL and NO notice. Rows K and F put the string `Tags` INSIDE `M`: a key filter's right-hand
+/// query, and a function argument's read in the filtered map, resolve against the map the filter reads
+/// (and the argument's fallback read inside a predicate runs from the document root), so a `Tags` beside
+/// `M` is an absence to both and no scalar is ever met; an earlier cut of these rows put it beside `M`
+/// and passed whatever the hold machine did. After every row the store holds no notice (the hold went
+/// with its reader's decision or with the write), which bounds the store over a type block's resources.
+/// An earlier cut recorded the notice where the scalar was met, with the member's
+/// path, so a mixed document got a notice where nothing moved and N refused members gave N notices.
+#[test]
+fn a_scalar_filter_inside_a_predicate_announces_the_reading_it_replaces_once() -> Result<()> {
+    const STRING_TAGS: &str =
+        r#"{ Resources: { Q: { Type: 'X', Properties: { Tags: 'x', M: { PROD: 1 } } } } }"#;
+    const STRING_TAGS_IN_M: &str =
+        r#"{ Resources: { Q: { Type: 'X', Properties: { M: { PROD: 1, Tags: 'x' } } } } }"#;
+    const TWO_STRING_TAGS: &str = r#"{ Resources: { Q: { Type: 'X', Properties: { Tags: 'x' } }, R: { Type: 'X', Properties: { Tags: 'y' } } } }"#;
+    const LIST_TAGS: &str = r#"{ Resources: { Q: { Type: 'X', Properties: { Tags: [ { Key: 'Env', Value: 'prod' } ] } } } }"#;
+    const MIXED: &str = r#"{ Resources: { A: { Type: 'X', Properties: { Tags: [ { Key: 'Env', Value: 'prod' } ] } }, C: { Type: 'X', Properties: { Tags: 'x' } } } }"#;
+    const NOT_EMPTY: &str =
+        "rule r { Resources.*[ Properties.Tags[ Key == 'Env' ] exists ] !empty }";
+    const COMPARISON: &str =
+        "rule r { Resources.*[ Properties.Tags[ Key == 'Env' ] exists ].Type == 'X' }";
+    const KEY_FILTER_RHS: &str =
+        "rule r { Resources.*[ Properties.M[ keys == Tags[ Key == 'Env' ].Value ] !empty ] !empty }";
+    const FUNCTION_ARGUMENT: &str = "rule r { Resources.*[ Properties.M[ keys == to_upper(Tags[ Key == 'Env' ].Value) ] !empty ] !empty }";
+    const THE_IN_PREDICATE_READING: &str = "read inside a filter predicate as an absence";
+    // What a run leaves: the status, the in-predicate notices, the refused-read lines, what the store
+    // holds BEFORE the rule boundary (how many notices, how many reader entries are still on them, and
+    // how many reader entries the clauses added over the run), and how many notices the store still
+    // HOLDS past the boundary after the run (`reset_captures`, which the file's run makes before each
+    // rule and this closure makes once more after the last). Every row expects no reader entry before
+    // the boundary (a clause settles every read it marked on its exit, and the boundary clears the
+    // entries either way, so only a read before it can see an entry a later run of the same clause would
+    // inherit) and no hold after it, since a hold is written, or dropped at the boundary with the rule's
+    // captures; a file-level `let`'s hold would outlive the boundary, and every file-level `let` row here
+    // writes its notice; a block `let`'s hold goes at the boundary as a clause's own does, rows TB and
+    // BL.
+    type StoreBeforeTheBoundary = (usize, usize, usize);
+    let run = |rules: &str,
+               input: &str|
+     -> Result<(Status, Vec<String>, usize, StoreBeforeTheBoundary, usize)> {
+        let rules_file = RulesFile::try_from(rules)?;
+        let mut root = root_scope(&rules_file, Rc::new(PathAwareValue::try_from(input)?));
+        let status = eval_rules_file(&rules_file, &mut root, None)?;
+        let lines = refused_read_lines(&root).len();
+        let notices: Vec<String> = root
+            .deprecations()
+            .filter(|notice| notice.contains(THE_IN_PREDICATE_READING))
+            .cloned()
+            .collect();
+        let before_the_boundary = (
+            root.held_scalar_filter_notices(),
+            root.held_reader_entries(),
+            root.reader_entries_added(),
+        );
+        root.reset_captures();
+        Ok((
+            status,
+            notices,
+            lines,
+            before_the_boundary,
+            root.held_scalar_filter_notices(),
+        ))
+    };
+    let mut cells = CellFailures::default();
+    for (label, rules, input, status_expected, notices_expected, lines_expected) in [
+        ("S", NOT_EMPTY, STRING_TAGS, Status::FAIL, 1, 0),
+        ("S2", NOT_EMPTY, TWO_STRING_TAGS, Status::FAIL, 1, 0),
+        ("L", NOT_EMPTY, LIST_TAGS, Status::PASS, 0, 0),
+        ("M", NOT_EMPTY, MIXED, Status::FAIL, 1, 0),
+        ("C", COMPARISON, MIXED, Status::FAIL, 1, 0),
+        ("K", KEY_FILTER_RHS, STRING_TAGS_IN_M, Status::FAIL, 0, 0),
+        ("F", FUNCTION_ARGUMENT, STRING_TAGS_IN_M, Status::FAIL, 0, 0),
+    ] {
+        let (status, notices, lines, (_, readers, _), held) = run(rules, input)?;
+        cells.check_with(
+            &format!("({label}) `{rules}`: {status_expected:?}, {notices_expected} in-predicate notice(s) naming the filter and the key it follows and no member's path, {lines_expected} refused-read line(s), no reader entry left before the boundary, no hold left in the store"),
+            (status_expected, notices_expected, true, true, lines_expected, 0, 0),
+            (
+                status,
+                notices.len(),
+                notices.iter().all(|notice| {
+                    notice.contains("the filter `[ Key == 'Env' ]` follows the key `Tags`")
+                        && notice.contains("the member is now undecided")
+                }),
+                notices.iter().all(|notice| !notice.contains("/Resources/")),
+                lines,
+                readers,
+                held,
+            ),
+            || format!("the notices read: {notices:?}"),
+        );
+    }
+    // The notice is written only where the verdict MOVED, once the clause is decided: (SP) `some` over
+    // MIXED passes on the kept member, so the refused member decided nothing and no notice is written,
+    // where a notice written at the read came out before the verdict was known; (SG) a `when` gate over
+    // the selection beside a sibling condition whose decided failure settles the conjunction: the raise is
+    // decided past, the rule is not applicable, no notice; (PG) the same gate alone: the raise fails the
+    // rule closed, the verdict moved (the block ran before), ONE notice, written when the raise reached the
+    // condition site. Two readers of one marker (a file-level `let`): (TR) `rule a { some %x !empty }`
+    // passes on the kept member and `rule b { %x !empty }` then fails on the refused one: ONE notice, the
+    // hold kept confirmed past `a`'s decision for `b` to read; (RR) a condition raises on the marker at
+    // one site and a later condition reads the same marker and passes, then the raise fails the rule
+    // closed: ONE notice, the raise's hold not erased by the later read. (BK) a BLOCK over the selection,
+    // `Resources.*[ ... exists ] { Type == 'X' }`: the block fails closed on the undecided member as a
+    // clause does and writes ONE notice (the block arm reads the member too). (OA)/(OG) the clause's FAIL
+    // or raise decided past by an `or` sibling that holds, asserted and as a gate: the rule's verdict did
+    // not move, so NO notice in either role (the strict FAIL is settled by the rule as the raise is by its
+    // fold). The settlement at the RULE, decided from the rule's own FAIL and its basis: (DN) the marker
+    // clause beside a conjunct that answers a decided no (`Resources.A.Type == 'Y'` over A's `X`): the
+    // rule FAILs on the decided no whatever the marker holds, NO notice, as the gate shape SG writes none;
+    // (BS) the block spelling of that body, `Resources.*[ ... exists ] { Type == 'Y' }`: A's decided no
+    // fails the block, NO notice (decided inside the loop, the block wrote one where the clause wrote
+    // none); (BSo) `some Resources.*[ ... exists ] { Type == 'X' }`: the block passes on A, PASS, NO
+    // notice; (CB) a parameterized call beside the marker clause, `ok(Resources)` passing: the call's
+    // own judgment settles ITS clauses' FAILs alone, so `main`'s FAIL on the marker is written, ONE
+    // notice (a settlement over every FAIL in the scope let the call's pass withdraw it); (CO) the marker
+    // clause INSIDE a called rule, `check(Resources.*[ ... ])`, under an `or` that passes `main`: the
+    // called rule's undecidable FAIL is handed up and `main`'s pass withdraws it, PASS, NO notice (the
+    // call's own judgment wrote one); (CN) the called rule FAILing on a decided no beside the marker,
+    // `not` turning it into a pass: PASS, NO notice. A marker with a SECOND reader inside one rule, where
+    // the hold has to survive the first reader's decision without it: (RL) a rule-body `let`, read by a
+    // `some` that passes and then by a `!empty` that fails: ONE notice, as the file-level TR; (PA) a
+    // parameterized rule's argument read by two clauses of its body the same way: ONE notice; (CX) a
+    // filter CAPTURE carrying the undecided member's marker (`merge_captures_into_parent`) to a later
+    // clause, `some Resources[ x | ... ] !empty` passing on the kept member and `%x == 'A'` then failing
+    // closed on the marker beside the kept key: ONE notice, at the later clause (dropped at the first
+    // reader's decision, the hold was gone and the later move went silent). The store's bound reads the
+    // binding's KIND: (BL) a rule-body `let` read by a `!empty` that FAILs on the marker beside a
+    // conjunct's decided no (`Resources.A.Type == 'Y'`): the rule FAILs decided, the FAIL is withdrawn,
+    // NO notice, and the `let`'s hold goes at the rule boundary with the clause's (a block's `let` is
+    // read inside its rule alone; read as "any binding", it was kept as a file-level `let`'s is); (TB),
+    // below the loop, the same shape as a type block's per-resource `let` over the resource's own
+    // properties.
+    const RULE_BODY_LET: &str = "rule r {\n  let x = Resources.*[ Properties.Tags[ Key == 'Env' ] exists ]\n  some %x !empty\n  %x !empty\n}";
+    const RULE_BODY_LET_BESIDE_A_DECIDED_NO: &str = "rule r {\n  let x = Resources.*[ Properties.Tags[ Key == 'Env' ] exists ]\n  %x !empty\n  Resources.A.Type == 'Y'\n}";
+    const ARGUMENT_READ_TWICE: &str = "rule check(s) { some %s !empty  %s !empty }\nrule main { check(Resources.*[ Properties.Tags[ Key == 'Env' ] exists ]) }";
+    const CAPTURE_READ_LATER: &str =
+        "rule r { some Resources[ x | Properties.Tags[ Key == 'Env' ] exists ] !empty  %x == 'A' }";
+    const DECIDED_NO_CONJUNCT: &str = "rule r { Resources.*[ Properties.Tags[ Key == 'Env' ] exists ] !empty  Resources.A.Type == 'Y' }";
+    const BLOCK_FAILS_ON_A_SIBLING: &str =
+        "rule r { Resources.*[ Properties.Tags[ Key == 'Env' ] exists ] { Type == 'Y' } }";
+    const SOME_BLOCK_PASSES_ON_A_SIBLING: &str =
+        "rule r { some Resources.*[ Properties.Tags[ Key == 'Env' ] exists ] { Type == 'X' } }";
+    const CALL_BESIDE_THE_MARKER: &str = "rule ok(p) { %p exists }\nrule main { Resources.*[ Properties.Tags[ Key == 'Env' ] exists ] !empty  ok(Resources) }";
+    const CALL_UNDER_AN_OR: &str = "rule check(p) { %p !empty }\nrule main { check(Resources.*[ Properties.Tags[ Key == 'Env' ] exists ]) or Resources exists }";
+    const CALL_UNDER_A_NOT: &str = "rule check(p) { %p !empty  Resources.A.Type == 'Y' }\nrule main { not check(Resources.*[ Properties.Tags[ Key == 'Env' ] exists ]) }";
+    const SOME_NOT_EMPTY: &str =
+        "rule r { some Resources.*[ Properties.Tags[ Key == 'Env' ] exists ] !empty }";
+    const BLOCK_OVER_THE_SELECTION: &str =
+        "rule r { Resources.*[ Properties.Tags[ Key == 'Env' ] exists ] { Type == 'X' } }";
+    const OR_ASSERTED: &str =
+        "rule r { Resources.*[ Properties.Tags[ Key == 'Env' ] exists ] !empty or Resources exists }";
+    const OR_GATED: &str = "rule r when Resources.*[ Properties.Tags[ Key == 'Env' ] exists ] !empty or Resources exists { Resources exists }";
+    const SETTLED_GATE: &str = "rule r when Resources.*[ Properties.Tags[ Key == 'Env' ] exists ] !empty  Resources.A.Type == 'Y' { Resources exists }";
+    const PROPAGATING_GATE: &str =
+        "rule r when Resources.*[ Properties.Tags[ Key == 'Env' ] exists ] !empty { Resources exists }";
+    const TWO_READERS: &str = "let x = Resources.*[ Properties.Tags[ Key == 'Env' ] exists ]\nrule a { some %x !empty }\nrule b { %x !empty }";
+    const RAISE_THEN_READ: &str = "let x = Resources.*[ Properties.Tags[ Key == 'Env' ] exists ]\nrule r when %x !empty  some %x !empty { Resources exists }";
+    for (label, rules, status_expected, notices_expected) in [
+        ("SP", SOME_NOT_EMPTY, Status::PASS, 0),
+        ("SG", SETTLED_GATE, Status::SKIP, 0),
+        ("PG", PROPAGATING_GATE, Status::FAIL, 1),
+        ("TR", TWO_READERS, Status::FAIL, 1),
+        ("RR", RAISE_THEN_READ, Status::FAIL, 1),
+        ("BK", BLOCK_OVER_THE_SELECTION, Status::FAIL, 1),
+        ("OA", OR_ASSERTED, Status::PASS, 0),
+        ("OG", OR_GATED, Status::PASS, 0),
+        ("DN", DECIDED_NO_CONJUNCT, Status::FAIL, 0),
+        ("BS", BLOCK_FAILS_ON_A_SIBLING, Status::FAIL, 0),
+        ("BSo", SOME_BLOCK_PASSES_ON_A_SIBLING, Status::PASS, 0),
+        ("CB", CALL_BESIDE_THE_MARKER, Status::FAIL, 1),
+        ("CO", CALL_UNDER_AN_OR, Status::PASS, 0),
+        ("CN", CALL_UNDER_A_NOT, Status::PASS, 0),
+        ("RL", RULE_BODY_LET, Status::FAIL, 1),
+        ("PA", ARGUMENT_READ_TWICE, Status::FAIL, 1),
+        ("CX", CAPTURE_READ_LATER, Status::FAIL, 1),
+        ("BL", RULE_BODY_LET_BESIDE_A_DECIDED_NO, Status::FAIL, 0),
+    ] {
+        let (status, notices, _, (_, readers, _), held) = run(rules, MIXED)?;
+        cells.check_with(
+            &format!("({label}) `{}` over the mixed document: {status_expected:?}, {notices_expected} in-predicate notice(s), written only where the verdict moved and once the clause was decided, no reader entry left before the boundary, no hold left in the store", rules.replace('\n', "  ")),
+            (status_expected, notices_expected, 0, 0),
+            (status, notices.len(), readers, held),
+            || format!("the notices read: {notices:?}"),
+        );
+    }
+    // (TB) a type block's per-resource `let` over the resource's own properties, `Resources.* { let t =
+    // Properties.Items[ Tags[ Key == 'Env' ] exists ]  %t !empty  Type == 'Y' }`, over two resources
+    // whose `Items` each hold a string-tagged item beside a list-tagged one: each resource's run resolves
+    // the `let` and holds the marker anew (a `BlockLet` marker), `%t !empty` reads it and FAILs closed on
+    // the undecided item, `Type == 'Y'` FAILs decided, so the rule FAILs decided, NO notice, and NO hold
+    // is left past the boundary (the N holds of a type block over N resources went nowhere before). The
+    // row reads the store BEFORE the boundary too and asserts a hold EXISTED there, so a `let` that
+    // minted no marker cannot pass as a hold the boundary dropped: an earlier cut of this row put `let t
+    // = Resources.*[ ... ]` inside the type block, where the body's queries start at the resource and no
+    // resource holds a `Resources` key, so nothing was ever held and the row's expectations held
+    // whatever the boundary did. The expected values are reasoned from the code; a red on the
+    // hold-before count means the resource-relative `let` minted no marker (the row then tests nothing),
+    // and a red on the holds-after count means a `BlockLet` marker's hold survived the boundary.
+    const TYPE_BLOCK_LET_BESIDE_A_DECIDED_NO: &str = "rule r { Resources.* {\n  let t = Properties.Items[ Tags[ Key == 'Env' ] exists ]\n  %t !empty\n  Type == 'Y'\n} }";
+    const TWO_RESOURCES_WITH_MIXED_ITEMS: &str = r#"{ Resources: { A: { Type: 'X', Properties: { Items: [ { Tags: 'x' }, { Tags: [ { Key: 'Env', Value: 'prod' } ] } ] } }, B: { Type: 'X', Properties: { Items: [ { Tags: 'y' }, { Tags: [ { Key: 'Env', Value: 'prod' } ] } ] } } } }"#;
+    let (status, notices, _, (held_before, readers, _), held) = run(
+        TYPE_BLOCK_LET_BESIDE_A_DECIDED_NO,
+        TWO_RESOURCES_WITH_MIXED_ITEMS,
+    )?;
+    cells.check_with(
+        "(TB) a type block's per-resource `let` over the resource's own items beside a decided no: FAIL, no notice, a hold existed before the boundary with no reader entry left on it, and no hold is left after it",
+        (Status::FAIL, 0, true, 0, 0),
+        (status, notices.len(), held_before > 0, readers, held),
+        || format!("the notices read: {notices:?}; {held_before} hold(s) before the boundary"),
+    );
+    // (GB) a gate-role block that ends on a sibling value's body raising a plain unevaluatable (a scalar
+    // filter met OUTSIDE a predicate, `Properties.Other[ Key == 'k' ] exists` over a string `Other`), after
+    // the undecided member `A` (first by key order) was read: the block hands the error up and the rule
+    // fails closed on it, the marker's read is decided without it (nothing moved for the marker), so NO
+    // notice. Read BEFORE the rule boundary, since the boundary drops the hold and clears its readers
+    // either way: the block MARKED the read (one reader entry added over the run) and SETTLED it on its
+    // exit (no reader entry left), with the hold itself kept for a later reader; decided only after the
+    // fold, the early return left the entry behind for the next run of the same block to inherit, and
+    // the `run` closure's own boundary hid it. (A reasoned mutation: deciding the reads inside the loop
+    // and fold again leaves the entry, and the row reads one; a block that marked nothing reads zero
+    // marks.) After the boundary no hold is left. The block sits in a PARAMETERIZED rule the `when`
+    // calls, as the gate-role cells place theirs: a block clause written as the `when` condition itself
+    // does not parse (a bare query followed by a block is read as a clause after a rule reference, so
+    // the first cut of this row never reached the method), and a NAMED gate rule also runs at the top
+    // level in the strict role, where its block FAILs on the marker and the rule's own judgment writes
+    // the notice this row says the gate's bail leaves unwritten; a parameterized rule runs only where it
+    // is called.
+    const STRING_TAGGED_A_THEN_A_STRING_OTHER: &str = r#"{ Resources: { A: { Type: 'X', Properties: { Tags: 'x' } }, D: { Type: 'X', Properties: { Tags: [ { Key: 'Env', Value: 'prod' } ], Other: 'o' } } } }"#;
+    const GATE_BLOCK_ENDED_BY_A_SIBLINGS_BODY: &str = "rule gate(p) { Resources.*[ Properties.Tags[ Key == 'Env' ] exists ] { Properties.Other[ Key == 'k' ] exists } }\nrule r when gate(1) { Resources exists }";
+    let (status, notices, _, before_the_boundary, held) = run(
+        GATE_BLOCK_ENDED_BY_A_SIBLINGS_BODY,
+        STRING_TAGGED_A_THEN_A_STRING_OTHER,
+    )?;
+    cells.check_with(
+        "(GB) a gate-role block ended by a sibling's body raising a plain unevaluatable after the member was read: the rule fails closed on that raise, no notice; before the boundary the one hold is kept with no reader entry left and one reader entry added over the run; after it no hold is left",
+        (Status::FAIL, 0, (1, 0, 1), 0),
+        (status, notices.len(), before_the_boundary, held),
+        || format!("the notices read: {notices:?}"),
+    );
+    cells.assert_all_agreed();
+    Ok(())
+}
+
+/// A stored reason is matched against the registry by its BYTES: a registered sentence holding a raw ESC
+/// and a raw line break, stored as written, is a refused read to `is_refused_read` by text and the part
+/// of a numbered text `numbered_refusal_parts` accepts, while the record beside an absence
+/// (`left_marker_beside_an_absence`) writes it ESCAPED, never cut. Stored escaped, the same sentence
+/// matched nothing in the registry and read as a spent regex budget's marker, so an empty left-hand
+/// selection compared against it was not applicable at exit 0 with the refusal silent; identity is
+/// bytes, escaping is display (the console strips and prints the escaped form, pinned in the reporter's
+/// own cells).
+#[test]
+fn a_registered_sentence_holding_raw_controls_is_matched_by_its_bytes_and_rendered_escaped(
+) -> Result<()> {
+    use crate::rules::eval_context::{numbered_refusal_parts, register_refusal};
+    let rules_file = RulesFile::try_from("rule r { Other exists }")?;
+    let _root = root_scope(
+        &rules_file,
+        Rc::new(PathAwareValue::try_from("{ Other: 'o' }")?),
+    );
+    let raw = "the key \u{1b}[31mNames\u{1b}[0m could not be read\nwrite `X.Names` instead";
+    let other = "Rb";
+    let _ = register_refusal(raw);
+    let _ = register_refusal(other);
+    let plain = |reason: &str| UnResolved {
+        traversed_to: Rc::new(PathAwareValue::Null(path_value::Path::root())),
+        remaining_query: "Q".to_string(),
+        reason: Some(reason.to_string()),
+        kind: UnResolvedKind::Absent,
+    };
+    let escaped = crate::utils::writer::escaped_controls_for_display(raw);
+    let numbered = format!("(1) {raw} (2) {other}");
+    let record = crate::rules::eval::left_marker_beside_an_absence(raw, None);
+    let mut cells = CellFailures::default();
+    cells.check(
+        "the raw-stored sentence is a refused read by its bytes, its escaped copy is none, the numbered text of the raw sentence and another is accepted part by part, and the record writes the sentence escaped, whole, with no raw control",
+        (true, false, Some(vec![raw, other]), true, false, false),
+        (
+            is_refused_read(&plain(raw), raw),
+            is_refused_read(&plain(&escaped), &escaped),
+            numbered_refusal_parts(&numbered),
+            record.ends_with(&format!(": {escaped}")),
+            record.contains('\u{1b}'),
+            record.contains('\n'),
+        ),
+    );
+    cells.assert_all_agreed();
+    Ok(())
+}
+
+/// A REFUSAL's own sentence passes the record's net whole wherever a marker's reason is written, and the
+/// fact that it is a refusal's is the MARKER's KIND (`UnResolvedKind::Undecidable` carrying the refusal's
+/// token), never a registry lookup inside a renderer: the key filter's marker sentence
+/// (`UnResolvedRhs::did_not_resolve_reason`) writes an `Undecidable` marker's reason whole from the arm
+/// that matched the kind, and nets an `Absent` marker's (a retrieval's reason, `bounded_lead`) whatever
+/// text it holds. So the same sentence, wider than `LONGEST_LEAD_IN_A_RECORD`, renders byte for byte the
+/// same whether a live registry holds it (the real run) or none does (a quiet probe registers nothing),
+/// and `is_refused_read` finds the marker from either, by its token. Read through the registry, the
+/// renderer cut the sentence inside a probe and left it whole in the real run, so one wrap could carry
+/// two texts. The record beside an absence (`left_marker_beside_an_absence`) writes the marker's text
+/// escaped under no net at all, registered or not. A refusal's remedy and path are never cut after the
+/// raise.
+#[test]
+fn a_registered_refusals_sentence_passes_the_records_net_whole() -> Result<()> {
+    use crate::rules::eval_context::{register_refusal, LONGEST_LEAD_IN_A_RECORD};
+    let refusal = format!("R{}", "x".repeat(LONGEST_LEAD_IN_A_RECORD + 100));
+    let retrieval = format!("U{}", "x".repeat(LONGEST_LEAD_IN_A_RECORD + 100));
+    let sentence_for = |remaining_query: &str, reason: &str, kind: UnResolvedKind| {
+        UnResolvedRhs {
+            rhs: QueryResult::UnResolved(UnResolved {
+                traversed_to: Rc::new(PathAwareValue::Null(path_value::Path::root())),
+                remaining_query: remaining_query.to_string(),
+                reason: Some(reason.to_string()),
+                kind,
+            }),
+            lhs: Rc::new(PathAwareValue::Null(path_value::Path::root())),
+        }
+        .did_not_resolve_reason()
+        .unwrap_or_default()
+    };
+    let refused = |token| UnResolvedKind::Undecidable {
+        refusal: Some(token),
+        carried: None,
+    };
+    let mut cells = CellFailures::default();
+    // Inside a quiet probe: no live registry holds the sentence (none is alive here), the marker carries
+    // its token, and the sentence is written whole from the kind.
+    let token = crate::rules::eval_context::mint_refusal_token();
+    let in_a_probe = (
+        sentence_for("Q", &refusal, refused(token)),
+        sentence_for("Q", &format!("{refusal}\n"), refused(token)),
+        sentence_for("", &refusal, refused(token)),
+    );
+    // In the real run: the sentence registered under a live root scope, the marker the same.
+    let rules_file = RulesFile::try_from("rule r { Other exists }")?;
+    let _root = root_scope(
+        &rules_file,
+        Rc::new(PathAwareValue::try_from("{ Other: 'o' }")?),
+    );
+    let token = register_refusal(&refusal);
+    let in_the_run = (
+        sentence_for("Q", &refusal, refused(token)),
+        sentence_for("Q", &format!("{refusal}\n"), refused(token)),
+        sentence_for("", &refusal, refused(token)),
+    );
+    cells.check(
+        "a refusal's marker renders its over-the-net sentence byte for byte the same inside a quiet probe and in the real run, whole (a trailing line break trimmed at the edge), and the marker is a refused read to `is_refused_read` from either",
+        (true, true, true, true),
+        (
+            in_a_probe == in_the_run,
+            in_the_run.0.contains(&refusal)
+                && in_the_run.1.contains(&refusal)
+                && in_the_run.2.contains(&refusal),
+            in_the_run.1.ends_with(", so the keys it selects cannot be decided"),
+            is_refused_read(
+                &UnResolved {
+                    traversed_to: Rc::new(PathAwareValue::Null(path_value::Path::root())),
+                    remaining_query: "Q".to_string(),
+                    reason: Some(refusal.clone()),
+                    kind: refused(token),
+                },
+                &refusal
+            ),
+        ),
+    );
+    cells.check(
+        "the record beside an absence writes the refusal's text as the marker's, escaped and under no net, and the record's lead, an absent left value's retrieval reason, under the net",
+        (true, true),
+        (
+            crate::rules::eval::left_marker_beside_an_absence(&refusal, None).contains(&refusal),
+            crate::rules::eval::left_marker_beside_an_absence("m", Some(&retrieval))
+                .contains("more characters cut]"),
+        ),
+    );
+    // The control: an `Absent` marker's reason is a retrieval's and is netted by the kind, registered
+    // or not (the registry holds `refusal`; it is read by nothing here).
+    cells.check(
+        "an `Absent` marker's reason of the same width is cut once at the net's width in each key-filter arm whether or not a registry holds the text, and written escaped and whole beside an absence",
+        (false, true, false, true, true),
+        (
+            sentence_for("Q", &retrieval, UnResolvedKind::Absent).contains(&retrieval),
+            sentence_for("Q", &retrieval, UnResolvedKind::Absent).contains("more characters cut]"),
+            sentence_for("Q", &refusal, UnResolvedKind::Absent).contains(&refusal),
+            sentence_for("", &refusal, UnResolvedKind::Absent).contains("more characters cut]"),
+            crate::rules::eval::left_marker_beside_an_absence(&retrieval, None)
+                .ends_with(&format!(": {retrieval}")),
+        ),
+    );
+    cells.assert_all_agreed();
+    Ok(())
+}
+
+/// A clause whose LEFT operand is a literal (`let lit = 'A'`, then `%lit != %x`), compared against values
+/// that hold a REFUSAL's marker, runs to its verdict in a debug build under both negated comparators the
+/// pre-pass covers (`!=`, `NOT IN`) and reads as its document-left twin does under a positive `IN`: the
+/// operators make the document value the pair's subject under a literal left operand, so a result's `lhs`
+/// is a right-hand value, and the by-address sets of compared and accepted left-hand values
+/// (`compared_left_values`, `accepted_left_values`, read where a marker stands among the right-hand
+/// values) stand for the literal's one `Rc` there, as the pre-pass notes the literal in place of the
+/// result's own value. The negated spellings fail closed on the refusal. Under `IN`, `%lit IN %x` (`%x`
+/// holding the key `A` beside the marker) PASSES as `Key IN %x` over `Key: A` does: the listed value the
+/// literal matched settles the membership and the marker's pair is dropped (`marker_pair_under_in`);
+/// keyed on the result's own `lhs`, the literal's address was never among the accepted and the marker's
+/// pair was kept, so the two spellings had two verdicts. Before the sets were read as left operand
+/// values, every debug build and every fuzz run panicked on the identity check here.
+#[test]
+fn a_literal_left_operand_beside_a_refusals_marker_reads_as_its_document_left_twin() -> Result<()> {
+    const DOC: &str = r#"{ "Key": "A", "Cfg": { "Mode": { "Ref": "ModeParam" }, "Fallback": { "Kind": "k" }, "A": { "Kind": "k", "Sub": { "R1": { "Ref": "P" }, "P": { "Kind": "k" }, "Q": { "Kind": "k" } } }, "B": { "Kind": "k", "Sub": { "R1": { "Ref": "P" }, "P": { "Kind": "k" }, "Q": { "Kind": "k" } } } } }"#;
+    let mut cells = CellFailures::default();
+    // (the verdict; the rule's record holds a record flagged as a refusal; the clause's own refused-read
+    // lines, the refused walk's own left out)
+    let run = |literal: &str, comparison: &str| -> Result<(Result<Status>, bool, Vec<String>)> {
+        // `%x` holds the keys the first capture binds (`Fallback`, `A`, `B`) beside the refused walk's
+        // marker, as the membership cells bind it; bound by the walk alone, the refusal cuts the capture
+        // back to the marker and no listed value is there for the `A` rows to match (both `IN` spellings
+        // then FAIL on the marker's pair, agreeing, with nothing listed to settle them).
+        let rules = format!(
+            "rule r {{ Cfg[ x | Kind == 'k' ] !empty  {REFUSED_WALK_INTO_X}  let lit = '{literal}'  {comparison} }}"
+        );
+        let rules_file = RulesFile::try_from(rules.as_str())?;
+        let mut root = root_scope(&rules_file, Rc::new(PathAwareValue::try_from(DOC)?));
+        let status = eval_rules_file(&rules_file, &mut root, None);
+        let lines = without_the_refused_walks_line(refused_read_lines(&root));
+        let record = format!("{:?}", root.reset_recorder().extract());
+        Ok((status, record.contains("refusal: true"), lines))
+    };
+    // The `a` rows compare a literal that equals NO key: the negated spellings FAIL on the refusal's raise
+    // and not on a resolved no, and under `IN` no listed value accepts the literal, so the accepted set is
+    // empty, the marker's pair is kept and the clause FAILS on it (the row for the empty accepted set,
+    // which the remap leaves empty). The `A` rows compare a key the keys list: under `IN` the literal
+    // matches, the marker's pair is dropped, the clause PASSES as `Key IN %x` over `Key: A` does, and the
+    // skipped refusal pair is never silent: exactly ONE refused-read line of the clause's own (the
+    // refused walk's own line left out).
+    for (label, literal, comparison, expected, lines_of_the_clause) in [
+        ("`!=` against no key", "a", "%lit != %x", Status::FAIL, 0),
+        (
+            "`NOT IN` against no key",
+            "a",
+            "%lit NOT IN %x",
+            Status::FAIL,
+            0,
+        ),
+        ("`IN` against no key", "a", "%lit IN %x", Status::FAIL, 0),
+        (
+            "`IN` against the key `A`",
+            "A",
+            "%lit IN %x",
+            Status::PASS,
+            1,
+        ),
+        (
+            "the document-left twin under `IN` against the key `A`",
+            "A",
+            "Key IN %x",
+            Status::PASS,
+            1,
+        ),
+    ] {
+        let (status, refusal, lines) = run(literal, comparison)?;
+        cells.check(
+            &format!("{label}: the run completes in a debug build, with the verdict the marker's pair rule gives, the refusal in the rule's record, and the clause's own refused-read lines: {status:?} {lines:?}"),
+            (true, true, lines_of_the_clause),
+            (
+                matches!(status, Ok(got) if got == expected),
+                refusal,
+                lines.len(),
+            ),
+        );
+    }
+    cells.assert_all_agreed();
+    Ok(())
+}
+
+/// A refusal raised inside a LIST member's predicate (`Items[ Tags[ Key == 'Env' ] exists ]` over a
+/// member whose `Tags` is a string: the filter over a scalar is refused, and the refusal is delivered as
+/// the member's marker, `to_refusal_result`) leaves that member UNDECIDED, never deselected as if the
+/// predicate had failed it, and is reported ONCE at the OUTER clause, in the list arm as in the map arm
+/// (`select_list_members` and `run_filter_predicate` answer the member with its marker; the member's
+/// predicate runs inside a frame of its own that is dropped on every exit, so the raise is never noted
+/// at a clause inside the predicate). The clause over the selection reads the undecided member as its
+/// role reads every undecided value, whatever the kept members hold. Four rows. (1) One member and an
+/// `or` sibling that holds: the selection holds the marker alone, so `!empty` is undecidable, the `or`
+/// sibling decides past it: PASS, no capture notice, ONE refused-read line opening with the outer clause
+/// over the list, "passed by a sibling clause that holds", naming the refusal at line 1. (2) TWO members,
+/// the refused string beside a member whose `Tags` holds the key, and NO sibling: the clause FAILS closed
+/// on the undecided member whatever the kept member holds, the refusal flagged in the record (the
+/// predicate's own `exists` record carries the raise), and NO refused-read line (the failing record is
+/// the report; the line is for a refusal a decided clause never raised). This row tells the mechanism
+/// from the deselection it replaces: deselected, the member left the clause PASSING with ZERO lines and
+/// the refusal silent, the fail-open shape; the status is what tells them apart, since both read zero
+/// lines. (3) The map-arm twin over the same two members (`Res.*[ Tags[ Key == 'Env' ] exists ]
+/// !empty`): the same verdict, the refusal in the record, no line, so the two arms are shown to agree.
+/// (4) `empty` over the refused member alone, asserted and as a `when` gate: undecidable in both roles (a
+/// refused member might exist), so the assertion FAILS with its record flagged a refusal and the gate
+/// fails its rule closed, the refusal in the record each time; no refused-read line, since nothing
+/// decided past the raise (a line is written where an outer `some`, `or` or `not` decided past the
+/// refusal; a raise that reaches the rule is the rule's own FAIL, flagged). Rows (2) and (3) were pinned
+/// FAIL when the member was first read as an unconverted raise, re-pinned PASS with one "passed by a
+/// value that holds" line under a kept-member pass-over, and re-pinned FAIL with zero lines when that
+/// pass-over was withdrawn for refusal markers. Row (1) stood under
+/// `a_refused_capture_inside_a_predicate_fails_the_enclosing_clause_closed` first, though it has no
+/// capture and its rule passes.
+#[test]
+fn a_refusal_raised_inside_a_list_members_predicate_is_noted_at_the_outer_clause() -> Result<()> {
+    let mut cells = CellFailures::default();
+    // (1) The positive control's list twin: one member, an `or` sibling that holds.
+    {
+        const STRING_TAGS_IN_A_LIST: &str = r#"{ "Items": [ { "Tags": "x" } ], "Other": "o" }"#;
+        let rules = "rule r { Items[ Tags[ Key == 'Env' ] exists ] !empty or Other exists }";
+        let rules_file = RulesFile::try_from(rules)?;
+        let mut root = root_scope(
+            &rules_file,
+            Rc::new(PathAwareValue::try_from(STRING_TAGS_IN_A_LIST)?),
+        );
+        let status = eval_rules_file(&rules_file, &mut root, None);
+        let warned: Vec<String> = root.warnings().cloned().collect();
+        let (capture_warnings, refused_read_lines): (Vec<&String>, Vec<&String>) = warned
+            .iter()
+            .partition(|w| !w.contains("reported here instead"));
+        cells.check(
+            &format!("(1) one member, a refused walk raised whole inside its predicate and decided past by an `or` sibling: PASS, no capture notice, exactly ONE refused-read line opening with the OUTER clause over the list, \"passed by a sibling clause that holds\", naming the string-filter refusal at line 1, among {warned:?}"),
+            (true, 0, 1, true, true, true, true),
+            (
+                matches!(status, Ok(Status::PASS)),
+                capture_warnings.len(),
+                refused_read_lines.len(),
+                refused_read_lines
+                    .iter()
+                    .all(|line| line_opens_with(line, "Items[")),
+                refused_read_lines
+                    .iter()
+                    .all(|line| line.contains("passed by a sibling clause that holds")),
+                refused_read_lines
+                    .iter()
+                    .all(|line| line.contains("filters the entries of a String")),
+                refused_read_lines
+                    .iter()
+                    .all(|line| line.contains("line:1")),
+            ),
+        );
+    }
+    // (2) and (3): two members, the refused string first, no sibling, in the list arm and in the map arm.
+    const TWO_LIST_MEMBERS: &str =
+        r#"{ "Items": [ { "Tags": "x" }, { "Tags": [ { "Key": "Env" } ] } ] }"#;
+    const TWO_MAP_MEMBERS: &str =
+        r#"{ "Res": { "A": { "Tags": "x" }, "B": { "Tags": [ { "Key": "Env" } ] } } }"#;
+    // (the verdict; the refusal's text is in the record; a record is flagged a refusal; the refused-read
+    // lines)
+    let run = |rules: &str, document: &str| -> Result<(Result<Status>, bool, bool, Vec<String>)> {
+        let rules_file = RulesFile::try_from(rules)?;
+        let mut root = root_scope(&rules_file, Rc::new(PathAwareValue::try_from(document)?));
+        let status = eval_rules_file(&rules_file, &mut root, None);
+        let lines: Vec<String> = root
+            .warnings()
+            .filter(|w| w.contains("reported here instead"))
+            .cloned()
+            .collect();
+        let record = format!("{:?}", root.reset_recorder().extract());
+        Ok((
+            status,
+            record.contains("filters the entries of a String"),
+            record.contains("refusal: true"),
+            lines,
+        ))
+    };
+    // The refused member fails `!empty` CLOSED in both arms, whatever the kept member beside it holds:
+    // FAIL (basis undecidable), the refusal flagged in the record, and NO refused-read line (the failing
+    // clause's own record is the report; the line is for a refusal a decided clause never raised). An
+    // earlier cut pinned PASS with the refusal on one "passed by a value that holds" line (a kept member
+    // deciding past the undecided one); that pass-over is withdrawn for refusal markers, the tool's
+    // settled posture being a hard refusal that fails closed, and these rows are re-pinned with it. Before
+    // either, the deselection left the clause passing with zero lines, the fail-open these rows close.
+    for (label, rules, document) in [
+        (
+            "(2) two list members, the refused string first, no sibling: the refused member fails `!empty` closed (FAIL; deselected, it left the clause passing with zero lines), the refusal flagged in the record, no refused-read line",
+            "rule r { Items[ Tags[ Key == 'Env' ] exists ] !empty }",
+            TWO_LIST_MEMBERS,
+        ),
+        (
+            "(3) the map-arm twin over the same two members: the same verdict, the refusal in the record, no line",
+            "rule r { Res.*[ Tags[ Key == 'Env' ] exists ] !empty }",
+            TWO_MAP_MEMBERS,
+        ),
+    ] {
+        let (status, refusal, _, lines) = run(rules, document)?;
+        cells.check(
+            &format!("{label}: {status:?} {lines:?}"),
+            (true, true, 0),
+            (matches!(status, Ok(Status::FAIL)), refusal, lines.len()),
+        );
+    }
+    // (4) `empty` over the refused member alone: a refused member might exist, so the clause is
+    // undecidable in both roles; the raise reaches the rule and is its FAIL, flagged, with no line.
+    const ONE_STRING_MEMBER: &str = r#"{ "Items": [ { "Tags": "x" } ], "Other": "o" }"#;
+    for (label, rules) in [
+        (
+            "(4) `Items[ Tags[ Key == 'Env' ] exists ] empty` asserted over the refused member alone: undecidable, FAIL, the record flagged a refusal and carrying the sentence, no line (nothing decided past the raise)",
+            "rule r { Items[ Tags[ Key == 'Env' ] exists ] empty }",
+        ),
+        (
+            "(4) the same as a `when` gate: the condition raises and the rule fails closed (FAIL), the record flagged and carrying the sentence, no line",
+            "rule r when Items[ Tags[ Key == 'Env' ] exists ] empty { Other exists }",
+        ),
+    ] {
+        let (status, refusal, flagged, lines) = run(rules, ONE_STRING_MEMBER)?;
+        cells.check(
+            &format!("{label}: {status:?} {lines:?}"),
+            (true, true, true, 0),
+            (
+                matches!(status, Ok(Status::FAIL)),
+                refusal,
+                flagged,
+                lines.len(),
+            ),
+        );
+    }
+    cells.assert_all_agreed();
+    Ok(())
 }
 
 /// Two refusals AMONG one comparison's values, one on each side, reach the numbered raise; the numbered
@@ -55879,19 +66781,25 @@ fn a_gates_numbered_raise_is_accepted_part_by_part_and_registered_by_nobody() ->
 /// it is promoted over (`raised_refusal_text` numbers the reads it is given, led by the reason only when
 /// the reason is none of them); the per-value record of A's pair keeps the key filter's reason. The
 /// registry holds the refusal's sentence once and NO text with `(1) ` (the registry's size is what the
-/// run's output counts as the refused reads met). The same comparison as a `when` gate is raised on the
-/// same text under the gate's plain undecidable error (`refusal: false` in its block record, the flag read
-/// from the variant and its token, never from the text; the cell pins it), unnumbered too.
+/// run's output counts as the refused reads met). The same comparison as a `when` gate is raised under
+/// the gate's plain undecidable error (its block record's flag read from the variant and its token, never
+/// from the text; the cell pins it) on the refusal's sentence FIRST and the key filter's reason AFTER it,
+/// numbered `(1) ... (2) ...`: the plain raise's text is registered by nobody, so it can carry a part the
+/// registry does not hold, and the reason the gate decided on (a spent regex budget, a key filter whose
+/// right-hand side could not be read) is named in its output, where promoted over it vanished from it.
 ///
 /// The MIRROR, `some %y NOT IN %x`: the refusal's marker on the LEFT (in `%y`, beside the keys of `Cfg2`)
-/// and the key filter's on the RIGHT (in `%x`, beside the key `B`). The keys `C` and `D` are compared
-/// first, each against `B` (a pass, unknown beside the right-hand marker) and against the key filter's
-/// marker, whose pair is the first to record a reason, so `evidence.undecided` is again the key filter's
-/// text; the left-hand marker's own pair records the refusal after it. The key filter's reason is a
-/// marker's, read on the right this time, and the one refused read the comparison met is the left-hand
-/// refusal (`refused_reads` holds the left-hand refusals' texts too), so the promotion lands on it:
-/// asserted, `raised_refusal` raises the refusal alone (`refusal: true`, unnumbered); as a gate, the plain
-/// undecidable error on the same text (`refusal: false`). The control with NO refusal on either side,
+/// and the key filter's on the RIGHT (in `%x`, beside the key `B`). Under membership the right-hand
+/// marker is read by the pre-pass over the right-hand values, and no pair of it writes a reason: the keys
+/// `C` and `D` each pass against `B` (unknown beside the marker, `passes_are_unknown`), and the one pair
+/// that records a reason is the left-hand marker's own, so `evidence.undecided` is the REFUSAL's text
+/// here, a refused read already, and nothing is promoted (measured: the pair of record read the mirror's
+/// `when` raise unnumbered while this doc said the key filter's pair recorded first). Asserted,
+/// `raised_refusal` raises the refusal alone (`refusal: true`, unnumbered), as in the first shape. As a
+/// gate, the plain raise names the refusal first and the key filter's reason after it, numbered, as in
+/// the first shape too: the plain raise reads the markers' reasons from the VALUES on either side
+/// (`binary_operation`'s `marker_reasons`), not from what the promotion set aside, so the key filter's
+/// reason is named whichever pair recorded first. The control with NO refusal on either side,
 /// `some Cfg.Mode.Ref NOT IN %x` (a resolved value against the key `B` and the key filter's marker): the
 /// reason is the key filter's and there is nothing to promote it to, so both roles raise the plain
 /// undecidable error on the key filter's own text, no refusal in the block record and no numbered text
@@ -55914,23 +66822,30 @@ fn a_gates_numbered_raise_is_accepted_part_by_part_and_registered_by_nobody() ->
 /// flagged as the assertion is; the rows pinned `Some(false)` while the gate's raise carried no token.
 #[test]
 fn a_strict_raise_over_a_left_key_filters_reason_beside_a_refusal_is_the_refusal() -> Result<()> {
-    const UNDECIDED_X_REFUSED_Y: &str = r#"{
-    "Cfg": {
-        "Mode": { "Ref": "ModeParam" },
-        "A": { "Kind": "k", "Ref": "r", "M": { "PROD": 1, "Tags": "x" } },
-        "B": { "Kind": "k", "Ref": "r", "Flag": "y", "M": { "PROD": 1, "Tags": [ { "Key": "Env", "Value": "dev" } ] } }
-    },
-    "Cfg2": {
-        "Mode": { "Ref": "ModeParam" },
-        "Other": { "Kind": "k" },
-        "C": { "Kind": "k", "Sub": { "R1": { "Ref": "P" }, "P": { "Kind": "k" }, "Q": { "Kind": "k" } } },
-        "D": { "Kind": "k", "Sub": { "R1": { "Ref": "P" }, "P": { "Kind": "k" }, "Q": { "Kind": "k" } } }
-    }
-}"#;
-    // `A` undecided (the key filter's right-hand side cannot be read over a string `Tags`; `Ref !exists`
-    // fails on it) and `B` grounded through `Flag == 'y'`: `%x` holds A's marker, a key filter's and no
-    // refusal's, beside the key `B`.
-    const UNDECIDED_WALK_INTO_X: &str = "Cfg[*][ x | Mode exists or M[ keys == to_upper(Tags[ Key == 'Env' ].Value) ] !empty or Ref !exists or Flag == 'y' ] !empty";
+    // `A`'s `M` holds a key of thirty `a`s, which spends the regex budget under `/(?!x)((a+)+)b/`: the key
+    // filter leaves a marker that is a key filter's and NO refusal's (nobody registers a spent budget).
+    // The undecided source was a string `Tags` under `to_upper(Tags[ Key == 'Env' ].Value)` until the
+    // scalar-filter refusal inside a predicate was registered; that marker now reads as a refused read,
+    // and this cell is about a marker that is none.
+    let undecided_x_refused_y = format!(
+        r#"{{
+    "Cfg": {{
+        "Mode": {{ "Ref": "ModeParam" }},
+        "A": {{ "Kind": "k", "Ref": "r", "M": {{ "{}": 1, "PROD": 1 }} }},
+        "B": {{ "Kind": "k", "Ref": "r", "Flag": "y", "M": {{ "PROD": 1 }} }}
+    }},
+    "Cfg2": {{
+        "Mode": {{ "Ref": "ModeParam" }},
+        "Other": {{ "Kind": "k" }},
+        "C": {{ "Kind": "k", "Sub": {{ "R1": {{ "Ref": "P" }}, "P": {{ "Kind": "k" }}, "Q": {{ "Kind": "k" }} }} }},
+        "D": {{ "Kind": "k", "Sub": {{ "R1": {{ "Ref": "P" }}, "P": {{ "Kind": "k" }}, "Q": {{ "Kind": "k" }} }} }}
+    }}
+}}"#,
+        "a".repeat(30)
+    );
+    // `A` undecided (its key filter spent the regex budget; `Ref !exists` fails on it) and `B` grounded
+    // through `Flag == 'y'`: `%x` holds A's marker, a key filter's and no refusal's, beside the key `B`.
+    const UNDECIDED_WALK_INTO_X: &str = "Cfg[*][ x | Mode exists or M[ keys == /(?!x)((a+)+)b/ ] !empty or Ref !exists or Flag == 'y' ] !empty";
     const REFUSED_WALK_INTO_Y: &str =
         "Cfg2[*][ y | Mode exists or Kind == 'k' ].Sub[*][ s | R1 !exists ] !empty or Cfg2.Other exists";
     struct Run {
@@ -55948,6 +66863,9 @@ fn a_strict_raise_over_a_left_key_filters_reason_beside_a_refusal_is_the_refusal
         /// Whether that block record carries the refusal's sentence (`Cfg2`'s own-key refusal): the
         /// promoted raises do, the control's key filter's reason does not.
         block_record_carries_the_refusal: Option<bool>,
+        /// Whether that block record carries a SECOND numbered part (`(2) `): the gate's plain raise
+        /// names the key filter's reason after the refusal; the asserted raise and the controls do not.
+        block_record_second_part: Option<bool>,
     }
     let run = |clause: &str| -> Result<Run> {
         let rules = format!(
@@ -55956,7 +66874,7 @@ fn a_strict_raise_over_a_left_key_filters_reason_beside_a_refusal_is_the_refusal
         let rules_file = RulesFile::try_from(rules.as_str())?;
         let mut root = root_scope(
             &rules_file,
-            Rc::new(PathAwareValue::try_from(UNDECIDED_X_REFUSED_Y)?),
+            Rc::new(PathAwareValue::try_from(undecided_x_refused_y.as_str())?),
         );
         // A raise held at the clause fails the rule closed, `Ok(FAIL)`, and that is the only FAIL the
         // cells accept: an error that escaped the clause fails the test here instead of reading as the
@@ -55979,8 +66897,9 @@ fn a_strict_raise_over_a_left_key_filters_reason_beside_a_refusal_is_the_refusal
             .unwrap_or_default();
         let extracted = root.reset_recorder().extract();
         // The clause's own records, one Debug string each (` IN ` names the comparison, spelled `not IN`
-        // in a record's context, and none of the walks before it); the block record is the
-        // `GuardClauseBlockCheck` among them that holds the refusal's sentence.
+        // in a record's context, and none of the walks before it); the block record is the clause's one
+        // `GuardClauseBlockCheck` among them, whichever text it holds (the refusal's sentence for the
+        // promoted rows, the key filter's own reason for the control), read apart from the texts below.
         let mut under_the_clause = Vec::new();
         record_containers_list(&extracted, " IN ", &mut under_the_clause);
         let block_record = under_the_clause
@@ -55994,41 +66913,43 @@ fn a_strict_raise_over_a_left_key_filters_reason_beside_a_refusal_is_the_refusal
             block_record_numbered: block_record.map(|record| record.contains("(1) ")),
             block_record_carries_the_refusal: block_record
                 .map(|record| !the_refusal.is_empty() && record.contains(the_refusal.as_str())),
+            block_record_second_part: block_record.map(|record| record.contains("(2) ")),
         })
     };
     let mut cells = CellFailures::default();
     // (label; the clause; wanted (status, numbered registered, own-key registered, the block record's
-    // `refusal` flag, the block record numbered, the block record carries the refusal))
+    // `refusal` flag, the block record numbered, the block record carries the refusal, the block record
+    // carries a second numbered part))
     let cases: [_; 6] = [
         (
             "`some %x NOT IN %y` asserted, a key filter's marker on the left beside a refusal's on the right: raised (FAIL) as the refusal, its block record reading `refusal: true` and carrying the refusal's sentence unnumbered (no `(1) `); the registry holds that sentence once and no numbered text",
             "some %x NOT IN %y",
-            (Status::FAIL, 0, 1, Some(true), Some(false), Some(true)),
+            (Status::FAIL, 0, 1, Some(true), Some(false), Some(true), Some(false)),
         ),
         (
-            "the same comparison as a `when` gate: raised (FAIL) on the refusal's sentence alone, unnumbered, under the gate's undecidable error, which carries the refusal's token and so reads `refusal: true` on the block record; the registry the same",
+            "the same comparison as a `when` gate: raised (FAIL) under the gate's plain undecidable error on the refusal's sentence first and the key filter's reason after it, numbered, its record flagged `refusal: true` by the refusal's token the raise carries (the joined text itself is registered by nobody); the registry the same",
             "when some %x NOT IN %y { Cfg exists }",
-            (Status::FAIL, 0, 1, Some(true), Some(false), Some(true)),
+            (Status::FAIL, 0, 1, Some(true), Some(true), Some(true), Some(true)),
         ),
         (
-            "the MIRROR `some %y NOT IN %x` asserted, the refusal's marker on the LEFT beside a key filter's on the right: the key filter's reason is promoted to the one refused read met, the left-hand refusal, raised (FAIL) as the refusal, its block record reading `refusal: true` and carrying the refusal's sentence unnumbered; the registry holds that sentence once and no numbered text",
+            "the MIRROR `some %y NOT IN %x` asserted, the refusal's marker on the LEFT beside a key filter's on the right: the recorded reason is the left-hand refusal's own (the right-hand marker is read by the pre-pass alone), raised (FAIL) as the refusal, its block record reading `refusal: true` and carrying the refusal's sentence unnumbered; the registry holds that sentence once and no numbered text",
             "some %y NOT IN %x",
-            (Status::FAIL, 0, 1, Some(true), Some(false), Some(true)),
+            (Status::FAIL, 0, 1, Some(true), Some(false), Some(true), Some(false)),
         ),
         (
-            "the mirror as a `when` gate: raised (FAIL) on the refusal's sentence alone, unnumbered, under the gate's undecidable error, which carries the refusal's token and so reads `refusal: true` on the block record; the registry the same",
+            "the mirror as a `when` gate: raised (FAIL) under the gate's plain undecidable error on the refusal's sentence first and the key filter's reason after it, numbered, its record flagged `refusal: true` by the refusal's token; the registry the same",
             "when some %y NOT IN %x { Cfg exists }",
-            (Status::FAIL, 0, 1, Some(true), Some(false), Some(true)),
+            (Status::FAIL, 0, 1, Some(true), Some(true), Some(true), Some(true)),
         ),
         (
             "the control `some Cfg.Mode.Ref NOT IN %x` asserted, a resolved value against the key `B` and the key filter's marker, no refusal on either side: raised (FAIL) on the key filter's own reason, nothing to promote it to, the block record `refusal: false`, unnumbered, carrying no refusal's sentence; the registry holds the walk's one own-key sentence and no numbered text",
             "some Cfg.Mode.Ref NOT IN %x",
-            (Status::FAIL, 0, 1, Some(false), Some(false), Some(false)),
+            (Status::FAIL, 0, 1, Some(false), Some(false), Some(false), Some(false)),
         ),
         (
             "the control as a `when` gate: the same plain undecidable error on the key filter's reason (`refusal: false`), unnumbered, no refusal's sentence in the block record",
             "when some Cfg.Mode.Ref NOT IN %x { Cfg exists }",
-            (Status::FAIL, 0, 1, Some(false), Some(false), Some(false)),
+            (Status::FAIL, 0, 1, Some(false), Some(false), Some(false), Some(false)),
         ),
     ];
     for (label, clause, wanted) in &cases {
@@ -56043,10 +66964,271 @@ fn a_strict_raise_over_a_left_key_filters_reason_beside_a_refusal_is_the_refusal
                 read.block_record_refusal,
                 read.block_record_numbered,
                 read.block_record_carries_the_refusal,
+                read.block_record_second_part,
             ),
         );
     }
     assert_eq!(cells.seen, cases.len());
+    cells.assert_all_agreed();
+    Ok(())
+}
+
+/// A `when` GATE raised beside TWO key filters' markers, one on each side (`some %x NOT IN %z`, each capture
+/// holding a key filter's marker beside a grounded entry), names BOTH markers' reasons only BESIDE A
+/// REFUSAL: with the refused own-key walk's marker in `%x` as well, the gate's raise is the refusal first
+/// and the two markers' reasons numbered after it, `(1) <refusal> (2) <x's> (3) <z's>`, its record
+/// flagged `refusal: true` by the bit the raise carries beside the refused read, and the ASSERTED raise is
+/// the refusal alone, `refusal: true`, the markers' reasons set aside (the strict raise carries registered
+/// text only; no asserted row names both). With NO refusal the markers' reasons do not join: asserted or gated,
+/// the raise is the first reason recorded alone, unnumbered, `refusal: false`, as the released binaries
+/// raised it; joined, the text named one reason or two by which pair recorded first, and a resolved
+/// pair's own undecided reason beside a marker read numbered in one order and alone in the other
+/// (`a_resolved_pairs_reason_beside_a_marker_and_no_refusal_reads_alike_in_either_order` pins the
+/// order's silence). The
+/// markers are the ones a key filter leaves for a map whose right-hand query resolves to nothing (`M[
+/// keys == Missing ]` over a map without `Missing`): the reason names the map's path, so the two are
+/// distinct texts and no one registers either; the earlier fixture, a string `Tags` under `to_upper(Tags[
+/// Key == 'Env' ].Value)`, became a registered refusal's marker when the scalar-filter refusal inside a
+/// predicate was registered, and this cell is about markers that are none. The control with one marker
+/// and a resolved value names that one reason, unnumbered, in both roles.
+#[test]
+fn a_gate_raised_beside_two_key_filters_markers_names_both_reasons() -> Result<()> {
+    const TWO_UNDECIDED_WALKS: &str = r#"{
+    "Cfg": {
+        "Mode": { "Ref": "ModeParam" },
+        "A": { "Kind": "k", "Ref": "r", "M": { "PROD": 1 } },
+        "B": { "Kind": "k", "Ref": "r", "Flag": "y", "M": { "PROD": 1 } }
+    },
+    "Cfg3": {
+        "Mode": { "Ref": "ModeParam" },
+        "A3": { "Kind": "k", "Ref": "r", "M": { "PROD3": 1 } },
+        "B3": { "Kind": "k", "Ref": "r3", "Flag": "y", "M": { "PROD3": 1 } }
+    },
+    "Cfg2": {
+        "Mode": { "Ref": "ModeParam" },
+        "Other": { "Kind": "k" },
+        "C": { "Kind": "k", "Sub": { "R1": { "Ref": "P" }, "P": { "Kind": "k" }, "Q": { "Kind": "k" } } },
+        "D": { "Kind": "k", "Sub": { "R1": { "Ref": "P" }, "P": { "Kind": "k" }, "Q": { "Kind": "k" } } }
+    }
+}"#;
+    // Each walk leaves one key filter's marker (the entry whose `M` lacks `Missing`, so the key filter's
+    // right-hand query resolves to nothing; `Ref !exists` fails on it) beside one grounded entry (`Flag
+    // == 'y'`): `%x` holds A's marker beside B, `%z` holds A3's beside B3, and B3's `Ref` differs from B's
+    // so no pair of grounded entries collides under `NOT IN`.
+    const UNDECIDED_WALK_INTO_X: &str =
+        "Cfg[*][ x | Mode exists or M[ keys == Missing ] !empty or Ref !exists or Flag == 'y' ] !empty";
+    const UNDECIDED_WALK_INTO_Z: &str =
+        "Cfg3[*][ z | Mode exists or M[ keys == Missing ] !empty or Ref !exists or Flag == 'y' ] !empty";
+    // The refused own-key walk, captured into `x` as well: the rows beside a refusal add it, so `%x` holds
+    // A's marker, the key `B` and the refusal's marker.
+    const REFUSED_WALK_INTO_X: &str =
+        "Cfg2[*][ x | Mode exists or Kind == 'k' ].Sub[*][ s | R1 !exists ] !empty or Cfg2.Other exists";
+    // A marker's reason names the path of the map whose right-hand query did not resolve: `/Cfg/A/M` for
+    // `%x`'s, `/Cfg3/A3/M` for `%z`'s, two texts (the first path is no part of the second).
+    const THE_FIRST_MARKER: &str = "at /Cfg/A/M";
+    const THE_SECOND_MARKER: &str = "at /Cfg3/A3/M";
+    // (status; registered texts; the block record's `refusal` flag; the block record numbered (`(1) `);
+    // the block record carries a second numbered part (`(2) `); it names the first marker's map; it names
+    // the second marker's map)
+    type Seen = (
+        Status,
+        usize,
+        Option<bool>,
+        Option<bool>,
+        Option<bool>,
+        Option<bool>,
+        Option<bool>,
+    );
+    let run = |binds: &str, clause: &str| -> Result<Seen> {
+        let rules = format!("rule r {{ {binds}  {clause} }}");
+        let rules_file = RulesFile::try_from(rules.as_str())?;
+        let mut root = root_scope(
+            &rules_file,
+            Rc::new(PathAwareValue::try_from(TWO_UNDECIDED_WALKS)?),
+        );
+        let status = eval_rules_file(&rules_file, &mut root, None)?;
+        let registered = crate::rules::eval_context::registered_refusals().len();
+        let extracted = root.reset_recorder().extract();
+        let mut under_the_clause = Vec::new();
+        record_containers_list(&extracted, " IN ", &mut under_the_clause);
+        let block_record = under_the_clause
+            .iter()
+            .find(|record| record.contains("GuardClauseBlockCheck"));
+        Ok((
+            status,
+            registered,
+            block_record.map(|record| record.contains("refusal: true")),
+            block_record.map(|record| record.contains("(1) ")),
+            block_record.map(|record| record.contains("(2) ")),
+            block_record.map(|record| record.contains(THE_FIRST_MARKER)),
+            block_record.map(|record| record.contains(THE_SECOND_MARKER)),
+        ))
+    };
+    let two_markers = format!("{UNDECIDED_WALK_INTO_X}  {UNDECIDED_WALK_INTO_Z}");
+    let beside_a_refusal = format!("{two_markers}  {REFUSED_WALK_INTO_X}");
+    let mut cells = CellFailures::default();
+    let cases: [(&str, &str, &str, Seen); 6] = [
+        (
+            "`some %x NOT IN %z` asserted, a key filter's marker on each side and no refusal: raised (FAIL) on a plain undecidable error (`refusal: false`) carrying the first reason recorded alone, unnumbered; nothing registered",
+            &two_markers,
+            "some %x NOT IN %z",
+            (
+                Status::FAIL,
+                0,
+                Some(false),
+                Some(false),
+                Some(false),
+                Some(true),
+                Some(false),
+            ),
+        ),
+        (
+            "the same comparison as a `when` gate: the one reason, unnumbered; nothing registered",
+            &two_markers,
+            "when some %x NOT IN %z { Cfg exists }",
+            (
+                Status::FAIL,
+                0,
+                Some(false),
+                Some(false),
+                Some(false),
+                Some(true),
+                Some(false),
+            ),
+        ),
+        (
+            "the control `some Cfg.Mode.Ref NOT IN %x` asserted, one marker and a resolved value: raised (FAIL) on the one marker's reason, unnumbered, the second map unnamed; nothing registered",
+            &two_markers,
+            "some Cfg.Mode.Ref NOT IN %x",
+            (
+                Status::FAIL,
+                0,
+                Some(false),
+                Some(false),
+                Some(false),
+                Some(true),
+                Some(false),
+            ),
+        ),
+        (
+            "the control as a `when` gate: the one reason, unnumbered; nothing registered",
+            &two_markers,
+            "when some Cfg.Mode.Ref NOT IN %x { Cfg exists }",
+            (
+                Status::FAIL,
+                0,
+                Some(false),
+                Some(false),
+                Some(false),
+                Some(true),
+                Some(false),
+            ),
+        ),
+        (
+            "`some %x NOT IN %z` as a `when` gate BESIDE the refusal (the refused walk's marker in `%x` too): raised (FAIL) on the refusal first and both markers' reasons numbered after it, the record flagged `refusal: true` by the bit the raise carries beside the refused read (the joined text's marker parts are registered by nobody); the one own-key sentence registered",
+            &beside_a_refusal,
+            "when some %x NOT IN %z { Cfg exists }",
+            (
+                Status::FAIL,
+                1,
+                Some(true),
+                Some(true),
+                Some(true),
+                Some(true),
+                Some(true),
+            ),
+        ),
+        (
+            "`some %x NOT IN %z` asserted beside the refusal: the strict raise is the refusal alone, `refusal: true`, unnumbered, the markers' reasons set aside; the one own-key sentence registered",
+            &beside_a_refusal,
+            "some %x NOT IN %z",
+            (
+                Status::FAIL,
+                1,
+                Some(true),
+                Some(false),
+                Some(false),
+                Some(false),
+                Some(false),
+            ),
+        ),
+    ];
+    for (label, binds, clause, wanted) in &cases {
+        cells.check(label, *wanted, run(binds, clause)?);
+    }
+    assert_eq!(cells.seen, cases.len());
+    cells.assert_all_agreed();
+    Ok(())
+}
+
+/// A comparison over a capture holding a key filter's marker beside resolved keys, one of them a key the
+/// regex engine gives up on (thirty `a`s under `%x != /(?!x)((a+)+)b/`), and NO refusal, reads ALIKE in
+/// either order of the capture's values: the clause's block record (its status, its `refusal` flag and
+/// its message) is the same whether the marker's pair or the engine's pair is recorded first, nothing is
+/// registered, and no numbered text is written. Read by the bytes: a left-hand marker that is no refusal
+/// is a pair that fails CLOSED under `!=` (the `LhsUnresolved` arm), so the clause is decided, not
+/// raised, and its block record carries no message; the point pinned here is the order's silence, not
+/// the text, because the markers' reasons join a raise only beside a refusal, and joined whenever met
+/// the same rule over the same document raised two texts by the order its `let`-less bindings were
+/// written in. The capture is built twice: the marker first (`some Cfg[ x | M[ keys == Missing ] !empty
+/// ] !empty`, where the predicate's `!empty` over the key filter's marker leaves each entry undecidable
+/// and files its marker under `x`, and the `some` outside drops the markers from the bind's own answer
+/// so the bind is decided rather than raised), and the keys first (`Cfg[ x | Kind == 'k' ]`, the three
+/// keys, one of them the thirty `a`s).
+#[test]
+fn a_resolved_pairs_reason_beside_a_marker_and_no_refusal_reads_alike_in_either_order() -> Result<()>
+{
+    let spends_the_budget = "a".repeat(30);
+    let document = format!(
+        r#"{{ "Cfg": {{ "A": {{ "Kind": "k", "M": {{ "PROD": 1 }} }}, "B": {{ "Kind": "k", "M": {{ "PROD": 1 }} }}, "{spends_the_budget}": {{ "Kind": "k" }} }} }}"#
+    );
+    const MARKER_INTO_X: &str = "some Cfg[ x | M[ keys == Missing ] !empty ] !empty";
+    const KEYS_INTO_X: &str = "Cfg[ x | Kind == 'k' ] !empty";
+    // (status; registered texts; the clause's block record as one text: its status, flag and message,
+    // `None` when no block record is found under the comparison)
+    type Seen = (Status, usize, Option<String>);
+    let run = |binds: &str| -> Result<Seen> {
+        let rules = format!("rule r {{ {binds}  %x != /(?!x)((a+)+)b/ }}");
+        let rules_file = RulesFile::try_from(rules.as_str())?;
+        let mut root = root_scope(
+            &rules_file,
+            Rc::new(PathAwareValue::try_from(document.as_str())?),
+        );
+        let status = eval_rules_file(&rules_file, &mut root, None)?;
+        let registered = crate::rules::eval_context::registered_refusals().len();
+        let extracted = root.reset_recorder().extract();
+        let mut under_the_clause = Vec::new();
+        // The comparison's record names the capture; the bind clauses name `x |`, never `%x`.
+        record_containers_list(&extracted, "%x", &mut under_the_clause);
+        let block_record = under_the_clause
+            .iter()
+            .find(|record| record.contains("GuardClauseBlockCheck"))
+            .cloned();
+        Ok((status, registered, block_record))
+    };
+    let marker_first = run(&format!("{MARKER_INTO_X}  {KEYS_INTO_X}"))?;
+    let keys_first = run(&format!("{KEYS_INTO_X}  {MARKER_INTO_X}"))?;
+    let mut cells = CellFailures::default();
+    cells.check(
+        "the marker's pair recorded first: the rule fails (FAIL), nothing registered, the comparison's block record found and holding no numbered text",
+        (Status::FAIL, 0, true, Some(false)),
+        (
+            marker_first.0,
+            marker_first.1,
+            marker_first.2.is_some(),
+            marker_first.2.as_deref().map(|record| record.contains("(1) ")),
+        ),
+    );
+    cells.check(
+        "the keys first: the same status, nothing registered, the block record found",
+        (Status::FAIL, 0, true),
+        (keys_first.0, keys_first.1, keys_first.2.is_some()),
+    );
+    cells.check(
+        "the two orders' block records are one text (status, flag and message alike)",
+        true,
+        marker_first.2 == keys_first.2,
+    );
     cells.assert_all_agreed();
     Ok(())
 }
@@ -56166,7 +67348,7 @@ fn every_absence_that_decides_beside_a_refused_read_reports_it() -> Result<()> {
 /// would be neither registered nor counted.
 #[test]
 fn the_refused_read_line_follows_the_verdict_and_counts_the_sites_refusals() -> Result<()> {
-    const THE_LINE: &str = "reported here instead";
+    const THE_LINE: &str = THE_REFUSED_READ_MARKER;
     const THE_REFUSAL: &str = "a name bound outside the predicate";
     const LETS: &str =
         "let wanted = Mappings.Wanted.Keys\nlet names = Resources.*.Properties.Tags[*][ Key IN %wanted ]\n";
@@ -56357,11 +67539,11 @@ fn a_membership_a_listed_value_settles_reports_the_refused_read_beside_it() -> R
     };
     for (label, rules) in [
         (
-            "`when Cfg.Mode.Ref IN %x` with the keys and the refusal's marker, `Ref` among the keys: the body runs (PASS), one line, the refusal reached the root once and was recorded once",
+            "`when Cfg.Mode.Ref IN %x` with the keys and the refusal's marker, `Ref` among the keys: the body runs (PASS), one line of the membership's own, the refusal reached the root twice and was recorded twice (the bind's own line is the second)",
             format!("rule r when Cfg[ x | Kind == 'k' ] !empty  {REFUSED_WALK}  Cfg.Mode.Ref IN %x {{ Cfg.Mode.Ref == 'A' }}"),
         ),
         (
-            "`Cfg.Mode.Ref IN %x` asserted with the keys and the refusal's marker: PASS, one line, the refusal reached the root once and was recorded once",
+            "`Cfg.Mode.Ref IN %x` asserted with the keys and the refusal's marker: PASS, one line of the membership's own, the refusal reached the root twice and was recorded twice (the bind's own line is the second)",
             format!("rule r {{ Cfg[ x | Kind == 'k' ] !empty  {REFUSED_WALK}  Cfg.Mode.Ref IN %x }}"),
         ),
     ] {
@@ -56371,9 +67553,14 @@ fn a_membership_a_listed_value_settles_reports_the_refused_read_beside_it() -> R
         let status = eval_rules_file(&rules_file, &mut root, None)?;
         let (skips, forwards, root_calls, records) = counters();
         let lines = lines_of(root.warnings().cloned().collect());
+        // Two root calls and two records: the membership's own ("passed by a value that holds", the one
+        // line `lines_of` keeps) and the refused walk's own at the bind's site (its first disjunct raised
+        // the refusal, the `or` sibling decided past it, and the disjunction reports the walk's refusal
+        // there, "passed by a sibling clause that holds"), each reaching the root once; the counters count
+        // the whole run, so the bind's line is their second call and record.
         cells.check(
             label,
-            (Status::PASS, 1, true, 1, 1),
+            (Status::PASS, 1, true, 2, 2),
             (
                 status,
                 lines.len(),
@@ -56386,12 +67573,13 @@ fn a_membership_a_listed_value_settles_reports_the_refused_read_beside_it() -> R
         );
         // The travel, as a row of its own whose label carries every counter, so a red reads them all:
         // the operator pairs the one left value with the marker once (one skipped pair), the call
-        // reaches the root once and is recorded once; the forwards are the scopes between.
+        // reaches the root once and is recorded once, and the bind's own line is the second root call
+        // and record; the forwards are the scopes between.
         cells.check(
             &format!(
                 "{label}: the travel (skipped pairs {skips}, forwards {forwards}, root calls {root_calls}, records {records})"
             ),
-            (1, 1, 1),
+            (1, 2, 2),
             (skips, root_calls, records),
         );
     }
@@ -56768,7 +67956,7 @@ fn an_absent_reference_beside_a_marker_under_a_positive_in_is_raised_not_decided
 #[test]
 fn a_membership_that_fails_beside_the_marker_writes_no_line_and_keeps_the_markers_record(
 ) -> Result<()> {
-    const THE_LINE: &str = "reported here instead";
+    const THE_LINE: &str = THE_REFUSED_READ_MARKER;
     const MISMATCH: &str = "was decided by a value that matches a denied value";
     const THE_REFUSAL: &str = "then no kept entry holds a key the predicate names";
     const THE_MARKER_PAIR: &str = "to: Some(UnResolved(";
@@ -56799,11 +67987,13 @@ fn a_membership_that_fails_beside_the_marker_writes_no_line_and_keeps_the_marker
             let rules_file = RulesFile::try_from(rules.as_str())?;
             let mut root = root_scope(&rules_file, Rc::new(PathAwareValue::try_from(input)?));
             let status = eval_rules_file(&rules_file, &mut root, None)?;
-            let lines: Vec<String> = root
-                .warnings()
-                .filter(|line| line.contains(THE_LINE))
-                .cloned()
-                .collect();
+            // The membership clause's own lines: the refused walk's line at its own site is left out.
+            let lines = without_the_refused_walks_line(
+                root.warnings()
+                    .filter(|line| line.contains(THE_LINE))
+                    .cloned()
+                    .collect(),
+            );
             let mismatch = lines.iter().filter(|line| line.contains(MISMATCH)).count();
             let mut records = String::new();
             record_containers_under(&root.reset_recorder().extract(), under, &mut records);
@@ -57433,7 +68623,7 @@ fn a_some_clause_against_an_absent_right_hand_side_writes_the_absence_line() -> 
 #[test]
 fn a_refusal_among_the_right_hand_values_is_registered_whatever_the_verdict() -> Result<()> {
     const THE_REFUSAL: &str = "a name bound outside the predicate";
-    const THE_LINE: &str = "reported here instead";
+    const THE_LINE: &str = THE_REFUSED_READ_MARKER;
     const A_KEY_FILTERS_REASON: &str = "could not be decided";
     const TWO_MARKERS: &str = r#"
     {
@@ -57671,7 +68861,7 @@ fn an_empty_left_collection_beside_a_spent_budget_is_raised_not_settled_under_a_
 #[test]
 fn a_refusal_among_the_left_hand_values_is_registered_and_reported_when_the_clause_is_decided(
 ) -> Result<()> {
-    const THE_LINE: &str = "reported here instead";
+    const THE_LINE: &str = THE_REFUSED_READ_MARKER;
     const PASSED: &str = "passed by a value that holds";
     const THE_CAPTURE_REFUSAL: &str = "then no kept entry holds a key the predicate names";
     const THE_TWIN_REFUSAL: &str = "a name bound outside the predicate";
@@ -57701,11 +68891,14 @@ fn a_refusal_among_the_left_hand_values_is_registered_and_reported_when_the_clau
         let rules_file = RulesFile::try_from(rules)?;
         let mut root = root_scope(&rules_file, Rc::new(PathAwareValue::try_from(input)?));
         let status = eval_rules_file(&rules_file, &mut root, None)?;
-        let lines: Vec<String> = root
-            .warnings()
-            .filter(|line| line.contains(THE_LINE) && line.contains(refusal))
-            .cloned()
-            .collect();
+        // The comparison's own lines naming the refusal: the refused walk's line at its own site, which
+        // names the same refusal, is left out.
+        let lines: Vec<String> = without_the_refused_walks_line(
+            root.warnings()
+                .filter(|line| line.contains(THE_LINE) && line.contains(refusal))
+                .cloned()
+                .collect(),
+        );
         let passed = lines.iter().filter(|line| line.contains(PASSED)).count();
         let registered = crate::rules::eval_context::registered_refusals()
             .iter()
@@ -58955,6 +70148,7 @@ fn an_absent_right_hand_reference_beside_a_refusal_is_raised_under_some_and_deci
     let resolved_equal = document("TopicName: 'n'", "[ { Key: 'Env', Value: 'o1' } ]");
     // The reference present (`N` holds a readable pair) beside the marker.
     let reference_present = document("Tags: [ { Key: 'Env', Value: 'other' } ]", "{ Env: 'x' }");
+    const THE_MISMATCH_LINE: &str = "was decided by a value that does not match";
     struct Run {
         /// (`empty`, `!empty`)
         statuses: (Status, Status),
@@ -58964,9 +70158,15 @@ fn an_absent_right_hand_reference_beside_a_refusal_is_raised_under_some_and_deci
         /// names the refusal and the clause's `%names`.
         lines: usize,
         line_names_the_refusal: bool,
+        /// The refused-read lines in the mismatch wording after the `empty` run: the `==` control's
+        /// `match_all`, decided by a right-hand pair no left-hand value equals, writes one.
+        mismatch_lines: usize,
+        /// Whether the `!empty` run read the same registry and the same lines of both wordings as the
+        /// `empty` run: the tail changes the enclosing clause's verdict, never the predicate's report.
+        tails_agree: bool,
     }
     let run = |predicate: &str, input: &str| -> Result<Run> {
-        let one = |tail: &str| -> Result<(Status, usize, usize, bool)> {
+        let one = |tail: &str| -> Result<(Status, usize, usize, bool, usize)> {
             let rules = format!(
                 "{LETS}\nrule r {{ Resources.*[ Type == 'AWS::S3::Bucket' ][ {predicate} ]{tail} }}"
             );
@@ -58985,110 +70185,141 @@ fn an_absent_right_hand_reference_beside_a_refusal_is_raised_under_some_and_deci
             let names_the_refusal = lines
                 .iter()
                 .any(|line| line.contains(THE_TWIN_REFUSAL) && line.contains("%names"));
-            Ok((status, registered, lines.len(), names_the_refusal))
+            let mismatch_lines = root
+                .warnings()
+                .filter(|line| line.contains(THE_MISMATCH_LINE))
+                .count();
+            Ok((
+                status,
+                registered,
+                lines.len(),
+                names_the_refusal,
+                mismatch_lines,
+            ))
         };
-        let (empty, registered, lines, line_names_the_refusal) = one(" empty")?;
-        let (not_empty, _, _, _) = one(" !empty")?;
+        let (empty, registered, lines, line_names_the_refusal, mismatch_lines) = one(" empty")?;
+        let (not_empty, registered_2, lines_2, names_2, mismatch_2) = one(" !empty")?;
         Ok(Run {
             statuses: (empty, not_empty),
             registered,
             lines,
             line_names_the_refusal,
+            mismatch_lines,
+            tails_agree: registered == registered_2
+                && lines == lines_2
+                && line_names_the_refusal == names_2
+                && mismatch_lines == mismatch_2,
         })
     };
     let mut cells = CellFailures::default();
-    // (label, the document, wanted (`some`, `match_all`) statuses under (`empty`, `!empty`), the refusal
-    // registered, the absence lines under `match_all` naming the refusal) under `!=`, then under `==`.
-    for (cmp, rows) in [
+    // (the comparator; label; the document; wanted (`some`, `match_all`) statuses under (`empty`,
+    // `!empty`); the refusal registered (both quantifiers); the absence lines under `match_all` naming the
+    // refusal; the mismatch lines under `match_all`) under `!=`, then under `==`. Both tails are read for
+    // every row and must agree on everything but the enclosing clause's status.
+    let cases: [_; 8] = [
         (
             "!=",
-            [
-                (
-                    "`!=`: the reference the document lacks beside the refusal's marker: `some` raised (the predicate fails closed under both tails), `match_all` decided by the absence (the bucket deselected); the refusal registered, one line in the absence wording naming it",
-                    &marker,
-                    ((Status::FAIL, Status::FAIL), (Status::PASS, Status::FAIL)),
-                    1,
-                    (1, true),
-                ),
-                (
-                    "`!=`: the marker resolved to a pair the tag differs from (no marker): `some` passes on the resolved pair beside the absence (the bucket kept), `match_all` deselected; nothing registered, no line",
-                    &resolved_differs,
-                    ((Status::FAIL, Status::PASS), (Status::PASS, Status::FAIL)),
-                    0,
-                    (0, false),
-                ),
-                (
-                    "`!=`: the marker resolved to the tag's own pair (no marker): both spellings deselected; nothing registered, no line",
-                    &resolved_equal,
-                    ((Status::PASS, Status::FAIL), (Status::PASS, Status::FAIL)),
-                    0,
-                    (0, false),
-                ),
-                (
-                    "`!=`: control, the reference present beside the marker: raised under both quantifiers; the refusal registered, no absence line",
-                    &reference_present,
-                    ((Status::FAIL, Status::FAIL), (Status::FAIL, Status::FAIL)),
-                    1,
-                    (0, false),
-                ),
-            ],
+            "`!=`: the reference the document lacks beside the refusal's marker: `some` raised (the predicate fails closed under both tails), `match_all` decided by the absence (the bucket deselected); the refusal registered, one line in the absence wording naming it, none in the mismatch wording",
+            &marker,
+            ((Status::FAIL, Status::FAIL), (Status::PASS, Status::FAIL)),
+            1,
+            (1, true),
+            0,
+        ),
+        (
+            "!=",
+            "`!=`: the marker resolved to a pair the tag differs from (no marker): `some` passes on the resolved pair beside the absence (the bucket kept), `match_all` deselected; nothing registered, no line in either wording",
+            &resolved_differs,
+            ((Status::FAIL, Status::PASS), (Status::PASS, Status::FAIL)),
+            0,
+            (0, false),
+            0,
+        ),
+        (
+            "!=",
+            "`!=`: the marker resolved to the tag's own pair (no marker): both spellings deselected; nothing registered, no line in either wording",
+            &resolved_equal,
+            ((Status::PASS, Status::FAIL), (Status::PASS, Status::FAIL)),
+            0,
+            (0, false),
+            0,
+        ),
+        (
+            "!=",
+            "`!=`: control, the reference present beside the marker: raised under both quantifiers; the refusal registered, no line in either wording",
+            &reference_present,
+            ((Status::FAIL, Status::FAIL), (Status::FAIL, Status::FAIL)),
+            1,
+            (0, false),
+            0,
         ),
         (
             "==",
-            [
-                (
-                    "`==`: the reference the document lacks beside the refusal's marker: `some` raised, `match_all` decided by the absence (the bucket deselected); the refusal registered, one line in the absence wording naming it",
-                    &marker,
-                    ((Status::FAIL, Status::FAIL), (Status::PASS, Status::FAIL)),
-                    1,
-                    (1, true),
-                ),
-                (
-                    "`==`: the marker resolved to the tag's own pair (no marker): `some` passes on the resolved pair beside the absence (the bucket kept), `match_all` deselected; nothing registered, no line",
-                    &resolved_equal,
-                    ((Status::FAIL, Status::PASS), (Status::PASS, Status::FAIL)),
-                    0,
-                    (0, false),
-                ),
-                (
-                    "`==`: the marker resolved to a pair the tag differs from (no marker): both spellings deselected; nothing registered, no line",
-                    &resolved_differs,
-                    ((Status::PASS, Status::FAIL), (Status::PASS, Status::FAIL)),
-                    0,
-                    (0, false),
-                ),
-                (
-                    "`==`: control, the reference present beside the marker: `some` raised, `match_all` decided by the right-hand pair no left-hand value equals (deselected, the line in the mismatch wording); the refusal registered, no absence line",
-                    &reference_present,
-                    ((Status::FAIL, Status::FAIL), (Status::PASS, Status::FAIL)),
-                    1,
-                    (0, false),
-                ),
-            ],
+            "`==`: the reference the document lacks beside the refusal's marker: `some` raised, `match_all` decided by the absence (the bucket deselected); the refusal registered, one line in the absence wording naming it, none in the mismatch wording",
+            &marker,
+            ((Status::FAIL, Status::FAIL), (Status::PASS, Status::FAIL)),
+            1,
+            (1, true),
+            0,
         ),
-    ] {
-        for (label, input, wanted_statuses, wanted_registered, wanted_lines) in rows {
-            let some = run(&format!("some Properties.Tag {cmp} %names"), input)?;
-            let match_all = run(&format!("Properties.Tag {cmp} %names"), input)?;
-            cells.check(
-                label,
-                (
-                    wanted_statuses,
-                    wanted_registered,
-                    wanted_registered,
-                    wanted_lines,
-                    0,
-                ),
-                (
-                    (some.statuses, match_all.statuses),
-                    some.registered,
-                    match_all.registered,
-                    (match_all.lines, match_all.line_names_the_refusal),
-                    some.lines,
-                ),
-            );
-        }
+        (
+            "==",
+            "`==`: the marker resolved to the tag's own pair (no marker): `some` passes on the resolved pair beside the absence (the bucket kept), `match_all` deselected; nothing registered, no line in either wording",
+            &resolved_equal,
+            ((Status::FAIL, Status::PASS), (Status::PASS, Status::FAIL)),
+            0,
+            (0, false),
+            0,
+        ),
+        (
+            "==",
+            "`==`: the marker resolved to a pair the tag differs from (no marker): both spellings deselected; nothing registered, no line in either wording",
+            &resolved_differs,
+            ((Status::PASS, Status::FAIL), (Status::PASS, Status::FAIL)),
+            0,
+            (0, false),
+            0,
+        ),
+        (
+            "==",
+            "`==`: control, the reference present beside the marker: `some` raised, `match_all` decided by the right-hand pair no left-hand value equals (deselected); the refusal registered, no absence line, ONE line in the mismatch wording under `match_all`",
+            &reference_present,
+            ((Status::FAIL, Status::FAIL), (Status::PASS, Status::FAIL)),
+            1,
+            (0, false),
+            1,
+        ),
+    ];
+    for (cmp, label, input, wanted_statuses, wanted_registered, wanted_lines, wanted_mismatch) in
+        &cases
+    {
+        let some = run(&format!("some Properties.Tag {cmp} %names"), input)?;
+        let match_all = run(&format!("Properties.Tag {cmp} %names"), input)?;
+        cells.check(
+            label,
+            (
+                *wanted_statuses,
+                *wanted_registered,
+                *wanted_registered,
+                *wanted_lines,
+                0,
+                *wanted_mismatch,
+                0,
+                true,
+            ),
+            (
+                (some.statuses, match_all.statuses),
+                some.registered,
+                match_all.registered,
+                (match_all.lines, match_all.line_names_the_refusal),
+                some.lines,
+                match_all.mismatch_lines,
+                some.mismatch_lines,
+                some.tails_agree && match_all.tails_agree,
+            ),
+        );
     }
+    assert_eq!(cells.seen, cases.len());
     cells.assert_all_agreed();
     Ok(())
 }
@@ -65599,13 +76830,13 @@ fn a_referenced_rules_cut_leaves_the_referencing_rules_parked_captures_alone() -
     root.add_variable_capture("x", QueryResult::Resolved(Rc::clone(&parked)))?;
     root.end_capture_entry();
     root.begin_capture_entry();
-    let status = root.rule_status("inner", ClauseRole::Assertion);
+    let judged = root.rule_status("inner", ClauseRole::Assertion);
     root.end_capture_entry();
     root.close_capture_frame();
     cells.check(
-        "the referenced rule is decided through its fallback clause",
-        Some(Status::PASS),
-        status.as_ref().ok().copied(),
+        "the referenced rule is decided through its fallback clause (a PASS, which carries no basis)",
+        Some(crate::rules::Judged::Pass),
+        judged.as_ref().ok().cloned(),
     );
     let x = root.resolve_variable("x")?;
     cells.check(
@@ -70900,11 +82131,8 @@ fn a_key_filter_whose_right_hand_query_is_refused_is_recorded_at_the_map(
         );
         let mut checks = Vec::new();
         let mut block_messages = Vec::new();
-        walk(
-            &root.reset_recorder().extract(),
-            &mut checks,
-            &mut block_messages,
-        );
+        let tree = root.reset_recorder().extract();
+        walk(&tree, &mut checks, &mut block_messages);
         let at_the_map: Vec<_> = checks
             .iter()
             .filter(|(path, _, _)| path == "/Resources/C/Properties/M")
@@ -70937,6 +82165,22 @@ fn a_key_filter_whose_right_hand_query_is_refused_is_recorded_at_the_map(
             rhs,
             op,
             block_messages
+        );
+        // The refused right-hand query's token, recovered from the registry by its registered sentence
+        // (`eval_context::token_of_registered`, the key-filter arms over `Unevaluatable`): the map's
+        // marker carries it, a refused read by token and not by its wrapped sentence alone.
+        let mut markers = Vec::new();
+        undecidable_markers_with_kinds(&tree, &mut markers);
+        assert!(
+            markers.iter().any(|(marker_path, _, kind)| {
+                marker_path == "/Resources/C/Properties/M" && kind.refusal().is_some()
+            }),
+            "{} {} {} {}: the undecided map's marker carries the refusal's token: {:?}",
+            label,
+            path,
+            rhs,
+            op,
+            markers
         );
     }
     Ok(())

@@ -1635,7 +1635,7 @@ let api_gws = Resources.*[ Type == 'AWS::ApiGateway::RestApi' ]
     the cell did, passing on records of the unrelated `Cfg[ x | Kind == 'k' ]` clause), reads each pair's flag and
     message, and reads the report's sentences for the two wordings, so it goes red when either arm's reading or either
     spelling's flags change
-    (pinned by `eval_tests.rs:a_plain_left_marker_beside_a_right_refusal_is_reported_as_unreadable_where_its_mirror_is_missing`).
+    (pinned by `eval_tests.rs:a_plain_left_marker_beside_a_right_refusal_is_reported_as_undecided_on_both_sides`).
 
 21. <a name="a-map-filters-capture-holds-the-key"></a> A filter's capture over a MAP holds the KEYS the filter kept, not the
     members: `Sub[ s | Name exists ]` over `Sub: { S1: { Name: 'n' } }` binds `%s` to the string `S1`, so `%s.Name == 'n'`
@@ -1649,3 +1649,106 @@ let api_gws = Resources.*[ Type == 'AWS::ApiGateway::RestApi' ]
     three roles, each beside its `Sub.%s.Name` control: the assertion's FAIL with the retrieval's reason on record, the
     filter predicate's deselected entry (`!empty` over the filter fails), and the `when` condition not applicable; the
     rows go red if `%s.Name` ever decides a clause.
+
+22. <a name="a-not-over-a-refusal-only-fail-fails-closed"></a> A reference's `not` over a rule whose FAIL rests on reads
+    it could not decide FAILS closed rather than passing. `rule main { not check }` with `rule check { some %y NOT IN %m
+    }` over a `%m` holding a key filter's refused marker: `check` fails at its leaf on the refusal (an assertion fails
+    closed on a refused read), and this evaluator before the change inverted that FAIL into `main`'s PASS, a verdict the
+    refusal manufactured; it now answers FAIL for `main`. Whether a FAIL rests on undecidables alone is decided by the
+    STRUCTURE of the rule's folds, each answering its FAIL with a basis combined from its branches' (a decided no, or
+    the undecidable reads the FAIL rests on): a conjunction's FAIL is decided
+    when any failing conjunct's is (`AND(no, unknown)` is `no`, so `some %y NOT IN %m  Maps.Nope exists` is a plain no and
+    `not check` passes as before, the refused read's line reading "passed by the negation of a rule that failed"); a
+    disjunction's or a `some` block's FAIL is decided only when every failing branch's is (`OR(no, unknown)` is unknown,
+    so `Maps.Nope exists or some %y NOT IN %m` and a `some` block with one refused entry are refusal-born and `not check`
+    fails closed). The basis travels inside the FAIL (a judged answer is a PASS, a SKIP or a FAIL with its basis, so no
+    PASS or SKIP carries one) and so in the rule-status cache, never through the refused-read entries a quiet probe or a
+    measurement leaves empty, so a gate over `not check` read under a measurement answers as the real run does; every site
+    that turns an undecidable into a strict FAIL names it, a spent regex budget's marker and the block arm's own-key
+    refusal included, which note no refused read. Two record shapes: in a rule body the fail-closed `not` is a FAIL whose
+    own record says why, in one of two variants chosen by what the basis holds: flagged a refusal and naming the read(s)
+    where the FAIL rests on one ("the negated rule [check] failed only on reads it could not decide, so the negation
+    fails closed rather than passing: ..."), unflagged and naming none where the undecidable is no refusal, a spent regex
+    budget's marker or a type the operator has no answer for ("...; the undecided reads are reported where the rule met
+    them"); the author's `<< >>` message on the reference rides in the record's own field; and either variant writes NO
+    refused-read line, since failing closed is acting on the refusal and "was not raised" would be false of it; as a
+    `when` condition the negated rule runs in the gate role, where every undecidable leaves it as a raise that reaches the
+    reference before any negation (no gate-role or filter-role `not` ever meets an undecidable-born FAIL; a debug build
+    asserts it, and a release build in which that ever broke would raise the undecidable as the refusal it is, carrying
+    the read's token, rather than answer a status), so `rule r when not check { .. }` fails `r` closed on its condition
+    rather than opening or skipping the block, the same answer "raise the negation" would have given, reached by the
+    rule's own raise. One exception to the conjunction rule, decided by one test in every role: a block whose body
+    read the empty selection a one-object filter left, and was refused there, has a body whose decided no holds under
+    the reading of the filter that kept an element and not under the reading that kept none, so the block's FAIL is
+    decided exactly when its judgement over its other values alone equals its judgement over them plus that failure,
+    the status and the basis of a FAIL alike, and rests on the refused read otherwise. Alone, the readings agree only
+    under `not empty` (without it the other reading is SKIP, so a `not` over the rule would answer PASS under one
+    reading and SKIP under the other, and the FAIL rests on the refused read instead, failing the `not` closed, where
+    this evaluator before the change inverted the body's no into a PASS); beside sibling values a `some` block agrees
+    unless every sibling skips (`not check` passes with the read's line where the siblings fail), an every-entry block
+    agrees where a sibling fails on a decided no and disagrees where every sibling passes or where every failure rests
+    on an undecidable (`not check` fails closed naming every read; as a `when` condition the block raises and the gated
+    rule fails closed, where it was reported not applicable before); a sibling the block could not decide (a raise it
+    holds, another refused selection whose body is undecidable) agrees with nothing, so the block raises unless another
+    sibling decides it (a sibling that fails on a decided no decides an every-entry block); a refused selection whose OWN
+    body is undecidable over it (refused whole by the keys the body read together, or raising over the read it refused,
+    whichever error the body's conjunction held first) decides nothing either way and is judged by its siblings in both
+    roles, so a sibling that passes decides a `some` block and one that fails on a decided no decides an every-entry
+    block, each with the block's own line, and nothing decided, the block fails closed or raises on that read (see
+    `eval_tests.rs:a_blocks_pending_refused_selection_is_settled_at_every_exit_in_both_roles (cases "HO", "PO", "PF", "PEp", "POp", "HOp", "HSa", "HSs", "HSp")`;
+    an earlier build returned at once on such a body beside siblings, so the clause spelling's order inside the body
+    decided whether the siblings were consulted; one order dependence remains, a known limit: a body whose FIRST held
+    error is a marker's raise (an undecidable comparison over a key filter nobody can decide, `%m !empty` over a map
+    whose key spent the engine's budget) re-raises an undecidable comparison over the kept text where a body whose
+    first held error is the refused read itself re-raises the plain refusal, and a `when` condition reads only the
+    comparison kind as three-valued, so with no sibling deciding the block the two orders can still open or fail a gate
+    differently; the per-value mark such a body leaves, where it raised a marker of
+    another text, is written after the siblings' records, where it was written at once, so the record tree and
+    `-o json` list it after them); a refused selection with no
+    value beside it is judged after every selection has run, as a lone selection is: beside a second refused selection
+    whose body is undecidable the siblings are undecided, so `not check` fails closed and the gate fails closed in
+    either map order. A selection is refused by a read of a key the object LACKS; a key the object HOLDS (`Effect`
+    over a one-object statement) is read as nothing over the refused selection, as the dotted spelling
+    `Statement[*][ Principal == '*' ].Effect == 'Deny'` reads it, so a clause on it is not applicable and a `when` in
+    the body gated on it reads nothing and leaves the value not applicable, never refused (the chained-filter spelling
+    `[ Sid exists  Effect == 'Deny' ] !empty` decides on the keys it holds and is refused only when every key it names
+    is lacking, the second-filter rule in `docs/CLAUSES.md`; the "E1nk"/"E1i" pair). Beside a selection whose closed `when` read nothing the readings are a lone selection's (`not check` fails closed
+    without `not empty` and passes with it, the gate not applicable either way); earlier builds of this change
+    returned before that fold ran, on the
+    first selection judged and then at the exit over an empty value set, reading the pair as an empty selection (the
+    gate not applicable, the refusal dropped with no record and no line); siblings that every one skip are values the block has, so without the refused value
+    the block is SKIP under `not empty` as well, and the assertion role fails `not check` closed there (an earlier
+    build of this change read them as no value and passed the `not` on the refusal); as a `when` condition FAIL
+    against SKIP also counts as agreement, since both mean the guard did not hold (alone without `not empty`, and
+    either quantifier where every sibling skips: the gated rule is then not applicable), where the assertion role
+    fails closed. The block's record is flagged a
+    refusal by the block's own read whatever the body decided beside it (the flag says whether the message embeds a
+    refusal); beside siblings the refused value leaves a flagged per-value FAIL record under the block in either role;
+    where that `not` passes, the block's refused read is written "passed by the negation of a rule that failed", and
+    where a `when` condition's block decided it, "was decided by a sibling clause's failure" (the body's no) or "was
+    decided by a sibling entry's failure" (a failing sibling past the undecidable value) (pinned by
+    `eval_tests.rs:a_blocks_refused_read_over_the_empty_selection_is_judged_with_its_bodys_basis (cases "E1", "E1k", "E1nk", "E2", "V1", "SP", "SF", "GS", "GSf", "GSsf", "GSsfk", "GKk", "GKsk", "GKnk", "GKsnk", "GSu", "GSr", "GKr", "GKx", "GKd", "GKr2", "GKr2r", "GKr2k", "GKr2rk", "GKek", "GKenk", "SS", "GSs", "D")`
+    and `eval_tests.rs:a_gate_role_block_over_a_refused_selection_beside_a_sibling_raises_or_writes_its_own_line_once (cases "GU", "GUd", "GUf", "GD", "MF", "MO")`). A passing sibling decides past the fail-closed `not` as past any
+    decided FAIL (`rule main { not check or Maps exists }` passes with one ordinary line). Raising the negation in the
+    assertion role instead was considered and not taken: FAIL is the shape every other refusal reaching a strict role
+    takes. A `when` or type-block condition raised on a refused read in a strict role fails its block closed as before;
+    the condition's raise is then the block's own leaf FAIL, handed up as one, and a type block is every resource at once,
+    so a second resource whose body fails on a plain no makes the block's FAIL decided
+    (pinned by `eval_tests.rs:a_negated_reference_fails_closed_on_a_refusal_only_fail (cases "R1", "R1b", "R1c", "R3", "T1", "T1b")`);
+    the structural rows, the two record shapes and the sites that note no refused read are each a labeled row
+    (pinned by `eval_tests.rs:a_negated_reference_decides_by_the_structure_of_the_rules_folds (cases "A1", "A2", "O1", "O2", "S1", "S2", "S3", "M1", "M2", "G1", "N1", "D1", "B1", "B2", "B3", "B4", "L1", "L2", "X1", "X2", "C1", "C2", "U1", "U2", "U3")`).
+    The parameterized rows of the same shape are the "R1" and "R3" rows of
+    eval_tests.rs:frame_entries_decide_by_kind_and_a_rule_call_runs_in_its_own_frame, which read the same.
+
+23. <a name="a-let-bound-numbered-re-read-loses-its-flag"></a> A `let`-bound refusal re-read inside a NUMBERED text
+    beside an unregistered marker's reason reads `refusal: false` where the original raise read `true`. A failed
+    assignment's error is re-raised on every later read of the name as the same error with its refusal token left
+    behind (`Error::repeated`: a later read is a later raise, minted in no predicate run, so it flags no entry); the
+    sentence re-read whole is the registered refusal it is, read by text, but the shape `(1) <refusal> (2) <spent
+    budget>`, which a raise over a refusal and a budget marker writes, parses to no registered set (the numbered
+    parser accepts registered parts only, all or nothing), so the re-read carries no token and names no registered
+    text. Recovering the registered parts' tokens through a lenient parse of the numbered text would close it and is
+    deferred: the one residual of the token carrier, recorded as the design it keeps. Nothing moves with it but the
+    record's flag and the console's remedy line for that re-read; the verdict, the exit code and the registry are the
+    same. Pinned as it reads by `eval_tests.rs:a_let_bound_refusal_re_read_keeps_its_flag_by_text_alone`, whose
+    residual row goes red when the re-read recovers its token.
