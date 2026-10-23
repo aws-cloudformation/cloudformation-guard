@@ -199,8 +199,13 @@ mod validate_tests {
 
     /// `run_payload` with the summary off (`--show-summary none`): the console output is the findings
     /// alone, so a line that carries a record's sentence is a finding's and never the summary's quote of
-    /// the same record.
-    fn run_payload_without_summary(rule: &str, document: &str) -> (i32, String) {
+    /// the same record. `output_format` is the `-o` value, `None` for the console; `Some("json")` gives
+    /// the same run's report, whose `error_message` strings are the records' sentences as recorded.
+    fn run_payload_without_summary(
+        rule: &str,
+        document: &str,
+        output_format: Option<&str>,
+    ) -> (i32, String) {
         let payload = format!(
             r#"{{"data": [{}], "rules": [{}]}}"#,
             serde_json::to_string(document).unwrap(),
@@ -211,6 +216,7 @@ mod validate_tests {
             Writer::new_with_err(WBVec(vec![]), WBVec(vec![])).expect("Failed to create writer.");
         let status_code = ValidateTestRunner::default()
             .payload()
+            .output_format(output_format)
             .show_summary(vec!["none"])
             .run(&mut writer, &mut reader);
         (
@@ -2148,6 +2154,166 @@ mod validate_tests {
                 && output.contains("the clause is raised and the run continues"),
             "{}: the record says the clause is raised and the run continues, never that it bails:\n{}",
             rules,
+            output
+        );
+    }
+
+    /// An every-entry block whose body FAILs at the leaf on a refusal, asserted, prints the refusal once
+    /// and writes no refused-read line for it.
+    ///
+    /// The strict raise beside a refused read becomes a FAIL at the comparison's own leaf; under
+    /// `match_all` that FAIL is the block's own and the rule's, so the leaf's record, flagged as the
+    /// refusal it carries, is the report: the console prints the refusal's sentence exactly once (the
+    /// record's one line for it), and the fold writes no "reported here instead" line, since a line
+    /// saying the read was not raised would be false of a refusal the failing rule shows. The premise the
+    /// no-line rule rests on is that the failing block PRINTS the leaf's refusal; this cell is that
+    /// premise, read on the console.
+    #[test]
+    fn a_strict_leaf_fail_under_an_every_entry_block_prints_the_refusal_once_and_no_line() {
+        let mut reader = Reader::default();
+        let mut writer = Writer::new(WBVec(vec![])).expect("Failed to create writer.");
+
+        let status_code = ValidateTestRunner::default()
+            .data(vec!["strict-leaf-fail-under-match-all-template.json"])
+            .rules(vec!["strict_leaf_fail_under_match_all.guard"])
+            .show_summary(vec!["all"])
+            .run(&mut writer, &mut reader);
+
+        let output = writer.stripped().expect("failed to read the writer");
+        assert_eq!(
+            StatusCode::VALIDATION_ERROR,
+            status_code,
+            "the block fails on the leaf FAIL and the sibling's failure, and the run goes on to its exit \
+             code:\n{}",
+            output
+        );
+        assert_eq!(
+            1,
+            output
+                .matches("then no kept entry holds a key the predicate names")
+                .count(),
+            "the leaf's refusal is printed exactly once, by its own record:\n{}",
+            output
+        );
+        assert!(
+            !output.contains("reported here instead"),
+            "no refused-read line is written for a refusal the failing block shows:\n{}",
+            output
+        );
+    }
+
+    /// A `when` gate raised beside a refusal AND a key filter's budget marker prints the remedy whole.
+    ///
+    /// The raise's text is the refusal first and the budget marker's reason after it, numbered; read by
+    /// text alone the record is nobody's refusal (the marker's part is registered by no one), and the
+    /// console would cut it at the bound it holds every plain recorded message to, before the remedy.
+    /// The raise carries the refusal's token beside its text, since the comparison met a refused read,
+    /// so the record is flagged and printed whole: the remedy, the path and the budget's sentence.
+    #[test]
+    fn a_gate_raised_beside_a_refusal_and_a_budget_marker_prints_the_remedy_whole() {
+        let mut reader = Reader::default();
+        let mut writer = Writer::new(WBVec(vec![])).expect("Failed to create writer.");
+
+        let status_code = ValidateTestRunner::default()
+            .data(vec!["refusal-beside-a-budget-marker-template.json"])
+            .rules(vec![
+                "gate_raised_beside_a_refusal_and_a_budget_marker.guard",
+            ])
+            .show_summary(vec!["all"])
+            .run(&mut writer, &mut reader);
+
+        let output = writer.stripped().expect("failed to read the writer");
+        assert_eq!(
+            StatusCode::VALIDATION_ERROR,
+            status_code,
+            "the gate fails closed and the run goes on to its exit code:\n{}",
+            output
+        );
+        assert!(
+            output.contains("(1) ")
+                && output.contains("then no kept entry holds a key the predicate names")
+                && output.contains("path /Cfg/A/Sub")
+                && output.contains("(2) "),
+            "the refusal is printed whole, numbered first, its remedy and path included, and the \
+             budget marker's reason follows it numbered second (a plain recorded message is cut at 320 \
+             characters, before the path):\n{}",
+            output
+        );
+        assert!(
+            !output.contains("bailing"),
+            "the run continues, never bails:\n{}",
+            output
+        );
+    }
+
+    /// A resource keyed by three hundred right-to-left overrides keeps the console's line under its bound.
+    ///
+    /// The left-hand refused marker is compared with a key the document lacks under that resource; the
+    /// record leads with the absence, whose reason names the key and its path. Both are escaped first
+    /// (`\u{202e}` for each override) and bounded on the PRINTED width with the leaf kept, so the line the
+    /// console prints holds the refusal's remedy and no raw override, where a bound on the source
+    /// characters printed eight times the bound of escapes and pushed the remedy past the console's
+    /// whole-line bound.
+    #[test]
+    fn a_resource_key_of_bidi_controls_keeps_the_console_line_under_its_bound() {
+        let key = "\u{202e}".repeat(300);
+        let data = format!(
+            concat!(
+                "{{ \"Cfg\": {{ \"Mode\": {{ \"Ref\": \"ModeParam\" }}, \"Fallback\": {{ \"Kind\": \"k\" }}, ",
+                "\"A\": {{ \"Kind\": \"k\", \"Sub\": {{ \"R1_the_own_key_of_the_sub_map_whose_name_is_long_enough_to_carry_the_refusal_past_the_bound\": {{ \"Ref\": \"P\" }}, \"P\": {{ \"Kind\": \"k\" }}, \"Q\": {{ \"Kind\": \"k\" }} }} }}, ",
+                "\"B\": {{ \"Kind\": \"k\", \"Sub\": {{ \"R1_the_own_key_of_the_sub_map_whose_name_is_long_enough_to_carry_the_refusal_past_the_bound\": {{ \"Ref\": \"P\" }}, \"P\": {{ \"Kind\": \"k\" }}, \"Q\": {{ \"Kind\": \"k\" }} }} }} }}, ",
+                "\"Resources\": {{ \"R{}x\": {{ \"Type\": \"AWS::S3::Bucket\", \"Properties\": {{ \"Name\": \"n\" }} }} }} }}"
+            ),
+            key
+        );
+        let mut reader = Reader::new(ReadCursor(Cursor::new(data.into_bytes())));
+        let mut writer = Writer::new(WBVec(vec![])).expect("Failed to create writer.");
+
+        let status_code = ValidateTestRunner::default()
+            .rules(vec![
+                "left_refusal_beside_an_absent_key_under_a_bidi_resource.guard",
+            ])
+            .show_summary(vec!["all"])
+            .run(&mut writer, &mut reader);
+
+        let output = writer.stripped().expect("failed to read the writer");
+        assert_eq!(
+            StatusCode::VALIDATION_ERROR,
+            status_code,
+            "the clause fails on the absence beside the refusal:\n{}",
+            output
+        );
+        // Two console lines carry the remedy: the strict raise's block record (the refusal alone, the
+        // path of its own key) and the pair record that leads with the absence under the overrides' key
+        // and ends with the refusal. The second is the one the key reaches; every line is read for the
+        // bound and the whole output for a raw override.
+        let carrying: Vec<&str> = output
+            .lines()
+            .filter(|line| line.contains("then no kept entry holds a key the predicate names"))
+            .collect();
+        assert!(
+            !carrying.is_empty(),
+            "no console line carries the refusal's remedy:\n{}",
+            output
+        );
+        assert!(
+            carrying.iter().all(|line| line.chars().count() < 4096),
+            "every line carrying the remedy is under the console's whole-line bound:\n{}",
+            output
+        );
+        assert!(
+            !output.contains('\u{202e}'),
+            "no raw override reaches the console:\n{}",
+            output
+        );
+        assert!(
+            carrying.iter().any(|line| {
+                line.contains("\\u{202e}")
+                    && line.contains("more characters cut")
+                    && line.contains("x/Properties")
+            }),
+            "one line names the path with the overrides as escapes, the key cut and its leaf kept, and \
+             ends with the refusal:\n{}",
             output
         );
     }
@@ -6799,8 +6965,7 @@ mod validate_tests {
         );
     }
 
-    /// A refusal's sentence is printed once per console finding, whichever record carries it, and never
-    /// on a `Reason =` line.
+    /// A refusal's sentence is printed once per console finding, whichever record carries it.
     ///
     /// Two records carry an asserted `IN` against a capture holding a refusal's marker. With the marker
     /// ALONE in `%x` (no earlier clause binds `x`) the clause compares nothing and is raised on the
@@ -6810,13 +6975,12 @@ mod validate_tests {
     /// run continues. That case is a pin of what the console prints for the shape, unchanged here. With
     /// listed keys beside the marker and a value no key accepts (`Ref` is among no key) the clause fails
     /// on its statuses and the marker's pair keeps its record, a right-hand value the evaluator could
-    /// not read, printed under the resource as a `Check = { }` block whose `Error =` line is the record's
-    /// sentence, which quotes the refusal (`Error = [...]`); that block also wrote the unresolved
-    /// value's own reason on a `Reason =` line, and for a refusal's marker the reason IS the refusal, so
-    /// the resource's finding carried the refusal's key sentence, remedy and path twice, each up to the
-    /// console's refusal bound. The summary is off so that every line carrying the sentence is a
-    /// finding's; the key pairs' own findings carry no refusal, and an absent value's `Reason =` line is
-    /// kept (`a_refusal_beside_a_missing_template_value_prints_on_an_error_line`).
+    /// not read, printed under the resource as a `Check = { }` block: the sentence's head on its `Error =`
+    /// line and the refusal, the unresolved value's reason, on its `Reason =` line, each bounded on its
+    /// own. Written as recorded, the `Error =` line quoted the refusal (`Error = [...]`) and the
+    /// `Reason =` line repeated it, so the resource's finding carried the refusal's key sentence, remedy
+    /// and path twice, each up to the console's refusal bound. The summary is off so that every line
+    /// carrying the sentence is a finding's; the key pairs' own findings carry no refusal.
     #[rstest::rstest]
     #[case::marker_alone(false)]
     #[case::listed_keys_beside_the_marker(true)]
@@ -6843,23 +7007,7 @@ mod validate_tests {
         // payload through `-o json` gives the record's sentence as recorded, which the console line is
         // compared with.
         let run = |output_format: Option<&str>| -> (i32, String) {
-            let payload = format!(
-                r#"{{"data": [{}], "rules": [{}]}}"#,
-                serde_json::to_string(&template).unwrap(),
-                serde_json::to_string(&rules).unwrap()
-            );
-            let mut reader = Reader::new(ReadCursor(Cursor::new(payload.into_bytes())));
-            let mut writer = Writer::new_with_err(WBVec(vec![]), WBVec(vec![]))
-                .expect("Failed to create writer.");
-            let status_code = ValidateTestRunner::default()
-                .payload()
-                .output_format(output_format)
-                .show_summary(vec!["none"])
-                .run(&mut writer, &mut reader);
-            (
-                status_code,
-                writer.stripped().expect("failed to read stdout"),
-            )
+            run_payload_without_summary(&rules, &template, output_format)
         };
         let (status_code, out) = run(None);
         assert_eq!(
@@ -6889,15 +7037,10 @@ mod validate_tests {
             keys_beside_the_marker,
             line
         );
-        assert!(
-            !line.trim_start().starts_with("Reason"),
-            "keys beside the marker {}: the sentence is never the `Reason =` line's:\n{}",
-            keys_beside_the_marker,
-            line
-        );
         if keys_beside_the_marker {
-            // The marker's pair, under the resource: the record's sentence on the `Error =` line of the
-            // `Check = { }` block, and no `Reason =` line restating the refusal under it.
+            // The marker's pair, under the resource: the sentence's head on the `Error =` line of the
+            // `Check = { }` block, and the refusal, the unresolved value's reason, on its one `Reason =`
+            // line.
             let resource_block: Vec<&str> = out
                 .lines()
                 .skip_while(|l| !l.starts_with("Resource = R "))
@@ -6906,20 +7049,33 @@ mod validate_tests {
                 .collect();
             assert!(
                 resource_block.iter().any(|l| *l == line),
-                "the sentence is in the resource's own block:\n{}",
+                "the refusal is in the resource's own block:\n{}",
                 out
             );
             assert!(
-                line.trim_start().starts_with("Error = ")
-                    && line.contains("the value to compare to could not be read"),
-                "the sentence is the record's, on the finding's `Error =` line:\n{}",
+                line.trim_start().starts_with("Reason = "),
+                "the refusal is the finding's `Reason =` line:\n{}",
                 line
             );
-            assert!(
-                !resource_block
+            assert_eq!(
+                vec![
+                    "Error = Check was not compliant as the value to compare to could not be read."
+                ],
+                resource_block
                     .iter()
-                    .any(|l| l.trim_start().starts_with("Reason = ")),
-                "no `Reason =` line restates the refusal under the finding:\n{}",
+                    .filter(|l| l.trim_start().starts_with("Error = "))
+                    .map(|l| l.trim_start())
+                    .collect::<Vec<_>>(),
+                "the finding's one `Error =` line is the sentence's head:\n{}",
+                out
+            );
+            assert_eq!(
+                1,
+                resource_block
+                    .iter()
+                    .filter(|l| l.trim_start().starts_with("Reason = "))
+                    .count(),
+                "one `Reason =` line under the finding:\n{}",
                 out
             );
         } else {
@@ -7009,15 +7165,14 @@ mod validate_tests {
     }
 
     /// A refused marker compared against a value a long template string lacks prints its refusal once on
-    /// the console, whatever part of the record's sentence the console's bound keeps. `%x != Resources.R.
-    /// Properties.Cfg.Mode.Ref.Missing` with the refusal's marker alone in `%x` and `Cfg.Mode.Ref` a
-    /// 5000-character string: the record is the marker's, the retrieval's reason the refusal, and the
-    /// console's `Error =` line is the record's sentence bounded at 4096 characters. A sentence that
-    /// leads with the long string is cut before the refusal, and the `Reason =` line, the refusal
-    /// bounded, is then the one line that carries it; a sentence that does not lead with it carries the
-    /// refusal on the `Error =` line and prints no `Reason =` line. Either way: exactly one console line
-    /// carries the refusal, its path included, and an empty output fails. The summary is off so every
-    /// line carrying the sentence is a finding's.
+    /// the console, on the `Reason =` line, whatever the console's bound keeps of the record's sentence.
+    /// `%x != Resources.R.Properties.Cfg.Mode.Ref.Missing` with the refusal's marker alone in `%x` and
+    /// `Cfg.Mode.Ref` a 5000-character string: the record is the marker's beside the absent key, its
+    /// reason the refusal and its message the absence's lead (the retrieval's reason over the long
+    /// string, bounded by the evaluator) followed by the refusal. The console prints the head and the
+    /// lead on the `Error =` line, bounded, and the refusal on the `Reason =` line: exactly one console
+    /// line carries the refusal, its path included, and that line is the `Reason =` line; an empty
+    /// output fails. The summary is off so every line carrying the sentence is a finding's.
     #[test]
     fn a_refused_marker_against_a_long_strings_missing_key_prints_the_refusal_once() {
         const THE_REFUSALS_PATH: &str = "t path /Resources/R/Properties/Cfg";
@@ -7038,7 +7193,7 @@ mod validate_tests {
         let rules =
             format!("rule r {{ {walk}  %x != Resources.R.Properties.Cfg.Mode.Ref.Missing }}");
 
-        let (status_code, out) = run_payload_without_summary(&rules, &template);
+        let (status_code, out) = run_payload_without_summary(&rules, &template, None);
         assert_eq!(
             StatusCode::VALIDATION_ERROR,
             status_code,
@@ -7056,19 +7211,31 @@ mod validate_tests {
             out
         );
         assert!(
-            carrying[0].contains(THE_REFUSALS_PATH),
-            "the one line carries the refusal whole, its path included:\n{}",
+            carrying[0].trim_start().starts_with("Reason = ")
+                && carrying[0].contains(THE_REFUSALS_PATH),
+            "the one line is the `Reason =` line and carries the refusal whole, its path included:\n{}",
             carrying[0]
+        );
+        assert!(
+            out.lines().any(|line| {
+                line.trim_start().starts_with(
+                    "Error = Check was not compliant as the value to compare from could not be read."
+                )
+            }),
+            "the `Error =` line is the sentence's head, the lead after it:\n{}",
+            out
         );
     }
 
     /// The short-lead sibling of the cell above: `%x != Resources.R.Properties.Cfg.Mode.Ref.Missing` with
-    /// the refusal's marker alone in `%x` and `Cfg.Mode.Ref` the fixture's short string. The record's
-    /// sentence, bounded, keeps the refusal, so the `Error =` line carries it and the block prints no
-    /// `Reason =` line, whose text would restate what that line already carries. Decided on the sentence
-    /// as recorded instead of as printed, the block printed the refusal on both lines.
+    /// the refusal's marker alone in `%x` and `Cfg.Mode.Ref` the fixture's short string. The layout is
+    /// decided from the record, not from the lead's length, so it is the long-lead cell's: the head and
+    /// the lead on the `Error =` line, the refusal once on the `Reason =` line. Decided from what a
+    /// bounded line still carried, the block put the refusal on the `Error =` line here and on the
+    /// `Reason =` line there, and printed it on both when the two readings disagreed.
     #[test]
-    fn a_refused_marker_against_a_short_strings_missing_key_prints_the_refusal_on_the_error_line() {
+    fn a_refused_marker_against_a_short_strings_missing_key_prints_the_refusal_on_the_reason_line()
+    {
         const THE_REFUSALS_PATH: &str = "t path /Resources/R/Properties/Cfg";
         let cfg = CAPTURED_KEYS_AND_A_REFUSAL
             .strip_prefix(r#"{"Cfg": "#)
@@ -7081,7 +7248,7 @@ mod validate_tests {
         let rules =
             format!("rule r {{ {walk}  %x != Resources.R.Properties.Cfg.Mode.Ref.Missing }}");
 
-        let (status_code, out) = run_payload_without_summary(&rules, &template);
+        let (status_code, out) = run_payload_without_summary(&rules, &template, None);
         assert_eq!(
             StatusCode::VALIDATION_ERROR,
             status_code,
@@ -7099,15 +7266,24 @@ mod validate_tests {
             out
         );
         assert!(
-            carrying[0].trim_start().starts_with("Error = ")
+            carrying[0].trim_start().starts_with("Reason = ")
                 && carrying[0].contains(THE_REFUSALS_PATH),
-            "the one line is the `Error =` line and carries the refusal whole, its path included:\n{}",
+            "the one line is the `Reason =` line and carries the refusal whole, its path included:\n{}",
             carrying[0]
         );
+        let error_lines: Vec<&str> = out
+            .lines()
+            .filter(|line| line.trim_start().starts_with("Error = "))
+            .collect();
         assert!(
-            !out.lines()
-                .any(|line| line.trim_start().starts_with("Reason = ")),
-            "no `Reason =` line restates what the `Error =` line carries:\n{}",
+            error_lines.len() == 1
+                && error_lines[0].trim_start().starts_with(
+                    "Error = Check was not compliant as the value to compare from could not be read."
+                )
+                && error_lines[0].contains("Missing")
+                && !error_lines[0].contains(THE_OWN_KEY_REFUSAL),
+            "the one `Error =` line is the sentence's head and the absence's lead, the refusal not on \
+             it:\n{}",
             out
         );
     }
@@ -7127,7 +7303,7 @@ mod validate_tests {
         let rules =
             "rule r { let x = ['a', 'b']  %x != Resources.R.Properties.Cfg.Mode.Ref.Missing }";
 
-        let (status_code, out) = run_payload_without_summary(rules, &template);
+        let (status_code, out) = run_payload_without_summary(rules, &template, None);
         assert_eq!(
             StatusCode::VALIDATION_ERROR,
             status_code,

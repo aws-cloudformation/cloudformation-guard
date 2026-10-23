@@ -118,7 +118,11 @@ impl<'record, 'value, 'loc: 'value> EvalContext<'value, 'loc>
     fn is_top_level_alias(&self, _: &str, _: MergedKeys) -> bool {
         false
     }
-    fn rule_status(&mut self, _: &str, _: crate::rules::eval::ClauseRole) -> Result<Status> {
+    fn rule_status(
+        &mut self,
+        _: &str,
+        _: crate::rules::eval::ClauseRole,
+    ) -> Result<crate::rules::Judged> {
         todo!()
     }
     fn resolve_variable(&mut self, _: &str) -> Result<Vec<QueryResult>> {
@@ -218,6 +222,35 @@ impl<'record, 'value, 'loc: 'value> EvalContext<'value, 'loc>
     ) -> bool {
         false
     }
+    /// Dropped with the other notices.
+    fn pend_scalar_filter_notice(
+        &mut self,
+        _: crate::rules::errors::RefusalToken,
+        _: &FileLocation<'_>,
+        _: &str,
+        _: String,
+        _: crate::rules::MarkerBinding,
+    ) {
+    }
+    fn undecided_member_read(
+        &mut self,
+        _: crate::rules::errors::RefusalToken,
+        _: Option<&str>,
+        _: crate::rules::eval::ClauseRole,
+        _: &FileLocation<'_>,
+    ) {
+    }
+    fn undecided_reads_decided(
+        &mut self,
+        _: &FileLocation<'_>,
+        _: crate::rules::UndecidedReadsDecision,
+    ) {
+    }
+    fn held_raises_failed_closed(&mut self, _: &[String]) {}
+    fn held_fails_mark(&self) -> u64 {
+        0
+    }
+    fn held_fails_judged(&mut self, _: u64, _: Option<&[crate::rules::RefusedRead]>) {}
     /// A cache of its own per ask: this double evaluates no `[*]` filter twice.
     fn predicate_regexes(
         &self,
@@ -257,8 +290,8 @@ impl<'record, 'value, 'loc: 'value> EvalContext<'value, 'loc>
     ) -> Option<Rc<std::cell::RefCell<super::DocumentBindingMemo<'value>>>> {
         None
     }
-    fn resolving_a_binding(&self) -> bool {
-        false
+    fn resolving_binding(&self) -> crate::rules::MarkerBinding {
+        crate::rules::MarkerBinding::Clause
     }
     fn within_parameterized_call(&self) -> bool {
         false
@@ -291,6 +324,24 @@ impl<'record, 'value, 'loc: 'value> EvalContext<'value, 'loc>
         _: crate::rules::UnraisedVerdict,
         _: &[String],
     ) {
+    }
+    fn open_absorbed_frame(&mut self) {}
+    fn close_absorbed_frame(&mut self) -> Vec<crate::rules::AbsorbedRaise<'loc>> {
+        Vec::new()
+    }
+    fn note_absorbed_raise(
+        &mut self,
+        _: &str,
+        _: &FileLocation<'loc>,
+        _: &[String],
+        _: crate::rules::RaiseKind,
+    ) {
+    }
+    fn absorbed_frame_mark(&self) -> usize {
+        0
+    }
+    fn truncate_absorbed_frame(&mut self, _: usize) -> Vec<crate::rules::AbsorbedRaise<'loc>> {
+        Vec::new()
     }
     /// Binds no variables, so nothing here is resolved.
     fn variable_is_resolved(&self, _: &str) -> bool {
@@ -1550,9 +1601,14 @@ fn one_variable_rooted_clause_answers_the_same_in_two_rules() -> Result<()> {
         let mut scope = root_scope(&control_file, Rc::new(value));
         crate::rules::eval::eval_rules_file(&control_file, &mut scope, None)?;
         // `rule_status` after the run re-evaluates the rule (its cache is filled only by itself), a
-        // bare drive after the file record closed: one record around each.
+        // bare drive after the file record closed: one record around each. The judged answers whole,
+        // basis included: `second`'s FAIL is a comparison that answered no, a decided no, so an answer
+        // that read it as resting on an undecidable would fail this control too.
         assert_eq!(
-            (Status::PASS, Status::FAIL),
+            (
+                crate::rules::Judged::Pass,
+                crate::rules::Judged::Fail(crate::rules::FailBasis::Decided)
+            ),
             (
                 scope.drive_bare(|scope| {
                     scope.rule_status("first", crate::rules::eval::ClauseRole::Assertion)
@@ -1571,12 +1627,12 @@ fn one_variable_rooted_clause_answers_the_same_in_two_rules() -> Result<()> {
     let mut scope = root_scope(&rules_file, Rc::new(value));
     let whole = crate::rules::eval::eval_rules_file(&rules_file, &mut scope, None)?;
 
-    let first = scope.drive_bare(|scope| {
-        scope.rule_status("first", crate::rules::eval::ClauseRole::Assertion)
-    })?;
-    let second = scope.drive_bare(|scope| {
-        scope.rule_status("second", crate::rules::eval::ClauseRole::Assertion)
-    })?;
+    let first = scope
+        .drive_bare(|scope| scope.rule_status("first", crate::rules::eval::ClauseRole::Assertion))?
+        .status();
+    let second = scope
+        .drive_bare(|scope| scope.rule_status("second", crate::rules::eval::ClauseRole::Assertion))?
+        .status();
 
     assert_eq!(
         first, second,
@@ -1805,7 +1861,11 @@ impl<'value, 'loc: 'value> EvalContext<'value, 'loc> for BindingsOnly<'value, 'l
     fn is_top_level_alias(&self, _: &str, _: MergedKeys) -> bool {
         todo!()
     }
-    fn rule_status(&mut self, _: &str, _: crate::rules::eval::ClauseRole) -> Result<Status> {
+    fn rule_status(
+        &mut self,
+        _: &str,
+        _: crate::rules::eval::ClauseRole,
+    ) -> Result<crate::rules::Judged> {
         todo!()
     }
     fn resolve_variable(&mut self, _: &str) -> Result<Vec<QueryResult>> {
@@ -1905,6 +1965,41 @@ impl<'value, 'loc: 'value> EvalContext<'value, 'loc> for BindingsOnly<'value, 'l
     ) -> bool {
         todo!()
     }
+    fn pend_scalar_filter_notice(
+        &mut self,
+        _: crate::rules::errors::RefusalToken,
+        _: &FileLocation<'_>,
+        _: &str,
+        _: String,
+        _: crate::rules::MarkerBinding,
+    ) {
+        todo!()
+    }
+    fn undecided_member_read(
+        &mut self,
+        _: crate::rules::errors::RefusalToken,
+        _: Option<&str>,
+        _: crate::rules::eval::ClauseRole,
+        _: &FileLocation<'_>,
+    ) {
+        todo!()
+    }
+    fn undecided_reads_decided(
+        &mut self,
+        _: &FileLocation<'_>,
+        _: crate::rules::UndecidedReadsDecision,
+    ) {
+        todo!()
+    }
+    fn held_raises_failed_closed(&mut self, _: &[String]) {
+        todo!()
+    }
+    fn held_fails_mark(&self) -> u64 {
+        todo!()
+    }
+    fn held_fails_judged(&mut self, _: u64, _: Option<&[crate::rules::RefusedRead]>) {
+        todo!()
+    }
     /// A cache of its own per ask: this double evaluates no `[*]` filter twice.
     fn predicate_regexes(
         &self,
@@ -1945,7 +2040,7 @@ impl<'value, 'loc: 'value> EvalContext<'value, 'loc> for BindingsOnly<'value, 'l
     ) -> Option<Rc<std::cell::RefCell<super::DocumentBindingMemo<'value>>>> {
         todo!()
     }
-    fn resolving_a_binding(&self) -> bool {
+    fn resolving_binding(&self) -> crate::rules::MarkerBinding {
         todo!()
     }
     fn within_parameterized_call(&self) -> bool {
@@ -1976,6 +2071,27 @@ impl<'value, 'loc: 'value> EvalContext<'value, 'loc> for BindingsOnly<'value, 'l
         _: crate::rules::UnraisedVerdict,
         _: &[String],
     ) {
+        todo!()
+    }
+    fn open_absorbed_frame(&mut self) {
+        todo!()
+    }
+    fn close_absorbed_frame(&mut self) -> Vec<crate::rules::AbsorbedRaise<'loc>> {
+        todo!()
+    }
+    fn note_absorbed_raise(
+        &mut self,
+        _: &str,
+        _: &FileLocation<'loc>,
+        _: &[String],
+        _: crate::rules::RaiseKind,
+    ) {
+        todo!()
+    }
+    fn absorbed_frame_mark(&self) -> usize {
+        todo!()
+    }
+    fn truncate_absorbed_frame(&mut self, _: usize) -> Vec<crate::rules::AbsorbedRaise<'loc>> {
         todo!()
     }
     fn data_file_name(&self) -> Option<&'value str> {
@@ -2730,9 +2846,11 @@ fn a_referenced_rules_condition_capture_is_not_read_by_the_referencing_rule() ->
             per_case.push((
                 shape,
                 order,
-                scope.drive_bare(|scope| {
-                    scope.rule_status("main", crate::rules::eval::ClauseRole::Assertion)
-                })?,
+                scope
+                    .drive_bare(|scope| {
+                        scope.rule_status("main", crate::rules::eval::ClauseRole::Assertion)
+                    })?
+                    .status(),
             ));
         }
     }
@@ -6587,7 +6705,7 @@ impl<'scope, 'value, 'loc: 'value> EvalContext<'value, 'loc>
         &mut self,
         rule_name: &'value str,
         role: crate::rules::eval::ClauseRole,
-    ) -> Result<Status> {
+    ) -> Result<crate::rules::Judged> {
         self.inner.rule_status(rule_name, role)
     }
     fn resolve_variable(&mut self, variable_name: &'value str) -> Result<Vec<QueryResult>> {
@@ -6677,6 +6795,42 @@ impl<'scope, 'value, 'loc: 'value> EvalContext<'value, 'loc>
     ) -> bool {
         self.inner.record_deprecation_once(kind, site, notice)
     }
+    fn pend_scalar_filter_notice(
+        &mut self,
+        token: crate::rules::errors::RefusalToken,
+        site: &FileLocation<'_>,
+        reason: &str,
+        notice: String,
+        binding: crate::rules::MarkerBinding,
+    ) {
+        self.inner
+            .pend_scalar_filter_notice(token, site, reason, notice, binding)
+    }
+    fn undecided_member_read(
+        &mut self,
+        token: crate::rules::errors::RefusalToken,
+        reason: Option<&str>,
+        role: crate::rules::eval::ClauseRole,
+        at: &FileLocation<'_>,
+    ) {
+        self.inner.undecided_member_read(token, reason, role, at)
+    }
+    fn undecided_reads_decided(
+        &mut self,
+        at: &FileLocation<'_>,
+        decision: crate::rules::UndecidedReadsDecision,
+    ) {
+        self.inner.undecided_reads_decided(at, decision)
+    }
+    fn held_raises_failed_closed(&mut self, sites: &[String]) {
+        self.inner.held_raises_failed_closed(sites)
+    }
+    fn held_fails_mark(&self) -> u64 {
+        self.inner.held_fails_mark()
+    }
+    fn held_fails_judged(&mut self, since: u64, rests_on: Option<&[crate::rules::RefusedRead]>) {
+        self.inner.held_fails_judged(since, rests_on)
+    }
     fn predicate_regexes(
         &self,
         site: &FileLocation<'_>,
@@ -6720,8 +6874,8 @@ impl<'scope, 'value, 'loc: 'value> EvalContext<'value, 'loc>
     ) -> Option<Rc<std::cell::RefCell<super::DocumentBindingMemo<'value>>>> {
         self.inner.document_binding_memo()
     }
-    fn resolving_a_binding(&self) -> bool {
-        self.inner.resolving_a_binding()
+    fn resolving_binding(&self) -> crate::rules::MarkerBinding {
+        self.inner.resolving_binding()
     }
     fn within_parameterized_call(&self) -> bool {
         self.inner.within_parameterized_call()
@@ -6764,6 +6918,27 @@ impl<'scope, 'value, 'loc: 'value> EvalContext<'value, 'loc>
     ) {
         self.inner
             .record_unraised_refusal(site, context, verdict, refusals)
+    }
+    fn open_absorbed_frame(&mut self) {
+        self.inner.open_absorbed_frame()
+    }
+    fn close_absorbed_frame(&mut self) -> Vec<crate::rules::AbsorbedRaise<'loc>> {
+        self.inner.close_absorbed_frame()
+    }
+    fn note_absorbed_raise(
+        &mut self,
+        clause: &str,
+        site: &FileLocation<'loc>,
+        reads: &[String],
+        kind: crate::rules::RaiseKind,
+    ) {
+        self.inner.note_absorbed_raise(clause, site, reads, kind)
+    }
+    fn absorbed_frame_mark(&self) -> usize {
+        self.inner.absorbed_frame_mark()
+    }
+    fn truncate_absorbed_frame(&mut self, mark: usize) -> Vec<crate::rules::AbsorbedRaise<'loc>> {
+        self.inner.truncate_absorbed_frame(mark)
     }
     fn variable_is_resolved(&self, variable_name: &str) -> bool {
         self.inner.variable_is_resolved(variable_name)
@@ -8151,6 +8326,743 @@ fn a_declared_capture_absent_from_the_store_reads_as_an_empty_selection_at_both_
     Ok(())
 }
 
+/// The author's `<< >>` message a block check carries (`BlockCheck::custom_message`: a `not` over a reference
+/// that failed closed, an access clause's own block-shaped record) reaches the structured report's
+/// `custom_message` for every block record kind the report builder reads (`BlockGuardCheck`,
+/// `GuardClauseBlockCheck`, `TypeCheck`, `WhenCheck`), beside the record's own sentence and flag; a record
+/// with none reads `None`, as before. Rows "BG", "GC", "TC", "WC", one per kind, each a childless FAIL
+/// record with a message, and "GC-none" the control with no author's message.
+#[test]
+fn a_block_checks_authors_message_reaches_the_structured_report_for_every_record_kind() {
+    const AUTHORS: &str = "the author's own words on the clause";
+    const SENTENCE: &str = "the record's own sentence";
+    let block = |custom_message: Option<&str>| BlockCheck {
+        status: Status::FAIL,
+        at_least_one_matches: false,
+        message: Some(SENTENCE.to_string()),
+        refusal: true,
+        custom_message: custom_message.map(str::to_string),
+    };
+    let record = |container: RecordType<'static>| EventRecord {
+        context: String::from("rule/clause"),
+        container: Some(container),
+        children: vec![],
+    };
+    let messages_of = |records: &[EventRecord<'_>]| -> (Option<String>, Option<String>, bool) {
+        let clauses = report_all_failed_clauses_for_rules(records);
+        match clauses.as_slice() {
+            [ClauseReport::Block(block)] => (
+                block.messages.custom_message.clone(),
+                block.messages.error_message.clone(),
+                block.messages.refusal,
+            ),
+            other => panic!("one block report for one record, got {}", other.len()),
+        }
+    };
+    for (label, container) in [
+        ("BG", RecordType::BlockGuardCheck(block(Some(AUTHORS)))),
+        (
+            "GC",
+            RecordType::GuardClauseBlockCheck(block(Some(AUTHORS))),
+        ),
+        (
+            "TC",
+            RecordType::TypeCheck(TypeBlockCheck {
+                type_name: "AWS::S3::Bucket",
+                block: block(Some(AUTHORS)),
+            }),
+        ),
+        ("WC", RecordType::WhenCheck(block(Some(AUTHORS)))),
+    ] {
+        assert_eq!(
+            (Some(AUTHORS.to_string()), Some(SENTENCE.to_string()), true),
+            messages_of(&[record(container)]),
+            "({label}) the block check's author's message, sentence and flag reach the report"
+        );
+    }
+    assert_eq!(
+        (None, Some(SENTENCE.to_string()), true),
+        messages_of(&[record(RecordType::GuardClauseBlockCheck(block(None)))]),
+        "(GC-none) a block check with no author's message reports none"
+    );
+}
+
+/// An access clause's block record with a message is reported by the report builder unless one of the
+/// clause's OWN per-value records reports (`an_own_value_check_reports`), and after its children: (i) a
+/// FAILING own-context child (a dependent-rule value check under the clause's context): the block is
+/// suppressed and the child reports alone; (ii) a reporting child from ANOTHER context (a `let`'s key
+/// filter recorded under no clause): the child first, then the block with its author's message; (iii) a
+/// named reference's record (a `not` that failed closed) holding the referenced rule's `RuleCheck`: the
+/// rule's report first, then the block, the order the call spelling writes; (iv) an own-context child
+/// that is a `Success` prints nothing, so the block is NOT suppressed. The clause and value contexts are
+/// built by the writer's helpers (`eval::access_clause_block_context`, `eval::access_clause_value_context`),
+/// never spelled here.
+#[test]
+fn an_access_clauses_block_report_is_suppressed_only_by_an_own_value_check_that_reports() {
+    use crate::rules::exprs::{GuardClause, RuleClause, RulesFile};
+    use crate::rules::{ClauseCheck, MissingValueCheck, NamedStatus};
+    const AUTHORS: &str = "the author's own words on the clause";
+    const SENTENCE: &str = "the record's own sentence";
+    let rules_file = RulesFile::try_from("rule r { Resources exists }").expect("a rules file");
+    let gac = match rules_file.guard_rules[0].block.conjunctions[0][0] {
+        RuleClause::Clause(GuardClause::Clause(ref gac)) => gac,
+        ref other => panic!("an access clause, got {:?}", other),
+    };
+    let block_context = crate::rules::eval::access_clause_block_context(gac);
+    let value_context = crate::rules::eval::access_clause_value_context(gac);
+    let block = BlockCheck {
+        status: Status::FAIL,
+        at_least_one_matches: false,
+        message: Some(SENTENCE.to_string()),
+        refusal: true,
+        custom_message: Some(AUTHORS.to_string()),
+    };
+    let child = |context: &str, container: RecordType<'static>| EventRecord {
+        context: context.to_string(),
+        container: Some(container),
+        children: vec![],
+    };
+    let failing = |context: &str| {
+        child(
+            context,
+            RecordType::ClauseValueCheck(ClauseCheck::DependentRule(MissingValueCheck {
+                rule: "helper",
+                status: Status::FAIL,
+                message: None,
+                custom_message: None,
+            })),
+        )
+    };
+    let success = child(
+        &value_context,
+        RecordType::ClauseValueCheck(ClauseCheck::Success),
+    );
+    let rule_run = child(
+        "check",
+        RecordType::RuleCheck(NamedStatus {
+            name: "check",
+            status: Status::FAIL,
+            message: None,
+            refusal: false,
+        }),
+    );
+    /// The kinds of the reports, in order: `B` a block carrying the author's message, `C` a clause
+    /// report, `R` a rule report.
+    fn shape(reports: &[ClauseReport<'_>]) -> String {
+        reports
+            .iter()
+            .map(|report| match report {
+                ClauseReport::Block(block) => match block.messages.custom_message.as_deref() {
+                    Some(AUTHORS) => 'B',
+                    _ => 'b',
+                },
+                ClauseReport::Clause(_) => 'C',
+                ClauseReport::Rule(_) => 'R',
+                ClauseReport::Disjunctions(_) => 'D',
+            })
+            .collect()
+    }
+    for (label, context, children, expected) in [
+        (
+            "(i) an own-context failing child suppresses the block",
+            block_context.as_str(),
+            vec![failing(&value_context)],
+            "C",
+        ),
+        (
+            "(ii) a reporting child of another context: the child, then the block",
+            block_context.as_str(),
+            vec![failing("")],
+            "CB",
+        ),
+        (
+            "(iii) a named reference's record over the rule's run: the rule, then the block",
+            "not check",
+            vec![rule_run.clone()],
+            "RB",
+        ),
+        (
+            "(iv) an own-context success prints nothing and suppresses nothing",
+            block_context.as_str(),
+            vec![success.clone()],
+            "B",
+        ),
+        (
+            "(v) an own-context success beside a reporting child of another context: the child, then the block (a reading by the children's kind suppressed the block here)",
+            block_context.as_str(),
+            vec![success.clone(), failing("")],
+            "CB",
+        ),
+    ] {
+        let record = EventRecord {
+            context: context.to_string(),
+            container: Some(RecordType::GuardClauseBlockCheck(block.clone())),
+            children,
+        };
+        assert_eq!(
+            expected,
+            shape(&report_all_failed_clauses_for_rules(std::slice::from_ref(
+                &record
+            ))),
+            "{label}"
+        );
+    }
+}
+
+/// The writer's two contexts for an access clause differ by the one shared prefix the reader strips
+/// (`eval::ACCESS_CLAUSE_BLOCK_CONTEXT_PREFIX`): a drift between them would make every access clause's
+/// block record look like one with no per-value child, and every raised clause print its reason twice.
+#[test]
+fn the_access_clauses_block_and_value_contexts_differ_by_the_shared_prefix() {
+    use crate::rules::exprs::{GuardClause, RuleClause, RulesFile};
+    // The `let` is what makes the file evaluable below: an undeclared variable is a rules-file error,
+    // and the real evaluation's `expect` would panic on it instead of writing the record this cell reads.
+    let rules_file =
+        RulesFile::try_from("let allowed = ['T']\nrule r { some Resources.*.Type IN %allowed }")
+            .expect("a rules file");
+    let gac = match rules_file.guard_rules[0].block.conjunctions[0][0] {
+        RuleClause::Clause(GuardClause::Clause(ref gac)) => gac,
+        ref other => panic!("an access clause, got {:?}", other),
+    };
+    let block_context = crate::rules::eval::access_clause_block_context(gac);
+    let value_context = crate::rules::eval::access_clause_value_context(gac);
+    assert_eq!(
+        Some(value_context.as_str()),
+        block_context.strip_prefix(crate::rules::eval::ACCESS_CLAUSE_BLOCK_CONTEXT_PREFIX),
+        "the block context is the prefix and then the value context"
+    );
+    assert!(
+        !value_context.is_empty() && !value_context.starts_with('#'),
+        "the value context is the clause as written: {}",
+        value_context
+    );
+    // The writer USES the helpers: a real evaluation's record tree holds the clause's block record under
+    // the block context and, under it, a value's record under the value context; a writer spelling either
+    // text by hand would drift from the reader without this read.
+    let mut root = root_scope(
+        &rules_file,
+        Rc::new(
+            PathAwareValue::try_from(r#"{ "Resources": { "R": { "Type": "T" } } }"#)
+                .expect("a document"),
+        ),
+    );
+    crate::rules::eval::eval_rules_file(&rules_file, &mut root, None).expect("an evaluation");
+    let tree = root.reset_recorder().extract();
+    fn find<'r>(record: &'r EventRecord<'_>, context: &str) -> Option<&'r EventRecord<'r>> {
+        if record.context == context {
+            return Some(record);
+        }
+        record
+            .children
+            .iter()
+            .find_map(|child| find(child, context))
+    }
+    let block = find(&tree, &block_context)
+        .expect("the clause's block record, under the writer's block context");
+    assert!(
+        block
+            .children
+            .iter()
+            .any(|child| child.context == value_context),
+        "a value's record under the clause's block record carries the writer's value context: {:?}",
+        block
+            .children
+            .iter()
+            .map(|child| child.context.as_str())
+            .collect::<Vec<_>>()
+    );
+}
+
+/// The root scope's hold machine for the in-predicate scalar-filter notice, cell by cell
+/// (`pend_scalar_filter_notice`, `undecided_member_read`, `undecided_reads_decided`,
+/// `held_raises_failed_closed`, and `record_unraised_refusal`'s drop of a raise decided past): (1) held,
+/// confirmed by a filter-role read with the marker's own sentence, read by a clause and FAILED there: one
+/// notice, and a second hold on the same token for the same site adds none (once per site); (2) a clause
+/// DECIDED without the marker withdraws its read and keeps the hold confirmed, so a later reader that fails
+/// writes it; (3) a raise at a clause's site is written when that site fails a rule closed, not when another
+/// site does, and a nameless call writes every raise; (4) an unconfirmed hold a clause reads is dropped and
+/// never written, by that clause or a later one; (5) a raise at one site is not erased by a later read at
+/// another site that is then decided without the marker; (6) the refused-read line written for the raise's
+/// site as decided past drops the raise, so a later fail-closed writes nothing; (7) two tokens held at one
+/// site are written first-minted first, so the site keeps the first's text; (8) a filter-role read with
+/// another sentence confirms nothing. A strict FAIL is settled by the rule's verdict (`held_fails_judged`):
+/// written when the rule FAILs, withdrawn when it does not, and dropped by the refused-read line a
+/// disjunct writes for the clause (6b), as a raise is by its fold. The store's bound: (9) a hold whose
+/// marker no binding produced (`MarkerBinding::Clause`) stays through an unrelated cleanup, a reader
+/// decided without it, a FAIL the rule passed past and a raise decided past (a later clause of the rule
+/// may still read the marker), and goes at the rule boundary (`reset_captures`), while a file-level
+/// assignment's hold (`RootAssignment`; rows (2) and (5), which need a second reader) outlives it; (10) a
+/// second hold for one token merges into the first, keeping its confirmation and its RAISED reader for
+/// the fold to write, where a replacement reset both. The rule-level settlement: (11) a nested rule's
+/// judgment (`held_fails_mark`, then `held_fails_judged` since it) withdraws the FAILs marked since its
+/// mark alone, so the enclosing rule's earlier FAIL is written by the enclosing rule's own FAIL; (12) a
+/// FAIL whose reads do not name the hold (by sentence or by token) withdraws its FAIL and writes nothing,
+/// where one that names it by token writes it. (13) the boundary reads the binding's KIND: a block
+/// `let`'s hold (`BlockLet`) goes at the boundary as a clause's own does; a file-level assignment's is
+/// kept and keeps no reader entry across it, so a FAIL left unsettled at the boundary is not written by
+/// the next rule's judgment; a re-pend keeps the greater binding.
+#[test]
+fn the_held_scalar_filter_notice_is_written_only_where_its_reader_moved_the_verdict() {
+    use crate::rules::errors::RefusalToken;
+    use crate::rules::eval::ClauseRole;
+    use crate::rules::exprs::RulesFile;
+    use crate::rules::{EvalContext, UndecidedReadsDecision, UnraisedVerdict};
+    const BODY: &str = "the member is now undecided (held notice";
+    let at = |line: u32| FileLocation {
+        line,
+        column: 1,
+        file_name: "rules.guard",
+    };
+    let (filter_site, clause_a, clause_b) = (at(5), at(10), at(20));
+    let rules_file = RulesFile::try_from("rule r { Other exists }").expect("a rules file");
+    let scope = || {
+        root_scope(
+            &rules_file,
+            Rc::new(PathAwareValue::try_from(r#"{ "Other": "o" }"#).expect("a document")),
+        )
+    };
+    let notices = |root: &RootScope<'_, '_>| -> Vec<String> {
+        root.deprecations()
+            .filter(|notice| notice.contains(BODY))
+            .cloned()
+            .collect()
+    };
+    // A clause's own marker (`pend`: its reader withdrawn or written; the hold goes at the rule boundary,
+    // `reset_captures`), a block `let`'s (`pend_block`: the same lifetime, its readers inside the rule)
+    // and a file-level assignment's (`pend_let`: kept past the boundary for the next rule's reader).
+    let pend = |root: &mut RootScope<'_, '_>, token: RefusalToken, tag: &str| {
+        root.pend_scalar_filter_notice(
+            token,
+            &filter_site,
+            "R",
+            format!("{BODY} {tag})"),
+            crate::rules::MarkerBinding::Clause,
+        );
+    };
+    let pend_block = |root: &mut RootScope<'_, '_>, token: RefusalToken, tag: &str| {
+        root.pend_scalar_filter_notice(
+            token,
+            &filter_site,
+            "R",
+            format!("{BODY} {tag})"),
+            crate::rules::MarkerBinding::BlockLet,
+        );
+    };
+    let pend_let = |root: &mut RootScope<'_, '_>, token: RefusalToken, tag: &str| {
+        root.pend_scalar_filter_notice(
+            token,
+            &filter_site,
+            "R",
+            format!("{BODY} {tag})"),
+            crate::rules::MarkerBinding::RootAssignment,
+        );
+    };
+    let confirm = |root: &mut RootScope<'_, '_>, token: RefusalToken| {
+        root.undecided_member_read(token, Some("R"), ClauseRole::Filter, &filter_site);
+    };
+    let read = |root: &mut RootScope<'_, '_>, token: RefusalToken, site: &FileLocation<'_>| {
+        root.undecided_member_read(token, Some("R"), ClauseRole::Assertion, site);
+    };
+    // A top-level rule's judgment over every FAIL marked in the scope (mark 0): a FAIL resting on the
+    // read `R` (the holds `R` names are written), or any other verdict (the FAILs are withdrawn).
+    let rests_on_r: Vec<crate::rules::RefusedRead> = vec![("R".to_string(), None)];
+    let judged_fail = |root: &mut RootScope<'_, '_>| root.held_fails_judged(0, Some(&rests_on_r));
+    let judged_pass = |root: &mut RootScope<'_, '_>| root.held_fails_judged(0, None);
+    let t1 = RefusalToken::minted(1);
+    let t2 = RefusalToken::minted(2);
+
+    // (1) held, confirmed, read, FAILED, the rule judged FAIL: written once; once per site. A FAIL alone
+    // writes nothing until the rule is judged.
+    let mut root = scope();
+    pend(&mut root, t1, "one");
+    confirm(&mut root, t1);
+    read(&mut root, t1, &clause_a);
+    root.undecided_reads_decided(&clause_a, UndecidedReadsDecision::Failed);
+    assert_eq!(0, notices(&root).len(), "(1) a FAIL waits for the rule");
+    judged_fail(&mut root);
+    assert_eq!(
+        1,
+        notices(&root).len(),
+        "(1) written once: {:?}",
+        notices(&root)
+    );
+    pend(&mut root, t1, "again");
+    confirm(&mut root, t1);
+    read(&mut root, t1, &clause_a);
+    root.undecided_reads_decided(&clause_a, UndecidedReadsDecision::Failed);
+    judged_fail(&mut root);
+    assert_eq!(
+        1,
+        notices(&root).len(),
+        "(1) once per site: {:?}",
+        notices(&root)
+    );
+    assert!(
+        notices(&root)[0].contains("one)"),
+        "(1) the first text stays"
+    );
+
+    // (2) DECIDED keeps a memoized binding's hold confirmed for the next reader; so does a FAIL the rule
+    // passed past.
+    let mut root = scope();
+    pend_let(&mut root, t1, "two");
+    confirm(&mut root, t1);
+    read(&mut root, t1, &clause_a);
+    root.undecided_reads_decided(&clause_a, UndecidedReadsDecision::Decided);
+    judged_fail(&mut root);
+    assert_eq!(
+        0,
+        notices(&root).len(),
+        "(2) decided without the marker writes nothing"
+    );
+    read(&mut root, t1, &clause_a);
+    root.undecided_reads_decided(&clause_a, UndecidedReadsDecision::Failed);
+    judged_pass(&mut root);
+    assert_eq!(
+        0,
+        notices(&root).len(),
+        "(2) a FAIL the rule passed past writes nothing"
+    );
+    read(&mut root, t1, &clause_b);
+    root.undecided_reads_decided(&clause_b, UndecidedReadsDecision::Failed);
+    judged_fail(&mut root);
+    assert_eq!(
+        1,
+        notices(&root).len(),
+        "(2) the next reader that fails writes it"
+    );
+
+    // (3) a raise is written where ITS site fails a rule closed, not where another does; a rule's FAIL
+    // leaves a raise alone (its fold settles it).
+    let mut root = scope();
+    pend(&mut root, t1, "three");
+    confirm(&mut root, t1);
+    read(&mut root, t1, &clause_a);
+    root.undecided_reads_decided(&clause_a, UndecidedReadsDecision::Raised);
+    root.held_raises_failed_closed(&[clause_b.to_string()]);
+    judged_fail(&mut root);
+    assert_eq!(
+        0,
+        notices(&root).len(),
+        "(3) another site's fail-closed, or the rule's FAIL, writes nothing for a raise"
+    );
+    root.held_raises_failed_closed(&[clause_a.to_string()]);
+    assert_eq!(
+        1,
+        notices(&root).len(),
+        "(3) the raise's own site writes it"
+    );
+
+    // (4) an unconfirmed hold a clause reads is dropped.
+    let mut root = scope();
+    pend(&mut root, t1, "four");
+    read(&mut root, t1, &clause_a);
+    root.undecided_reads_decided(&clause_a, UndecidedReadsDecision::Failed);
+    judged_fail(&mut root);
+    confirm(&mut root, t1);
+    read(&mut root, t1, &clause_b);
+    root.undecided_reads_decided(&clause_b, UndecidedReadsDecision::Failed);
+    judged_fail(&mut root);
+    assert_eq!(
+        0,
+        notices(&root).len(),
+        "(4) nothing confirmed it, nothing is written"
+    );
+
+    // (5) a raise at A survives a read at B decided without the marker (a memoized binding's hold, the
+    // one shape with two readers).
+    let mut root = scope();
+    pend_let(&mut root, t1, "five");
+    confirm(&mut root, t1);
+    read(&mut root, t1, &clause_a);
+    root.undecided_reads_decided(&clause_a, UndecidedReadsDecision::Raised);
+    read(&mut root, t1, &clause_b);
+    root.undecided_reads_decided(&clause_b, UndecidedReadsDecision::Decided);
+    root.held_raises_failed_closed(&[clause_a.to_string()]);
+    assert_eq!(
+        1,
+        notices(&root).len(),
+        "(5) the raise at A is kept past B's read"
+    );
+
+    // (6) the decided-past line for the raise's site drops the raise.
+    let mut root = scope();
+    pend(&mut root, t1, "six");
+    confirm(&mut root, t1);
+    read(&mut root, t1, &clause_a);
+    root.undecided_reads_decided(&clause_a, UndecidedReadsDecision::Raised);
+    root.record_unraised_refusal(
+        &clause_a,
+        "Other exists",
+        UnraisedVerdict::DecidedBySiblingClause,
+        &["R".to_string()],
+    );
+    root.held_raises_failed_closed(&[clause_a.to_string()]);
+    assert_eq!(
+        0,
+        notices(&root).len(),
+        "(6) a raise decided past writes nothing"
+    );
+    // (6b) the same line for a strict FAIL a disjunct passed past.
+    let mut root = scope();
+    pend(&mut root, t1, "six-b");
+    confirm(&mut root, t1);
+    read(&mut root, t1, &clause_a);
+    root.undecided_reads_decided(&clause_a, UndecidedReadsDecision::Failed);
+    root.record_unraised_refusal(
+        &clause_a,
+        "Other exists",
+        UnraisedVerdict::PassedBySiblingClause,
+        &["R".to_string()],
+    );
+    judged_fail(&mut root);
+    assert_eq!(
+        0,
+        notices(&root).len(),
+        "(6b) a FAIL decided past writes nothing when the rule fails on something else"
+    );
+
+    // (7) two tokens at one site: first-minted first.
+    let mut root = scope();
+    pend(&mut root, t2, "second");
+    pend(&mut root, t1, "first");
+    confirm(&mut root, t1);
+    confirm(&mut root, t2);
+    read(&mut root, t1, &clause_a);
+    read(&mut root, t2, &clause_a);
+    root.undecided_reads_decided(&clause_a, UndecidedReadsDecision::Failed);
+    judged_fail(&mut root);
+    let written = notices(&root);
+    assert_eq!(1, written.len(), "(7) one notice at the site: {written:?}");
+    assert!(
+        written[0].contains("first)"),
+        "(7) the first-minted text: {:?}",
+        written
+    );
+
+    // (8) a filter-role read with another sentence confirms nothing.
+    let mut root = scope();
+    pend(&mut root, t1, "eight");
+    root.undecided_member_read(t1, Some("not R"), ClauseRole::Filter, &filter_site);
+    read(&mut root, t1, &clause_a);
+    root.undecided_reads_decided(&clause_a, UndecidedReadsDecision::Failed);
+    judged_fail(&mut root);
+    assert_eq!(
+        0,
+        notices(&root).len(),
+        "(8) another sentence confirms nothing"
+    );
+
+    // (9) the store's bound is the RULE boundary (`reset_captures`): a clause's own hold stays through
+    // an unrelated cleanup before its first outer read, through a reader decided without it, a FAIL the
+    // rule passed past and a raise decided past (a later clause of the rule may read the marker through a
+    // capture or a call's argument), and goes at the rule's end; a file-level assignment's hold outlives
+    // the boundary.
+    let mut root = scope();
+    pend(&mut root, t1, "nine");
+    confirm(&mut root, t1);
+    root.record_unraised_refusal(
+        &clause_b,
+        "Other exists",
+        UnraisedVerdict::DecidedBySiblingClause,
+        &["Q".to_string()],
+    );
+    judged_pass(&mut root);
+    assert_eq!(
+        1,
+        root.held_scalar_filter_notices(),
+        "(9) a confirmed, unread hold waits for its reader through an unrelated cleanup"
+    );
+    read(&mut root, t1, &clause_a);
+    root.undecided_reads_decided(&clause_a, UndecidedReadsDecision::Decided);
+    assert_eq!(
+        1,
+        root.held_scalar_filter_notices(),
+        "(9) a reader decided without the marker leaves the hold for a later reader"
+    );
+    read(&mut root, t1, &clause_a);
+    root.undecided_reads_decided(&clause_a, UndecidedReadsDecision::Failed);
+    judged_pass(&mut root);
+    assert_eq!(
+        1,
+        root.held_scalar_filter_notices(),
+        "(9) a FAIL the rule passed past leaves the hold"
+    );
+    read(&mut root, t1, &clause_a);
+    root.undecided_reads_decided(&clause_a, UndecidedReadsDecision::Raised);
+    root.record_unraised_refusal(
+        &clause_a,
+        "Other exists",
+        UnraisedVerdict::DecidedBySiblingClause,
+        &["R".to_string()],
+    );
+    assert_eq!(
+        1,
+        root.held_scalar_filter_notices(),
+        "(9) a raise decided past leaves the hold"
+    );
+    root.reset_captures();
+    assert_eq!(
+        (0, 0),
+        (root.held_scalar_filter_notices(), notices(&root).len()),
+        "(9) the rule's end drops a clause's own hold; nothing was written"
+    );
+    let mut root = scope();
+    pend_let(&mut root, t1, "nine-let");
+    confirm(&mut root, t1);
+    read(&mut root, t1, &clause_a);
+    root.undecided_reads_decided(&clause_a, UndecidedReadsDecision::Decided);
+    root.reset_captures();
+    assert_eq!(
+        1,
+        root.held_scalar_filter_notices(),
+        "(9) a file-level assignment's hold outlives the rule boundary for the next rule's reader"
+    );
+    assert_eq!(0, notices(&root).len(), "(9) nothing was written");
+
+    // (10) a re-pend of one token merges: the confirmation and the RAISED reader at A are kept, so the
+    // fold around A writes it; replaced whole, the hold read unconfirmed and the fold found no raise.
+    let mut root = scope();
+    pend(&mut root, t1, "ten");
+    confirm(&mut root, t1);
+    read(&mut root, t1, &clause_a);
+    root.undecided_reads_decided(&clause_a, UndecidedReadsDecision::Raised);
+    pend(&mut root, t1, "ten again");
+    assert_eq!(
+        1,
+        root.held_scalar_filter_notices(),
+        "(10) one hold per token"
+    );
+    root.held_raises_failed_closed(&[clause_a.to_string()]);
+    let written = notices(&root);
+    assert_eq!(
+        1,
+        written.len(),
+        "(10) the raise survived the re-pend and is written: {written:?}"
+    );
+    assert!(
+        written[0].contains("ten again)"),
+        "(10) the later notice text is the one written: {:?}",
+        written
+    );
+    assert_eq!(
+        0,
+        root.held_scalar_filter_notices(),
+        "(10) written and dropped"
+    );
+
+    // (11) a nested rule's judgment settles the FAILs marked since ITS mark alone: the enclosing rule's
+    // FAIL at A, marked before the nested rule opened, survives the nested rule's pass and is written when
+    // the enclosing rule's FAIL rests on the read.
+    let mut root = scope();
+    pend_let(&mut root, t1, "eleven");
+    confirm(&mut root, t1);
+    read(&mut root, t1, &clause_a);
+    root.undecided_reads_decided(&clause_a, UndecidedReadsDecision::Failed);
+    let nested = root.held_fails_mark();
+    read(&mut root, t1, &clause_b);
+    root.undecided_reads_decided(&clause_b, UndecidedReadsDecision::Failed);
+    root.held_fails_judged(nested, None);
+    assert_eq!(
+        0,
+        notices(&root).len(),
+        "(11) the nested pass withdraws B and writes nothing"
+    );
+    judged_fail(&mut root);
+    assert_eq!(
+        1,
+        notices(&root).len(),
+        "(11) A's FAIL, marked before the nested rule, is written by the enclosing rule"
+    );
+
+    // (12) a FAIL that rests on OTHER reads moved nothing for this hold: withdrawn; the hold goes at the
+    // rule boundary (`reset_captures`).
+    let mut root = scope();
+    pend(&mut root, t1, "twelve");
+    confirm(&mut root, t1);
+    read(&mut root, t1, &clause_a);
+    root.undecided_reads_decided(&clause_a, UndecidedReadsDecision::Failed);
+    let other: Vec<crate::rules::RefusedRead> = vec![("another read".to_string(), None)];
+    root.held_fails_judged(0, Some(&other));
+    assert_eq!(
+        (0, 1),
+        (notices(&root).len(), root.held_scalar_filter_notices()),
+        "(12) a FAIL resting on other reads writes nothing and withdraws the FAIL; the hold waits for the rule's end"
+    );
+    root.reset_captures();
+    assert_eq!(
+        0,
+        root.held_scalar_filter_notices(),
+        "(12) the rule's end drops it"
+    );
+    // The same FAIL naming the hold by its TOKEN writes it.
+    let mut root = scope();
+    pend(&mut root, t1, "twelve-token");
+    confirm(&mut root, t1);
+    read(&mut root, t1, &clause_a);
+    root.undecided_reads_decided(&clause_a, UndecidedReadsDecision::Failed);
+    let by_token: Vec<crate::rules::RefusedRead> = vec![("another read".to_string(), Some(t1))];
+    root.held_fails_judged(0, Some(&by_token));
+    assert_eq!(
+        1,
+        notices(&root).len(),
+        "(12) a read carrying the hold's token names it"
+    );
+
+    // (13) the boundary reads the binding's KIND: a block `let`'s hold (a rule body's, a type block's
+    // per-resource, a called rule's body's) has every reader inside its rule and goes at the boundary as
+    // a clause's own does, where a flag read as "any binding" kept a type block's N holds alive to the
+    // scope's end; a file-level assignment's hold is kept, and keeps NO reader entry across the
+    // boundary, so a FAIL a rule left unsettled at a shared site is not written by the next rule's
+    // judgment. A re-pend keeps the greater binding.
+    let mut root = scope();
+    pend_block(&mut root, t1, "thirteen-block");
+    confirm(&mut root, t1);
+    read(&mut root, t1, &clause_a);
+    root.undecided_reads_decided(&clause_a, UndecidedReadsDecision::Decided);
+    root.reset_captures();
+    assert_eq!(
+        (0, 0),
+        (root.held_scalar_filter_notices(), notices(&root).len()),
+        "(13) a block `let`'s hold goes at the rule boundary; nothing was written"
+    );
+    let mut root = scope();
+    pend_let(&mut root, t1, "thirteen-root");
+    confirm(&mut root, t1);
+    read(&mut root, t1, &clause_a);
+    root.undecided_reads_decided(&clause_a, UndecidedReadsDecision::Failed);
+    root.reset_captures();
+    assert_eq!(
+        1,
+        root.held_scalar_filter_notices(),
+        "(13) a file-level assignment's hold is kept past the boundary"
+    );
+    judged_fail(&mut root);
+    assert_eq!(
+        (0, 1),
+        (notices(&root).len(), root.held_scalar_filter_notices()),
+        "(13) the FAIL left unsettled at the boundary is not carried into the next rule's judgment: nothing written, the hold confirmed for a reader"
+    );
+    read(&mut root, t1, &clause_b);
+    root.undecided_reads_decided(&clause_b, UndecidedReadsDecision::Failed);
+    judged_fail(&mut root);
+    assert_eq!(
+        1,
+        notices(&root).len(),
+        "(13) the next rule's own FAIL on the kept hold is written"
+    );
+    let mut root = scope();
+    pend_block(&mut root, t1, "thirteen-merge");
+    pend_let(&mut root, t1, "thirteen-merge again");
+    confirm(&mut root, t1);
+    root.reset_captures();
+    assert_eq!(
+        1,
+        root.held_scalar_filter_notices(),
+        "(13) a re-pend keeps the greater binding: the hold outlives the boundary"
+    );
+}
+
 /// A unary report keeps the kind of the record it was built from (`ValueCheck::refusal`) and, for a
 /// refusal's record, bounds what its sentence quotes from the template, as the comparison reports do. A
 /// refused read recorded over an unresolved value prints the value the query traversed to into its
@@ -8808,6 +9720,127 @@ fn a_refusals_quoted_value_renders_its_path_as_a_path_and_its_value_as_a_part() 
     );
 }
 
+/// `registers_wrap`, the one rule both wrap sites read (`rhs_undecided`, `key_filter::outcome_of`), on
+/// its truth table: a plain refusal's wrap is registered whatever token it carries; a numbered text's
+/// wrap is registered only when NO token carries the refusal for it (the release build's fail-closed
+/// answer where the sites' debug assertions say the invariant was broken); a text that is no refusal's
+/// registers nothing, numbered or not, token or none. Read here because at each site the assertion
+/// panics on the one input where the branch matters, so a test through the sites cannot tell the rule
+/// from a site that registers every refusal's wrap.
+#[test]
+fn a_wrap_is_registered_for_a_plain_refusal_and_for_a_numbered_text_with_no_token_alone() {
+    let token = Some(mint_refusal_token());
+    for (refused, numbered, token, expected) in [
+        (true, false, None, true),
+        (true, false, token, true),
+        (true, true, None, true),
+        (true, true, token, false),
+        (false, false, None, false),
+        (false, false, token, false),
+        (false, true, None, false),
+        (false, true, token, false),
+    ] {
+        assert_eq!(
+            registers_wrap(refused, numbered, token),
+            expected,
+            "registers_wrap({}, {}, {:?})",
+            refused,
+            numbered,
+            token
+        );
+    }
+}
+
+/// A function's reason for a value it had no answer for (`no_answer_for`, through
+/// `general_no_answer_reason`) bounds its one template-derived part, the path, where it is written: a
+/// value at a path of a thousand characters names its path as `template_path` renders it (cut in its
+/// middle, both ends kept, the location whole) and never whole, so the reason reaches the key filter's
+/// marker (`UnResolvedRhs::did_not_resolve_reason`) and a record's lead (`eval::Lead::Absence`) bounded,
+/// where it was once bounded only where the key filter embedded it and reached a lead whole.
+#[test]
+fn a_functions_no_answer_reason_bounds_its_path_where_it_is_written() {
+    // A list, a kind `parse_int` does not take: the one way a value reaches `no_answer_for` through
+    // `parse_int` (a string it cannot parse leaves through the function's own `Err`, never here).
+    let long = "k".repeat(1000);
+    let value = Rc::new(PathAwareValue::List((
+        Path::new(format!("/Cfg/{long}/Name"), 2, 4),
+        vec![],
+    )));
+    let result = no_answer_for(
+        &FunctionName::ParseInt,
+        &[vec![QueryResult::Resolved(Rc::clone(&value))]],
+        Some(0),
+    );
+    let QueryResult::UnResolved(unresolved) = &result else {
+        panic!("a value the function had no answer for is an unresolved result");
+    };
+    let reason = unresolved.reason.clone().unwrap_or_default();
+    let expected_path = template_path(value.self_path());
+    assert!(
+        expected_path.contains("more characters cut]...") && expected_path.ends_with("[L:2,C:4]"),
+        "the control: a thousand-character path is cut in its middle with its location whole: {}",
+        expected_path
+    );
+    assert_eq!(
+        reason,
+        format!(
+            "parse_int has no answer for the value at {expected_path}: it is array, which the function \
+             does not take"
+        ),
+        "the reason names the path as `template_path` renders it"
+    );
+    assert!(
+        !reason.contains(&long),
+        "the path is never whole: {}",
+        reason
+    );
+}
+
+/// `bounded_lead`, the record's net under the source bounds (`eval::Lead::into_text`): a lead of bounded
+/// parts, wider than one part, passes through unchanged (nothing is cut a second time); a lead holding a
+/// raw control is escaped once, and a second pass over the escaped lead changes nothing; a raw lead past
+/// `LONGEST_LEAD_IN_A_RECORD` printed characters is cut at its end with the count cut.
+#[test]
+fn the_records_lead_net_cuts_nothing_bounded_and_escapes_once() {
+    // The widest lead a retrieval writes: the three-part "Attempting to retrieve from key K but type is
+    // not an struct type at path P, Type = T, Value = V" reason with every part at its maximum (a key
+    // and a value each cut at the part bound, a path cut in its middle), the longest type name among
+    // them; a lead of bounded parts of that width passes through unchanged, so the net's width cannot
+    // sit between a real lead's width and the console's bound and cut such a lead a second time.
+    let widest_part = "k".repeat(1000);
+    let bounded = format!(
+        "Attempting to retrieve from key {} but type is not an struct type at path {}, Type = {}, \
+         Value = {}",
+        marker_part(&widest_part),
+        template_path(&Path::new(format!("/Cfg/{widest_part}/Tags"), 1, 1)),
+        "String",
+        marker_part(&format!("{:?}", "v".repeat(1000)))
+    );
+    assert_eq!(
+        bounded_lead(&bounded),
+        bounded,
+        "a lead of bounded parts passes through unchanged ({} chars)",
+        bounded.chars().count()
+    );
+    assert!(
+        bounded.chars().count() < LONGEST_LEAD_IN_A_RECORD,
+        "the widest three-part lead is under the net's width: {} chars",
+        bounded.chars().count()
+    );
+    let once = bounded_lead("key \u{1b}x");
+    assert_eq!(once, "key \\u{1b}x", "a raw control is escaped once");
+    assert_eq!(bounded_lead(&once), once, "an escaped lead is unchanged");
+    let too_long = "r".repeat(LONGEST_LEAD_IN_A_RECORD + 500);
+    let cut = bounded_lead(&too_long);
+    assert!(
+        cut.starts_with(&"r".repeat(LONGEST_LEAD_IN_A_RECORD))
+            && cut.ends_with("...[500 more characters cut]")
+            && cut.chars().count() < too_long.len(),
+        "a raw lead past the net's width is cut at its end with the count: {} chars",
+        cut.chars().count()
+    );
+}
+
 /// The twin's undecidable-pair sentence escapes a long key and bounds it on an ESCAPE BOUNDARY
 /// (`template_part`): the bound holds on the printed text and no escape is cut in half. A key of
 /// 255 characters, an ESC and a forty-character tail prints the 255 and cuts at the ESC, whose
@@ -9269,4 +10302,30 @@ fn the_cut_begins_at_the_first_length_where_it_shortens_the_part() {
         "a path of {} accented letters renders whole: characters decide, not bytes",
         first_cut_path - 1
     );
+}
+
+/// The boundary search of `numbered_refusal_parts` tries every occurrence of the next marker, the
+/// overlapping ones too: in `(1) A (2) (2) B` the only split that leaves a registered part before it is
+/// the second ` (2) `, which starts one character after the first. Resuming the search after the whole
+/// marker skipped it and read the text as no refusal's.
+#[test]
+fn numbered_refusal_parts_finds_a_boundary_that_overlaps_the_previous_one() -> Result<()> {
+    // The registry is the root scope's: the two parts are registered under a scope alive for the test.
+    let rules_file = RulesFile::try_from("rule r { Resources exists }")?;
+    let _root = root_scope(
+        &rules_file,
+        Rc::new(PathAwareValue::try_from("{ Resources: {} }")?),
+    );
+    let _a = register_refusal("A (2)");
+    let _b = register_refusal("B");
+    assert_eq!(
+        numbered_refusal_parts("(1) A (2) (2) B"),
+        Some(vec!["A (2)", "B"])
+    );
+    assert_eq!(
+        numbered_refusal_parts("(1) A (2) (2) C"),
+        None,
+        "a part nobody registered is no refusal's, overlapping boundary or not"
+    );
+    Ok(())
 }

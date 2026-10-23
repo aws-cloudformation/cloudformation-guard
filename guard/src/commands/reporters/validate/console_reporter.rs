@@ -1,7 +1,8 @@
 use crate::commands::tracker::StatusContext;
 use crate::commands::validate::{OutputFormatType, Reporter};
-use crate::rules::eval_context::{names_a_refused_read, EventRecord};
+use crate::rules::eval_context::{unresolved_comparison_sentence, EventRecord};
 use crate::rules::path_value::traversal::Traversal;
+use crate::rules::path_value::PathAwareValue;
 use crate::rules::values::CmpOperator;
 use crate::rules::{
     BlockCheck, ClauseCheck, ComparisonClauseCheck, NamedStatus, QueryResult, RecordType, Status,
@@ -205,15 +206,20 @@ fn pprint_failed_sub_tree(
                     }
                 }
 
-                ClauseCheck::Comparison(ComparisonClauseCheck {
-                    custom_message,
-                    message,
-                    comparison: (cmp, not),
-                    from,
-                    status: Status::FAIL,
-                    to,
-                    ..
-                }) => {
+                ClauseCheck::Comparison(
+                    check @ ComparisonClauseCheck {
+                        status: Status::FAIL,
+                        ..
+                    },
+                ) => {
+                    let ComparisonClauseCheck {
+                        custom_message,
+                        message,
+                        comparison: (cmp, not),
+                        from,
+                        to,
+                        ..
+                    } = check;
                     let custom_message = custom_message.as_ref().map_or("".to_string(), |s| {
                         format!(" Message = [{}]", s.replace('\n', ";"))
                     });
@@ -222,75 +228,41 @@ fn pprint_failed_sub_tree(
                         .as_ref()
                         .map_or("".to_string(), |s| format!(" Error = [{}]", s));
 
+                    // An unresolved operand on either side: the ONE sentence builder shared with the
+                    // structured report (`unresolved_comparison_sentence`), which names a refused
+                    // left-hand read first, else reads the right-hand operand first where it is
+                    // unresolved, and words the sentence by the operand's kind (refused, missing,
+                    // undecided), so this tree and `-o json` name the same operand for one record; the
+                    // tree quotes a traversed value as it is.
+                    if let Some((sentence, _)) =
+                        unresolved_comparison_sentence(check, &|value: &PathAwareValue| {
+                            value.to_string()
+                        })
+                    {
+                        writeln!(
+                            writer,
+                            "{}{}{sentence}{err}{msg}",
+                            prefix,
+                            prefix_current,
+                            err = error_message,
+                            msg = custom_message
+                        )?;
+                        return Ok(());
+                    }
+
                     let to_result = match to {
-                        Some(to) => match to {
-                            QueryResult::Literal(_) => unreachable!(),
-                            QueryResult::Resolved(to_res) => Some(Rc::clone(to_res)),
-
-                            QueryResult::UnResolved(to_unres) => {
-                                // A right-hand side the evaluator REFUSED to read is named as the
-                                // refusal (the error text that follows), not as a missing property
-                                // spelled with the marker's remaining query; an absent right-hand
-                                // value keeps the missing-property sentence, beside a refused read
-                                // among the other values too, so the operand is read and not the
-                                // record's flag (`names_a_refused_read`, as the report's arm reads).
-                                if names_a_refused_read(to_unres, message.as_ref()) {
-                                    writeln!(
-                                        writer,
-                                        "{}{}Check was not compliant as the value to compare to could not be read.{err}{msg}",
-                                        prefix,
-                                        prefix_current,
-                                        err = error_message,
-                                        msg = custom_message
-                                    )?;
-                                } else {
-                                    writeln!(
-                                        writer,
-                                        "{}{}Check was not compliant as property [{remain}] to compare to is missing. Value traversed to [{to}].{err}{msg}",
-                                        prefix,
-                                        prefix_current,
-                                        remain=to_unres.remaining_query,
-                                        to=to_unres.traversed_to,
-                                        err=error_message,
-                                        msg=custom_message
-                                    )?;
-                                }
-                                return Ok(());
-                            }
-                        },
-
+                        Some(QueryResult::Resolved(to_res)) => Some(Rc::clone(to_res)),
+                        Some(QueryResult::Literal(_)) => unreachable!(),
+                        Some(QueryResult::UnResolved(_)) => {
+                            unreachable!("an unresolved right-hand operand is reported above")
+                        }
                         None => None,
                     };
 
                     match from {
                         QueryResult::Literal(_) => unreachable!(),
-                        QueryResult::UnResolved(to_unres) => {
-                            // A left-hand side the evaluator REFUSED to read, whose record carries
-                            // the refusal's text, is named as the refusal (the error text that
-                            // follows), not as a missing property spelled with the marker's remaining
-                            // query, as the right-hand arm above names its refusal; an absent
-                            // left-hand value keeps the missing-property sentence.
-                            if names_a_refused_read(to_unres, message.as_ref()) {
-                                writeln!(
-                                    writer,
-                                    "{}{}Check was not compliant as the value to compare from could not be read.{err}{msg}",
-                                    prefix,
-                                    prefix_current,
-                                    err = error_message,
-                                    msg = custom_message
-                                )?;
-                            } else {
-                                writeln!(
-                                    writer,
-                                    "{}{}Check was not compliant as property [{remain}] to compare from is missing. Value traversed to [{to}].{err}{msg}",
-                                    prefix,
-                                    prefix_current,
-                                    remain=to_unres.remaining_query,
-                                    to=to_unres.traversed_to,
-                                    err=error_message,
-                                    msg=custom_message
-                                )?;
-                            }
+                        QueryResult::UnResolved(_) => {
+                            unreachable!("an unresolved left-hand operand is reported above")
                         }
 
                         QueryResult::Resolved(res) => {
@@ -447,19 +419,22 @@ mod tests {
     }
 
     /// The failed-clause tree's line for a LEFT-hand value that is a REFUSAL's marker, decided by a
-    /// right-hand side the document lacks, says the value could not be read and carries, in its one
-    /// error, the absent right-hand key before the refusal: `%x != Cfg.Missing` with the keys and the
-    /// refusal's marker in the capture `%x` (the document and the refused walk are the ones the
-    /// evaluator's own cells use for this shape), `Missing` a key the document lacks. One line holds
-    /// the could-not-be-read wording, `Missing` and the refusal, the refusal is printed once in the
-    /// whole tree, and no line reads the marker as a property the template lacks ("to compare from is
-    /// missing"); the keys' own pairs keep the missing-property wording for the right-hand side ("to
-    /// compare to is missing"), since for them the key is the one place the absence is named.
+    /// right-hand side the document lacks, says the value to compare from could not be read (the refused
+    /// read is the finding, and the shared sentence builder reads a refused left-hand operand first) and
+    /// carries, in its one error, the absence named with its side before the refusal: `%x != Cfg.Missing`
+    /// with the keys and the refusal's marker in the capture `%x` (the document and the refused walk are
+    /// the ones the evaluator's own cells use for this shape), `Missing` a key the document lacks. With
+    /// the error's lead "The right-hand value is absent: Could not find key Missing ..." the line no
+    /// longer reads that key as the left value's absence, which it did when the error began with the
+    /// retrieval's reason alone. One line holds the refusal; it names the right side, the key and the
+    /// refusal, the absence first; the refusal is printed once in the whole tree; no line reads the
+    /// marker as a property the template lacks ("to compare from is missing"), and the keys' own pairs
+    /// keep the missing-property wording for the right-hand side.
     #[test]
     fn a_left_refusal_beside_an_absent_right_hand_side_prints_the_absence_and_the_refusal_once(
     ) -> crate::rules::Result<()> {
         const THE_REFUSAL: &str = "then no kept entry holds a key the predicate names";
-        const COULD_NOT_BE_READ: &str = "the value to compare from could not be read";
+        const THE_RIGHT_SIDE: &str = "The right-hand value is absent";
         let data = PathAwareValue::try_from(
             r#"{
                 "Cfg": {
@@ -487,42 +462,123 @@ mod tests {
         pprint_failed_sub_tree(&root, String::new(), true, "rules", "data", &mut out)?;
         let printed = String::from_utf8(out).expect("the tree is text");
 
-        let could_not_be_read: Vec<&str> = printed
+        let with_the_refusal: Vec<&str> = printed
             .lines()
-            .filter(|line| line.contains(COULD_NOT_BE_READ))
+            .filter(|line| line.contains(THE_REFUSAL))
             .collect();
         assert_eq!(
             1,
-            could_not_be_read.len(),
-            "one line says the value to compare from could not be read, in:\n{}",
+            with_the_refusal.len(),
+            "one line carries the refusal, in:\n{}",
             printed
         );
-        let line = could_not_be_read[0];
+        let line = with_the_refusal[0];
         assert!(
-            line.contains("Could not find key Missing") && line.contains(THE_REFUSAL),
-            "that line names the absent right-hand key and the refusal, got:\n{}",
+            line.contains("the value to compare from could not be read")
+                && line.contains(THE_RIGHT_SIDE)
+                && line.contains("Could not find key Missing"),
+            "that line names the refused left-hand read in its sentence and the right-hand side as absent in its error, got:\n{}",
             line
         );
         assert!(
-            line.find("Could not find key Missing") < line.find(THE_REFUSAL),
-            "the absence leads and the refusal follows, got:\n{}",
+            line.find(THE_RIGHT_SIDE) < line.find("Could not find key Missing")
+                && line.find("Could not find key Missing") < line.find(THE_REFUSAL),
+            "the side, then the absence, then the refusal, got:\n{}",
             line
-        );
-        assert_eq!(
-            1,
-            printed.matches(THE_REFUSAL).count(),
-            "the refusal is printed once in the tree, in:\n{}",
-            printed
         );
         assert!(
             !printed.contains("to compare from is missing"),
-            "the marker is not read as a property the template lacks, in:\n{}",
+            "no line reads the marker as a property the template lacks, in:\n{}",
             printed
         );
+        Ok(())
+    }
+
+    /// The failed-clause tree's lines for a KEY FILTER's marker on the left (the marker a key filter
+    /// leaves for a map whose key spent the regex budget, no refusal), in both shapes. Beside a RIGHT-hand
+    /// side the document lacks (`%cfg != Resources.R.Properties.Missing`), the record carries the absent
+    /// value as what the marker was compared with and its message leads with the right-hand absence, so
+    /// the line names the right side as the missing one ("property [Missing] to compare to is missing")
+    /// and its error names the side, the key and the marker's reason. Beside a PRESENT right-hand side
+    /// (`%cfg != 'zzz'`), the pair is a FAIL status asserted, decided by its record alone, and the record
+    /// carries the marker's reason as its message, so the line names the value as one that could not be
+    /// decided ("the value to compare from could not be decided", the wording for a marker of the key
+    /// filter's kind) with the reason in its error; before, that record had no message and the line read
+    /// "property [] to compare from is missing" with the reason nowhere in the output. The reason is a
+    /// key filter's, no refusal, so neither record is flagged and neither line says a value could not be
+    /// read.
+    #[test]
+    fn a_key_filters_marker_on_the_left_prints_its_reason_in_both_shapes(
+    ) -> crate::rules::Result<()> {
+        const THE_LEFT_MARKER: &str = "stands among the left-hand values";
+        let spends_the_budget = "a".repeat(30);
+        let data = Rc::new(PathAwareValue::try_from(
+            format!(
+                "{{ Resources: {{ R: {{ Type: 'AWS::IAM::Role', Properties: {{ Maps: {{ M1: {{ {spends_the_budget}: 'z' }}, M2: {{ aab: 'x' }} }} }} }} }} }}"
+            )
+            .as_str(),
+        )?);
+        let printed = |clause: &str| -> crate::rules::Result<String> {
+            let text = format!(
+                "let cfg = Resources.R.Properties.Maps.*[ keys == /(?!x)((a+)+)b/ ].*\nrule r {{ {clause} }}"
+            );
+            let rules = RulesFile::try_from(text.as_str())?;
+            let mut scope = root_scope(&rules, Rc::clone(&data));
+            assert_eq!(Status::FAIL, eval_rules_file(&rules, &mut scope, None)?);
+            let root = scope.reset_recorder().extract();
+            let mut out = Vec::new();
+            pprint_failed_sub_tree(&root, String::new(), true, "rules", "data", &mut out)?;
+            Ok(String::from_utf8(out).expect("the tree is text"))
+        };
+
+        let absent = printed("%cfg != Resources.R.Properties.Missing")?;
+        let with_the_marker: Vec<&str> = absent
+            .lines()
+            .filter(|line| line.contains(THE_LEFT_MARKER))
+            .collect();
+        assert_eq!(
+            1,
+            with_the_marker.len(),
+            "one line names the marker beside the absent right-hand side, in:\n{}",
+            absent
+        );
         assert!(
-            printed.contains("to compare to is missing"),
-            "the keys' pairs keep the missing-property wording for the absent right-hand side, in:\n{}",
-            printed
+            with_the_marker[0].contains("property [Missing] to compare to is missing")
+                && with_the_marker[0].contains("The right-hand value is absent")
+                && with_the_marker[0].contains("Could not find key Missing"),
+            "that line names the right-hand side as the missing one, got:\n{}",
+            with_the_marker[0]
+        );
+        assert!(
+            !absent.contains("to compare from") && !absent.contains("could not be read"),
+            "the marker is neither the missing value nor an unread one, in:\n{}",
+            absent
+        );
+
+        let present = printed("%cfg != 'zzz'")?;
+        let undecided_lines: Vec<&str> = present
+            .lines()
+            .filter(|line| line.contains("the value to compare from could not be decided"))
+            .collect();
+        assert_eq!(
+            1,
+            undecided_lines.len(),
+            "one line is the marker's pair against the present right-hand side, named as a value that could not be decided, in:\n{}",
+            present
+        );
+        // The marker's own reason, not the opener alone: a line reading ` Error = [` with any text in
+        // it would pass on a reason that is not this marker's.
+        assert!(
+            undecided_lines[0].contains(" Error = [")
+                && undecided_lines[0].contains("The regular expression could not be evaluated"),
+            "that line carries the marker's reason (the regex engine's refusal) in its error, got:\n{}",
+            undecided_lines[0]
+        );
+        assert!(
+            !present.contains("to compare from is missing")
+                && !present.contains("could not be read"),
+            "a key filter's marker is neither a property the template lacks nor a refusal, in:\n{}",
+            present
         );
         Ok(())
     }

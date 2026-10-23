@@ -304,7 +304,9 @@ impl Error {
 
     /// A comparison the engine could not decide, raised with no refusal token: a raise that copies no
     /// refusal's marker (see `UndecidableComparison`'s second field; the raises over a marker copy its
-    /// token through `UnResolvedKind::refusal` instead).
+    /// token through `UnResolvedKind::refusal` instead). The cells' constructor for a token-less raise:
+    /// every engine site that registers the sentence it raises carries the registration's token now.
+    #[cfg(test)]
     pub(crate) fn undecidable(reason: String) -> Error {
         Error::UndecidableComparison(reason, None)
     }
@@ -367,6 +369,13 @@ impl RefusalToken {
     /// token minted after the wrap reads as earlier than one minted before it.
     pub(crate) fn later_than(self, other: RefusalToken) -> bool {
         self.0 > other.0
+    }
+
+    /// The token's place in the thread's minting order, for a store that keys by token and reads its
+    /// entries first-minted first (`eval_context::RootScope`'s held notices). Crate-private, as
+    /// `later_than` is: the type stays opaque to consumers, and no public ordering is derived on it.
+    pub(crate) fn minting_order(self) -> u64 {
+        self.0
     }
 }
 

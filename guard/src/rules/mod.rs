@@ -376,7 +376,10 @@ impl QueryResult {
 pub(crate) struct ComparisonClauseCheck {
     pub(crate) comparison: (CmpOperator, bool),
     pub(crate) from: QueryResult,
-    pub(crate) to: Option<QueryResult>, // happens with from is unresolved
+    /// `None` for an unresolved `from` with nothing to show beside it; a left-hand marker decided by a
+    /// right-hand side the document lacks carries the first absent right-hand value here, so the record
+    /// names what the marker was compared against (`eval::binary_operation`, the `LhsUnresolved` arm).
+    pub(crate) to: Option<QueryResult>,
     pub(crate) message: Option<String>,
     pub(crate) custom_message: Option<String>,
     pub(crate) status: Status,
@@ -560,6 +563,18 @@ pub(crate) struct BlockCheck {
     /// evaluator's own sentence with no error in it.
     #[serde(skip)]
     pub(crate) refusal: bool,
+    /// The author's own `<< >>` message on the clause the record closes, set wherever the clause carries
+    /// one and the block shape is the record of that clause: the fail-closed `not` over a reference (`not r
+    /// << msg >>`, `eval::record_fail_closed_negation`, whose record is a block check so the message can
+    /// carry the refusal flag the `DependentRule` value check has no field for), an access clause decided
+    /// over an empty selection or whose query or comparison raised, a call whose argument could not be
+    /// evaluated. Read by the reporters where they read a dependent rule's (`custom_message` of the
+    /// structured output and the console summary's finding). `None` on the reference's SKIP record (the
+    /// author's text explains a failure, and that record's sentence is the rule's skip reason) and on every
+    /// block check the grammar gives no message (a block, a `when`, a type block, a disjunction); the record
+    /// tree `--print-json` writes keeps its shape for those, since the key is written only where it is set.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) custom_message: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -847,7 +862,13 @@ pub(crate) trait EvalContext<'value, 'loc: 'value>: RecordTracer<'value> {
     /// assertion and merely inapplicable when it is a `when` condition. Implementations
     /// that cache must key on `(rule_name, role)`, since the same rule reached from a body
     /// and from a gate are two different questions.
-    fn rule_status(&mut self, rule_name: &'value str, role: eval::ClauseRole) -> Result<Status>;
+    ///
+    /// The answer is the rule's `Judged`: a PASS, a SKIP, or a FAIL with the BASIS it rests on
+    /// (`FailBasis`: whether the rule's folds decided a no, or the FAIL rests on reads the rule could not
+    /// decide, with those reads). The basis travels with the outcome, never as state on the context, so
+    /// every site that answers FAIL names its basis and a cache stores the judged answer; a reference's
+    /// `not` reads it (`eval::negate_a_failed_rule`).
+    fn rule_status(&mut self, rule_name: &'value str, role: eval::ClauseRole) -> Result<Judged>;
     fn resolve_variable(&mut self, variable_name: &'value str) -> Result<Vec<QueryResult>>;
 
     /// The values `variable_name` already HOLDS without anything being evaluated: a `let` bound to a
@@ -1257,8 +1278,12 @@ pub(crate) trait EvalContext<'value, 'loc: 'value>: RecordTracer<'value> {
 
     /// Note that a comparison at `site` (written as `context`) was decided without raising the REFUSED
     /// reads among its values, on either side (`refusals`, one text each): the clause's verdict
-    /// (`verdict`: a value that holds settled it, a value the document lacks decided it, a value that does
-    /// not match decided it, or a value that matches a denied entry decided it) never raised them, and the
+    /// (`verdict`, one of ten: a value that holds settled it, a value the document lacks decided it, a
+    /// value that does not match decided it, a value that matches a denied entry decided it, a value of
+    /// another kind decided it; a sibling entry's failure decided the every-entry block whose body raised
+    /// beside the refused read, or a sibling entry's pass settled the `some` block, the block fold's own
+    /// calls; a sibling clause's failure decided the conjunction past the raise, or a sibling clause's
+    /// pass decided the disjunction past it, the conjunction fold's own calls) never raised them, and the
     /// line is what keeps such a refusal from being silent. Written only after the clause is decided (a
     /// clause raised on an undecided pair carries the refusal in its failure and writes nothing), once per
     /// clause site: the line counts the DISTINCT refusal texts the site met and how many evaluations
@@ -1274,6 +1299,73 @@ pub(crate) trait EvalContext<'value, 'loc: 'value>: RecordTracer<'value> {
         verdict: UnraisedVerdict,
         refusals: &[String],
     );
+
+    /// Open a frame that collects the raises a block body makes beside a refused read while it is the
+    /// innermost open frame: the channel by which a comparison's raise reaches the block fold that may
+    /// absorb it (`eval::eval_guard_block_clause` opens one around each value's body and closes it after,
+    /// whatever the body answered; `eval::eval_conjunction_clauses` opens one around each conjunction it
+    /// folds, since a sibling clause decides past a raise there). The raise itself cannot carry what the
+    /// fold needs: the error's variant holds a text and a refusal token, and every `match` on it would
+    /// widen with a third field; a frame is held by
+    /// the root and reached through the resolver chain the fold and the raise site already share, so the
+    /// clause as written, its own position and the reads it met travel out of band and arrive at the one
+    /// fold that opened the frame. Nested frames stack: a block inside a value's body opens its own and
+    /// closes it before the outer closes, so a raise is collected by the innermost body around it. The
+    /// same rules as `record_warning`: returns nothing, no default (a forwarding scope that inherited a
+    /// no-op would compile and drop every raise under it).
+    fn open_absorbed_frame(&mut self);
+
+    /// Close the innermost open frame and hand back what it collected, in the order the raises were made:
+    /// empty when nothing inside raised beside a refused read, and empty with a debug assertion when no
+    /// frame is open (a pairing fault of the caller, the class `RecordTracker` asserts for an `end_record`
+    /// with no `start_record`). No default, as `open_absorbed_frame` has none.
+    fn close_absorbed_frame(&mut self) -> Vec<AbsorbedRaise<'loc>>;
+
+    /// Note a raise made beside a refused read (`reads`, one text each) by the clause written as `clause`
+    /// at `site`, into the innermost open frame; a no-op with none open (a top-level clause's raise has
+    /// no absorber: the raise itself reports the reads, and its own writer, the `record_unraised_refusal`
+    /// call where the clause is decided, is its line). Called for EVERY raise a clause builds beside a
+    /// refused read, whatever its kind and role: the raise sites of `eval::binary_operation` (the plain
+    /// undecidable comparison a fold absorbs, and the strict raise the access clause turns into a leaf
+    /// FAIL, which a `some` block or a disjunction may pass past), the unary operators' raise over a
+    /// refused read among their values, and a fold that could not decide (a block's, a conjunction's),
+    /// which hands the frame it collected up to the frame around it so an outer fold that decides reports
+    /// every read. The fold that reads a frame decides by its arm and role what to write for each entry;
+    /// this call records what was met. Never for a raise beside no refused read (there is no line to write
+    /// for it) and never for a probe's or a discovery's raise (`QuietScope` notes nothing; the root notes
+    /// nothing under a running measurement). No default, as `open_absorbed_frame` has none.
+    fn note_absorbed_raise(
+        &mut self,
+        clause: &str,
+        site: &exprs::FileLocation<'loc>,
+        reads: &[String],
+        kind: RaiseKind,
+    );
+
+    /// How many raises the innermost open frame holds now (0 with none open): the mark a site that
+    /// DECIDES past a raise takes before the clauses it decides over run, so it can TAKE their notes
+    /// (`truncate_absorbed_frame`) when its decision settles the raise and write each as decided past by
+    /// the clause that decided: a disjunction one disjunct passed (`A or B` with `A` raised and `B` true
+    /// is decided by `B`, as the hold is dropped; `eval::eval_conjunction_clauses` takes TWO marks there,
+    /// one before the disjunction and one before each disjunct, so the entries before the passing
+    /// disjunct's own mark are its siblings', "passed by a sibling clause that holds", and the entries
+    /// from it are the passing disjunct's own, a `some` clause passing on another of its values past its
+    /// refused read, "passed by a value that holds"); a reference whose rule FAILed, whose `not` takes the
+    /// rule's entries and judges them by the basis of the rule's FAIL (`eval::eval_guard_named_clause`,
+    /// `eval::negate_a_failed_rule`: "passed by the negation of a rule that failed" past a decided no; where
+    /// the FAIL rests on undecidables alone the entries are handed up with the `not` clause's own FAIL).
+    /// The pair for a site that decides INSIDE the clauses a frame collects over, where
+    /// `open_absorbed_frame`/`close_absorbed_frame` is the pair for a body whose raises belong to the fold
+    /// around it. Without the mark a note the deciding site dropped the raise of stayed in the frame and
+    /// the fold around it reported the read as decided by a sibling entry when the `or` had decided it.
+    /// Each entry carries its kind (`RaiseKind`), which the deciding site reads where the two kinds part.
+    /// No default, as `open_absorbed_frame` has none.
+    fn absorbed_frame_mark(&self) -> usize;
+
+    /// Remove every raise noted into the innermost open frame since `mark` (`absorbed_frame_mark`) and
+    /// hand them back in the order they were noted, for the deciding site to write; empty with none open,
+    /// or with no entry past `mark`. No default, as `open_absorbed_frame` has none.
+    fn truncate_absorbed_frame(&mut self, mark: usize) -> Vec<AbsorbedRaise<'loc>>;
 
     /// The name of the data file this evaluation reads, for a notice that cites positions in it: with
     /// several data files in one run, a position alone does not say which file it is in. The root
@@ -1343,6 +1435,111 @@ pub(crate) trait EvalContext<'value, 'loc: 'value>: RecordTracer<'value> {
         site: &exprs::FileLocation<'_>,
         notice: String,
     ) -> bool;
+
+    /// Hold the in-predicate scalar-filter notice (`DeprecationKind::ScalarFilterInsideAPredicate`) for
+    /// the refusal `token` mints, to be written by the clause whose verdict rests on the marker that
+    /// carries it, once that verdict is known and only where the marker's pair contributed to it (a strict
+    /// FAIL, or a raise that fails its rule closed): a clause decided without the marker (`some` passing on
+    /// a kept member, a `when` settled by a sibling's decided failure) moved no verdict and writes nothing.
+    /// `reason` is the marker's own sentence as the producer stored it: the predicate clause that reads
+    /// the marker as its OPERAND confirms the notice by that text (`undecided_member_read` in the filter
+    /// role), so a key filter's wrap of the same refusal, or a function argument that met it, confirms
+    /// nothing and the notice is never written for them (there the clause already failed closed and no
+    /// verdict moved). `site` is the scalar filter's own predicate position, the key the notice is written
+    /// once under. One hold per token: a second hold for the same token (the same sentence delivered again
+    /// under one mint) is MERGED into the first, which keeps its confirmation and its readers (a raise a
+    /// clause has not yet settled is never erased by a re-pend) and takes the later site, reason and
+    /// notice. `binding` says which binding, if any, was resolving when the marker was produced
+    /// (`resolving_binding`), and the hold's lifetime follows it: a file-level assignment's marker
+    /// (`MarkerBinding::RootAssignment`: resolved once and read by every rule that names it) keeps its
+    /// hold past the rule boundary; every other marker's readers are inside one rule (a block's `let`,
+    /// the clause's own query, a filter capture that carries it to a later clause, a parameterized
+    /// rule's argument read by its body), so its hold stays for them through the rule and goes at the
+    /// rule's end (`reset_captures`), which bounds the holds a run keeps by one rule's markers plus the
+    /// file-level `let`-bound ones rather than by every refused member the run met; read as a flag that
+    /// any binding set, a type block's per-resource `let` over N resources left N holds alive to the
+    /// scope's end. A re-pend keeps the greater binding. No default: the root scope keeps the holds, a
+    /// scope that forwards lookups forwards this, and the scopes that drop every notice (a probe's run,
+    /// the test doubles) say so with a body of their own, so a new scope cannot inherit a silent drop
+    /// (the drift `record_deprecation_once` guards against the same way).
+    fn pend_scalar_filter_notice(
+        &mut self,
+        token: errors::RefusalToken,
+        site: &exprs::FileLocation<'_>,
+        reason: &str,
+        notice: String,
+        binding: MarkerBinding,
+    );
+
+    /// A clause at `at` read an undecided marker as its role reads one (a strict FAIL on it, a gate's or
+    /// a filter predicate's raise), not passing it over: in the filter role the marker is the predicate
+    /// clause's operand and a held notice for its token whose reason is the marker's own is CONFIRMED; in
+    /// the assertion and gate roles a confirmed hold for its token is marked READ by the clause, to be
+    /// written or dropped when the clause's verdict is known (`undecided_reads_decided`), and an
+    /// unconfirmed hold is dropped (no predicate clause read the marker as its operand, so nothing moved
+    /// for it). `token` is the marker's own refusal token or the one it carries
+    /// (`UnResolvedKind::Undecidable`), `reason` its stored sentence. No default, as
+    /// `pend_scalar_filter_notice` has none.
+    fn undecided_member_read(
+        &mut self,
+        token: errors::RefusalToken,
+        reason: Option<&str>,
+        role: eval::ClauseRole,
+        at: &exprs::FileLocation<'_>,
+    );
+
+    /// The clause at `at` whose reads `undecided_member_read` marked is decided, for ITS reads alone (a
+    /// hold is read by several clauses when a `let`-bound selection is read by several rules; another
+    /// clause's read of the same hold is untouched): on `Failed` (a strict FAIL that RESTS on the marked
+    /// reads, `FailBasis::Undecidable`: no decided no beside them) its read becomes a FAIL at its site, for
+    /// the rule around the clause to settle (written where that rule FAILs, `held_fails_judged`; withdrawn
+    /// where a disjunct or a `some` block passes past it and writes the clause's refused-read line,
+    /// `record_unraised_refusal`); on `Decided` (the clause passed, or a decided no fails it whatever the
+    /// marker holds, in either role) its read is withdrawn and the hold stays confirmed for the next
+    /// reader (a capture or a call's argument can carry the marker to a later clause of the rule; the
+    /// rule's end drops what no reader took, `reset_captures`); on `Raised` (the gate role's raise) its read becomes a RAISE at its site, for the fold
+    /// around the clause to settle: written where the raise fails a rule closed
+    /// (`held_raises_failed_closed`), withdrawn where a sibling decides past it (the root scope drops the
+    /// raise when the refused-read line for that site is written). The two roles are symmetric: a FAIL or
+    /// a raise a sibling decides past moved no verdict. Called once per clause, after its fold, when the
+    /// clause marked a read. No default, as `pend_scalar_filter_notice` has none.
+    fn undecided_reads_decided(
+        &mut self,
+        at: &exprs::FileLocation<'_>,
+        decision: UndecidedReadsDecision,
+    );
+
+    /// A raise that reached a condition site in the strict role fails its rule closed
+    /// (`eval::convert_condition_raise`): every hold RAISED at one of `sites` (the frame entries' sites,
+    /// else the condition's own, `FileLocation::to_string`) is written once per site and dropped. No
+    /// default, as `pend_scalar_filter_notice` has none.
+    fn held_raises_failed_closed(&mut self, sites: &[String]);
+
+    /// The mark a rule takes as its judgment opens (`eval::judged_rule`): every strict FAIL a clause marks
+    /// from here on (`undecided_reads_decided` with `Failed`) is stamped past it, so the rule's exit settles
+    /// ITS clauses' FAILs alone (`held_fails_judged`) and never an enclosing rule's, marked before this rule
+    /// was entered. A referenced rule on a cache miss and every parameterized call enter `judged_rule`
+    /// inside the referencing rule's run, so a settlement that read every FAILED reader in the scope let
+    /// a nested rule's PASS withdraw the enclosing rule's FAIL, and a nested rule's FAIL write a notice the
+    /// enclosing `or` or `not` then passed past. No default, as `pend_scalar_filter_notice` has none.
+    fn held_fails_mark(&self) -> u64;
+
+    /// A rule was judged, settling the strict FAILs stamped past `since` (its own clauses', and the
+    /// FAILs a nested rule whose FAIL rested on an undecidable handed up to it, as the leaf-FAIL frame
+    /// hands its entries up): with `rests_on` the refused reads the rule's own FAIL rests on
+    /// (`FailBasis::Undecidable`, at the TOP-LEVEL run of the rule in `eval::eval_rules_file`, the one
+    /// site with no fold above it), every such hold the reads name (by the marker's sentence, or its
+    /// token) is written once per site and dropped, the clause's FAIL being part of the rule's; every
+    /// other FAIL marked since `since` is withdrawn (the rule passed past it, was not applicable, raised,
+    /// or FAILed on a decided no beside it, `FailBasis::Decided`, in which case the marker moved no verdict
+    /// and the roles read alike: a gate shape settled by a sibling's decided failure writes nothing
+    /// either); the holds stay, and a hold goes at the rule boundary (`reset_captures`) unless its marker
+    /// is a file-level assignment's (`MarkerBinding::RootAssignment`). A call with no FAIL marked since
+    /// `since` returns before it walks the holds.
+    /// A nested rule whose FAIL rests on an undecidable calls neither: its FAILs are handed up to the
+    /// enclosing rule's judgment, whose basis folds them. Raised and undecided reads are left alone. No
+    /// default, as `pend_scalar_filter_notice` has none.
+    fn held_fails_judged(&mut self, since: u64, rests_on: Option<&[RefusedRead]>);
 
     /// Put this evaluation into, or take it out of, a measurement; see [`Measurement`].
     ///
@@ -1499,15 +1696,16 @@ pub(crate) trait EvalContext<'value, 'loc: 'value>: RecordTracer<'value> {
         None
     }
 
-    /// Whether a binding is being resolved somewhere on this scope's chain: a file-level assignment's
-    /// right-hand side at the root (`resolving_assignments`) or a block's `let` in a block
-    /// (`resolving_let`). A quiet probe that resolves a `%name` while one is open may read a value the
-    /// open resolution has not finished filling (`bind_assignment_captures` skips the assignment being
-    /// resolved, so a `let` aliasing its capture reads a partial set), and such a value is not kept in
-    /// the `document_binding_memo` for the evaluation. Every scope that is not the root or a block
-    /// forwards; a scope with no root behind it answers `false`. No default, for the reason
-    /// `document_binding_memo` has none.
-    fn resolving_a_binding(&self) -> bool;
+    /// Which binding is being resolved somewhere on this scope's chain (`MarkerBinding`): a file-level
+    /// assignment at the root (`resolving_assignments`, `RootAssignment`), a block's `let` in a block
+    /// (`resolving_let`, `BlockLet`), or none (`Clause`). A chain with both open (a block's `let` whose
+    /// right-hand side forces a file-level assignment) answers the outermost, `RootAssignment`. Every
+    /// scope that is not the root or a block forwards; a scope with no root behind it answers `Clause`.
+    /// Two readers: the quiet probes' memo, which keeps nothing read while any binding is open
+    /// (`eval_context::resolving_a_binding`, a free function over this method), and the in-predicate
+    /// scalar-filter holds, whose lifetime follows the KIND of binding open when the marker was produced
+    /// (`pend_scalar_filter_notice`). No default, for the reason `document_binding_memo` has none.
+    fn resolving_binding(&self) -> MarkerBinding;
 
     /// The answers this evaluation's `binding_owners` walks have given for the ROOT's bindings, keyed by
     /// the binding's id (its site in the rules text and its capture generation; see
@@ -1853,7 +2051,17 @@ impl MoveDirection {
 /// wording). The
 /// verdict stands either way; the line says which value decided it so a reader knows why the refusal was
 /// not raised, and words the no by the comparator's polarity, since the value that decided `Names[*] NOT
-/// IN %x` matched a listed entry and "does not match" would say the opposite.
+/// IN %x` matched a listed entry and "does not match" would say the opposite. Four more verdicts name the
+/// SIBLING that decided past a raise made beside a refused read, two per deciding mechanism and each by its
+/// polarity as the five above are: a sibling ENTRY of a block (`DecidedBySibling`, `PassedBySibling`) and a
+/// sibling CLAUSE of a conjunction or a disjunction (`DecidedBySiblingClause`, `PassedBySiblingClause`).
+/// A tenth names the NEGATION that turned a referenced rule's leaf FAIL into the referencing rule's pass
+/// (`PassedByNegation`); the negation that refuses to, over a rule whose FAIL rests on undecidables alone,
+/// fails closed and reports the refusal in its own FAIL record, not on this line (failing closed IS acting
+/// on the refusal, so "was not raised" would be false of it; `eval::negate_a_failed_rule`). An eleventh is
+/// the neutral word a fold writes for an entry it found left where its own invariant says none can be, so
+/// a release build never fabricates a reason (`DecidedPastUnrecorded`). Eleven in all, counted apart
+/// (`eval_context::UnraisedCounts`) and worded apart on the line.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum UnraisedVerdict {
     Passed,
@@ -1861,6 +2069,271 @@ pub(crate) enum UnraisedVerdict {
     DecidedByMismatch,
     DecidedByCollision,
     DecidedByKinds,
+    /// A block body (`Items.* { .. }`) raised beside a refused read for one entry while a sibling
+    /// entry's decided failure settled the every-entry block, so the fold absorbed the raise into its
+    /// FAIL (`eval::eval_guard_block_clause`'s decided branch): the refused read was not raised, and the
+    /// line says the sibling decided it.
+    DecidedBySibling,
+    /// A `some` block (`some Items.* { .. }`) whose body raised beside a refused read for one entry, or
+    /// FAILed at the leaf on the refusal in the assertion role, while a sibling entry's pass settled the
+    /// block (the decided branch's `some` arm, and the strict leaf FAILs the fold keeps for a `some` that
+    /// passed on another entry): the refused read was not raised, and the line says the sibling entry
+    /// holds. Not `Passed`, which is the comparison's own wording for a pass on its own values: at one
+    /// site the two are counted apart, so a reader can tell an entry that passed from one whose raise a
+    /// sibling's pass swallowed.
+    PassedBySibling,
+    /// A conjunction (a block body, a rule body, a `when` body, a filter predicate) decided FAIL by one
+    /// clause's failure past another clause's raise beside a refused read (`AND(no, unknown)` is `no`,
+    /// `eval::eval_conjunction_clauses`'s FAIL exit with a held raise): the raise was dropped with the
+    /// hold, and the line says the sibling clause decided it.
+    DecidedBySiblingClause,
+    /// A disjunction (`A or B`) decided PASS by one disjunct that holds past another disjunct's raise
+    /// beside a refused read, or past its leaf FAIL on the refusal in the assertion role
+    /// (`eval::eval_conjunction_clauses`'s disjunct-PASS arm): the raise was dropped with the hold, and
+    /// the line says the sibling clause holds.
+    PassedBySiblingClause,
+    /// A referenced rule's strict leaf FAIL on a refusal (`rule check { some %y NOT IN %m }`), handed to
+    /// the reference site with the rule's FAIL (`EvalContext::rule_status`, the parameterized call) and
+    /// turned into the referencing rule's PASS by the reference's `not` (`eval::eval_guard_named_clause`,
+    /// `eval::eval_parameterized_rule_call`): the refused read is unseen under a passing rule, and the line
+    /// says the negation of a rule that failed passed it. Not `Passed`, which would say the refused read's
+    /// own clause passed. Written only where the referenced rule's FAIL is a DECIDED no by the structure
+    /// of its folds (`FailBasis::Decided`); a FAIL that rests on undecidables alone fails the `not`
+    /// closed, with the refusals named in the `not` clause's own FAIL record and no line here.
+    PassedByNegation,
+    /// The neutral word for an entry a fold found left where its own invariant says none can be (a
+    /// conjunction, a body, a referenced or called rule that answered PASS or SKIP with an entry still
+    /// in its frame; a `when` condition that did not match with a refused read's entry among what its
+    /// gate-role clauses noted, which the roles never produce): a debug build asserts the invariant, and
+    /// a release build writes the entry with this word rather than dropping it or naming a value that
+    /// holds, which the fold cannot know.
+    DecidedPastUnrecorded,
+}
+
+/// Why a FAIL is a FAIL, carried INSIDE the FAIL by every site that answers one (`Judged::Fail`, the
+/// evaluation chain's results, `EvalContext::rule_status` and its cache): a DECIDED no, or a FAIL that
+/// rests on reads the evaluator could not decide (a refused read, a selection nobody could decide, a spent
+/// regex budget), with the refused reads it rests on. Every strict site that turns an undecidable into a
+/// FAIL names `Undecidable` (`eval::fail_closed_or_raise`, the block, `when`, type-block and rule folds'
+/// strict arms, the comparison and the unary operator over their own pairs), every fold combines its
+/// branches' bases (`and`, `or`), and a reference's `not` reads the basis of the rule it negates
+/// (`eval::negate_a_failed_rule`): a decided no is inverted to a PASS, an undecidable-born FAIL fails the
+/// `not` closed, since a PASS there would be a verdict the undecidable manufactured. Carried with the
+/// outcome and never as state on the context, so a site that forgets to choose does not compile, nothing
+/// is saved or restored around a probe or a measurement, and the frames (`AbsorbedRaise`), which a quiet
+/// probe and a running measurement leave empty, carry no part of the answer. The reads are what the
+/// fail-closed `not`'s record names; empty for an undecidable that is no refusal (a spent budget), whose
+/// record then reads no refusal.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum FailBasis {
+    /// A decided no: a comparison that answered no, a value the document lacks, a block over a selection
+    /// every entry of which failed, `not <rule that passed>`.
+    Decided,
+    /// A FAIL that rests on undecidables alone, with the refused reads it rests on (each text once, in
+    /// the order met, with the token its raise carried where it carried one, so a refusal known by its
+    /// token alone, whose text no registry holds, keeps the token through every fold; empty for an
+    /// undecidable that is no refusal).
+    Undecidable { refused_reads: Vec<RefusedRead> },
+}
+
+/// One refused read a FAIL rests on: its text and the token the raise that met it carried (`None` for a
+/// read known by its registered text alone).
+pub(crate) type RefusedRead = (String, Option<errors::RefusalToken>);
+
+impl FailBasis {
+    /// An undecidable-born basis over `refused_reads` known by text alone, deduplicated in order.
+    pub(crate) fn undecidable(refused_reads: Vec<String>) -> Self {
+        FailBasis::undecidable_reads(refused_reads.into_iter().map(|text| (text, None)).collect())
+    }
+
+    /// An undecidable-born basis over `refused_reads` with their tokens, each text once in the order met;
+    /// a text met twice keeps its first position and the first token it was met with, else a later one.
+    pub(crate) fn undecidable_reads(refused_reads: Vec<RefusedRead>) -> Self {
+        let mut reads: Vec<RefusedRead> = Vec::with_capacity(refused_reads.len());
+        for (text, token) in refused_reads {
+            match reads.iter_mut().find(|(known, _)| *known == text) {
+                Some((_, known_token)) => {
+                    if known_token.is_none() {
+                        *known_token = token;
+                    }
+                }
+                None => reads.push((text, token)),
+            }
+        }
+        FailBasis::Undecidable {
+            refused_reads: reads,
+        }
+    }
+
+    pub(crate) fn is_decided(&self) -> bool {
+        matches!(self, FailBasis::Decided)
+    }
+
+    /// Whether an undecidable-born FAIL rests on at least one REFUSAL (a read the registry holds), as
+    /// against a budget-only undecidable: the refusal flag of the record that reports it.
+    pub(crate) fn rests_on_a_refusal(&self) -> bool {
+        matches!(self, FailBasis::Undecidable { refused_reads } if !refused_reads.is_empty())
+    }
+
+    /// The refused reads an undecidable-born FAIL rests on, each with its token; none for a decided no.
+    pub(crate) fn refused_reads(&self) -> &[RefusedRead] {
+        match self {
+            FailBasis::Decided => &[],
+            FailBasis::Undecidable { refused_reads } => refused_reads,
+        }
+    }
+
+    /// The texts of the refused reads, in order: what a record names and a frame entry carries.
+    pub(crate) fn refused_texts(&self) -> Vec<String> {
+        self.refused_reads()
+            .iter()
+            .map(|(text, _)| text.clone())
+            .collect()
+    }
+
+    /// The basis of a conjunction's FAIL from two failing branches' (`AND(no, unknown)` is `no`): decided
+    /// when either is, else undecidable over both branches' reads.
+    pub(crate) fn and(self, other: FailBasis) -> FailBasis {
+        match (self, other) {
+            (FailBasis::Decided, _) | (_, FailBasis::Decided) => FailBasis::Decided,
+            (a, b) => a.joined_with(b),
+        }
+    }
+
+    /// The basis of a disjunction's, a `some` block's or a `some` clause's FAIL from two failing branches'
+    /// (`OR(no, unknown)` is unknown): decided only when both are, else undecidable over the undecidable
+    /// branches' reads.
+    pub(crate) fn or(self, other: FailBasis) -> FailBasis {
+        match (self, other) {
+            (FailBasis::Decided, FailBasis::Decided) => FailBasis::Decided,
+            (FailBasis::Decided, undecidable) | (undecidable, FailBasis::Decided) => undecidable,
+            (a, b) => a.joined_with(b),
+        }
+    }
+
+    /// Two undecidable bases as one, the reads of both in order, each once, tokens kept.
+    fn joined_with(self, other: FailBasis) -> FailBasis {
+        let mut reads = self.refused_reads().to_vec();
+        reads.extend(other.refused_reads().iter().cloned());
+        FailBasis::undecidable_reads(reads)
+    }
+}
+
+/// What a site of the evaluation chain answers for a clause, a block, a rule or a reference: a PASS, a
+/// SKIP, or a FAIL WITH the basis it rests on (`FailBasis`). A basis exists on a FAIL alone, so every site
+/// that answers FAIL names one by construction and no PASS or SKIP can carry an undecidable into a cache or
+/// a fold (a status beside a basis admitted both). Carried by every function of the chain, answered and
+/// cached by `EvalContext::rule_status`, and read by the folds (`FailBasis::and`, `::or`) and by a
+/// reference's `not` (`eval::negate_a_failed_rule`); the status-only wrappers (`eval::eval_guard_clause`,
+/// `eval_conjunction_clauses`, `eval_rule`, the cells') read `status` at leaves that feed no fold.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum Judged {
+    Pass,
+    Skip,
+    Fail(FailBasis),
+}
+
+impl Judged {
+    /// The status alone, for a reader that has no fold to carry a basis to.
+    pub(crate) fn status(&self) -> Status {
+        match self {
+            Judged::Pass => Status::PASS,
+            Judged::Skip => Status::SKIP,
+            Judged::Fail(_) => Status::FAIL,
+        }
+    }
+
+    /// A status decided on nothing the evaluator could fail to read (an empty selection, an empty
+    /// reference, a block over a selection every entry of which was decided): a FAIL here is a decided no.
+    pub(crate) fn decided(status: Status) -> Judged {
+        match status {
+            Status::PASS => Judged::Pass,
+            Status::SKIP => Judged::Skip,
+            Status::FAIL => Judged::Fail(FailBasis::Decided),
+        }
+    }
+
+    /// A fold's status with the basis its failing branches folded (`basis`, `None` while none failed):
+    /// a FAIL carries the folded basis (a decided no where the fold counted a FAIL no branch named a
+    /// basis for), a PASS or a SKIP none.
+    pub(crate) fn folded(status: Status, basis: Option<FailBasis>) -> Judged {
+        match status {
+            Status::FAIL => Judged::Fail(basis.unwrap_or(FailBasis::Decided)),
+            other => Judged::decided(other),
+        }
+    }
+}
+
+/// What a frame entry (`AbsorbedRaise`) was when it was noted, decided by the role of the clause that
+/// raised (`eval::kind_for`): every fold that meets an entry decides by this kind, never by which of its
+/// arms it is in, since a strict leaf FAIL and a gate-role raise leave the same entry otherwise. Whether a
+/// FAIL rests on undecidables alone is not read off the entries (a quiet probe and a running measurement
+/// note none): it travels with the status as its `FailBasis`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RaiseKind {
+    /// A gate-role or filter-predicate raise: an `Err` the fold above may absorb into a decided sibling's
+    /// verdict or decide past (a conjunct's failure, a disjunct's pass), and otherwise hands up or raises.
+    Raised,
+    /// A strict-role raise the leaf turned into its own FAIL status, recorded `refusal: true` at the leaf:
+    /// its FAIL is part of every FAIL above it, never decided past by a failing sibling, and is written
+    /// only where a `some` block, a disjunct that holds or a `not` turns that FAIL into a pass. Every
+    /// `LeafFail` entry is refusal-born: it carries the refused reads its FAIL rests on.
+    LeafFail,
+}
+
+/// How a clause whose values held undecided markers it read (`EvalContext::undecided_member_read`) came
+/// out, for the in-predicate scalar-filter notices held on those markers
+/// (`EvalContext::undecided_reads_decided`): the notice is written only where the verdict MOVED, and a
+/// verdict moved where the marker's pair contributed to a FAIL or to a raise that fails a rule closed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum UndecidedReadsDecision {
+    /// The clause FAILed in the strict role and its FAIL rests on the marked reads (no value answered a
+    /// decided no beside them): the member once deselected with the clause passing, or selected with it
+    /// passing, now fails it. Written where the rule around the clause FAILs; withdrawn where a disjunct or
+    /// a `some` block passes past the FAIL.
+    Failed,
+    /// The clause was decided without the marked reads: it passed (`some` on a kept member that holds), a
+    /// decided no fails it whatever the marker holds, or in the gate role it raised nothing (the reads
+    /// stood beside values that settled it). Withdrawn.
+    Decided,
+    /// The clause raised in the gate or filter-predicate role: the fold around it settles the raise, and
+    /// the hold with it (written where the raise fails a rule closed, dropped where a sibling decides past
+    /// it). Kept, as raised at the clause's site.
+    Raised,
+}
+
+/// Which binding, if any, was resolving when an undecided marker was produced, as
+/// `EvalContext::resolving_binding` reads the scope chain and `EvalContext::pend_scalar_filter_notice`
+/// records it on the marker's hold: the hold's lifetime follows it. A file-level assignment
+/// (`RootAssignment`, the root's `resolving_assignments`) is resolved once and read by every rule that
+/// names it, so its hold outlives the rule boundary; a block's `let` (`BlockLet`, a block's
+/// `resolving_let`: a rule body's, a type block's per-resource, a called rule's body's) is read inside
+/// its rule alone, so its hold goes at the boundary as a clause's own does; a marker from no binding
+/// (`Clause`: the clause's own query, a filter capture carrying it to a later clause, a parameterized
+/// rule's argument read by its body) has every reader inside the rule too. Ordered so that a chain
+/// with two resolutions open (a block's `let` whose right-hand side forces a file-level assignment)
+/// reads as the outermost binding's, the one every rule reads: `RootAssignment` is the greatest.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum MarkerBinding {
+    Clause,
+    BlockLet,
+    RootAssignment,
+}
+
+/// One raise a block body made beside a refused read, as the frame `EvalContext::open_absorbed_frame`
+/// collects it for the fold that may absorb it: the comparison as the author wrote it (`clause`, the text
+/// the refused-read line opens with; a block's own text where the block is the raising clause, the marker
+/// its query delivered or the selection it refused), the position of that clause (`site`, the key the
+/// line is stored under, so a comparison absorbed under one value and decided past under another is one
+/// line at its own position, and two comparisons absorbed by one block are two), the refused reads
+/// the raise met (`reads`, the texts the line names) and what the raise was (`kind`: a raise a fold may
+/// decide past, or a strict leaf's own FAIL).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct AbsorbedRaise<'loc> {
+    pub(crate) clause: String,
+    pub(crate) site: exprs::FileLocation<'loc>,
+    pub(crate) reads: Vec<String>,
+    pub(crate) kind: RaiseKind,
 }
 
 /// The kinds of one-release notice recorded once per call site; see
@@ -1894,6 +2367,17 @@ pub(crate) enum DeprecationKind {
     /// the previous release's one-object reading did not select. One line per filter site, written for
     /// the first such map the filter met.
     ListTwinOfAScalarMap,
+    /// A filter over a scalar met inside a filter predicate as the predicate clause's own operand
+    /// (`Resources.*[ Properties.Tags[ Key == 'Env' ] exists ]` over a string `Tags`), where the previous
+    /// release read the scalar as an absence to the predicate (the member deselected under `exists`,
+    /// selected under `!exists`, nothing reported) and the member is now undecided, carried beside the
+    /// kept members, on which the clause over the selection fails closed whatever the kept members hold.
+    /// Written once per filter site, after the clause's verdict is known, and only where that verdict
+    /// MOVED: the clause failed in the strict role on the undecided member, or raised on it and the raise
+    /// failed its rule closed. A `some` that passes on a kept member, or a `when` a sibling's decided
+    /// failure settles, moved no verdict and writes nothing (`EvalContext::pend_scalar_filter_notice`,
+    /// `EvalContext::undecided_member_read`, `EvalContext::undecided_reads_decided`).
+    ScalarFilterInsideAPredicate,
 }
 
 impl DeprecationKind {
@@ -1915,6 +2399,9 @@ impl DeprecationKind {
             DeprecationKind::KeyFilterFold => "the key-filter fold notice",
             DeprecationKind::OwnKeyReadAsAMember => "the member notice",
             DeprecationKind::ListTwinOfAScalarMap => "the list-twin notice",
+            DeprecationKind::ScalarFilterInsideAPredicate => {
+                "the in-predicate scalar-filter notice"
+            }
         }
     }
 }

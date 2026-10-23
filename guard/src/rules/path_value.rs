@@ -1770,11 +1770,23 @@ impl QueryResolver for PathAwareValue {
                             // The first undecided key is the whole selection's error here, so its
                             // sentence is the one registered, as the evaluator registers the sentence
                             // of the key its fold keeps (`real_binary_operation`).
-                            if selection.register {
-                                let _registered =
-                                    crate::rules::eval_context::register_refusal(&reason);
-                            }
-                            return Err(Error::undecidable(reason));
+                            // The registration's token rides on the error, so a reader of this arm's
+                            // marker reads the refusal by its token as the evaluator's arm does: the wrap
+                            // is registered under the kept pairing's own token, else the one recovered
+                            // for its sentence (`ensure_registered_wrap`, as `real_binary_operation`
+                            // registers the live arm's), never under a mint made here while either is
+                            // known, so the refusal's timing stays its producer's in this arm too.
+                            let inner = selection.timing.token();
+                            let registered = if selection.register {
+                                Some(crate::rules::eval_context::ensure_registered_wrap(
+                                    &reason,
+                                    inner,
+                                    &crate::rules::eval::no_frame_ranking,
+                                ))
+                            } else {
+                                inner
+                            };
+                            return Err(Error::UndecidableComparison(reason, registered));
                         }
                         if selection.selected {
                             match key {

@@ -345,13 +345,9 @@ impl Notices {
                             .cases
                             .values()
                             .fold(UnraisedCounts::default(), |sum, case| sum + *case);
-                        let across = match key.spec_file() {
-                            Some(spec_file) => format!(
-                                " in {} cases of `{}`",
-                                tally.cases.len(),
-                                crate::utils::writer::escaped_controls_for_display(spec_file)
-                            ),
-                            None => format!(" in {} cases", tally.cases.len()),
+                        let across = rules::eval_context::WhereFound::Cases {
+                            count: tally.cases.len(),
+                            spec_file: key.spec_file().map(str::to_string),
                         };
                         rules::eval_context::unraised_refusal_notice(
                             &tally.first,
