@@ -2,6 +2,9 @@
 This module contains the logic for the cfn-guard pre-commit hook
 """
 
+from __future__ import annotations
+
+import argparse
 import os
 import platform
 import shutil
@@ -9,9 +12,8 @@ import subprocess
 import sys
 import tarfile
 import tempfile
-import argparse
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Sequence, Union
 from urllib.request import Request, urlopen
 
 BIN_NAME = "cfn-guard"
@@ -84,9 +86,8 @@ def install_cfn_guard():
     if current_os in supported_oses:
         url = release_urls_dict[current_os].replace("TAG", GUARD_BINARY_VERSION)
         # Download tarball of release from Github
-        with tempfile.NamedTemporaryFile(delete=False) as temp_file:
-            with urlopen(url) as response:
-                shutil.copyfileobj(response, temp_file)
+        with tempfile.NamedTemporaryFile(delete=False) as temp_file, urlopen(url) as response:
+            shutil.copyfileobj(response, temp_file)
 
         # Create the install_dir if it doesn't exist
         os.makedirs(install_dir, exist_ok=True)
@@ -100,12 +101,10 @@ def install_cfn_guard():
                 filename = os.path.basename(member.name)
                 # Join the install_dir path and the filename to get the full target path
                 file_path = os.path.join(install_dir, filename)
-                # Open the archived file
-                with tar.extractfile(member) as source:
-                    # Create a new file using the file_path with write binary mode
-                    with open(file_path, "wb") as target:
-                        # Copy the contents of the archived file(s) to the target file
-                        shutil.copyfileobj(source, target)
+                # Open the archived file, and a new file at file_path in write binary mode
+                with tar.extractfile(member) as source, open(file_path, "wb") as target:
+                    # Copy the contents of the archived file(s) to the target file
+                    shutil.copyfileobj(source, target)
 
         binary_path = os.path.join(install_dir, binary_name)
         os.chmod(binary_path, 0o755)
@@ -135,7 +134,7 @@ def run_cfn_guard(args: str) -> int:
         return run_cfn_guard(args)
 
 
-def main(argv: Union[Sequence[str], None] = None) -> int:
+def main(argv: Sequence[str] | None = None) -> int:
     """Entry point for the pre-commit hook"""
     if argv is None:
         argv = sys.argv[1:]
