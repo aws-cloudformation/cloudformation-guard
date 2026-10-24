@@ -7,6 +7,7 @@ use crate::rules::functions::collections::count;
 use crate::rules::functions::converters::{
     parse_bool, parse_char, parse_float, parse_int, parse_str,
 };
+use crate::rules::functions::key::key;
 use crate::rules::functions::strings::{
     join, json_parse, regex_replace, substring, to_lower, to_upper, url_decode,
 };
@@ -1253,6 +1254,7 @@ pub(crate) enum FunctionName {
     Count,
     Join,
     JsonParse,
+    Key,
     Now,
     ParseBoolean,
     ParseChar,
@@ -1282,7 +1284,8 @@ impl FunctionName {
             | FunctionName::ParseFloat
             | FunctionName::ParseInt
             | FunctionName::ParseEpoch
-            | FunctionName::ParseChar => 1,
+            | FunctionName::ParseChar
+            | FunctionName::Key => 1,
             FunctionName::Now => 0,
         }
     }
@@ -1294,6 +1297,7 @@ impl std::fmt::Display for FunctionName {
             FunctionName::Count => "count",
             FunctionName::Join => "join",
             FunctionName::JsonParse => "json_parse",
+            FunctionName::Key => "key",
             FunctionName::Now => "now",
             FunctionName::ParseBoolean => "parse_boolean",
             FunctionName::ParseChar => "parse_char",
@@ -1319,6 +1323,7 @@ impl TryFrom<&str> for FunctionName {
             "count" => Ok(FunctionName::Count),
             "join" => Ok(FunctionName::Join),
             "json_parse" => Ok(FunctionName::JsonParse),
+            "key" => Ok(FunctionName::Key),
             "now" => Ok(FunctionName::Now),
             "parse_boolean" => Ok(FunctionName::ParseBoolean),
             "parse_char" => Ok(FunctionName::ParseChar),
@@ -1340,6 +1345,7 @@ impl TryFrom<&str> for FunctionName {
 
 struct CountFunction;
 struct JsonParseFunction;
+struct KeyFunction;
 struct RegexReplaceFunction;
 struct SubstringFunction;
 struct ToUpperFunction;
@@ -1363,6 +1369,7 @@ impl Callable for FunctionName {
         match self {
             FunctionName::Count => CountFunction.call(args),
             FunctionName::JsonParse => JsonParseFunction.call(args),
+            FunctionName::Key => KeyFunction.call(args),
             FunctionName::RegexReplace => RegexReplaceFunction.call(args),
             FunctionName::Substring => SubstringFunction.call(args),
             FunctionName::ToUpper => ToUpperFunction.call(args),
@@ -1395,6 +1402,12 @@ impl Callable for NowFunction {
 impl Callable for CountFunction {
     fn call(&self, args: &[Vec<QueryResult>]) -> Result<Vec<Option<PathAwareValue>>> {
         Ok(vec![Some(count(&args[0]))])
+    }
+}
+
+impl Callable for KeyFunction {
+    fn call(&self, args: &[Vec<QueryResult>]) -> Result<Vec<Option<PathAwareValue>>> {
+        Ok(key(&args[0]))
     }
 }
 

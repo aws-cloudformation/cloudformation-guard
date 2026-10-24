@@ -1,0 +1,29 @@
+let buckets = Resources.*[ Type == 'AWS::S3::Bucket' ]
+
+rule BUCKET_LOGICAL_IDS when %buckets !empty {
+    let names = key(%buckets)
+
+    let total = count(%names)
+    %total == 5
+
+    %names in ["s3", "bucket", "bucket2", "bucket3", "bucket4"]
+}
+
+rule BUCKET_LOGICAL_ID_PER_RESOURCE when %buckets !empty {
+    %buckets {
+        let name = key(this)
+        %name in ["s3", "bucket", "bucket2", "bucket3", "bucket4"]
+    }
+}
+
+let service = Resources.*[ Type == 'AWS::New::Service' ]
+
+rule SERVICE_PROPERTY_NAMES when %service !empty {
+    let props = %service.Properties.*
+    let names = key(%props)
+
+    let total = count(%names)
+    %total == 5
+
+    %names in ["Policy", "Arn", "Encoded", "UpdatedAt", "CreatedAt"]
+}
