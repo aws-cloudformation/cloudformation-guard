@@ -86,8 +86,18 @@ impl Loader {
             match val.parse::<i64>() {
                 Ok(i) => MarkedValue::Int(i, location),
                 Err(_) => match val.parse::<f64>() {
-                    Ok(f) => MarkedValue::Float(f, location),
-                    Err(_) => match self.parse_bool(&val) {
+                    // `f64::from_str` also accepts `nan`, `inf` and `infinity`, none of which
+                    // YAML resolves to a float. YAML spells the non-finite floats `.nan` and
+                    // `.inf`, and those spellings already fall through to `String` here, so
+                    // accepting the Rust-only ones made the two halves disagree.
+                    //
+                    // Keeping `NaN` out of the value space is the part that matters:
+                    // `PathAwareValue` asserts `Eq` and hashes its own contents, and
+                    // `Float(NaN)` is not equal to itself. A NaN-keyed entry can never be
+                    // found again, and no comparison against one can be answered, so a clause
+                    // that guards on it cannot decide either way.
+                    Ok(f) if f.is_finite() => MarkedValue::Float(f, location),
+                    _ => match self.parse_bool(&val) {
                         Some(b) => MarkedValue::Bool(b, location),
                         None => match val.to_lowercase().as_str() {
                             "~" | "null" => MarkedValue::Null(location),
