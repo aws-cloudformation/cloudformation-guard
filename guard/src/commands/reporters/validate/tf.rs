@@ -110,7 +110,8 @@ lazy_static! {
 }
 
 use super::common::{
-    populate_hierarchy_path_trees, IdentityHash, LocalResourceAggr, PathTree, RuleHierarchy,
+    console_field, populate_hierarchy_path_trees, IdentityHash, LocalResourceAggr, PathTree,
+    RuleHierarchy,
 };
 use crate::rules::display::ValueOnlyDisplay;
 use crate::rules::errors::Error;
@@ -333,10 +334,10 @@ fn single_line(
                             val="Value",
                             cw="ComparedWith",
                             prefix=prefix,
-                            path=property_of(resource_based),
-                            value=ValueOnlyDisplay(Rc::clone(&bc.from)),
+                            path=console_field(&property_of(resource_based)),
+                            value=console_field(&ValueOnlyDisplay(Rc::clone(&bc.from))),
                             cmp=crate::rules::eval_context::cmp_str(bc.comparison),
-                            with=ValueOnlyDisplay(Rc::clone(&bc.to))
+                            with=console_field(&ValueOnlyDisplay(Rc::clone(&bc.to)))
                         )?;
                         Ok(width)
                     }
@@ -369,10 +370,10 @@ fn single_line(
                             .take(cut_off)
                             .map(|each| ValueOnlyDisplay(Rc::clone(each)))
                             .collect::<Vec<_>>();
-                        let collected = format!("{:?}", collected);
-                        let path = property_of(&bc.from.self_path().0);
+                        let collected = console_field(&format!("{:?}", collected));
+                        let path = console_field(&property_of(&bc.from.self_path().0));
                         let cmp = crate::rules::eval_context::cmp_str(bc.comparison);
-                        let value = ValueOnlyDisplay(Rc::clone(&bc.from));
+                        let value = console_field(&ValueOnlyDisplay(Rc::clone(&bc.from)));
                         if cut_off >= bc.to.len() {
                             writeln!(
                                 writer,
@@ -431,7 +432,7 @@ fn single_line(
                             pp = "PropertyPath",
                             op = "Operator",
                             prefix = prefix,
-                            path = property,
+                            path = console_field(&property),
                             cmp = crate::rules::eval_context::cmp_str(re.comparison),
                         )?;
                         Ok(width)

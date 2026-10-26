@@ -12,7 +12,8 @@ use lazy_static::lazy_static;
 use crate::{
     commands::{
         reporters::validate::common::{
-            populate_hierarchy_path_trees, IdentityHash, LocalResourceAggr, PathTree, RuleHierarchy,
+            console_field, populate_hierarchy_path_trees, IdentityHash, LocalResourceAggr,
+            PathTree, RuleHierarchy,
         },
         tracker::StatusContext,
         validate::{OutputFormatType, Reporter},
@@ -58,6 +59,12 @@ fn context_start_line(line: usize) -> usize {
     line.saturating_sub(2).max(1)
 }
 
+/// Whether the reporter colours the `Code:` excerpt: the process setting the `colored` crate reads (a
+/// terminal, `NO_COLOR`, `CLICOLOR_FORCE`), read once per excerpt and handed to `emit_code`.
+fn colour_on() -> bool {
+    colored::control::SHOULD_COLORIZE.should_colorize()
+}
+
 /// The `Code:` excerpt under a finding: the source from two lines above the finding's position, six
 /// lines in all.
 ///
@@ -73,19 +80,40 @@ fn emit_code(
     writer: &mut dyn Write,
     location: &Location,
     prefix: &str,
+    colour: bool,
 ) -> rules::Result<()> {
     if location.line == 0 && location.col == 0 {
         return Ok(());
     }
     writeln!(writer, "{prefix}Code:", prefix = prefix)?;
     let new_prefix = format!("{}  ", prefix);
+    // Each source line is escaped (a tab kept) BEFORE the colour is added, so a control character in the
+    // template reaches the console as its escape and the colour sequence the line is wrapped in is the
+    // writer's own. `colour` says whether the line is wrapped (the process setting, `colour_on`, in the
+    // reporter; a cell passes it), so the output does not depend on global state a parallel test shares.
+    let excerpt = |num: usize, line: &str| {
+        let text = format!(
+            "{num:>5}.{line}",
+            num = num,
+            line = crate::utils::writer::escaped_controls_for_excerpt(line)
+        );
+        match colour {
+            true => format!(
+                "{}{}{}",
+                crate::utils::writer::WRITER_COLOUR_GREEN,
+                text,
+                crate::utils::writer::WRITER_COLOUR_RESET
+            ),
+            false => text,
+        }
+    };
     if let Some((num, line)) = code_segment.seek_line(context_start_line(location.line)) {
-        let line = format!("{num:>5}.{line}", num = num, line = line).bright_green();
+        let line = excerpt(num, line);
         writeln!(writer, "{prefix}{line}", prefix = new_prefix, line = line)?;
     }
     let mut context = 5;
     while let Some((num, line)) = code_segment.next() {
-        let line = format!("{num:>5}.{line}", num = num, line = line).bright_green();
+        let line = excerpt(num, line);
         writeln!(writer, "{prefix}{line}", prefix = new_prefix, line = line)?;
         context -= 1;
 
@@ -204,7 +232,7 @@ fn unary_err_msg(
         pp = "PropertyPath",
         op = "Operator",
         prefix = prefix,
-        path = re.value.self_path(),
+        path = console_field(&re.value.self_path()),
         cmp = rules::eval_context::cmp_str(re.comparison),
     )?;
     Ok(width)
@@ -405,6 +433,7 @@ fn single_line(
                                 writer,
                                 &bc.traversed_to.self_path().1,
                                 prefix,
+                                colour_on(),
                             )?;
                         }
                         Ok(0)
@@ -427,12 +456,18 @@ fn single_line(
                             val = "Value",
                             cw = "ComparedWith",
                             prefix = prefix,
-                            path = bc.from.self_path(),
-                            value = ValueOnlyDisplay(Rc::clone(&bc.from)),
+                            path = console_field(&bc.from.self_path()),
+                            value = console_field(&ValueOnlyDisplay(Rc::clone(&bc.from))),
                             cmp = rules::eval_context::cmp_str(bc.comparison),
-                            with = ValueOnlyDisplay(Rc::clone(&bc.to))
+                            with = console_field(&ValueOnlyDisplay(Rc::clone(&bc.to)))
                         )?;
-                        emit_code(self.code_segment, writer, &bc.from.self_path().1, prefix)?;
+                        emit_code(
+                            self.code_segment,
+                            writer,
+                            &bc.from.self_path().1,
+                            prefix,
+                            colour_on(),
+                        )?;
                         Ok(width)
                     }
 
@@ -460,6 +495,7 @@ fn single_line(
                             .collect::<Vec<_>>();
                         let collected = format!("{:?}", collected);
                         let width = "PropertyPath".len() + 4;
+                        let collected = console_field(&collected);
                         if cut_off >= bc.to.len() {
                             writeln!(
                                 writer,
@@ -470,8 +506,8 @@ fn single_line(
                                 val = "Value",
                                 cw = "ComparedWith",
                                 prefix = prefix,
-                                path = bc.from.self_path(),
-                                value = ValueOnlyDisplay(Rc::clone(&bc.from)),
+                                path = console_field(&bc.from.self_path()),
+                                value = console_field(&ValueOnlyDisplay(Rc::clone(&bc.from))),
                                 cmp = rules::eval_context::cmp_str(bc.comparison),
                                 with = collected
                             )?;
@@ -486,14 +522,20 @@ fn single_line(
                                 total_name = "Total",
                                 cw = "ComparedWith",
                                 prefix = prefix,
-                                path = bc.from.self_path(),
-                                value = ValueOnlyDisplay(Rc::clone(&bc.from)),
+                                path = console_field(&bc.from.self_path()),
+                                value = console_field(&ValueOnlyDisplay(Rc::clone(&bc.from))),
                                 cmp = rules::eval_context::cmp_str(bc.comparison),
                                 total = bc.to.len(),
                                 with = collected
                             )?;
                         }
-                        emit_code(self.code_segment, writer, &bc.from.self_path().1, prefix)?;
+                        emit_code(
+                            self.code_segment,
+                            writer,
+                            &bc.from.self_path().1,
+                            prefix,
+                            colour_on(),
+                        )?;
                         Ok(width)
                     }
 
@@ -505,7 +547,13 @@ fn single_line(
                         prefix: &str,
                     ) -> rules::Result<usize> {
                         let width = unary_err_msg(writer, cr, re, prefix)?;
-                        emit_code(self.code_segment, writer, &re.value.self_path().1, prefix)?;
+                        emit_code(
+                            self.code_segment,
+                            writer,
+                            &re.value.self_path().1,
+                            prefix,
+                            colour_on(),
+                        )?;
                         Ok(width)
                     }
                 }
@@ -649,7 +697,8 @@ mod code_excerpt_tests {
     fn excerpt_for(location: Location) -> String {
         let mut cursor = ReadCursor::new(SOURCE);
         let mut out: Vec<u8> = Vec::new();
-        emit_code(&mut cursor, &mut out, &location, "  ").expect("writing to a Vec cannot fail");
+        emit_code(&mut cursor, &mut out, &location, "  ", false)
+            .expect("writing to a Vec cannot fail");
         String::from_utf8(crate::utils::writer::strip_escape_sequences(&out)).expect("utf8")
     }
 
@@ -676,5 +725,79 @@ mod code_excerpt_tests {
     fn a_finding_without_a_source_position_shows_no_excerpt() {
         let text = excerpt_for(Location::default());
         assert_eq!(text, "", "no `Code:` header and no lines, got: {:?}", text);
+    }
+
+    /// A source line holding a control reaches the console as its escape, escaped BEFORE the colour is
+    /// added: the only escape byte left in the excerpt is the writer's own colour sequence (green and its
+    /// reset), and a tab, which neither ends nor hides a line, is kept as it is written. The ESC is built
+    /// with `char::from`, since the source holds no raw control.
+    ///
+    /// Expected, not yet run. Red: a raw ESC byte beside the colour sequences, the control written as
+    /// text with no escape, or the tab written as `\t`.
+    #[test]
+    fn a_control_in_a_source_line_is_escaped_before_the_colour_and_a_tab_is_kept() {
+        let esc = char::from(0x1b);
+        let source = format!("Resources:\n  A:\n\tTab: {esc}[31mred\n  B: 1\n");
+        let mut cursor = ReadCursor::new(&source);
+        let mut out: Vec<u8> = Vec::new();
+        // The colour is a parameter, so the cell reads no global setting that a parallel test shares.
+        emit_code(&mut cursor, &mut out, &Location::new(3, 1), "  ", true)
+            .expect("writing to a Vec cannot fail");
+        let written = String::from_utf8(out).expect("utf8");
+        let without_colour = written
+            .replace(&format!("{esc}[92m"), "")
+            .replace(&format!("{esc}[0m"), "");
+        assert!(
+            !without_colour.contains(esc),
+            "the only ESC bytes are the writer's colour: {:?}",
+            written
+        );
+        assert!(
+            written.contains("\\u{1b}[31mred"),
+            "the source ESC is written as its escape: {:?}",
+            written
+        );
+        assert!(
+            written.contains("\tTab: "),
+            "the tab is kept: {:?}",
+            written
+        );
+        assert!(
+            written.contains(&format!("{esc}[92m")),
+            "the colour is on, so the writer's own sequence is in the output: {:?}",
+            written
+        );
+    }
+
+    /// A real coloured excerpt, run through the backstop every comparison writer's buffer takes
+    /// (`writer_output`), comes out byte for byte as `emit_code` wrote it: the green that opens each
+    /// source line and the reset that closes it are the two sequences the backstop keeps
+    /// (`WRITER_COLOUR_SEQUENCES`), and the source's own ESC is already written as its escape. The cell
+    /// runs the writer, not a hand-built sequence, so a colour `emit_code` starts writing that the
+    /// backstop does not keep turns it red, where a backstop test that builds its own sequence would stay
+    /// green while every coloured `Code:` line printed the sequence as text.
+    ///
+    /// Expected, not yet run. Red: the backstop's output differs from the writer's (a colour sequence the
+    /// writer emits is written as text), or the excerpt holds no colour at all.
+    #[test]
+    fn a_coloured_excerpt_passes_the_writers_backstop_unchanged() {
+        let esc = char::from(0x1b);
+        let source = format!("Resources:\n  A:\n    Note: {esc}[8mhidden\n  B: 1\n");
+        let mut cursor = ReadCursor::new(&source);
+        let mut out: Vec<u8> = Vec::new();
+        emit_code(&mut cursor, &mut out, &Location::new(3, 1), "  ", true)
+            .expect("writing to a Vec cannot fail");
+        let written = String::from_utf8(out.clone()).expect("utf8");
+        assert!(
+            written.contains(crate::utils::writer::WRITER_COLOUR_GREEN)
+                && written.contains(crate::utils::writer::WRITER_COLOUR_RESET),
+            "the excerpt is coloured: {:?}",
+            written
+        );
+        assert_eq!(
+            written,
+            crate::commands::reporters::validate::common::writer_output(out),
+            "the backstop keeps every sequence the writer emits"
+        );
     }
 }

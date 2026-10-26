@@ -4,16 +4,16 @@ use serde::Serialize;
 use crate::commands::tracker::StatusContext;
 use crate::rules::eval_context::{
     find_skip_reason, BinaryCheck, BinaryComparison, ClauseReport, EventRecord, FileReport,
-    GuardClauseReport, InComparison, Messages, UnaryCheck, UnaryComparison, ValueComparisons,
-    ValueUnResolved,
+    GuardClauseReport, InComparison, Messages, RuleReport, UnaryCheck, UnaryComparison,
+    ValueComparisons, ValueUnResolved,
 };
 
 use crate::rules::path_value::traversal::Traversal;
 use crate::rules::path_value::PathAwareValue;
 use crate::rules::values::CmpOperator;
 use crate::rules::{
-    BlockCheck, ClauseCheck, EvaluationType, MembershipLead, NamedStatus, QueryResult, RecordType,
-    Status, UnResolved,
+    BlockCheck, ClauseCheck, CustomSlot, EvaluationType, MembershipLead, NamedStatus, QueryResult,
+    RecordType, Status, UnResolved,
 };
 use fancy_regex::Regex;
 use lazy_static::*;
@@ -38,16 +38,14 @@ impl From<(CmpOperator, bool)> for Comparison {
     }
 }
 
-/// The message, if it says anything.
+/// The message, if it says anything: `crate::rules::non_blank`, which holds the rule (a blank text is no
+/// text).
 ///
 /// A clause that carries no custom message records `Some("")` rather than `None`, so a plain `or` over
 /// the two message slots reports a blank reason -- which reads as a rendering bug rather than as a
 /// message nobody wrote.
-///
-/// A function rather than a closure: a closure taking `&Option<String>` and returning `Option<&str>`
-/// cannot express that the two lifetimes are the same one, and rustc rejects it.
 fn non_empty_message(message: &Option<String>) -> Option<&str> {
-    message.as_deref().filter(|text| !text.trim().is_empty())
+    crate::rules::non_blank(message)
 }
 
 /// The text as one line, so that nothing an author wrote can pass for a line this section writes itself.
@@ -81,15 +79,148 @@ fn non_empty_message(message: &Option<String>) -> Option<&str> {
 /// Rule names are not put through this. A name is an identifier, so it cannot hold a line break, and
 /// pretending otherwise would suggest to a reader that it can.
 ///
-/// No defence against a terminal control sequence. An author who writes an ANSI cursor movement into a
-/// message can still move the cursor -- here and through every other reporter in this file, none of which
-/// escapes one either. That is a property of the writer rather than of this section.
+/// No defence against a terminal control sequence of its own: an ANSI cursor movement in a message
+/// survives the collapse. Every line that prints a recorded message writes the controls as their escapes
+/// after it. The STRICT set (`escaped_controls_for_display`) is the default on every console line and
+/// field: a key, a path, a context (the rules file path a record context names, through
+/// `FileLocation`'s display, is escaped where the position is built, as a file name is), a value, an
+/// excerpt, an `Error =` or a `Reason =` text, because an
+/// evaluator's sentence quotes keys from the rules file and the template and the record stores it the same
+/// way (`reason_backstop`, `write_console_line`). The RELAXED set (`escaped_controls_for_console`), under
+/// which a joiner or a mark is ordinary text, applies only to the rule author's `<< >>` message text where
+/// it is printed (`plain_author_message`, the `Message =` lines through `write_text_line`, and a rule
+/// record's custom slot when the record says the slot holds the author's body, `custom_slot_origin`). Each finished
+/// line is escaped once. A line break inside a field is collapsed here first, since both sinks write one
+/// line: a context is collapsed at its `Check =` line (`context_line`), and a line feed left in any other
+/// field is escaped as `\n` there, never written.
+/// The comparison writers format their own lines (`ComparisonErrorWriter`) and escape each field they take
+/// from the template before it is formatted in (`console_field`), because their lines also carry the
+/// writer's colour, which an escape of the whole line would print as text. The clause arm then applies a
+/// backstop to what a writer wrote (`writer_output`), which writes every control as its escape except the
+/// text's own layout and the writer's two colour sequences, so a field a writer forgot cannot reach the
+/// terminal raw.
 fn one_line(text: &str) -> String {
     text.split(['\n', '\r'])
         .map(str::trim)
         .filter(|part| !part.is_empty())
         .collect::<Vec<_>>()
         .join("; ")
+}
+
+/// A clause's context for its `Check =` line: as it is, with the spacing the rules file gave it (the
+/// context of a clause can open and close with spaces, and the line has always printed them), except a
+/// context that spans lines, which is joined as the unattributed section joins it (`one_line`), since the
+/// sink writes one line. `one_line` alone trimmed the spaces of every context, and the printed line moved.
+/// A break at an end of the text does not span lines: a rules file with CRLF line endings leaves a `\r`
+/// after a one-line context, and the context is that one piece as it was written, spacing kept. The
+/// join is made only where a break sits between two pieces that hold text.
+fn context_line(context: &str) -> String {
+    if !context.contains(['\n', '\r']) {
+        return context.to_string();
+    }
+    let mut pieces = context
+        .split(['\n', '\r'])
+        .filter(|piece| !piece.trim().is_empty());
+    match (pieces.next(), pieces.next()) {
+        (Some(only), None) => only.to_string(),
+        _ => one_line(context),
+    }
+}
+
+/// Writes one finished console line that prints a KEY, a PATH or a CONTEXT: `line` with every control that
+/// breaks or hides a line written as its escape by the strict set (`escaped_controls_for_display`: the
+/// joiners and marks included, so a rule key with a pasted joiner does not print like the template's key
+/// without it), then a line feed. A field no helper bounded or escaped (a data key holding an ESC, a
+/// rules-file context) cannot reach the console raw through it. The escape is idempotent, so a field a
+/// caller already escaped (`template_path`) prints unchanged. The line is ONE line: a field that can hold
+/// a line break is collapsed (`one_line`) by its caller first, since a line feed in `line` is escaped here
+/// and not written.
+pub(super) fn write_console_line(
+    writer: &mut dyn Write,
+    line: std::fmt::Arguments<'_>,
+) -> crate::rules::Result<()> {
+    let line = line.to_string();
+    writeln!(
+        writer,
+        "{}",
+        crate::utils::writer::escaped_controls_for_display(&line)
+    )?;
+    Ok(())
+}
+
+/// Writes one finished console line that prints the rule AUTHOR's message text: as
+/// [`write_console_line`], with the relaxed set (`escaped_controls_for_console`), under which a joiner or
+/// a mark is ordinary text. An evaluator's error and a reason are not the author's prose and go through
+/// [`write_console_line`].
+pub(super) fn write_text_line(
+    writer: &mut dyn Write,
+    line: std::fmt::Arguments<'_>,
+) -> crate::rules::Result<()> {
+    let line = line.to_string();
+    writeln!(
+        writer,
+        "{}",
+        crate::utils::writer::escaped_controls_for_console(&line)
+    )?;
+    Ok(())
+}
+
+/// What a comparison writer wrote into its buffer, as the clause arm prints it: the writer's own lines,
+/// run through a BACKSTOP. Every control that breaks or hides a line is written as its escape, except the
+/// line feeds and tabs of the text's layout and the two colour sequences a writer wraps around an excerpt
+/// line (green and reset, the exact forms; `escaped_but_for_colour_and_layout`), so any other sequence,
+/// a conceal included, is written as its escape. The writers escape what they take from
+/// the template themselves (`console_field`), so for them this changes nothing; a writer that forgets one
+/// field still cannot send a raw control to the terminal.
+pub(super) fn writer_output(buffer: Vec<u8>) -> String {
+    crate::utils::writer::escaped_but_for_colour_and_layout(
+        &String::from_utf8(buffer).unwrap_or_default(),
+    )
+}
+
+/// A value, a path or a key a comparison writer takes from the template, as one console field: the strict
+/// escape (`escaped_controls_for_display`), which also writes a line feed in it as the characters `\n`, so
+/// a data string cannot end the writer's line and forge the next. The writers escape each field with this
+/// before it is formatted into their lines, and leave the lines' own colour and layout alone.
+pub(super) fn console_field(field: &dyn std::fmt::Display) -> String {
+    crate::utils::writer::escaped_controls_for_display(&field.to_string())
+}
+
+/// Writes one finished console line made of a BODY and the rule author's MESSAGE, which is the last piece
+/// of the line: the body goes through the strict set (`escaped_controls_for_display`) as a whole, whatever
+/// it holds, and `message` is appended through the relaxed set (`escaped_controls_for_console`), under
+/// which a joiner or a mark in the author's prose is ordinary text. The body is escaped as a whole, not
+/// field by field, so a field added to a line later cannot print a joiner raw; the message is the one
+/// piece the relaxed set reaches, and it stays last so the strict escape of the body cannot reach into it.
+/// `message` carries its own delimiters (` Message = [..]`), which hold no control. Both escapes are
+/// idempotent, so a piece a caller already escaped prints unchanged.
+pub(super) fn write_console_line_with_message(
+    writer: &mut dyn Write,
+    body: std::fmt::Arguments<'_>,
+    message: &str,
+) -> crate::rules::Result<()> {
+    let body = body.to_string();
+    writeln!(
+        writer,
+        "{}{}",
+        crate::utils::writer::escaped_controls_for_display(&body),
+        crate::utils::writer::escaped_controls_for_console(message)
+    )?;
+    Ok(())
+}
+
+/// [`write_console_line`] with `format!`'s arguments.
+macro_rules! console_line {
+    ($writer:expr, $($arg:tt)*) => {
+        write_console_line($writer, format_args!($($arg)*))
+    };
+}
+
+/// [`write_text_line`] with `format!`'s arguments.
+macro_rules! text_line {
+    ($writer:expr, $($arg:tt)*) => {
+        write_text_line($writer, format_args!($($arg)*))
+    };
 }
 
 /// What the per-resource output showed, in the two forms the unattributed section has to ask about.
@@ -214,9 +345,13 @@ pub(super) fn collect_unattributed_explanations<'record, 'value: 'record>(
 ) {
     match clause {
         ClauseReport::Block(blk) => {
+            // The context is the rules file's text, collapsed onto one line and escaped by the strict
+            // set like every context the per-resource output prints.
+            let one_context =
+                crate::utils::writer::escaped_controls_for_display(&one_line(&blk.context));
             let context = match rule_name {
-                Some(name) => format!("{name}: {}", one_line(&blk.context)),
-                None => one_line(&blk.context),
+                Some(name) => format!("{name}: {one_context}"),
+                None => one_context,
             };
             if !rendered.shows(clause) {
                 let explanation = explanation_of(&blk.messages);
@@ -233,8 +368,11 @@ pub(super) fn collect_unattributed_explanations<'record, 'value: 'record>(
             // A rule that failed on its own condition has no clause findings underneath it, so the
             // per-resource output has nothing to render and this message is the only account of why
             // the rule failed. `checks.is_empty()` is the discriminator: a rule whose clauses produced
-            // findings has them rendered per resource already, and repeating the rule-level message
-            // there would duplicate rather than explain.
+            // findings has them rendered per resource already, under a `Rule =` block that prints the
+            // rule's own `Message` line, and repeating the rule-level message there would duplicate
+            // rather than explain. This is narrower than `eval_context::speaks_for_itself`, the JUnit
+            // failure text's test, which also takes a rule whose checks are all silent: the JUnit report
+            // has no per-resource rendering that prints the rule's own message beside them.
             //
             // Reached when a condition cannot be answered across a rule boundary -- a gate whose
             // referenced or parameterized rule is undecidable. The evaluator records the explanation
@@ -247,7 +385,10 @@ pub(super) fn collect_unattributed_explanations<'record, 'value: 'record>(
             // one arm that wrote its message neither collapsed onto a line nor bounded, and the text it
             // writes is not always the evaluator's own: `eval.rs` replaces a called rule's status message
             // with the calling clause's `<< >>` body, so a rule node here can carry an author's message
-            // with the author's line breaks still in it. Leaving one arm raw is a difference with nothing
+            // with the author's line breaks still in it. The record says whose text the slot holds
+            // (`RuleReport::custom_slot`, read by `custom_slot_origin`), and the escape set follows:
+            // the relaxed one for the author's prose, the strict one for the evaluator's sentence.
+            // Leaving one arm raw is a difference with nothing
             // behind it. `non_empty_message` for the same reason the arms above use it -- an entry whose
             // explanation is blank reads as a rendering fault rather than as a message nobody wrote.
             if rule.checks.is_empty() {
@@ -256,8 +397,15 @@ pub(super) fn collect_unattributed_explanations<'record, 'value: 'record>(
                         format!("rule {}", rule.name),
                         // The rule record's kind travels with its message: a rule whose condition
                         // raised a refusal prints the refusal whole, one whose condition raised a
-                        // converter's error over a template value is held to the cap.
-                        bounded_for_the_console(explanation, rule.messages.refusal),
+                        // converter's error over a template value is held to the cap. A call's
+                        // `<< >>` body is the author's half and the rule's own sentence, which the
+                        // body displaced, the evaluator's half, joined as a clause's two halves are
+                        // (`explanation_of`): the author's prose under the relaxed set, the
+                        // sentence under its own kind's bound.
+                        match custom_slot_origin(rule) {
+                            Origin::Author => explanation_of(&rule.messages),
+                            origin => bounded_for_the_console(explanation, origin),
+                        },
                     ));
                 }
             }
@@ -321,41 +469,6 @@ pub(super) fn collect_unattributed_explanations<'record, 'value: 'record>(
 /// appearing twice. Median whitespace across all 233 messages is 8 characters and the most is 54.
 const LONGEST_RECORDED_MESSAGE: usize = 320;
 
-/// One recorded message, cut to a length a console can show.
-///
-/// Cut at whitespace, so a word is never split in half. That also drops a *compactly serialised* value
-/// whole, because such a value contains no whitespace and is therefore one word -- but only such a value.
-/// A document containing a string with a space in it, which is any template with a `Description` or a tag
-/// value, has whitespace inside the blob and the cut lands there instead, so up to the cap of unrelated
-/// content can still appear. The length is what bounds the output; the whitespace rule only decides where
-/// within that bound the cut falls.
-///
-/// Cutting mid-word would also put half a word into the fixture output, where the spell checker reads it
-/// as a misspelling and fails the build. Half of "ServerSideEncryptionConfiguration" did exactly that.
-///
-/// By character rather than by byte, so a multi-byte character straddling the cut cannot panic.
-///
-/// Collapsed onto one line by `one_line` before it is measured, which is also what sets the indentation
-/// aside: an explanation that fits once its own whitespace is gone comes out whole and carries no ellipsis.
-/// An ellipsis is a claim that something was dropped, and a message shortened only because of the spaces
-/// around it makes that claim falsely -- the smaller half of the same defect. Measuring the collapsed line
-/// rather than the recorded string is measuring what the section actually prints, which is the only length
-/// a cap on console output can be about.
-///
-/// Measured against the raw string the leading whitespace is spent from the same budget as the words, and a
-/// message indented far enough spends all of it:
-///
-/// ```text
-/// <<          ... 350 spaces ...          REALREASON>>
-/// ```
-///
-/// The first 320 characters are then all whitespace, the cut at the last whitespace within them leaves 319
-/// spaces, `trim_end` empties what is left, and the line renders as a bare `...` with the author's only word
-/// gone. Nothing about the length of what they wrote put it there.
-fn shortened(message: &str) -> String {
-    cut_to(message, LONGEST_RECORDED_MESSAGE)
-}
-
 /// The longest refusal explanation the console section prints, in characters. A refusal is the
 /// evaluator's own sentence about a read it would not make (`eval_context::refuse`): its definition of
 /// `X`, the remedy and the predicate, bounded by the author's query and predicate, and the parts it takes
@@ -374,8 +487,9 @@ fn shortened(message: &str) -> String {
 /// left as it is. The longest refusal text in the fixtures and tests is under a third of it.
 ///
 /// Which messages are refusals is the evaluator's to say, and it says so on the record
-/// (`Messages::refusal`, copied from `BlockCheck::refusal`, `ValueCheck::refusal`, `NamedStatus::refusal`
-/// or `ComparisonClauseCheck::refusal`, each set where the error was written into the message, from
+/// (`Messages::refusal`, copied from `BlockCheck::refusal`, `ValueCheck::refusal` or
+/// `ComparisonClauseCheck::refusal`, and for a rule record `RuleReport::custom_slot`, copied from
+/// `NamedStatus::slot`, each set where the error was written into the message, from
 /// `eval_context::is_refusal` or from the kind of the marker the record carries: a refusal beside an
 /// absence after the retrieval's own reason, or a refusal beside a value no listed entry accepted under a
 /// positive `IN`, both written as comparison records; `InComparisonCheck::refusal` keeps the two records'
@@ -399,8 +513,45 @@ const REFUSAL_CUT_MARKER: &str =
 /// explanation it never was.
 const REASON_CUT_MARKER: &str = "[reason cut at 4096 characters; `-o json` carries the whole text]";
 
+/// Whose text a console line prints, which decides how its raw controls are written and where it is cut.
+/// The one argument of [`bounded_for_the_console`], so a caller names the origin of the text it hands over
+/// and cannot pick an escape set by passing a bare flag. A rule record's origin is read off the record
+/// (`custom_slot_origin`, from `RuleReport::custom_slot`) and a clause record's error text's off its own
+/// (`error_slot_origin`, from `Messages::refusal`); no caller builds one from a loose `bool`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Origin {
+    /// The rule author's own `<< >>` prose: the relaxed escape set (`escaped_controls_for_console`), under
+    /// which a zero-width joiner or a direction mark is ordinary text. Cut at the recorded-message bound
+    /// where an entry of the section for findings that belong to no resource is bounded
+    /// (`bounded_for_the_console`, `explanation_of`); printed whole on the per-resource `Rule = { }`
+    /// block's `Message` line (`rule_line_texts`), as a clause's message is. Never a refusal.
+    Author,
+    /// The evaluator's own sentence, or text it quoted from the rules file or the template (a converter's
+    /// error, the sentence of a refusal-free record): the strict set (`escaped_controls_for_display`), as
+    /// every other line that names a key prints it, and the recorded-message cut.
+    Evaluator,
+    /// The evaluator's sentence about a read it refused (`Messages::refusal`, `CustomSlot::Refusal`): the
+    /// console's one refusal pipeline (`reason_backstop`, strict set), cut at the later refusal bound and
+    /// marked.
+    Refusal,
+}
+
+/// The origin of the evaluator's error text in a clause's or block's `messages`: a refusal when the
+/// record says so, the evaluator's sentence otherwise. The author's half of such a record is
+/// [`Origin::Author`] by position and needs no record to say it.
+fn error_slot_origin(messages: &Messages) -> Origin {
+    match messages.refusal {
+        true => Origin::Refusal,
+        false => Origin::Evaluator,
+    }
+}
+
 /// A recorded message, cut to the length its kind allows: a refusal explanation to
-/// `LONGEST_REFUSAL_MESSAGE`, anything else to `LONGEST_RECORDED_MESSAGE`.
+/// `LONGEST_REFUSAL_MESSAGE`, anything else to `LONGEST_RECORDED_MESSAGE`. Either way the text is put on
+/// one line and its raw controls are written as their escapes before the cut: the refusal through
+/// `reason_backstop`, an author's text through `plain_author_message` and the evaluator's through
+/// `plain_evaluator_message`, so a control sequence in an author's `<< >>` text or in a converter's
+/// sentence never reaches the terminal raw from the unattributed section.
 ///
 /// A refusal explanation is cut later than any other message because the remedy is the part a reader
 /// acts on, and a cut at `LONGEST_RECORDED_MESSAGE`, wrappers counted, would leave a refusal raised inside
@@ -408,9 +559,10 @@ const REASON_CUT_MARKER: &str = "[reason cut at 4096 characters; `-o json` carri
 /// none of the remedy. The cap exists for a message that embeds a document; a refusal does not, so it is
 /// not held to it.
 ///
-/// `refusal` is the kind the evaluator recorded beside the message (`Messages::refusal`), and is the only
-/// thing read: a text that happens to carry a refusal's wrapper is cut like any other when the record
-/// does not say it is one, and a refusal is printed whole whatever words it uses (the tests under
+/// `origin` is what the record says (`Messages::refusal` through `error_slot_origin`, and for a rule
+/// record's slot `RuleReport::custom_slot` through `custom_slot_origin`), and is the only thing
+/// read: a text that happens to carry a refusal's wrapper is cut like any other when the record does not
+/// say it is one, and a refusal is printed whole whatever words it uses (the tests under
 /// `explanation_tests` hold both). `LONGEST_REFUSAL_MESSAGE` says why the text was not enough.
 ///
 /// A refusal's text takes the console's ONE pipeline for a refusal line (`reason_backstop`: collapsed
@@ -420,11 +572,26 @@ const REASON_CUT_MARKER: &str = "[reason cut at 4096 characters; `-o json` carri
 /// the retrieval-error arm's lines (`refusal_lines`) are one pipeline. Cut here with no escape, those
 /// arms printed a raw ESC or a bidi override the evaluator had not bounded while the retrieval arm
 /// escaped it.
-fn bounded_for_the_console(message: &str, refusal: bool) -> String {
-    if refusal {
-        reason_backstop(message, REFUSAL_CUT_MARKER)
-    } else {
-        shortened(message)
+///
+/// Only the author's prose takes the relaxed set. A pathless clause whose error quotes the key
+/// `Bucket<joiner>Name` prints the key's escape on its `Error =` line and in the unattributed section
+/// alike, since both are the evaluator's text.
+fn bounded_for_the_console(message: &str, origin: Origin) -> String {
+    match origin {
+        Origin::Refusal => reason_backstop(message, REFUSAL_CUT_MARKER),
+        Origin::Author => plain_author_message(message).0,
+        Origin::Evaluator => plain_evaluator_message(message).0,
+    }
+}
+
+/// The origin of a rule record's custom slot, from the one value the record carries for it
+/// (`RuleReport::custom_slot`): a refusal's record holds the evaluator's refusal sentence there, an
+/// author's body the record says it copied, and anything else is the evaluator's own sentence.
+fn custom_slot_origin(rule: &RuleReport<'_>) -> Origin {
+    match rule.custom_slot {
+        CustomSlot::Refusal => Origin::Refusal,
+        CustomSlot::Author => Origin::Author,
+        CustomSlot::Evaluator => Origin::Evaluator,
     }
 }
 
@@ -441,8 +608,8 @@ fn bounded_for_the_console(message: &str, refusal: bool) -> String {
 /// author's text, and a line ending `\u{1... [explanation cut` read as a cut escape where nothing was
 /// cut but the reporter's own spelling.
 fn backstop(text: &str, marker: &str) -> String {
-    let cut = cut_to(text, LONGEST_REFUSAL_MESSAGE);
-    if one_line(text).chars().count() > LONGEST_REFUSAL_MESSAGE {
+    let (cut, was_cut) = cut_to(text, LONGEST_REFUSAL_MESSAGE);
+    if was_cut {
         format!("{} {marker}", before_a_split_escape(&cut))
     } else {
         cut
@@ -496,13 +663,47 @@ fn is_a_split_escape(tail: &str) -> bool {
 }
 
 /// `message` on one line and no longer than `limit` characters, cut at whitespace and marked with an
-/// ellipsis when something was dropped; see `shortened` for why each of those holds.
-fn cut_to(message: &str, limit: usize) -> String {
+/// ellipsis when something was dropped. The second element says whether anything was dropped, set in the
+/// one branch that drops it, so a caller that needs to know (`backstop`, `plain_author_message`) reads the
+/// cutter's own answer and keeps no second count of the collapsed text to agree with it. The cells that
+/// pin the bound read it through `plain_author_message`, the author's form of the plain pipeline; a
+/// recorded message of the evaluator's takes `plain_evaluator_message`, which cuts at the same bound.
+///
+/// Cut at whitespace, so a word is never split in half. That also drops a *compactly serialised* value
+/// whole, because such a value contains no whitespace and is therefore one word -- but only such a value.
+/// A document containing a string with a space in it, which is any template with a `Description` or a tag
+/// value, has whitespace inside the blob and the cut lands there instead, so up to the cap of unrelated
+/// content can still appear. The length is what bounds the output; the whitespace rule only decides where
+/// within that bound the cut falls.
+///
+/// Cutting mid-word would also put half a word into the fixture output, where the spell checker reads it
+/// as a misspelling and fails the build. Half of "ServerSideEncryptionConfiguration" did exactly that.
+///
+/// By character rather than by byte, so a multi-byte character straddling the cut cannot panic.
+///
+/// Collapsed onto one line by `one_line` before its length is taken, which is also what sets the indentation
+/// aside: an explanation that fits once its own whitespace is gone comes out whole and carries no ellipsis.
+/// An ellipsis is a claim that something was dropped, and a message shortened only because of the spaces
+/// around it makes that claim falsely -- the smaller half of the same defect. Measuring the collapsed line
+/// rather than the recorded string is measuring what the section actually prints, which is the only length
+/// a cap on console output can be about.
+///
+/// Counted against the raw string the leading whitespace is spent from the same budget as the words, and a
+/// message indented far enough spends all of it:
+///
+/// ```text
+/// <<          ... 350 spaces ...          REALREASON>>
+/// ```
+///
+/// The first 320 characters are then all whitespace, the cut at the last whitespace within them leaves 319
+/// spaces, `trim_end` empties what is left, and the line renders as a bare `...` with the author's only word
+/// gone. Nothing about the length of what they wrote put it there.
+fn cut_to(message: &str, limit: usize) -> (String, bool) {
     let collapsed = one_line(message);
     let message = collapsed.as_str();
     let cut = match message.char_indices().nth(limit) {
         Some((at, _)) => at,
-        None => return message.to_string(),
+        None => return (message.to_string(), false),
     };
 
     let kept = &message[..cut];
@@ -511,7 +712,7 @@ fn cut_to(message: &str, limit: usize) -> String {
         None => kept,
     };
 
-    format!("{}...", kept.trim_end())
+    (format!("{}...", kept.trim_end()), true)
 }
 
 /// One entry's explanation: the author's message, then the evaluator's account, each bounded on its own.
@@ -538,21 +739,24 @@ fn cut_to(message: &str, limit: usize) -> String {
 ///
 /// The refusal kind applies to the evaluator's half only: the author's `<< >>` text is never a refusal,
 /// and a long one is cut whatever the record says about the error beside it. A rule-level record carries
-/// the evaluator's sentence in the custom slot instead (`report_all_failed_clauses_for_rules`), and
-/// `collect_unattributed_explanations` reads that slot with the record's kind itself; this function sees
+/// either the evaluator's sentence or the author's copied body in the custom slot instead
+/// (`report_all_failed_clauses_for_rules`), and `collect_unattributed_explanations` reads that slot with
+/// the record's own origin (`custom_slot_origin`); this function sees
 /// clause and block reports.
 ///
 /// One function rather than the same expression in the block arm and the clause arm, which is where the
 /// `Messages` in both cases comes from, so that the bound above has somewhere to be asserted.
 fn explanation_of(messages: &Messages) -> String {
-    [
-        (non_empty_message(&messages.custom_message), false),
-        (non_empty_message(&messages.error_message), messages.refusal),
-    ]
-    .iter()
-    .filter_map(|(message, refusal)| message.map(|text| bounded_for_the_console(text, *refusal)))
-    .collect::<Vec<_>>()
-    .join(" ")
+    // The author's half takes the relaxed set, the evaluator's half the strict one.
+    let author = non_empty_message(&messages.custom_message)
+        .map(|text| bounded_for_the_console(text, Origin::Author));
+    let evaluator = non_empty_message(&messages.error_message)
+        .map(|text| bounded_for_the_console(text, error_slot_origin(messages)));
+    vec![author, evaluator]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<String>>()
+        .join(" ")
 }
 
 /// Collect `(context, explanation)` for every clause the per-resource output did not render.
@@ -589,7 +793,7 @@ fn collect_clause_explanations<'record, 'value: 'record>(
                 GuardClauseReport::Unary(unary) => (&unary.context, &unary.messages),
                 GuardClauseReport::Binary(binary) => (&binary.context, &binary.messages),
             };
-            let context = one_line(context);
+            let context = crate::utils::writer::escaped_controls_for_display(&one_line(context));
             if rendered.shows(report) {
                 return;
             }
@@ -1624,6 +1828,19 @@ pub(super) fn populate_hierarchy_path_trees<'report, 'value: 'report>(
 ///
 /// The error half is reachable whatever the message holds: a clause carrying a whitespace-only custom
 /// message and a real evaluator error keeps the error.
+///
+/// The message is collapsed before anything is escaped, as the one-line forms of the same text are
+/// (`plain_author_message`, `reason_backstop`): it is divided at every `;`, line feed and carriage return
+/// together (a line break inside a piece that holds a `;` is a break too, and a CRLF file's pairs are one
+/// break), and the error is joined into one line (`one_line`). The `Message` lines then go through the
+/// text sink (`write_text_line`, the relaxed set, for the author's prose) and the `Error` line through the
+/// strict sink (`write_console_line`), which write the raw controls that are left (an ESC, a tab, a bidi
+/// override) as their escapes. Escaped first, a line break would print as the two
+/// characters `\n` beside the `; ` the rest of the console joins it with. A rule author's `<< >>` text and
+/// a converter's error reach this function as the evaluator recorded them, so an ESC in either would
+/// otherwise print raw on the `Message =` and `Error =` lines of every clause arm and of the retrieval
+/// arm, while the unattributed section printed the same text escaped. The escape is idempotent, so a
+/// caller that already bounded its text prints unchanged.
 fn emit_messages(
     writer: &mut dyn Write,
     prefix: &str,
@@ -1631,24 +1848,19 @@ fn emit_messages(
     error: &str,
     width: usize,
 ) -> crate::rules::Result<()> {
-    let pieces: Vec<&str> = if message.contains(';') {
-        message.split(';').collect()
-    } else if message.contains('\n') {
-        message.split('\n').collect()
-    } else {
-        vec![message]
-    };
-    let pieces: Vec<&str> = pieces
-        .iter()
-        .map(|s| s.trim_start().trim_end())
-        .filter(|s| !s.is_empty())
+    let pieces: Vec<&str> = message
+        .split([';', '\n', '\r'])
+        .map(str::trim)
+        .filter(|piece| !piece.is_empty())
         .collect();
+    let error = one_line(error);
+    let error = error.as_str();
 
     match pieces.as_slice() {
         // No message. Nothing an author wrote survived, so nothing is written.
         [] => {}
         [only] => {
-            writeln!(
+            text_line!(
                 writer,
                 "{prefix}{mh:<width$} = {message}",
                 prefix = prefix,
@@ -1658,7 +1870,7 @@ fn emit_messages(
             )?;
         }
         many => {
-            writeln!(
+            text_line!(
                 writer,
                 "{prefix}{mh:<width$} {{",
                 prefix = prefix,
@@ -1666,19 +1878,19 @@ fn emit_messages(
                 width = width
             )?;
             for each in many {
-                writeln!(
+                text_line!(
                     writer,
                     "{prefix}  {message}",
                     prefix = prefix,
-                    message = each,
+                    message = each
                 )?;
             }
-            writeln!(writer, "{prefix}}}", prefix = prefix,)?;
+            text_line!(writer, "{prefix}}}", prefix = prefix)?;
         }
     }
 
     if !error.is_empty() {
-        writeln!(
+        console_line!(
             writer,
             "{prefix}{eh:<width$} = {error}",
             prefix = prefix,
@@ -1811,7 +2023,8 @@ fn refusal_lines(messages: &Messages, reason: &str) -> (String, Option<String>) 
 /// escape, each raw control grew into a six-character escape after the cut, so a line of three ESCs near
 /// the bound printed past it. The store holds the builder's bytes; every escape is display. The cut is
 /// the one every bounded refusal text takes (`backstop`), so the kind reaches the marker: through
-/// `bounded_for_the_console(_, true)` a plain reason over the bound was marked as an explanation.
+/// `bounded_for_the_console(_, Origin::Refusal)` a plain reason over the bound was marked as an
+/// explanation.
 fn reason_backstop(reason: &str, marker: &str) -> String {
     backstop(
         &crate::utils::writer::escaped_controls_for_display(&one_line(reason)),
@@ -1820,7 +2033,8 @@ fn reason_backstop(reason: &str, marker: &str) -> String {
 }
 
 /// The text a per-resource arm prints on its `Error =` line for `messages`: the recorded sentence as
-/// released for a record that is no refusal's (`emit_messages` writes it as it is), and for a refusal's
+/// recorded for a record that is no refusal's (returned as it is; `emit_messages` joins its line breaks
+/// and the console's sink escapes its controls when it prints), and for a refusal's
 /// the console's one refusal pipeline (`bounded_for_the_console`, through `reason_backstop`: one line,
 /// the remaining raw controls escaped, cut on the printed width last), so no console line that prints a
 /// refusal's sentence rests on the evaluator having bounded or escaped the text. For the arms that print
@@ -1829,47 +2043,101 @@ fn reason_backstop(reason: &str, marker: &str) -> String {
 fn error_line_text(messages: &Messages) -> String {
     let error = messages.error_message.as_deref().unwrap_or("");
     match messages.refusal {
-        true => bounded_for_the_console(error, true),
+        true => bounded_for_the_console(error, Origin::Refusal),
         false => error.to_string(),
     }
 }
 
 /// The two texts the `Rule = { }` arm of the per-resource output prints for a rule's own record
 /// (`pprint_clauses`, the `ClauseReport::Rule` arm, through `emit_rule_messages`): its `Message` line's
-/// text, then its `Error` line's. A rule-level record carries the evaluator's sentence in the CUSTOM
-/// slot (a condition that raised a refusal across a rule boundary, `report_all_failed_clauses_for_rules`),
+/// text, then its `Error` line's. The origin of the CUSTOM slot is read off the record
+/// (`custom_slot_origin`), so a caller cannot hand a refusal's record another origin's pipeline. A
+/// rule-level record carries the evaluator's sentence there (a condition that raised a refusal across a
+/// rule boundary, `report_all_failed_clauses_for_rules`) or the author's body copied onto a called rule,
 /// so for a refusal's record BOTH slots take the console's one refusal pipeline (`bounded_for_the_console`,
 /// through `reason_backstop`: one line, the remaining raw controls escaped, cut on the printed width last,
-/// with the refusal's marker); for a record that is no refusal's the custom slot is collapsed onto one
-/// line, its raw controls escaped, and cut at the recorded-message bound (`LONGEST_RECORDED_MESSAGE`,
-/// `cut_to`'s ellipsis), the cut the unattributed section gives the same slot of the same record
-/// (`collect_unattributed_explanations`): the slot is the evaluator's sentence, which quotes a template
-/// value where a converter's error raised over one, and that bound exists for exactly such a value (a
-/// 2 KB string printed whole on one line before it); the error slot is printed as released, as
-/// `error_line_text` prints it. The arm is reached: it renders under a rendered parent with no
+/// with the refusal's marker). For the evaluator's sentence the custom slot is collapsed onto one line,
+/// its raw controls escaped by the strict set, and cut at the recorded-message bound
+/// (`LONGEST_RECORDED_MESSAGE`, `cut_to`'s ellipsis), the cut the unattributed section gives the same
+/// slot of the same record (`collect_unattributed_explanations`): the sentence quotes a template value
+/// where a converter's error raised over one, and that bound exists for exactly such a value (a 2 KB
+/// string printed whole on one line before it). The author's body is collapsed and escaped by the relaxed
+/// set and NOT cut: the cut exists for text the evaluator quoted from the template, the author's prose is
+/// the author's to size, and the clause arms print it whole on their `Message =` lines, so the rule line
+/// of a call prints what the clause line prints (the unattributed section still bounds it, as it bounds
+/// every entry it prints). The error slot, which holds the rule's own sentence a call body displaced,
+/// is the evaluator's text and takes the pipeline of its kind (`bounded_for_the_console` over
+/// `error_slot_origin`: collapsed, escaped and cut at the recorded-message bound, or the refusal pipeline
+/// for a refusal's sentence), as the unattributed section prints the same sentence. The arm is reached: it renders
+/// under a rendered parent with no
 /// resource-membership gate of its own and recurses into the rule's checks, so a nested rule's record
 /// whose condition raised a refusal, printed under an outer rule rendering per resource, reaches it;
-/// printed through `emit_messages` as released, that record was the one per-resource line that put the
+/// printed through `emit_messages` before that function escaped, that record was the one per-resource line that put the
 /// evaluator's sentence out with a raw ESC or a line break in it while the clause arms beside it escaped
 /// theirs, and the one line that printed a 2 KB template value whole where the unattributed section cut
-/// the same slot. The escape is this arm's own addition over the unattributed section's cut: a raw
-/// control in a line printed under a resource moves the cursor as it does anywhere.
-fn rule_line_texts(messages: &Messages) -> (String, String) {
+/// the same slot. The unattributed section takes the same collapse, escape and cut for a text that is no
+/// refusal's (`bounded_for_the_console`, through `plain_author_message` or `plain_evaluator_message`),
+/// since a raw control in a line moves the cursor wherever it is printed. The third element
+/// says whether a plain record's custom slot was CUT at the recorded-message bound, as the cutter
+/// reports it (`plain_evaluator_message`): `Some(cut)` for the evaluator's sentence, `Some(false)` for
+/// the author's body, which is never cut here, `None` for a refusal's, whose cut
+/// is the refusal pipeline's own and marked in the text, so the flag cannot be read for a record it
+/// does not describe.
+fn rule_line_texts(rule: &RuleReport<'_>) -> (String, String, Option<bool>) {
+    let messages = &rule.messages;
     let released = |slot: &Option<String>| slot.as_deref().unwrap_or("").to_string();
-    match messages.refusal {
-        true => (
-            bounded_for_the_console(&released(&messages.custom_message), true),
-            bounded_for_the_console(&released(&messages.error_message), true),
+    match custom_slot_origin(rule) {
+        Origin::Refusal => (
+            bounded_for_the_console(&released(&messages.custom_message), Origin::Refusal),
+            bounded_for_the_console(&released(&messages.error_message), Origin::Refusal),
+            None,
         ),
-        false => (
-            cut_to(
-                &crate::utils::writer::escaped_controls_for_display(&one_line(&released(
-                    &messages.custom_message,
-                ))),
-                LONGEST_RECORDED_MESSAGE,
+        Origin::Author => (
+            crate::utils::writer::escaped_controls_for_console(&one_line(&released(
+                &messages.custom_message,
+            ))),
+            bounded_for_the_console(
+                &released(&messages.error_message),
+                error_slot_origin(messages),
             ),
-            released(&messages.error_message),
+            Some(false),
         ),
+        Origin::Evaluator => {
+            let (message, cut) = plain_evaluator_message(&released(&messages.custom_message));
+            (message, released(&messages.error_message), Some(cut))
+        }
+    }
+}
+
+/// The rule author's `<< >>` text as the unattributed section prints it (the author's half of an entry,
+/// and a rule record's custom slot the record marks as the author's), collapsed onto one line, its raw
+/// controls escaped by the relaxed set and cut at the recorded-message bound, and whether the cut happened, as `cut_to`
+/// says it: the flag is the cutter's own answer for the one text the cut is made from, not a second
+/// count beside it. `emit_rule_messages` used to rebuild the collapse and compare the two strings to
+/// learn the same thing, two copies of one computation that drifted (the rebuilt side was not escaped,
+/// so a short message holding a control compared as cut).
+fn plain_author_message(slot: &str) -> (String, bool) {
+    collapsed_escaped_and_cut(slot, crate::utils::writer::escaped_controls_for_console)
+}
+
+/// [`plain_author_message`] for text the EVALUATOR wrote or quoted from the template (a converter's error,
+/// the sentence of a refusal-free record, a rule-level slot the record does not mark as the author's), with
+/// the strict set (`escaped_controls_for_display`): a key with a pasted joiner in a quoted sentence
+/// prints its escape, as it does on every other line that names a key. The relaxed set is the rule
+/// author's prose alone.
+fn plain_evaluator_message(slot: &str) -> (String, bool) {
+    collapsed_escaped_and_cut(slot, crate::utils::writer::escaped_controls_for_display)
+}
+
+/// The one pipeline both plain forms take: `slot` on one line, escaped by `escape`, then cut at the
+/// recorded-message bound, with whether it was cut.
+fn collapsed_escaped_and_cut(slot: &str, escape: fn(&str) -> String) -> (String, bool) {
+    let collapsed = escape(&one_line(slot));
+    let (cut, was_cut) = cut_to(&collapsed, LONGEST_RECORDED_MESSAGE);
+    if was_cut {
+        (before_a_split_escape(&cut), true)
+    } else {
+        (cut, false)
     }
 }
 
@@ -1881,41 +2149,41 @@ fn rule_line_texts(messages: &Messages) -> (String, String) {
 /// came apart at every join. A record that is no refusal's whose custom slot was CUT at the
 /// recorded-message bound is written as one `Message = ...` line too (the collapse's joins would come
 /// apart the same way); every other plain record is written as every other record's messages are
-/// (`emit_messages`), the author's `;` list included. Whether the slot was cut is read by comparing the
-/// line's text with the collapsed AND escaped slot (`rule_line_texts` escapes before it cuts): compared
-/// with the unescaped collapse, a short plain message holding a raw control (a tab, an ESC) read as cut
-/// and took the one-line form the doc reserves for a cut. The rule-level record's custom slot holds
+/// (`emit_messages`), the author's `;` list included. Whether the slot was cut is what `rule_line_texts`
+/// reports beside the two texts, read once where the cut is made; an earlier form of this function
+/// rebuilt the collapse and compared the two strings, and compared with the UNESCAPED collapse, a short
+/// plain message holding a raw control (a tab, an ESC) read as cut and took the one-line form the doc
+/// reserves for a cut. The rule-level record's custom slot holds
 /// EITHER the evaluator's sentence OR an author's `<< >>` message copied onto a called rule by the
-/// evaluator, and the record does not say which, so an author's message over the bound on a rule
-/// reference is cut and collapsed here as the evaluator's sentence is, where the clause arms print an
-/// author's message whole; telling the two apart needs the record to carry the slot's kind, set where the
-/// evaluator copies the `<< >>` body, which is a change on the evaluator's side and not made here.
+/// evaluator, and the record says which (`RuleReport::custom_slot`, read by `custom_slot_origin` inside
+/// `rule_line_texts`): the author's body takes the relaxed escape set and is printed whole, as the clause
+/// arms print an author's message, and the evaluator's sentence takes the strict one and is cut at the
+/// recorded-message bound.
 fn emit_rule_messages(
     writer: &mut dyn Write,
     prefix: &str,
-    messages: &Messages,
+    rule: &RuleReport<'_>,
 ) -> crate::rules::Result<()> {
-    let (message, error) = rule_line_texts(messages);
-    if !messages.refusal {
-        let released = messages.custom_message.as_deref().unwrap_or("");
-        let cut =
-            message != crate::utils::writer::escaped_controls_for_display(&one_line(released));
-        if !cut {
-            return emit_messages(writer, prefix, &message, &error, 0);
+    let (message, error, cut) = rule_line_texts(rule);
+    match cut {
+        Some(false) => return emit_messages(writer, prefix, &message, &error, 0),
+        Some(true) => {
+            text_line!(writer, "{prefix}Message = {message}")?;
+            return emit_messages(writer, prefix, "", &error, 0);
         }
-        writeln!(writer, "{prefix}Message = {message}")?;
-        return emit_messages(writer, prefix, "", &error, 0);
+        None => {}
     }
     if !message.trim().is_empty() {
-        writeln!(writer, "{prefix}Message = {message}")?;
+        text_line!(writer, "{prefix}Message = {message}")?;
     }
     if !error.is_empty() {
-        writeln!(writer, "{prefix}Error = {error}")?;
+        console_line!(writer, "{prefix}Error = {error}")?;
     }
     Ok(())
 }
 
-/// `messages` is the record's: its custom message is printed as released, and for a refusal's record
+/// `messages` is the record's: its custom message is printed through `emit_messages` (its line breaks
+/// joined, its controls escaped), and for a refusal's record
 /// alone its sentence's head is printed on an `Error =` line before the property block, as a decided
 /// comparison's finding prints its sentence (`BinaryCheck::Resolved` below), with the refusal on the
 /// block's `Reason =` line or joined to the head, as the record decides (`refusal_lines`).
@@ -1928,11 +2196,11 @@ fn emit_retrieval_error(
     messages: &Messages,
     err_emitter: &mut dyn ComparisonErrorWriter,
 ) -> crate::rules::Result<()> {
-    writeln!(
+    console_line!(
         writer,
         "{prefix}Check = {cxt} {{",
         prefix = prefix,
-        cxt = context
+        cxt = context_line(context)
     )?;
     let check_end = format!("{}}}", prefix);
     let prefix = format!("{}  ", prefix);
@@ -1970,7 +2238,7 @@ fn emit_retrieval_error(
     let rpe_end = format!("{}}}", prefix);
     let inside_the_check = prefix.clone();
     let prefix = format!("{}  ", prefix);
-    writeln!(
+    console_line!(
         writer,
         "{prefix}PropertyPath = {path}",
         prefix = prefix,
@@ -1978,7 +2246,7 @@ fn emit_retrieval_error(
     )?;
 
     if !value_found {
-        writeln!(
+        console_line!(
             writer,
             "{prefix}MissingProperty = {prop}",
             prefix = prefix,
@@ -1991,14 +2259,21 @@ fn emit_retrieval_error(
     // already leads with the reason (`refusal_lines`); for every other record, the reason through the same
     // pipeline (`reason_backstop`, with the plain reason's own marker). Both arrive here finished.
     if let Some(reason) = reason_line {
-        writeln!(
+        console_line!(
             writer,
             "{prefix}Reason = {reason}",
             prefix = prefix,
             reason = reason
         )?;
     }
-    err_emitter.missing_property_msg(writer, clause, Some(&vur.value), &prefix)?;
+    // The comparison writer writes its own lines, and escapes the fields it takes from the template and
+    // the source excerpt itself (`console_field`), since an excerpt line carries the writer's own
+    // colour: an escape of the whole line would print the sequence as text. What it wrote then goes
+    // through the backstop (`writer_output`), which keeps the layout and the writer's two colour
+    // sequences and writes any other control as its escape.
+    let mut missing_property: Vec<u8> = Vec::new();
+    err_emitter.missing_property_msg(&mut missing_property, clause, Some(&vur.value), &prefix)?;
+    write!(writer, "{}", writer_output(missing_property))?;
     writeln!(writer, "{}", rpe_end)?;
     // The operand the record was compared WITH, where the record carries one (`ValueUnResolved::to`: the
     // absent right-hand value a left-hand marker was decided by, and nothing for any other record): its
@@ -2010,13 +2285,13 @@ fn emit_retrieval_error(
     // the console here as written.
     if let Some(to) = &vur.to {
         writeln!(writer, "{inside_the_check}ComparedWith {{")?;
-        writeln!(
+        console_line!(
             writer,
             "{inside_the_check}  PropertyPath = {path}",
             path = crate::rules::eval_context::template_path(to.traversed_to.self_path())
         )?;
         if !to.remaining_query.is_empty() {
-            writeln!(
+            console_line!(
                 writer,
                 "{inside_the_check}  MissingProperty = {prop}",
                 prop = to.remaining_query
@@ -2028,6 +2303,17 @@ fn emit_retrieval_error(
     Ok(())
 }
 
+/// The lines a reporter adds to a clause's finding (the property path, the operator, the value, the
+/// compared-with side, a source excerpt).
+///
+/// OBLIGATION: an implementation wraps every field it takes from the template or the data (a path, a
+/// value, a key, a source line) in [`console_field`], or in `escaped_controls_for_excerpt` for a source
+/// line it colours, BEFORE it formats the field into a line, and colours a line only after that. The clause
+/// arm writes the output behind a backstop that escapes any control except layout and the writer's two
+/// colour sequences (`writer_output`), so a field an implementation forgets cannot reach the terminal
+/// raw, but it is escaped without the strict set's care for a line feed in a value (the backstop keeps
+/// line feeds as the layout). The backstop escapes a joiner or a mark too, as the strict set does
+/// (`breaks_or_hides_a_line` names U+200C to U+200F).
 pub(super) trait ComparisonErrorWriter {
     fn missing_property_msg(
         &mut self,
@@ -2087,7 +2373,7 @@ pub(super) fn pprint_clauses<'report, 'value: 'report>(
             )?;
             let rule_end = format!("{}}}", prefix);
             let prefix = format!("{}  ", prefix);
-            emit_rule_messages(writer, &prefix, &rr.messages)?;
+            emit_rule_messages(writer, &prefix, rr)?;
             writeln!(writer, "{prefix}ALL {{", prefix = prefix)?;
             let all_end = format!("{}}}", prefix);
             let prefix = format!("{}  ", prefix);
@@ -2112,11 +2398,11 @@ pub(super) fn pprint_clauses<'report, 'value: 'report>(
             if !resource.clauses.contains(&IdentityHash { key: clause }) {
                 return Ok(());
             }
-            writeln!(
+            console_line!(
                 writer,
                 "{prefix}Check = {cxt} {{",
                 prefix = prefix,
-                cxt = blk.context
+                cxt = context_line(&blk.context)
             )?;
             let check_end = format!("{}}}", prefix);
             let prefix = format!("{}  ", prefix);
@@ -2128,13 +2414,23 @@ pub(super) fn pprint_clauses<'report, 'value: 'report>(
             });
             let width = if !traversed_to.is_empty() {
                 let width = "MissingProperty".len() + 4;
-                writeln!(
+                // Two lines, each finished and escaped on its own: a key in the path or the query holding
+                // an ESC or a bidi override reaches the console as its escape, as on the retrieval arm's
+                // `PropertyPath =` line. The path is printed as recorded, with no location and no cut
+                // (`template_path` adds both), so the lines read as they did.
+                console_line!(
                     writer,
-                    "{prefix}{pp:<width$}= {path}\n{prefix}{mp:<width$}= {q}",
+                    "{prefix}{pp:<width$}= {path}",
                     prefix = prefix,
                     pp = "PropertyPath",
                     width = width,
-                    path = traversed_to,
+                    path = traversed_to
+                )?;
+                console_line!(
+                    writer,
+                    "{prefix}{mp:<width$}= {q}",
+                    prefix = prefix,
+                    width = width,
                     mp = "MissingProperty",
                     q = query
                 )?;
@@ -2159,14 +2455,7 @@ pub(super) fn pprint_clauses<'report, 'value: 'report>(
                 .map_or("", String::as_str);
             let error = error_line_text(&blk.messages);
             emit_messages(writer, &prefix, message, &error, width)?;
-            writeln!(
-                writer,
-                "{}",
-                match String::from_utf8(post_message) {
-                    Ok(msg) => msg,
-                    Err(_) => "".to_string(),
-                }
-            )?;
+            writeln!(writer, "{}", writer_output(post_message))?;
             writeln!(writer, "{}", mpv_end)?;
             writeln!(writer, "{}", check_end)?;
         }
@@ -2190,11 +2479,11 @@ pub(super) fn pprint_clauses<'report, 'value: 'report>(
                     }
 
                     UnaryCheck::Resolved(re) => {
-                        writeln!(
+                        console_line!(
                             writer,
                             "{prefix}Check = {cxt} {{",
                             prefix = prefix,
-                            cxt = ur.context
+                            cxt = context_line(&ur.context)
                         )?;
                         let check_end = format!("{}}}", prefix);
                         let prefix = format!("{}  ", prefix);
@@ -2211,14 +2500,7 @@ pub(super) fn pprint_clauses<'report, 'value: 'report>(
                             .map_or("", String::as_str);
                         let error = error_line_text(&ur.messages);
                         emit_messages(writer, &prefix, message, &error, width)?;
-                        writeln!(
-                            writer,
-                            "{}",
-                            match String::from_utf8(post_message) {
-                                Ok(msg) => msg,
-                                Err(_) => "".to_string(),
-                            }
-                        )?;
+                        writeln!(writer, "{}", writer_output(post_message))?;
                         writeln!(writer, "{}", ce_end)?;
                         writeln!(writer, "{}", check_end)?;
                     }
@@ -2240,11 +2522,11 @@ pub(super) fn pprint_clauses<'report, 'value: 'report>(
                     }
 
                     BinaryCheck::Resolved(bc) => {
-                        writeln!(
+                        console_line!(
                             writer,
                             "{prefix}Check = {cxt} {{",
                             prefix = prefix,
-                            cxt = br.context
+                            cxt = context_line(&br.context)
                         )?;
                         let check_end = format!("{}}}", prefix);
                         let prefix = format!("{}  ", prefix);
@@ -2261,25 +2543,18 @@ pub(super) fn pprint_clauses<'report, 'value: 'report>(
                             .map_or("", String::as_str);
                         let error = error_line_text(&br.messages);
                         emit_messages(writer, &prefix, message, &error, width)?;
-                        writeln!(
-                            writer,
-                            "{}",
-                            match String::from_utf8(post_message) {
-                                Ok(msg) => msg,
-                                Err(_) => "".to_string(),
-                            }
-                        )?;
+                        writeln!(writer, "{}", writer_output(post_message))?;
 
                         writeln!(writer, "{}", ce_end)?;
                         writeln!(writer, "{}", check_end)?;
                     }
 
                     BinaryCheck::InResolved(inr) => {
-                        writeln!(
+                        console_line!(
                             writer,
                             "{prefix}Check = {cxt} {{",
                             prefix = prefix,
-                            cxt = br.context
+                            cxt = context_line(&br.context)
                         )?;
                         let check_end = format!("{}}}", prefix);
                         let prefix = format!("{}  ", prefix);
@@ -2301,14 +2576,7 @@ pub(super) fn pprint_clauses<'report, 'value: 'report>(
                         let error = error_line_text(&br.messages);
                         emit_messages(writer, &prefix, message, &error, width)?;
                         writeln!(writer, "{}", ce_end)?;
-                        writeln!(
-                            writer,
-                            "{}",
-                            match String::from_utf8(post_message) {
-                                Ok(msg) => msg,
-                                Err(_) => "".to_string(),
-                            }
-                        )?;
+                        writeln!(writer, "{}", writer_output(post_message))?;
                         writeln!(writer, "{}", check_end)?;
                     }
                 },
@@ -2373,9 +2641,53 @@ mod emit_messages_tests {
     /// `char::is_whitespace` follows `White_Space`, and the zero-width no-break space is not in it. The
     /// distinction is worth pinning: it is the nearest input to the panicking ones that must still
     /// produce a line, so a fix that reached for "looks blank to me" instead of `trim` would fail here.
+    /// The line writes the character as its escape, as it does every control that hides a line.
     #[test]
     fn a_zero_width_no_break_space_is_still_a_message() {
-        assert_eq!("Message = \u{FEFF}\n", emit("\u{FEFF}", ""));
+        assert_eq!("Message = \\u{feff}\n", emit("\u{FEFF}", ""));
+    }
+
+    /// A raw ESC in a message is written as its escape on a single-message line. The ESC is built with
+    /// `char::from`, since the source holds no raw control.
+    ///
+    /// Expected, not yet run. Red: the line carries the ESC byte itself.
+    #[test]
+    fn a_control_in_a_single_message_is_written_as_its_escape() {
+        let esc = char::from(0x1b);
+        let out = emit(&format!("{esc}[2J"), "");
+        assert_eq!("Message = \\u{1b}[2J\n", out);
+        assert!(!out.contains(esc), "no raw ESC is written: {:?}", out);
+    }
+
+    /// The items of a `;` list are escaped one by one, after the split: the separators still divide the
+    /// message and a tab or an ESC inside an item is written as its escape.
+    ///
+    /// Expected, not yet run. Red: an item carries the ESC or the tab byte itself.
+    #[test]
+    fn the_items_of_a_message_list_are_escaped_after_the_split() {
+        let esc = char::from(0x1b);
+        let out = emit(&format!("a{esc}[1m;b\tc"), "");
+        assert_eq!("Message {\n  a\\u{1b}[1m\n  b\\tc\n}\n", out);
+        assert!(!out.contains(esc), "no raw ESC is written: {:?}", out);
+        assert!(!out.contains('\t'), "no raw tab is written: {:?}", out);
+    }
+
+    /// The error half is escaped as the message half is, and a text a caller already escaped is
+    /// written as it is (the escape is idempotent).
+    ///
+    /// Expected, not yet run. Red: the `Error =` line carries the ESC byte, or an escaped text is
+    /// escaped a second time.
+    #[test]
+    fn an_error_with_a_control_is_written_as_its_escape_once() {
+        let esc = char::from(0x1b);
+        let out = emit("", &format!("failed at {esc}[1mpath"));
+        assert_eq!("Error = failed at \\u{1b}[1mpath\n", out);
+        assert!(!out.contains(esc), "no raw ESC is written: {:?}", out);
+        assert_eq!(
+            "Error = failed at \\u{1b}[1mpath\n",
+            emit("", "failed at \\u{1b}[1mpath"),
+            "an escaped text is not escaped again"
+        );
     }
 
     /// The error is written even when the message is not, which it was not before.
@@ -2418,6 +2730,564 @@ mod emit_messages_tests {
         assert_eq!(
             "Message = Encryption is required.\nError = Check was not compliant.\n",
             emit("Encryption is required.", "Check was not compliant.")
+        );
+    }
+
+    /// A line break inside a message that also holds a `;` divides the message too, as the one-line forms
+    /// of the same text join it (`one_line`): the pieces are cut at every `;`, line feed and carriage
+    /// return together, and a CRLF pair is one break. Cut at the `;` alone, the break inside a piece was
+    /// written as the two characters `\n` (or `\r\n`) beside the `; ` the rest of the console prints.
+    ///
+    /// Expected, not yet run. Red: a piece holds the characters `\n` or `\r`, or a CRLF text gives an
+    /// empty or doubled item.
+    #[test]
+    fn a_line_break_in_a_piece_that_holds_a_semicolon_divides_the_message() {
+        assert_eq!(
+            "Message {\n  a\n  b\n  c\n}\n",
+            emit("a; b\nc", ""),
+            "a line feed after a semicolon divides the piece"
+        );
+        assert_eq!(
+            "Message {\n  Violation: encrypt\n  use KMS\n  Fix: set it\n}\n",
+            emit("Violation: encrypt; use KMS\r\n  Fix: set it\r\n", ""),
+            "a CRLF text divides at its breaks and writes no carriage return"
+        );
+    }
+
+    /// The error half is joined into one line before it is escaped, as a refusal's is: a line break in a
+    /// plain record's error prints as `; `, not as the characters `\n`.
+    ///
+    /// Expected, not yet run. Red: the `Error =` line holds the characters `\n` or `\r`.
+    #[test]
+    fn a_line_break_in_an_error_is_joined_not_escaped() {
+        assert_eq!(
+            "Error = first; second; third\n",
+            emit("", "first\nsecond\r\nthird")
+        );
+    }
+
+    /// A joiner or a mark between printable characters is text, not a control: a zero-width joiner in an
+    /// emoji sequence and a right-to-left mark in Hebrew prose print as typed, and so do a zero-width
+    /// non-joiner and a left-to-right mark. The characters that hide or reorder a line (a zero-width
+    /// space, a word joiner, a bidi override) stay escaped.
+    ///
+    /// Expected, not yet run. Red: the ZWJ or the RLM line holds the characters `\u{200d}` or `\u{200f}`,
+    /// or a zero-width space or an override is written raw.
+    #[test]
+    fn joiners_and_marks_in_a_message_are_written_as_typed() {
+        let zwj = format!("owner{}tag required", '\u{200D}');
+        assert_eq!(format!("Message = {zwj}\n"), emit(&zwj, ""));
+        let rlm = format!("shalom{}world", '\u{200F}');
+        assert_eq!(format!("Message = {rlm}\n"), emit(&rlm, ""));
+        let others = format!("a{}b{}c", '\u{200C}', '\u{200E}');
+        assert_eq!(format!("Message = {others}\n"), emit(&others, ""));
+        assert_eq!(
+            "Message = a\\u{200b}b\\u{202e}c\\u{2060}d\n",
+            emit("a\u{200B}b\u{202E}c\u{2060}d", ""),
+            "a zero-width space, an override and a word joiner stay escaped"
+        );
+    }
+}
+
+/// The `Message =` and `Error =` lines of each arm of `pprint_clauses` that prints a clause's recorded
+/// texts through `emit_messages`: a block, a unary check, a decided comparison, a membership comparison
+/// and a retrieval error. The unit cell for each prints a record whose author's message and error hold a
+/// raw ESC and reads the whole output for the byte. The ESC is built with `char::from`, since the
+/// source holds no raw control.
+#[cfg(test)]
+mod clause_arm_escape_tests {
+    use super::{pprint_clauses, ComparisonErrorWriter, IdentityHash, LocalResourceAggr};
+    use crate::rules::eval_context::{
+        BinaryCheck, BinaryComparison, BinaryReport, ClauseReport, GuardBlockReport,
+        GuardClauseReport, InComparison, Messages, UnaryCheck, UnaryComparison, UnaryReport,
+        ValueUnResolved,
+    };
+    use crate::rules::path_value::PathAwareValue;
+    use crate::rules::values::CmpOperator;
+    use crate::rules::{UnResolved, UnResolvedKind};
+    use std::collections::{BTreeSet, HashSet};
+    use std::convert::TryFrom;
+    use std::io::Write;
+    use std::rc::Rc;
+
+    struct NoExcerpt;
+    impl ComparisonErrorWriter for NoExcerpt {}
+
+    fn esc() -> char {
+        char::from(0x1b)
+    }
+
+    /// A plain (non-refusal) record whose author's message and evaluator's error each hold an ESC.
+    fn messages() -> Messages {
+        Messages {
+            custom_message: Some(format!("{}[2J", esc())),
+            error_message: Some(format!("bad {}[1mvalue", esc())),
+            location: None,
+            refusal: false,
+            parts: None,
+        }
+    }
+
+    /// A string scalar: the value grammar reads a bare word as a fragment it cannot parse, so the scalar
+    /// is quoted.
+    fn value() -> Rc<PathAwareValue> {
+        Rc::new(PathAwareValue::try_from("'a'").expect("one scalar parses"))
+    }
+
+    /// `clause` as `pprint_clauses` writes it under a resource that shows it.
+    fn rendered(clause: &ClauseReport<'_>) -> String {
+        let mut clauses = HashSet::new();
+        clauses.insert(IdentityHash { key: clause });
+        let resource = LocalResourceAggr {
+            name: "R".to_string(),
+            resource_type: "AWS::Example::Thing",
+            cdk_path: None,
+            clauses,
+            paths: BTreeSet::new(),
+        };
+        let mut written: Vec<u8> = Vec::new();
+        pprint_clauses(
+            &mut written,
+            clause,
+            &resource,
+            "  ".to_string(),
+            &mut NoExcerpt,
+        )
+        .expect("writing to a Vec cannot fail");
+        String::from_utf8(written).expect("the output is UTF-8")
+    }
+
+    /// The record's halves are written as escapes: neither the message's nor the error's ESC reaches the
+    /// output as a byte. `with_error` is false for an arm that prints no sentence for a plain record.
+    fn assert_both_halves_escaped(out: &str, with_error: bool) {
+        assert!(!out.contains(esc()), "no raw ESC is written:\n{:?}", out);
+        assert!(
+            out.contains("\\u{1b}[2J"),
+            "the message is written, escaped:\n{}",
+            out
+        );
+        if with_error {
+            assert!(
+                out.contains("bad \\u{1b}[1mvalue"),
+                "the error is written, escaped:\n{}",
+                out
+            );
+        }
+    }
+
+    /// Expected, not yet run. Red: the block's `Message =` line carries the ESC byte.
+    #[test]
+    fn a_blocks_message_is_written_escaped() {
+        let clause = ClauseReport::Block(GuardBlockReport {
+            context: "Resources.*.Properties".to_string(),
+            messages: messages(),
+            unresolved: None,
+        });
+        let out = rendered(&clause);
+        assert_both_halves_escaped(&out, true);
+    }
+
+    /// Expected, not yet run. Red: the unary check's `Message =` or `Error =` line carries the ESC byte.
+    #[test]
+    fn a_unary_checks_message_is_written_escaped() {
+        let clause = ClauseReport::Clause(GuardClauseReport::Unary(UnaryReport {
+            check: UnaryCheck::Resolved(UnaryComparison {
+                value: value(),
+                comparison: (CmpOperator::Exists, false),
+            }),
+            context: "Resources.*.Properties exists".to_string(),
+            messages: messages(),
+        }));
+        let out = rendered(&clause);
+        assert_both_halves_escaped(&out, true);
+    }
+
+    /// Expected, not yet run. Red: the decided comparison's `Message =` or `Error =` line carries the
+    /// ESC byte.
+    #[test]
+    fn a_decided_comparisons_message_is_written_escaped() {
+        let clause = ClauseReport::Clause(GuardClauseReport::Binary(BinaryReport {
+            context: "Name == 'x'".to_string(),
+            messages: messages(),
+            check: BinaryCheck::Resolved(BinaryComparison {
+                from: value(),
+                to: value(),
+                comparison: (CmpOperator::Eq, false),
+            }),
+        }));
+        let out = rendered(&clause);
+        assert_both_halves_escaped(&out, true);
+    }
+
+    /// Expected, not yet run. Red: the membership comparison's `Message =` or `Error =` line carries
+    /// the ESC byte.
+    #[test]
+    fn a_membership_comparisons_message_is_written_escaped() {
+        let clause = ClauseReport::Clause(GuardClauseReport::Binary(BinaryReport {
+            context: "Name IN ['x']".to_string(),
+            messages: messages(),
+            check: BinaryCheck::InResolved(InComparison {
+                from: value(),
+                to: vec![value()],
+                comparison: (CmpOperator::In, false),
+            }),
+        }));
+        let out = rendered(&clause);
+        assert_both_halves_escaped(&out, true);
+    }
+
+    /// The retrieval arm prints the author's message through `emit_messages` too. A plain record's
+    /// sentence is not printed there (`refusal_lines` decides it for a refusal alone), so the cell reads
+    /// the message half.
+    ///
+    /// Expected, not yet run. Red: the retrieval error's `Message =` line carries the ESC byte.
+    #[test]
+    fn a_retrieval_errors_message_is_written_escaped() {
+        let clause = ClauseReport::Clause(GuardClauseReport::Binary(BinaryReport {
+            context: "Name == 'x'".to_string(),
+            messages: messages(),
+            check: BinaryCheck::UnResolved(ValueUnResolved {
+                value: UnResolved {
+                    traversed_to: value(),
+                    remaining_query: "Name".to_string(),
+                    reason: None,
+                    kind: UnResolvedKind::Absent,
+                },
+                comparison: (CmpOperator::Eq, false),
+                to: None,
+            }),
+        }));
+        let out = rendered(&clause);
+        assert_both_halves_escaped(&out, false);
+    }
+
+    /// A comparison writer's own colour and layout reach the output as they are. The CloudFormation writer
+    /// colours each source line of its `Code:` excerpt, so the strict escape of the finished line would
+    /// print the colour sequence as text and a tab-indented template as `\t`; the writers escape what they
+    /// take from the template themselves, before the colour, and the clause arm's backstop
+    /// (`writer_output`) then leaves the layout and the two colour sequences alone. The writer here emits
+    /// a coloured, tab-indented excerpt line the way that writer does; a field it takes from the template
+    /// goes through `console_field`, which also writes a line feed in it as the characters `\n`.
+    ///
+    /// Expected, not yet run. Red: the output holds the characters `\u{1b}[92m` (the colour printed as
+    /// text) or the excerpt's tab as `\t`, the template field's ESC byte reaches the output raw, or a
+    /// line feed in the field starts a second line.
+    #[test]
+    fn a_comparison_writers_colour_and_tab_are_not_escaped_by_the_clause_arm() {
+        struct ColouredExcerpt;
+        impl ComparisonErrorWriter for ColouredExcerpt {
+            fn unary_error_msg(
+                &mut self,
+                writer: &mut dyn Write,
+                _cr: &ClauseReport<'_>,
+                _bc: &UnaryComparison,
+                prefix: &str,
+            ) -> crate::rules::Result<usize> {
+                let field = format!("a{}[1mb\nforged = 1", esc());
+                writeln!(
+                    writer,
+                    "{prefix}PropertyPath = {}",
+                    super::console_field(&field)
+                )?;
+                writeln!(writer, "{prefix}\u{1b}[92m    3.\tType: X\u{1b}[0m")?;
+                Ok(0)
+            }
+        }
+        let clause = ClauseReport::Clause(GuardClauseReport::Unary(UnaryReport {
+            check: UnaryCheck::Resolved(UnaryComparison {
+                value: value(),
+                comparison: (CmpOperator::Exists, false),
+            }),
+            context: "Name exists".to_string(),
+            messages: Messages {
+                custom_message: None,
+                error_message: None,
+                location: None,
+                refusal: false,
+                parts: None,
+            },
+        }));
+        let mut clauses = HashSet::new();
+        clauses.insert(IdentityHash { key: &clause });
+        let resource = LocalResourceAggr {
+            name: "R".to_string(),
+            resource_type: "AWS::Example::Thing",
+            cdk_path: None,
+            clauses,
+            paths: BTreeSet::new(),
+        };
+        let mut written: Vec<u8> = Vec::new();
+        pprint_clauses(
+            &mut written,
+            &clause,
+            &resource,
+            "  ".to_string(),
+            &mut ColouredExcerpt,
+        )
+        .expect("writing to a Vec cannot fail");
+        let out = String::from_utf8(written).expect("the output is UTF-8");
+        assert!(
+            out.contains("\u{1b}[92m    3.\tType: X\u{1b}[0m"),
+            "the writer's colour and tab are written as they are:\n{:?}",
+            out
+        );
+        assert!(
+            out.contains("PropertyPath = a\\u{1b}[1mb\\nforged = 1\n"),
+            "the field the writer took from the template is escaped, one line:\n{:?}",
+            out
+        );
+    }
+
+    /// A writer that forgets to escape a field it took from the template still cannot reach the terminal
+    /// raw: the clause arm's backstop (`writer_output`) writes a cursor movement (`ESC [2J`) and an
+    /// operating-system command as their escapes, keeps the layout (a line feed, a tab) and keeps a
+    /// well-formed colour sequence. The writer here formats an unescaped field, a coloured line and a
+    /// tab-indented line.
+    ///
+    /// Expected, not yet run. Red: the output holds the ESC byte of the cursor movement, the colour
+    /// sequence is written as text, or the tab is written as `\t`.
+    #[test]
+    fn a_writer_that_forgets_to_escape_a_field_is_caught_by_the_backstop() {
+        struct Forgetful;
+        impl ComparisonErrorWriter for Forgetful {
+            fn unary_error_msg(
+                &mut self,
+                writer: &mut dyn Write,
+                _cr: &ClauseReport<'_>,
+                _bc: &UnaryComparison,
+                prefix: &str,
+            ) -> crate::rules::Result<usize> {
+                writeln!(
+                    writer,
+                    "{prefix}PropertyPath = a{}[2Jb{}]0;title",
+                    esc(),
+                    esc()
+                )?;
+                writeln!(writer, "{prefix}\u{1b}[92m    3.\tType: X\u{1b}[0m")?;
+                Ok(0)
+            }
+        }
+        let clause = ClauseReport::Clause(GuardClauseReport::Unary(UnaryReport {
+            check: UnaryCheck::Resolved(UnaryComparison {
+                value: value(),
+                comparison: (CmpOperator::Exists, false),
+            }),
+            context: "Name exists".to_string(),
+            messages: Messages {
+                custom_message: None,
+                error_message: None,
+                location: None,
+                refusal: false,
+                parts: None,
+            },
+        }));
+        let mut clauses = HashSet::new();
+        clauses.insert(IdentityHash { key: &clause });
+        let resource = LocalResourceAggr {
+            name: "R".to_string(),
+            resource_type: "AWS::Example::Thing",
+            cdk_path: None,
+            clauses,
+            paths: BTreeSet::new(),
+        };
+        let mut written: Vec<u8> = Vec::new();
+        pprint_clauses(
+            &mut written,
+            &clause,
+            &resource,
+            "  ".to_string(),
+            &mut Forgetful,
+        )
+        .expect("writing to a Vec cannot fail");
+        let out = String::from_utf8(written).expect("the output is UTF-8");
+        let without_colour = out.replace("\u{1b}[92m", "").replace("\u{1b}[0m", "");
+        assert!(
+            !without_colour.contains(esc()),
+            "no ESC byte but the colour reaches the output:\n{:?}",
+            out
+        );
+        assert!(
+            out.contains("PropertyPath = a\\u{1b}[2Jb\\u{1b}]0;title\n"),
+            "the forgotten field is written as its escapes:\n{:?}",
+            out
+        );
+        assert!(
+            out.contains("\u{1b}[92m    3.\tType: X\u{1b}[0m"),
+            "the colour and the tab are kept:\n{:?}",
+            out
+        );
+    }
+
+    /// The strict set holds for a line that prints a KEY, a PATH or a CONTEXT: a rule key with a pasted
+    /// zero-width joiner would print like the key without it if the line were written with the relaxed
+    /// set, which is for text. The same joiner in the rule's message prints as typed.
+    ///
+    /// Expected, not yet run. Red: the `Check =` line holds the joiner raw, or the `Message =` line holds
+    /// the characters `\u{200d}`.
+    #[test]
+    fn a_joiner_is_escaped_in_a_context_and_typed_in_a_message() {
+        let clause = ClauseReport::Block(GuardBlockReport {
+            context: format!("Bucket{}Name exists", '\u{200D}'),
+            messages: Messages {
+                custom_message: Some(format!("owner{}tag required", '\u{200D}')),
+                error_message: None,
+                location: None,
+                refusal: false,
+                parts: None,
+            },
+            unresolved: None,
+        });
+        let out = rendered(&clause);
+        assert!(
+            out.contains("Check = Bucket\\u{200d}Name exists {\n"),
+            "the context is escaped by the strict set:\n{:?}",
+            out
+        );
+        // The block arm pads the label to the property block's width, so the message is read after the
+        // `=`, not after one space.
+        assert!(
+            out.contains(&format!("= owner{}tag required\n", '\u{200D}')),
+            "the message is typed:\n{:?}",
+            out
+        );
+    }
+
+    /// The `Check =` line prints the context with the spacing the rules file gave it: a context that opens
+    /// and closes with spaces keeps them, as the line has always printed it, so the goldens that read these
+    /// lines byte for byte stay as they are. Only a context that spans lines is joined.
+    ///
+    /// Expected, not yet run. Red: the spaces around the context are trimmed or doubled.
+    #[test]
+    fn a_context_keeps_the_spacing_the_rules_file_gave_it_on_the_check_line() {
+        let clause = ClauseReport::Block(GuardBlockReport {
+            context: " %s3_bucket[*].Properties EXISTS  ".to_string(),
+            messages: Messages {
+                custom_message: None,
+                error_message: None,
+                location: None,
+                refusal: false,
+                parts: None,
+            },
+            unresolved: None,
+        });
+        let out = rendered(&clause);
+        assert!(
+            out.starts_with("  Check =  %s3_bucket[*].Properties EXISTS   {\n"),
+            "the context's own spaces are printed:\n{:?}",
+            out
+        );
+    }
+
+    /// A context that spans lines is joined on its `Check =` line as `; `, as the unattributed section
+    /// joins the same text, and is not written as the characters `\n` by the sink.
+    ///
+    /// Expected, not yet run. Red: the line holds the characters `\n` or a second console line.
+    #[test]
+    fn a_context_with_a_line_break_is_joined_on_the_check_line() {
+        let clause = ClauseReport::Block(GuardBlockReport {
+            context: "Resources.*\n{ Type == 'x' }".to_string(),
+            messages: Messages {
+                custom_message: None,
+                error_message: None,
+                location: None,
+                refusal: false,
+                parts: None,
+            },
+            unresolved: None,
+        });
+        let out = rendered(&clause);
+        assert!(
+            out.contains("Check = Resources.*; { Type == 'x' } {\n"),
+            "the context is on one line, joined:\n{:?}",
+            out
+        );
+        assert!(!out.contains("\\n"), "no escaped line feed:\n{:?}", out);
+    }
+
+    /// The `Check =` line of every arm prints the clause's context, text the rules file holds, and the
+    /// retrieval arm's `MissingProperty =` line prints the key the template lacks: neither is a field
+    /// any helper bounded, so a raw ESC in either would reach the console as a byte. Both go through
+    /// the sink (`write_console_line`) that escapes each finished line.
+    ///
+    /// Expected, not yet run. Red: an arm's output carries the ESC byte, or a context's escape reads
+    /// differently from the one written for a message.
+    #[test]
+    fn a_context_and_a_missing_key_with_a_control_are_written_escaped() {
+        let context = format!("Name == '{}[31mx'", esc());
+        let plain = || Messages {
+            custom_message: None,
+            error_message: None,
+            location: None,
+            refusal: false,
+            parts: None,
+        };
+        let clauses = [
+            ClauseReport::Block(GuardBlockReport {
+                context: context.clone(),
+                messages: plain(),
+                unresolved: None,
+            }),
+            ClauseReport::Clause(GuardClauseReport::Unary(UnaryReport {
+                check: UnaryCheck::Resolved(UnaryComparison {
+                    value: value(),
+                    comparison: (CmpOperator::Exists, false),
+                }),
+                context: context.clone(),
+                messages: plain(),
+            })),
+            ClauseReport::Clause(GuardClauseReport::Binary(BinaryReport {
+                context: context.clone(),
+                messages: plain(),
+                check: BinaryCheck::Resolved(BinaryComparison {
+                    from: value(),
+                    to: value(),
+                    comparison: (CmpOperator::Eq, false),
+                }),
+            })),
+            ClauseReport::Clause(GuardClauseReport::Binary(BinaryReport {
+                context: context.clone(),
+                messages: plain(),
+                check: BinaryCheck::InResolved(InComparison {
+                    from: value(),
+                    to: vec![value()],
+                    comparison: (CmpOperator::In, false),
+                }),
+            })),
+            ClauseReport::Clause(GuardClauseReport::Binary(BinaryReport {
+                context: context.clone(),
+                messages: plain(),
+                check: BinaryCheck::UnResolved(ValueUnResolved {
+                    value: UnResolved {
+                        traversed_to: value(),
+                        remaining_query: format!("Na{}[1mme", esc()),
+                        reason: None,
+                        kind: UnResolvedKind::Absent,
+                    },
+                    comparison: (CmpOperator::Eq, false),
+                    to: None,
+                }),
+            })),
+        ];
+        for (index, clause) in clauses.iter().enumerate() {
+            let out = rendered(clause);
+            assert!(
+                !out.contains(esc()),
+                "arm {}: no raw ESC is written:\n{:?}",
+                index,
+                out
+            );
+            assert!(
+                out.contains("Name == '\\u{1b}[31mx'"),
+                "arm {}: the context is written, escaped:\n{}",
+                index,
+                out
+            );
+        }
+        let out = rendered(&clauses[4]);
+        assert!(
+            out.contains("MissingProperty = Na\\u{1b}[1mme"),
+            "the missing key is written, escaped:\n{}",
+            out
         );
     }
 }
@@ -2819,8 +3689,9 @@ mod retrieval_error_tests {
     /// refusal pipeline: a raw line break in the recorded sentence is joined as `; ` first, a raw ESC is
     /// written as its escape after it, and a sentence over the bound is cut on its PRINTED width with the
     /// refusal's marker. Bounded with no escape, those arms printed the control raw while the
-    /// retrieval-error arm escaped it. The control: a record that is no refusal's prints its sentence as
-    /// released, controls and all, as `emit_messages` writes it.
+    /// retrieval-error arm escaped it. The control: a record that is no refusal's returns its sentence as
+    /// recorded, controls and all, from `error_line_text`; `emit_messages` collapses and escapes it when
+    /// it prints.
     #[test]
     fn a_refusal_records_error_line_on_the_block_and_comparison_arms_is_escaped_and_bounded() {
         let sentence = "the key `\u{1b}[31ma\nb\u{1b}[0m` could not be read";
@@ -2942,74 +3813,199 @@ mod retrieval_error_tests {
     /// a refusal's (`rule_line_texts`): a rule-level record carries the evaluator's sentence in the custom
     /// slot, so BOTH slots are collapsed, escaped and bounded, where the clause arms bound the error slot
     /// alone; a record that is no refusal's has its custom slot collapsed onto one line, escaped and cut
-    /// at the recorded-message bound (the cut the unattributed section gives that slot: it is the
+    /// at the recorded-message bound (the cut the unattributed section gives that slot: here it is the
     /// evaluator's sentence, which can quote a 2 KB template value), and its error slot as released. A
     /// raw ESC and a line break in each slot: the refusal's are written as `\u{1b}` and `; `; the plain
     /// record's custom slot is written the same way, its error slot stands; a plain custom slot of 4000
     /// characters is cut at the bound with the ellipsis, and a control-free one reads as the unattributed
-    /// section reads the same record.
+    /// section reads the same record. The last two rows hold an author's record whose error slot is the
+    /// sentence the body displaced: a 4000-character sentence that is no refusal's is cut like the
+    /// section cuts it, and a refusal's sentence takes the refusal pipeline. Red for those two rows is
+    /// the sentence printed whole or with a raw ESC.
     #[test]
     fn a_refusal_rule_records_two_lines_are_escaped_and_bounded_and_a_plain_ones_are_released() {
+        use crate::rules::eval_context::RuleReport;
+        use crate::rules::CustomSlot;
+        let rule_of = |messages: Messages, custom_slot: CustomSlot| RuleReport {
+            name: "nested",
+            messages,
+            custom_slot,
+            ..Default::default()
+        };
         let custom = "the condition `\u{1b}[31mgate\u{1b}[0m` could not be\nanswered";
         let error = "the key `\u{1b}[31ma\nb\u{1b}[0m` could not be read";
-        let refusal = Messages {
+        // The two texts a rule report can hold; what differs between the rows is the record's slot, not
+        // the messages (a rule report's flag is not what the printer reads).
+        let both_texts = Messages {
             custom_message: Some(custom.to_string()),
             error_message: Some(error.to_string()),
             location: None,
-            refusal: true,
+            refusal: false,
             parts: None,
         };
         assert_eq!(
             (
                 "the condition `\\u{1b}[31mgate\\u{1b}[0m` could not be; answered".to_string(),
                 "the key `\\u{1b}[31ma; b\\u{1b}[0m` could not be read".to_string(),
+                None,
             ),
-            super::rule_line_texts(&refusal),
-            "a refusal's record: both slots collapsed, then escaped"
+            super::rule_line_texts(&rule_of(both_texts.clone(), CustomSlot::Refusal)),
+            "a refusal's record: both slots collapsed, then escaped; it carries no plain cut flag"
         );
 
         let bound = super::LONGEST_REFUSAL_MESSAGE;
-        let (message, _) = super::rule_line_texts(&Messages {
-            custom_message: Some(format!("{}\u{1b}[1m", "y".repeat(bound))),
-            ..refusal.clone()
-        });
+        let (message, _, _) = super::rule_line_texts(&rule_of(
+            Messages {
+                custom_message: Some(format!("{}\u{1b}[1m", "y".repeat(bound))),
+                ..both_texts.clone()
+            },
+            CustomSlot::Refusal,
+        ));
         assert!(
             message.ends_with(super::REFUSAL_CUT_MARKER) && !message.contains('\u{1b}'),
             "the custom slot over the bound is cut with the marker and no raw ESC is left:\n{}",
             message.escape_debug()
         );
 
-        let plain = Messages {
-            refusal: false,
-            ..refusal.clone()
-        };
+        let plain = both_texts;
         assert_eq!(
             (
                 "the condition `\\u{1b}[31mgate\\u{1b}[0m` could not be; answered".to_string(),
-                error.to_string()
+                error.to_string(),
+                Some(false),
             ),
-            super::rule_line_texts(&plain),
-            "a record that is no refusal's: the custom slot collapsed and escaped, the error slot as released"
+            super::rule_line_texts(&rule_of(plain.clone(), CustomSlot::Evaluator)),
+            "a record that is no refusal's: the custom slot collapsed and escaped, uncut, the error slot as released"
         );
         let long = format!("{} {}", "y".repeat(300), "z".repeat(3700));
-        let (long_custom, _) = super::rule_line_texts(&Messages {
-            custom_message: Some(long.clone()),
-            ..plain.clone()
-        });
+        let (long_custom, _, cut) = super::rule_line_texts(&rule_of(
+            Messages {
+                custom_message: Some(long.clone()),
+                ..plain.clone()
+            },
+            CustomSlot::Evaluator,
+        ));
         assert_eq!(
-            format!("{}...", "y".repeat(300)),
-            long_custom,
-            "a plain record's custom slot of 4000 characters is cut at the recorded-message bound"
+            (format!("{}...", "y".repeat(300)), Some(true)),
+            (long_custom.clone(), cut),
+            "a plain record's custom slot of 4000 characters is cut at the recorded-message bound, and says so"
         );
         assert_eq!(
-            super::bounded_for_the_console(&long, false),
+            super::bounded_for_the_console(&long, super::Origin::Evaluator),
             long_custom,
             "a control-free plain custom slot reads as the unattributed section reads the same record"
         );
         assert_eq!(
-            (String::new(), String::new()),
-            super::rule_line_texts(&Messages::default()),
+            (String::new(), String::new(), Some(false)),
+            super::rule_line_texts(&rule_of(Messages::default(), CustomSlot::Evaluator)),
             "an empty record prints nothing on either line"
+        );
+        let (author_text, _, author_cut) = super::rule_line_texts(&rule_of(
+            Messages {
+                custom_message: Some(long.clone()),
+                ..plain
+            },
+            CustomSlot::Author,
+        ));
+        assert_eq!(
+            (long.clone(), Some(false)),
+            (author_text, author_cut),
+            "an author's body of 4000 characters is printed whole on the rule line, as a clause's Message = line prints it"
+        );
+        let (_, displaced, _) = super::rule_line_texts(&rule_of(
+            Messages {
+                custom_message: Some("the author's body".to_string()),
+                error_message: Some(long.clone()),
+                refusal: false,
+                ..Messages::default()
+            },
+            CustomSlot::Author,
+        ));
+        assert_eq!(
+            format!("{}...", "y".repeat(300)),
+            displaced,
+            "the sentence a body displaced, when it is no refusal's, is cut at the recorded-message bound as the section cuts it"
+        );
+        let (_, displaced_refusal, _) = super::rule_line_texts(&rule_of(
+            Messages {
+                custom_message: Some("the author's body".to_string()),
+                error_message: Some(format!("{}\u{1b}[1m", "y".repeat(bound))),
+                refusal: true,
+                ..Messages::default()
+            },
+            CustomSlot::Author,
+        ));
+        assert!(
+            displaced_refusal.ends_with(super::REFUSAL_CUT_MARKER)
+                && !displaced_refusal.contains('\u{1b}'),
+            "a displaced refusal's sentence takes the refusal pipeline: cut with the marker, no raw ESC:\n{}",
+            displaced_refusal.escape_debug()
+        );
+        let whole = format!("{} {}", "y".repeat(500), "z".repeat(500));
+        let (_, displaced_whole, _) = super::rule_line_texts(&rule_of(
+            Messages {
+                custom_message: Some("the author's body".to_string()),
+                error_message: Some(whole.clone()),
+                refusal: true,
+                ..Messages::default()
+            },
+            CustomSlot::Author,
+        ));
+        assert_eq!(
+            whole, displaced_whole,
+            "a displaced refusal's sentence under the refusal bound is printed whole, where a plain one is cut"
+        );
+    }
+
+    /// `cut_to` says whether it dropped anything, from the branch that drops it, and its two readers take
+    /// that answer: text of exactly the bound (after the collapse) is returned whole and unflagged, one
+    /// character more is cut and flagged, and whitespace around a short text is no cut. `backstop` marks
+    /// a text only when the cutter flagged it, and `plain_author_message` passes the flag on. Expected, not
+    /// yet run; a red is a flag that disagrees with the ellipsis (a cut text unflagged, or a whole text
+    /// flagged) or a marker on a text the cutter returned whole.
+    #[test]
+    fn the_cutter_says_whether_it_cut_and_its_readers_take_its_answer() {
+        let bound = super::LONGEST_RECORDED_MESSAGE;
+        let at_the_bound = "w".repeat(bound);
+        let over_the_bound = format!("{at_the_bound}w");
+        assert_eq!(
+            (at_the_bound.clone(), false),
+            super::cut_to(&at_the_bound, bound),
+            "a text of exactly the bound is returned whole and unflagged"
+        );
+        let (over_text, over_cut) = super::cut_to(&over_the_bound, bound);
+        assert_eq!(
+            (true, true),
+            (over_cut, over_text.ends_with("...")),
+            "one character over the bound is cut, flagged, and ends in the ellipsis"
+        );
+        assert_eq!(
+            ("a".to_string(), false),
+            super::cut_to(
+                &format!("{}a{}", " ".repeat(2 * bound), " ".repeat(2 * bound)),
+                bound
+            ),
+            "whitespace around a short text is collapsed away and is no cut"
+        );
+        assert_eq!(
+            (at_the_bound.clone(), false),
+            super::plain_author_message(&at_the_bound),
+            "a plain rule message of exactly the bound is whole and unflagged"
+        );
+        assert!(
+            super::plain_author_message(&over_the_bound).1,
+            "a plain rule message over the bound carries the cutter's flag"
+        );
+        let refusal_bound = super::LONGEST_REFUSAL_MESSAGE;
+        assert_eq!(
+            "w".repeat(refusal_bound),
+            super::backstop(&"w".repeat(refusal_bound), super::REFUSAL_CUT_MARKER),
+            "a text of exactly the refusal bound takes no marker"
+        );
+        assert!(
+            super::backstop(&"w".repeat(refusal_bound + 1), super::REFUSAL_CUT_MARKER)
+                .ends_with(super::REFUSAL_CUT_MARKER),
+            "one character over the refusal bound takes the marker"
         );
     }
 
@@ -3034,10 +4030,11 @@ mod retrieval_error_tests {
             clauses: HashSet::new(),
             paths: BTreeSet::new(),
         };
-        let render = |messages: Messages| -> Vec<String> {
+        let render = |messages: Messages, custom_slot: crate::rules::CustomSlot| -> Vec<String> {
             let report = ClauseReport::Rule(RuleReport {
                 name: "nested",
                 messages,
+                custom_slot,
                 ..Default::default()
             });
             let mut written: Vec<u8> = Vec::new();
@@ -3056,13 +4053,16 @@ mod retrieval_error_tests {
                 .collect()
         };
 
-        let lines = render(Messages {
-            custom_message: Some("word; ".repeat(bound / 3)),
-            error_message: Some("the key `a\nb` could not be read".to_string()),
-            location: None,
-            refusal: true,
-            parts: None,
-        });
+        let lines = render(
+            Messages {
+                custom_message: Some("word; ".repeat(bound / 3)),
+                error_message: Some("the key `a\nb` could not be read".to_string()),
+                location: None,
+                refusal: false,
+                parts: None,
+            },
+            crate::rules::CustomSlot::Refusal,
+        );
         let messages: Vec<&String> = lines
             .iter()
             .filter(|line| line.trim_start().starts_with("Message"))
@@ -3087,13 +4087,16 @@ mod retrieval_error_tests {
             "the error slot is one line with its break joined"
         );
 
-        let lines = render(Messages {
-            custom_message: Some("one; two".to_string()),
-            error_message: None,
-            location: None,
-            refusal: false,
-            parts: None,
-        });
+        let lines = render(
+            Messages {
+                custom_message: Some("one; two".to_string()),
+                error_message: None,
+                location: None,
+                refusal: false,
+                parts: None,
+            },
+            crate::rules::CustomSlot::Evaluator,
+        );
         assert!(
             lines.iter().any(|line| line.trim_start() == "Message {")
                 && lines.iter().any(|line| line.trim() == "one")
@@ -3104,16 +4107,19 @@ mod retrieval_error_tests {
 
         // A plain record's custom slot over the recorded-message bound: cut with the ellipsis and printed
         // as ONE `Message = ...` line, the joins of the collapse never split into items. The long run
-        // carries spaces: `cut_to` backs off to the last whitespace inside the bound (`shortened`'s
+        // carries spaces: `cut_to` backs off to the last whitespace inside the bound (`cut_to`'s
         // rule, so no word is split), and a run of 400 `z`s with no space in it would be dropped whole,
         // the line reading `a; b;...` with nothing of the run kept.
-        let lines = render(Messages {
-            custom_message: Some(format!("a; b\n{}", "z ".repeat(200))),
-            error_message: None,
-            location: None,
-            refusal: false,
-            parts: None,
-        });
+        let lines = render(
+            Messages {
+                custom_message: Some(format!("a; b\n{}", "z ".repeat(200))),
+                error_message: None,
+                location: None,
+                refusal: false,
+                parts: None,
+            },
+            crate::rules::CustomSlot::Evaluator,
+        );
         let messages: Vec<&String> = lines
             .iter()
             .filter(|line| line.trim_start().starts_with("Message"))
@@ -3130,18 +4136,28 @@ mod retrieval_error_tests {
         // A plain record's custom slot UNDER the bound that holds a raw control: the control is escaped
         // and the message still prints as the `Message { }` block with its `;` items, since only a CUT
         // slot takes the one-line form. Read against the unescaped collapse, the escaped text differed
-        // and every short plain message with a control took the one-line branch.
-        let lines = render(Messages {
-            custom_message: Some("one\u{1b}[1m; two".to_string()),
-            error_message: None,
-            location: None,
-            refusal: false,
-            parts: None,
-        });
+        // and every short plain message with a control took the one-line branch. The raw-ESC check reads
+        // the lines under the header only: `pprint_clauses` colours the rule's name on its `Rule = {`
+        // line, so with colour forced on that one line carries escapes of its own, which say nothing
+        // about the slot.
+        let lines = render(
+            Messages {
+                custom_message: Some("one\u{1b}[1m; two".to_string()),
+                error_message: None,
+                location: None,
+                refusal: false,
+                parts: None,
+            },
+            crate::rules::CustomSlot::Evaluator,
+        );
+        let under_the_header: Vec<&String> = lines
+            .iter()
+            .filter(|line| !line.trim_start().starts_with("Rule ="))
+            .collect();
         assert!(
             lines.iter().any(|line| line.trim() == "two")
                 && lines.iter().any(|line| line.contains("\\u{1b}[1m"))
-                && !lines.iter().any(|line| line.contains('\u{1b}'))
+                && !under_the_header.iter().any(|line| line.contains('\u{1b}'))
                 && !lines
                     .iter()
                     .any(|line| line.trim_start().starts_with("Message = ")),
@@ -4145,12 +5161,14 @@ mod one_line_tests {
 #[cfg(test)]
 mod explanation_tests {
     use super::{
-        explanation_of, LONGEST_RECORDED_MESSAGE, LONGEST_REFUSAL_MESSAGE, REFUSAL_CUT_MARKER,
+        explanation_of, plain_author_message, rule_line_texts, LONGEST_RECORDED_MESSAGE,
+        LONGEST_REFUSAL_MESSAGE, REFUSAL_CUT_MARKER,
     };
     use crate::rules::errors::Error;
-    use crate::rules::eval_context::{is_refusal, refuse, root_scope_for, Messages};
+    use crate::rules::eval_context::{is_refusal, refuse, root_scope_for, Messages, RuleReport};
     use crate::rules::exprs::RulesFile;
     use crate::rules::path_value::PathAwareValue;
+    use crate::rules::CustomSlot;
     use std::convert::TryFrom;
     use std::rc::Rc;
 
@@ -4177,6 +5195,30 @@ mod explanation_tests {
         }
     }
 
+    /// The author's `<< >>` message text prints a zero-width joiner and a right-to-left mark as typed on the
+    /// one-line form (`plain_author_message`) as it does on a clause's `Message =` line, and a zero-width
+    /// space is escaped. An evaluator's sentence or a reason is not the author's prose: it quotes keys from
+    /// the rules file and the template, so `reason_backstop` writes the same joiner as its escape (the
+    /// strict set, one text with the record that stores it).
+    ///
+    /// Expected, not yet run. Red: the author's joiner or mark is written as `\u{200d}` or `\u{200f}`, the
+    /// zero-width space is written raw, or the reason keeps the joiner raw.
+    #[test]
+    fn the_authors_prose_keeps_joiners_as_typed_and_a_reason_escapes_them() {
+        let typed = format!("owner{}tag{}x", '\u{200D}', '\u{200F}');
+        assert_eq!((typed.clone(), false), plain_author_message(&typed));
+        assert_eq!(
+            format!("a\\u{{200b}}b"),
+            plain_author_message("a\u{200B}b").0,
+            "a zero-width space stays escaped"
+        );
+        assert_eq!(
+            "owner\\u{200d}tag\\u{200f}x",
+            super::reason_backstop(&typed, "..."),
+            "a reason is written by the strict set"
+        );
+    }
+
     /// The unattributed section's entry for a refusal record takes the console's one refusal pipeline
     /// (`bounded_for_the_console` through `reason_backstop`): a raw line break in the evaluator's half
     /// is joined as `; ` and a raw ESC is written as its escape after it, as the per-resource arms print
@@ -4193,6 +5235,158 @@ mod explanation_tests {
             line
         );
         assert!(!line.contains('\u{1b}'), "no raw ESC reaches the section");
+    }
+
+    /// A refusal's sentence followed by `; ` and a converter's cause cut to a template part (the shape a
+    /// held error takes when a refusal that came with a token and no registered text arrives after it,
+    /// joined and registered under the token) reads as a refusal in the evaluator (`is_refusal`: the joined
+    /// text is registered), so the record carries the refusal flag and the section prints the joined text
+    /// whole under `LONGEST_REFUSAL_MESSAGE`, past `LONGEST_RECORDED_MESSAGE`, with the refusal's sentence
+    /// first and intact. The same text under a record that does not say it is a refusal's is cut at
+    /// `LONGEST_RECORDED_MESSAGE`, inside the refusal's sentence: what the registration and the sentence
+    /// leading the cause prevent. The `-o json` report carries the text whole either way and no flag
+    /// (`Messages::refusal` is not serialized), so the section's reading of the flag is the one the text
+    /// depends on.
+    ///
+    /// Expected, not yet run. Red: the joined text is not registered (`is_refusal` false), the section
+    /// prints it cut mid-sentence under the refusal flag, or the plain-flag copy is not cut at the plain
+    /// bound.
+    #[test]
+    fn a_refusal_sentence_joined_to_a_cut_cause_is_printed_whole_and_flagged() {
+        let held = format!(
+            "failed to convert a string: {} into an int",
+            "9".repeat(2000)
+        );
+        let sentence = format!(
+            "the read of `X` is refused: {}",
+            "word ".repeat(80).trim_end()
+        );
+        // The registry registers under a live root scope only, so the cell holds one for its span.
+        let scope_rules =
+            RulesFile::try_from("rule r { Resources exists }").expect("one rule parses");
+        let _scope = root_scope_for(
+            &scope_rules,
+            Rc::new(PathAwareValue::try_from("{ Resources: { A: 1 } }").expect("one map parses")),
+            None,
+        );
+        // The join is built by the evaluator (`with_the_refusal_named`), which registers it under the
+        // token: the sentence no one registered leads the held cause, cut to a part.
+        let joined_error = crate::rules::eval::the_join_for_a_reporter_cell(
+            Error::Unevaluatable(held),
+            sentence.clone(),
+            Some(crate::rules::errors::RefusalToken::minted(1)),
+        );
+        let joined = match &joined_error {
+            Error::Unevaluatable(text) => text.clone(),
+            other => panic!("the join keeps the held error's variant: {}", other),
+        };
+        assert!(
+            joined.starts_with(&format!("{sentence}; failed to convert a string: ")),
+            "the sentence leads and the cause follows it: {:?}",
+            joined
+        );
+        assert!(
+            joined.chars().count() > LONGEST_RECORDED_MESSAGE,
+            "the joined text is longer than the plain bound"
+        );
+        assert!(
+            joined.chars().count() < LONGEST_REFUSAL_MESSAGE,
+            "the joined text is under the refusal bound"
+        );
+        assert!(
+            is_refusal(&joined_error),
+            "the evaluator registered the join, so it reads as a refusal's"
+        );
+
+        let flagged = explanation_of(&refusal(&joined));
+        assert_eq!(
+            joined, flagged,
+            "printed whole, the refusal's sentence first and intact"
+        );
+        assert!(flagged.starts_with(sentence.as_str()));
+
+        let unflagged = explanation_of(&messages("", &joined));
+        assert!(
+            unflagged.ends_with("..."),
+            "a record that does not say refusal is cut at the plain bound"
+        );
+        assert!(!unflagged.contains(sentence.as_str()));
+    }
+
+    /// A message that is no refusal's takes the same collapse, escape and cut in the section as in the
+    /// rule's own record under a resource (`plain_author_message` for the author's text and
+    /// `plain_evaluator_message` for the evaluator's, read by `rule_line_texts` and by
+    /// `bounded_for_the_console`): an author's `<< >>` text and a plain error half with a raw ESC in each
+    /// are written as their escapes, the rule record's custom slot reads as the section reads the same
+    /// text, and a cut that would end inside an escape ends before it. An ESC alone cannot tell the
+    /// relaxed set from the strict one (both write it as an escape), so a zero-width joiner row follows:
+    /// the section's author half keeps it as typed, the rule record's slot keeps it for the author's
+    /// origin and escapes it for the evaluator's (the record-level routing is pinned by
+    /// `a_rule_records_slot_takes_the_escape_set_of_whose_text_it_holds`). The ESC is built with
+    /// `char::from`, since the source holds no raw control.
+    ///
+    /// Expected, not yet run. Red: the section prints the ESC raw (an uncut message was passed through
+    /// the cutter alone), the two readings of the rule record's slot differ, the joiner row reads a set
+    /// other than the origin's, or the cut leaves `\u{` at the end of the line.
+    #[test]
+    fn a_plain_explanation_in_the_section_is_escaped_as_the_rule_record_under_a_resource_is() {
+        let esc = char::from(0x1b);
+        let author = format!("<< {esc}[31mred{esc}[0m >>");
+        let error = format!("failed at {esc}[1mpath{esc}[0m");
+        let line = explanation_of(&messages(&author, &error));
+        assert_eq!(
+            "<< \\u{1b}[31mred\\u{1b}[0m >> failed at \\u{1b}[1mpath\\u{1b}[0m",
+            line
+        );
+        assert!(!line.contains(esc), "no raw ESC reaches the section");
+
+        let record = Messages {
+            custom_message: Some(author.clone()),
+            ..Messages::default()
+        };
+        let (under_a_resource, _, _) = rule_line_texts(&RuleReport {
+            messages: record,
+            custom_slot: CustomSlot::Author,
+            ..Default::default()
+        });
+        assert_eq!(
+            "<< \\u{1b}[31mred\\u{1b}[0m >>", under_a_resource,
+            "the rule record's custom slot reads as the section reads the same text"
+        );
+
+        let joiner = char::from_u32(0x200d).expect("a scalar value");
+        let typed = format!("owner{joiner}tag");
+        let slot_of = |custom_slot: CustomSlot| RuleReport {
+            messages: Messages {
+                custom_message: Some(typed.clone()),
+                ..Messages::default()
+            },
+            custom_slot,
+            ..Default::default()
+        };
+        assert_eq!(
+            typed,
+            explanation_of(&messages(&typed, "")),
+            "the section's author half keeps the joiner as typed"
+        );
+        assert_eq!(
+            typed,
+            rule_line_texts(&slot_of(CustomSlot::Author)).0,
+            "the rule record's slot keeps it for the author's origin"
+        );
+        assert_eq!(
+            "owner\\u{200d}tag",
+            rule_line_texts(&slot_of(CustomSlot::Evaluator)).0,
+            "and escapes it for the evaluator's"
+        );
+
+        let bound = LONGEST_RECORDED_MESSAGE;
+        let split = format!("{}{esc}[1m", "y".repeat(bound - 3));
+        assert_eq!(
+            (format!("{}...", "y".repeat(bound - 3)), true),
+            plain_author_message(&split),
+            "a cut inside an escape ends before the escape"
+        );
     }
 
     /// The cap bounds one message, so a line carrying two reaches twice it plus the space between them.
@@ -4400,14 +5594,398 @@ mod explanation_tests {
     }
 }
 
+/// The evaluator's text and the writers' backstop on the console: a key with a pasted joiner in an
+/// evaluator's sentence prints its escape on every line that carries the sentence, a concealing colour
+/// sequence in a field a writer forgot is written as its escape, and a context from a file with CRLF line
+/// endings prints as written.
 #[cfg(test)]
-mod shortened_tests {
-    use super::{shortened, LONGEST_RECORDED_MESSAGE};
+mod evaluator_text_tests {
+    use super::{
+        collect_unattributed_explanations, context_line, emit_messages, explanation_of,
+        rule_line_texts, writer_output, LocalResourceAggr, Rendered,
+    };
+    use crate::rules::eval_context::{ClauseReport, Messages, RuleReport};
+    use crate::rules::CustomSlot;
+
+    fn evaluator_record(error: &str) -> Messages {
+        Messages {
+            custom_message: None,
+            error_message: Some(error.to_string()),
+            location: None,
+            refusal: false,
+            parts: None,
+        }
+    }
+
+    /// A pathless clause whose error quotes the key `Bucket<joiner>Name` prints the key's escape on its
+    /// `Error =` line and in the unattributed section alike, and the rule-level slot of a plain record
+    /// takes the same escape: the evaluator's sentence is not the author's prose, so none of the three
+    /// reads the joiner as typed.
+    ///
+    /// Expected, not yet run. Red: the unattributed entry or the rule-level slot holds the joiner raw
+    /// while the `Error =` line holds its escape.
+    #[test]
+    fn a_look_alike_key_in_an_evaluator_sentence_is_escaped_on_every_line_that_carries_it() {
+        let joiner = char::from_u32(0x200d).expect("a scalar value");
+        let sentence = format!("the key Bucket{}Name could not be read", joiner);
+        let escaped = "the key Bucket\\u{200d}Name could not be read";
+
+        let mut line = Vec::new();
+        emit_messages(&mut line, "", "", &sentence, 0).expect("writing to a Vec cannot fail");
+        let line = String::from_utf8(line).expect("the line is UTF-8");
+        assert_eq!(format!("Error = {}\n", escaped), line);
+
+        assert_eq!(
+            escaped,
+            explanation_of(&evaluator_record(&sentence)),
+            "the unattributed section's entry"
+        );
+
+        let rule_level = RuleReport {
+            messages: Messages {
+                custom_message: Some(sentence.clone()),
+                ..evaluator_record("")
+            },
+            custom_slot: CustomSlot::Evaluator,
+            ..Default::default()
+        };
+        assert_eq!(
+            escaped,
+            rule_line_texts(&rule_level).0,
+            "the rule-level slot of a plain record"
+        );
+    }
+
+    /// A rule record's custom slot holds EITHER the author's `<< >>` body copied onto a called rule OR the
+    /// evaluator's sentence, and the record says which (`RuleReport::custom_slot`). The author's body
+    /// keeps a zero-width joiner as typed on the `Rule = { }` arm's `Message` text (`rule_line_texts`) and
+    /// in the unattributed section's `rule <name>` entry (the `ClauseReport::Rule` arm of
+    /// `collect_unattributed_explanations`, reached with no checks under the rule); the same text marked as
+    /// the evaluator's prints the joiner as its escape in both places. The rows run the section's Rule arm
+    /// itself, so reverting that arm to one set for both origins turns a row red.
+    ///
+    /// Expected, not yet run. Red: the author's row prints `\u{200d}` on either line (the arm or the
+    /// printer reads the strict set for the author's body), or the evaluator's row keeps the joiner raw.
+    #[test]
+    fn a_rule_records_slot_takes_the_escape_set_of_whose_text_it_holds() {
+        let joiner = char::from_u32(0x200d).expect("a scalar value");
+        let typed = format!("owner{}tag", joiner);
+        let escaped = "owner\\u{200d}tag".to_string();
+        for (slot, expected) in [
+            (CustomSlot::Author, typed.clone()),
+            (CustomSlot::Evaluator, escaped),
+        ] {
+            let rule = RuleReport {
+                name: "check",
+                messages: Messages {
+                    custom_message: Some(typed.clone()),
+                    ..evaluator_record("")
+                },
+                custom_slot: slot,
+                ..Default::default()
+            };
+            let (under_a_resource, _, _) = rule_line_texts(&rule);
+            assert_eq!(
+                expected, under_a_resource,
+                "the Rule arm's Message text, record marked {:?}",
+                slot
+            );
+
+            let report = ClauseReport::Rule(rule);
+            let rendered = Rendered::of(std::iter::empty::<&LocalResourceAggr>());
+            let mut entries = Vec::new();
+            collect_unattributed_explanations(&report, None, &rendered, &mut entries);
+            assert_eq!(
+                vec![("rule check".to_string(), expected)],
+                entries,
+                "the unattributed section's entry, record marked {:?}",
+                slot
+            );
+        }
+    }
+
+    /// The producer side of a rule record's slot origin: the records are built by the evaluator, not by
+    /// hand. A call whose `<< >>` body holds a zero-width joiner, over data the called rule fails on, writes
+    /// the joiner raw on the called rule's `Rule = check` block (the `Message` line of
+    /// `pprint_clauses`), and the same call over a called rule that fails on its own `when` writes it raw
+    /// in the unattributed section's `rule check` entry. Both runs go through the evaluator
+    /// (`eval_rules_file`), the report builder (`simplified_json_from_root`, which reads the record's
+    /// slot into `RuleReport::custom_slot`) and the console printers. Reverting the evaluator's mark of
+    /// the author's body (`ResolvedParameterContext::end_record`) or the report builder's copy of it turns
+    /// both rows red: the joiner then prints as its escape. The second row's entry holds the rule's own
+    /// sentence after the body, naming the refusal (the body displaces the sentence in the record's
+    /// message and the report keeps it as the error message). Two more runs, with no body, count the
+    /// section's entries that name the refusal: `not check(..)`, whose negation record carries the refusal
+    /// of its own, and `rule r when check(..)`. The gate reads one entry naming the refusal. The negation
+    /// reads two, because two records each explain themselves: the called rule's own refusal (an entry
+    /// that starts "The rule's condition could not be evaluated") and the negation's fail-closed block
+    /// (an entry that starts "the negated rule"); the cell asserts the two texts differ. A body on the
+    /// negated call (`not check(..) << >>`) reads the same two entries, each starting with the body as
+    /// typed, the first followed by the sentence the body displaced and the second by the negation's.
+    ///
+    /// Red: either row prints `\u{200d}` where the joiner stands, the section
+    /// holds no `rule check` entry (the second rule's `when` did not fail the rule closed with nothing
+    /// under it) or one without the refusal's sentence, or a count reads other than its row's (two for
+    /// the negation, one for the gate), or the negation's two entries do not start with those two
+    /// sentences, in which case the dump names the entries.
+    #[test]
+    fn an_authors_joiner_on_a_rule_call_reaches_the_console_raw_from_the_evaluator() {
+        use super::ComparisonErrorWriter;
+        use crate::rules::eval::eval_rules_file;
+        use crate::rules::eval_context::{root_scope, simplified_json_from_root};
+        use std::collections::{BTreeSet, HashSet};
+        use std::convert::TryFrom;
+        use std::rc::Rc;
+
+        struct NoExcerpt;
+        impl ComparisonErrorWriter for NoExcerpt {}
+
+        /// The first rule report named `name` among `reports`, depth first.
+        fn rule_named<'r, 'v>(
+            reports: &'r [ClauseReport<'v>],
+            name: &str,
+        ) -> Option<&'r ClauseReport<'v>> {
+            reports.iter().find_map(|report| match report {
+                ClauseReport::Rule(rule) if rule.name == name => Some(report),
+                ClauseReport::Rule(rule) => rule_named(&rule.checks, name),
+                ClauseReport::Disjunctions(ors) => rule_named(&ors.checks, name),
+                ClauseReport::Block(_) | ClauseReport::Clause(_) => None,
+            })
+        }
+
+        const OWN_KEY_TEXT: &str = "is a key of that map";
+        let joiner = char::from_u32(0x200d).expect("a scalar value");
+        let typed = format!("owner{joiner}tag");
+        let escaped = "owner\\u{200d}tag";
+
+        // Row one: the called rule fails on the data, and the body is printed under its `Rule =` block.
+        let rules = format!(
+            "rule check(p) {{ %p == 'x' }}\nrule r {{ check(Resources.A.Properties.Name) << {typed} >> }}"
+        );
+        let rules_file =
+            crate::rules::exprs::RulesFile::try_from(rules.as_str()).expect("the rules parse");
+        let mut root = root_scope(
+            &rules_file,
+            Rc::new(
+                crate::rules::path_value::PathAwareValue::try_from(
+                    "{ Resources: { A: { Properties: { Name: 'y' } } } }",
+                )
+                .expect("the data parses"),
+            ),
+        );
+        eval_rules_file(&rules_file, &mut root, None).expect("the run answers");
+        let tree = root.reset_recorder().extract();
+        let report = simplified_json_from_root(&tree).expect("the report builds");
+        let check = rule_named(&report.not_compliant, "check")
+            .expect("the called rule has a report of its own");
+        let resource = LocalResourceAggr {
+            name: "A".to_string(),
+            resource_type: "AWS::Example::Thing",
+            cdk_path: None,
+            clauses: HashSet::new(),
+            paths: BTreeSet::new(),
+        };
+        let mut written: Vec<u8> = Vec::new();
+        super::pprint_clauses(
+            &mut written,
+            check,
+            &resource,
+            String::new(),
+            &mut NoExcerpt,
+        )
+        .expect("writing to a Vec cannot fail");
+        let printed = String::from_utf8(written).expect("the output is UTF-8");
+        let message_lines: Vec<&str> = printed
+            .lines()
+            .filter(|line| line.trim_start().starts_with("Message"))
+            .collect();
+        assert!(
+            message_lines.iter().any(|line| line.contains(&typed)) && !printed.contains(escaped),
+            "the called rule's Message line keeps the joiner raw:\n{}",
+            printed
+        );
+
+        // Row two: the called rule fails on its own `when` with nothing under it, and the section prints
+        // the body raw.
+        let rules = format!(
+            "rule check(p) when Resources.R1.Properties.List[*].Grp[ keys == /(?!x)((a+)+)b/ ][*].Type exists {{ %p exists }}\nrule r {{ check(Resources.R1) << {typed} >> }}"
+        );
+        let rules_file =
+            crate::rules::exprs::RulesFile::try_from(rules.as_str()).expect("the rules parse");
+        let mut root = root_scope(
+            &rules_file,
+            Rc::new(
+                crate::rules::path_value::PathAwareValue::try_from(
+                    "{ Resources: { R1: { Properties: { List: [ { Grp: { aab: { Type: { Name: 't', Size: '1' }, B: { Type: 'T', Name: 'b' } } } }, { Grp: { aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: { k: '1' } } } ] } } } }",
+                )
+                .expect("the data parses"),
+            ),
+        );
+        eval_rules_file(&rules_file, &mut root, None).expect("the run answers");
+        let tree = root.reset_recorder().extract();
+        let report = simplified_json_from_root(&tree).expect("the report builds");
+        let rendered = Rendered::of(std::iter::empty::<&LocalResourceAggr>());
+        let mut entries = Vec::new();
+        for failure in &report.not_compliant {
+            collect_unattributed_explanations(failure, None, &rendered, &mut entries);
+        }
+        // The entry holds both halves, as a clause's two halves are joined: the author's body first, with
+        // the joiner as typed, then the rule's own sentence the body displaced, which names the refusal.
+        assert!(
+            entries.iter().any(|(context, text)| context == "rule check"
+                && text.starts_with(&typed)
+                && text.contains(OWN_KEY_TEXT)
+                && !text.contains(escaped)),
+            "the section's `rule check` entry keeps the joiner raw and names the refusal: {:?}",
+            entries
+        );
+        let naming_the_refusal = entries
+            .iter()
+            .filter(|(_, text)| text.contains(OWN_KEY_TEXT))
+            .count();
+        assert_eq!(
+            1, naming_the_refusal,
+            "a call with a body reads exactly one entry naming the refusal, as a call with none does: {:?}",
+            entries
+        );
+
+        // A call with no body, negated, and a call as a `when` gate. The gate's section names the refusal
+        // in one entry. The negation's section holds two entries, each with a sentence of its own: the
+        // called rule's refusal (`rule check`) and the negation's fail-closed block (the rule `r`'s
+        // entry), each explaining its own record, so both name the refusal and the texts differ. With a
+        // body on the negated call, the `rule check` entry holds the body and the sentence the body
+        // displaced, and the negation's entry holds the body and the negation's sentence: still two
+        // entries, still distinct texts, both starting with the body as typed.
+        const GATED_RULE: &str = "rule check(p) when Resources.R1.Properties.List[*].Grp[ keys == /(?!x)((a+)+)b/ ][*].Type exists { %p exists }\n";
+        for (label, rules, expected_entries, with_body) in [
+            (
+                "`not check(..)` with no body",
+                format!("{GATED_RULE}rule r {{ not check(Resources.R1) }}"),
+                2,
+                false,
+            ),
+            (
+                "`not check(..) << >>` with a body",
+                format!("{GATED_RULE}rule r {{ not check(Resources.R1) << {typed} >> }}"),
+                2,
+                true,
+            ),
+            (
+                "`rule r when check(..)`",
+                format!("{GATED_RULE}rule r when check(Resources.R1) {{ Resources exists }}"),
+                1,
+                false,
+            ),
+        ] {
+            let rules_file =
+                crate::rules::exprs::RulesFile::try_from(rules.as_str()).expect("the rules parse");
+            let mut root = root_scope(
+                &rules_file,
+                Rc::new(
+                    crate::rules::path_value::PathAwareValue::try_from(
+                        "{ Resources: { R1: { Properties: { List: [ { Grp: { aab: { Type: { Name: 't', Size: '1' }, B: { Type: 'T', Name: 'b' } } } }, { Grp: { aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa: { k: '1' } } } ] } } } }",
+                    )
+                    .expect("the data parses"),
+                ),
+            );
+            let _ = eval_rules_file(&rules_file, &mut root, None);
+            let tree = root.reset_recorder().extract();
+            let report = simplified_json_from_root(&tree).expect("the report builds");
+            let rendered = Rendered::of(std::iter::empty::<&LocalResourceAggr>());
+            let mut entries = Vec::new();
+            for failure in &report.not_compliant {
+                collect_unattributed_explanations(failure, None, &rendered, &mut entries);
+            }
+            let naming_the_refusal = entries
+                .iter()
+                .filter(|(_, text)| text.contains(OWN_KEY_TEXT))
+                .count();
+            assert_eq!(
+                expected_entries, naming_the_refusal,
+                "{}: the entries naming the refusal: {:?}",
+                label, entries
+            );
+            if expected_entries == 2 {
+                let texts: Vec<&str> = entries
+                    .iter()
+                    .map(|(_, text)| text.as_str())
+                    .filter(|text| text.contains(OWN_KEY_TEXT))
+                    .collect();
+                let sentence_of = |opening: &str| {
+                    texts.iter().any(|text| match with_body {
+                        true => text.starts_with(&typed) && text.contains(opening),
+                        false => text.starts_with(opening),
+                    })
+                };
+                assert!(
+                    sentence_of("The rule's condition could not be evaluated")
+                        && sentence_of("the negated rule")
+                        && texts[0] != texts[1],
+                    "{}: the two entries carry different sentences: {:?}",
+                    label,
+                    texts
+                );
+            }
+        }
+    }
+
+    /// The author's half of an entry keeps the joiner as typed while the evaluator's half beside it is
+    /// escaped, in the one explanation.
+    ///
+    /// Expected, not yet run. Red: the author's joiner is written as its escape, or the evaluator's
+    /// joiner is written raw.
+    #[test]
+    fn an_entry_keeps_the_authors_joiner_and_escapes_the_evaluators() {
+        let joiner = char::from_u32(0x200d).expect("a scalar value");
+        let record = Messages {
+            custom_message: Some(format!("owner{}tag", joiner)),
+            ..evaluator_record(&format!("key Bucket{}Name", joiner))
+        };
+        assert_eq!(
+            format!("owner{}tag key Bucket\\u{{200d}}Name", joiner),
+            explanation_of(&record)
+        );
+    }
+
+    /// The backstop on a comparison writer's buffer keeps the two colour sequences the writers emit and
+    /// the text's layout, and writes every other escape sequence as its escape, a well-formed one
+    /// included: a conceal (`ESC [8m`) in a field a writer forgot to escape would hide the text after it.
+    ///
+    /// Expected, not yet run. Red: the output holds the ESC byte of the conceal, or the green or the
+    /// reset is written as text.
+    #[test]
+    fn the_backstop_writes_a_forgotten_conceal_as_its_escape_and_keeps_the_writers_colour() {
+        let esc = char::from(0x1b);
+        let buffer = format!("a{esc}[8mhidden\n{esc}[92m    3.\tType: X{esc}[0m\n");
+        let written = writer_output(buffer.into_bytes());
+        assert_eq!(
+            format!("a\\u{{1b}}[8mhidden\n{esc}[92m    3.\tType: X{esc}[0m\n"),
+            written
+        );
+    }
+
+    /// A context that ends with a carriage return (a rules file with CRLF line endings) is the one-line
+    /// context it was written as, spacing kept; a context that spans lines is joined where a break sits
+    /// between two pieces that hold text.
+    ///
+    /// Expected, not yet run. Red: the first two rows are trimmed or joined, or the third is not joined.
+    #[test]
+    fn a_trailing_carriage_return_does_not_trim_a_one_line_context() {
+        assert_eq!("Name == 'x'", context_line("Name == 'x'\r"));
+        assert_eq!("  Name == 'x'  ", context_line("  Name == 'x'  \r\n"));
+        assert_eq!("Name; exists", context_line("Name\r\nexists"));
+        assert_eq!(" Name ", context_line(" Name "));
+    }
+}
+
+#[cfg(test)]
+mod cut_message_tests {
+    use super::{plain_author_message, LONGEST_RECORDED_MESSAGE};
 
     #[test]
     fn leaves_a_message_that_fits_alone() {
         let message = "Check was not compliant as property [Name] is missing.";
-        assert_eq!(message, shortened(message));
+        assert_eq!(message, plain_author_message(message).0);
     }
 
     /// The case this exists for. A value the evaluator embedded is compact JSON, so it holds no
@@ -4418,7 +5996,7 @@ mod shortened_tests {
         let document = format!(r#"{{"Resources":{{"{}":{{}}}}}}"#, "A".repeat(400));
         let message = format!("Property [Name] is missing. Value traversed to [{document}]");
 
-        let short = shortened(&message);
+        let short = plain_author_message(&message).0;
 
         assert!(
             short.starts_with("Property [Name] is missing. Value traversed to"),
@@ -4439,7 +6017,7 @@ mod shortened_tests {
     fn does_not_split_a_multi_byte_character() {
         let message = "é".repeat(LONGEST_RECORDED_MESSAGE * 2);
 
-        let short = shortened(&message);
+        let short = plain_author_message(&message).0;
 
         assert!(short.ends_with("..."), "it was truncated: {}", short);
         assert!(
@@ -4452,7 +6030,7 @@ mod shortened_tests {
     /// No whitespace to cut at leaves the hard limit, which is the point of having one.
     #[test]
     fn still_bounds_a_message_that_is_one_word() {
-        let short = shortened(&"x".repeat(LONGEST_RECORDED_MESSAGE * 3));
+        let short = plain_author_message(&"x".repeat(LONGEST_RECORDED_MESSAGE * 3)).0;
 
         assert_eq!(LONGEST_RECORDED_MESSAGE + 3, short.len());
     }
@@ -4489,7 +6067,7 @@ mod shortened_tests {
             "and what one line of it is, which fits under the cap"
         );
 
-        let short = shortened(message);
+        let short = plain_author_message(message).0;
 
         assert_eq!(
             printed, short,
@@ -4530,7 +6108,7 @@ mod shortened_tests {
             "and over it on one line, which is the length the cap is applied to"
         );
 
-        let short = shortened(message);
+        let short = plain_author_message(message).0;
 
         assert!(short.ends_with("..."), "it was cut, and says so: {}", short);
         assert!(
@@ -4554,7 +6132,7 @@ mod shortened_tests {
     fn leading_whitespace_does_not_swallow_the_message() {
         let message = format!("{}REALREASON", " ".repeat(350));
 
-        let short = shortened(&message);
+        let short = plain_author_message(&message).0;
 
         assert_eq!("REALREASON", short);
     }

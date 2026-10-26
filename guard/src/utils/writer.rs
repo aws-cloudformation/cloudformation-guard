@@ -162,6 +162,18 @@ pub(crate) fn escaped_controls_for_display(s: &str) -> String {
     escaped(s, false)
 }
 
+/// `name`, a file name, as [`escaped_controls_for_display`] writes it, borrowed as it is when it holds no
+/// character that breaks or hides a line (the usual path: no allocation for the position every clause's
+/// record context carries). The one place a rules file's path is escaped where the position is
+/// displayed (`FileLocation`'s `Display`), so a path holding an ESC or a line feed reaches no record
+/// context, report line or terminal raw, whichever writer prints the context.
+pub(crate) fn file_name_for_display(name: &str) -> std::borrow::Cow<'_, str> {
+    match name.chars().any(breaks_or_hides_a_line) {
+        true => std::borrow::Cow::Owned(escaped_controls_for_display(name)),
+        false => std::borrow::Cow::Borrowed(name),
+    }
+}
+
 /// A position in the rules file as a notice names it: the `Location[file:..., line:..., column:...]`
 /// display with the file's path escaped as a file name is ([`escaped_controls_for_display`]), since
 /// the path is the one given on the command line and a path may hold a line feed, or an ESC, on Linux.
@@ -172,10 +184,177 @@ pub(crate) fn location_for_notice(location: &crate::rules::exprs::FileLocation<'
     escaped_controls_for_display(&location.to_string())
 }
 
+/// Whether a character is escaped on a console line that prints a rule author's message
+/// ([`escaped_controls_for_console`]): everything [`breaks_or_hides_a_line`] names except the
+/// joiners and marks U+200C to U+200F (zero-width non-joiner and joiner, left-to-right and right-to-left
+/// marks). Those are ordinary text in an emoji sequence (a woman, U+200D, a laptop: one technologist
+/// emoji) and in Hebrew, Arabic and Persian prose, where a right-to-left mark or a non-joiner changes how
+/// a word is shaped, and writing them as `\u{200d}` would break a message that was typed correctly. The characters that end a line,
+/// reorder the rest of it (the embeddings, overrides and isolates, U+061C) or print as nothing at all
+/// (U+200B, U+2060, U+FEFF) stay escaped. The stderr notices keep the stricter predicate, since a name in
+/// a notice is compared by eye against another name, and so do the console lines that print a key, a path,
+/// a context, a value from the template or the data, or an evaluator's error or reason: the relaxed set
+/// is for the rule author's prose alone.
+fn breaks_or_hides_a_console_line(c: char) -> bool {
+    breaks_or_hides_a_line(c) && !matches!(c, '\u{200C}'..='\u{200F}')
+}
+
+/// `s` with each character that breaks or hides a console line ([`breaks_or_hides_a_console_line`])
+/// written as its Rust escape and everything else, the backslash included, as it is: the escaping for
+/// the TEXT the rule author wrote on the console (a rule's `Message =` lines and the one-line forms of
+/// that message), where a joiner or a mark is ordinary text. Idempotent: a backslash is left alone, so
+/// escaping an escaped text changes nothing. Everything else is escaped by
+/// [`escaped_controls_for_display`], the strict set, so a name with a pasted joiner does not print like
+/// the name without it: a key, a path, a context, a value taken from the template or the data, and an
+/// evaluator's `Error =` or `Reason =` text, which quotes keys.
+pub(crate) fn escaped_controls_for_console(s: &str) -> String {
+    escaped_by(s, false, breaks_or_hides_a_console_line)
+}
+
+/// [`escaped_controls_for_display`] for a line of the template's own source quoted under a finding (the
+/// `Code:` excerpt): the strict set, except that a tab is kept as it is. A tab neither ends nor hides a
+/// line and is how an indented template reads, so the excerpt shows the source as it is written.
+pub(crate) fn escaped_controls_for_excerpt(s: &str) -> String {
+    escaped_by(s, false, |c| c != '\t' && breaks_or_hides_a_line(c))
+}
+
+/// Whether XML 1.0 forbids `c` in a document whatever its position: the two noncharacters U+FFFE and
+/// U+FFFF (the controls below U+0020 other than the tab, line feed and carriage return are forbidden too,
+/// and [`breaks_or_hides_a_line`] already names them). The JSON reader keeps both code points, so a text
+/// that reached a JUnit report through it can hold them.
+fn forbidden_in_xml(c: char) -> bool {
+    matches!(c, '\u{FFFE}' | '\u{FFFF}')
+}
+
+/// [`escaped_controls_for_excerpt`] for an XML text node of a JUnit report: the strict set with the tab
+/// kept, and U+FFFE and U+FFFF, which XML 1.0 forbids, written as their escapes as well, so the node is
+/// well-formed whatever the text holds.
+pub(crate) fn escaped_controls_for_xml_text(s: &str) -> String {
+    escaped_by(s, false, |c| {
+        (c != '\t' && breaks_or_hides_a_line(c)) || forbidden_in_xml(c)
+    })
+}
+
+/// [`escaped_controls_for_xml_text`] for a rule author's own prose in an XML text node of a JUnit report
+/// (a `<< >>` message): the relaxed set of the console ([`escaped_controls_for_console`]), under which a
+/// zero-width joiner and the direction marks U+200C to U+200F are ordinary text, with the tab kept and
+/// U+FFFE and U+FFFF, which XML 1.0 forbids, written as their escapes.
+pub(crate) fn escaped_controls_for_xml_author_text(s: &str) -> String {
+    escaped_by(s, false, |c| {
+        (c != '\t' && breaks_or_hides_a_console_line(c)) || forbidden_in_xml(c)
+    })
+}
+
+/// `s` as the value of an XML attribute of a JUnit report, ready to be written between the quotes: the
+/// strict set ([`escaped_controls_for_display`]) with U+FFFE and U+FFFF added, except that a tab and a line
+/// feed are written as the character references `&#9;` and `&#10;`, which a parser reads back as the
+/// character and not as the space a raw one in a value becomes, so a name that holds a tab and a name that
+/// holds a backslash and a `t` stay two names. A carriage return is written as its escape `\r`, like
+/// every other control: a reference to it (`&#13;`) decodes to a raw carriage return for every consumer,
+/// which a terminal reading a CI tool's output acts on. A carriage return and line feed pair is not
+/// folded, as it is in a text node (`xml_text_with_escaped_controls_by`, whose fold exists for a parser
+/// that reads a literal pair as one line feed): it is written as the escape and the reference, `\r&#10;`,
+/// and reads back as `\r` followed by a line feed. A backslash is written as it is, not doubled, since a
+/// name in a report is a file name or a rule name that a reader compares against the file system and
+/// against the other streams (`escaped_controls_for_display` gives the same reason), so a Windows path
+/// `templates\a.yaml` reads back as `templates\a.yaml`.
+///
+/// The decision: no control other than the tab and the line feed reaches a consumer of the report raw (those
+/// two stay character references, which a parser decodes to the character, so that a name holding a tab and
+/// a name holding a backslash and a `t` stay two names), and a name reads back as
+/// typed except that a control other than the tab and the line feed reads as its escape. So a name that
+/// holds a control and a name that holds the typed characters of its escape (a carriage return and a
+/// backslash with an `r`, an ESC and `\u{1b}`) read alike in the report: the class of collision that was
+/// already accepted for the ESC, the joiners and the bidirectional marks, and the escaping does not keep
+/// every pair of names apart. The alternative, a character reference for every escape, would keep them
+/// apart and hand a raw ESC, a raw carriage return and the bidirectional marks to every consumer, the
+/// exact hazard the escapes exist to close; it is refused.
+///
+/// The `test` command's spec case names take this path as well: a case name reads as typed in the
+/// attribute, while a warning that names the same case routes it through [`escaped_for_display`], which
+/// doubles its backslash (`a\b` reads `a\\b` on the error stream and `a\b` here). The characters XML
+/// itself needs escaped (`&`, `<`, `>`, both quotes) are written as their entities. The joiners and the
+/// bidirectional marks are written as escapes: a name is an identifier read against other names. One
+/// function, so the reference characters are produced where the controls are decided and no caller holds
+/// a half-escaped value.
+pub(crate) fn xml_attribute_value(s: &str) -> String {
+    let escaped = escaped_by(s, false, |c| {
+        (!matches!(c, '\t' | '\n') && breaks_or_hides_a_line(c)) || forbidden_in_xml(c)
+    });
+    let mut out = String::with_capacity(escaped.len());
+    for c in escaped.chars() {
+        match c {
+            '\t' => out.push_str("&#9;"),
+            '\n' => out.push_str("&#10;"),
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
+            '\'' => out.push_str("&apos;"),
+            c => out.push(c),
+        }
+    }
+    out
+}
+
+/// `s` as a backstop for text a caller formatted itself and may have coloured: every character that breaks
+/// or hides a line is written as its escape by the strict set, except the line feed and the tab, which are
+/// the text's own layout, and except the two colour sequences the colouring writers emit around a line
+/// (`WRITER_COLOUR_SEQUENCES`: the green that opens an excerpt line and the reset that closes it), which
+/// move nothing on the screen. Any other ESC is written as its escape, a cursor movement, an
+/// operating-system command and any other colour or text attribute included (a conceal, `ESC [8m`, would
+/// hide the text after it, and a well-formed sequence is no more harmless than a malformed one for being
+/// well-formed). A writer that escapes its own fields (`console_field`) is unchanged by this; one that
+/// forgets cannot reach the terminal raw through it. One of the two sequences a template string carried
+/// itself would pass: it recolours the line and nothing else.
+pub(crate) fn escaped_but_for_colour_and_layout(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut rest = s;
+    while let Some(c) = rest.chars().next() {
+        if c == '\u{1b}' {
+            if let Some(sequence) = WRITER_COLOUR_SEQUENCES
+                .iter()
+                .find(|sequence| rest.starts_with(**sequence))
+            {
+                out.push_str(sequence);
+                rest = &rest[sequence.len()..];
+                continue;
+            }
+            out.push_str(&c.escape_debug().to_string());
+        } else if c != '\n' && c != '\t' && breaks_or_hides_a_line(c) {
+            out.push_str(&c.escape_debug().to_string());
+        } else {
+            out.push(c);
+        }
+        rest = &rest[c.len_utf8()..];
+    }
+    out
+}
+
+/// The green that opens a `Code:` excerpt line. Defined here and used by the writer that emits it
+/// (`validate::cfn::emit_code`) and by the backstop that lets it through
+/// (`escaped_but_for_colour_and_layout`), so a change to the colour is one change and the backstop cannot
+/// keep passing a sequence no writer emits, or escape one that a writer does.
+pub(crate) const WRITER_COLOUR_GREEN: &str = "\u{1b}[92m";
+
+/// The reset that closes a `Code:` excerpt line; see [`WRITER_COLOUR_GREEN`].
+pub(crate) const WRITER_COLOUR_RESET: &str = "\u{1b}[0m";
+
+/// The two escape sequences the comparison writers put in their buffers: [`WRITER_COLOUR_GREEN`] and
+/// [`WRITER_COLOUR_RESET`]. The backstop keeps these exact forms and nothing else.
+const WRITER_COLOUR_SEQUENCES: [&str; 2] = [WRITER_COLOUR_GREEN, WRITER_COLOUR_RESET];
+
 fn escaped(s: &str, backslash_too: bool) -> String {
+    escaped_by(s, backslash_too, breaks_or_hides_a_line)
+}
+
+/// The one escape: each character `hides` names, and a backslash when `backslash_too`, written as its Rust
+/// escape. The sets above differ in `hides` alone, so they sit side by side and cannot drift in how a
+/// character is written.
+fn escaped_by(s: &str, backslash_too: bool, hides: impl Fn(char) -> bool) -> String {
     s.chars()
         .map(|c| {
-            if breaks_or_hides_a_line(c) || (backslash_too && c == '\\') {
+            if hides(c) || (backslash_too && c == '\\') {
                 c.escape_debug().to_string()
             } else {
                 c.to_string()
@@ -803,9 +982,10 @@ impl Write for WriteBuffer {
 #[cfg(test)]
 mod tests {
     use super::{
-        deprecation, escaped_controls_for_display, escaped_for_display, is_notice,
-        location_for_notice, repeated_notice_trailer, trailer_file_list, warning, BufferRole,
-        StderrPrefix, WriteBuffer, Writer, DEPRECATION_PREFIX, NOTE_PREFIX, WARNING_PREFIX,
+        deprecation, escaped_but_for_colour_and_layout, escaped_controls_for_display,
+        escaped_for_display, is_notice, location_for_notice, repeated_notice_trailer,
+        trailer_file_list, warning, BufferRole, StderrPrefix, WriteBuffer, Writer,
+        DEPRECATION_PREFIX, NOTE_PREFIX, WARNING_PREFIX,
     };
     use crate::rules::errors::InternalError::{self, UnsupportedBufferError};
     use crate::Error;
@@ -1284,6 +1464,35 @@ mod tests {
         assert_eq!(1, location_for_notice(&location).lines().count());
     }
 
+    /// A rules file position DISPLAYS with its path escaped as a file name, wherever it is printed (a record
+    /// context, a refusal's text), and a plain path is displayed as it is. The notice form is unchanged
+    /// (escaping an escaped text changes nothing: a backslash is written as it is).
+    ///
+    /// Expected, not yet run. Red: the display carries the raw ESC or line feed, doubles a backslash, or
+    /// changes a path with nothing to escape.
+    #[test]
+    fn a_locations_display_escapes_its_path_and_leaves_a_plain_one_alone() {
+        let hidden = crate::rules::exprs::FileLocation {
+            file_name: "C:\\ru\nles\u{1b}.guard",
+            line: 3,
+            column: 7,
+        };
+        assert_eq!(
+            "Location[file:C:\\ru\\nles\\u{1b}.guard, line:3, column:7]",
+            hidden.to_string()
+        );
+        assert_eq!(location_for_notice(&hidden), hidden.to_string());
+        let plain = crate::rules::exprs::FileLocation {
+            file_name: "rules/main.guard",
+            line: 1,
+            column: 2,
+        };
+        assert_eq!(
+            "Location[file:rules/main.guard, line:1, column:2]",
+            plain.to_string()
+        );
+    }
+
     /// In a debug build the warning constructor refuses a body that still holds a line break: the
     /// data in it was not escaped at its point.
     #[cfg(debug_assertions)]
@@ -1420,5 +1629,67 @@ mod tests {
                 &[]
             )
         );
+    }
+
+    /// The backstop keeps the two colour sequences the writers emit, a line feed and a tab, and writes
+    /// every other escape sequence as its escape: a conceal, a 256-colour form, an empty parameter list,
+    /// a sequence cut short (an ESC at the end of the text, or `ESC [` with no final letter), and an ESC
+    /// that opens an operating-system command. Text that is already escaped passes unchanged.
+    ///
+    /// Expected, not yet run. Red: a row keeps its ESC byte (the backstop kept a well-formed sequence of
+    /// any kind), or a kept sequence, the tab or the line feed is written as an escape.
+    #[test]
+    fn the_backstop_keeps_only_the_writers_two_colour_sequences() {
+        let esc = char::from(0x1b);
+        let rows: Vec<(&str, String, String)> = vec![
+            (
+                "the green and the reset, with a tab and a line feed",
+                format!("{esc}[92m 3.\tType: X{esc}[0m\n"),
+                format!("{esc}[92m 3.\tType: X{esc}[0m\n"),
+            ),
+            (
+                "a conceal",
+                format!("a{esc}[8mb"),
+                "a\\u{1b}[8mb".to_string(),
+            ),
+            (
+                "a 256-colour form",
+                format!("a{esc}[38;5;196mb"),
+                "a\\u{1b}[38;5;196mb".to_string(),
+            ),
+            (
+                "an empty parameter list",
+                format!("a{esc}[mb"),
+                "a\\u{1b}[mb".to_string(),
+            ),
+            (
+                "an ESC at the end of the text",
+                format!("ab{esc}"),
+                "ab\\u{1b}".to_string(),
+            ),
+            (
+                "ESC [ with no final letter",
+                format!("a{esc}[b"),
+                "a\\u{1b}[b".to_string(),
+            ),
+            (
+                "an operating-system command",
+                format!("a{esc}]0;title"),
+                "a\\u{1b}]0;title".to_string(),
+            ),
+            (
+                "text that is already escaped",
+                "a\\u{1b}[8mb".to_string(),
+                "a\\u{1b}[8mb".to_string(),
+            ),
+        ];
+        for (label, given, expected) in rows {
+            assert_eq!(
+                expected,
+                escaped_but_for_colour_and_layout(&given),
+                "{}",
+                label
+            );
+        }
     }
 }

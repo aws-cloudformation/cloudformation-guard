@@ -351,7 +351,7 @@ Two limits. A captured value used as an interpolated key, `Resources.%name`, has
 | a key, no capture | selects among the members | selects among the entries | selects nothing | the absent key: unresolved | refused, with a notice |
 | a key, with a capture | binds the members | binds the keys | selects nothing | the absent key: unresolved | refused, with a notice |
 | `this`, no capture | selects among the members | selects among the entries | selects nothing | the absent key: unresolved | refused, with a notice |
-| `this`, with a capture | binds the members | refused, warning | selects nothing | the absent key: unresolved | refused, with a notice and the warning |
+| `this`, with a capture | binds the members | refused, warning | selects nothing | the absent key: unresolved | refused, with a notice and the warning; inside a filter predicate the capture is what is refused, with the warning and no notice |
 | an index, an earlier filter or a map-key filter, no capture | selects among the members | tests the value, keeps it when the predicate holds | tests the value | tests the value | tests the value |
 | an index, an earlier filter or a map-key filter, with a capture | binds the members | refused, warning | refused, warning | refused, warning | refused, warning |
 

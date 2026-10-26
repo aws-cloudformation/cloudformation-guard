@@ -113,13 +113,13 @@ pub enum Error {
     /// the body's refusal when a gate hands it up; inside a filter predicate's query it leaves the
     /// undecidable marker for the object instead); a
     /// capture declared after `this` over a map with entries, or after an index, an earlier filter or a
-    /// map-key filter over any value that is not a list (`eval_context::capture_not_bound_here`, one
+    /// map-key filter over any value that is not a list (`eval_context::capture_not_bound_reason`, one
     /// call site, inside `refuse_unbound_capture`, which the `this` arm of `apply_filter_noting` and
     /// `filter_tests_one_value` both reach, because a list at any of those positions binds the capture
     /// and the template decides which value sits there; the same capture over a scalar after `this` is
-    /// refused with the filter by the scalar arm above, which announces it through the same
-    /// `announce_unbound_capture`; inside a filter predicate's query `refuse_unbound_capture` leaves an
-    /// undecidable result for the entry under test instead); a function argument that is not what the
+    /// refused with the filter by the scalar arm above outside a predicate, which announces it through
+    /// the same `announce_unbound_capture`; inside a filter predicate's query `refuse_unbound_capture`
+    /// leaves an undecidable result for the entry under test instead, over a scalar too); a function argument that is not what the
     /// function needs (`eval_context::exactly_one`, the refusal every function shares for an argument
     /// that resolved to none or several values, plus two sites each in `RegexReplaceFunction::call` and
     /// `substring_bounds` and one in `JoinFunction::call`); `parse_float`,

@@ -117,7 +117,8 @@ struct WarningTally {
     /// other kinds). Keyed by case so a scope absorbed twice counts once.
     cases: BTreeMap<usize, UnraisedCounts>,
     /// For an unraised refusal: the distinct refusal texts in the order the cases met them, and the
-    /// clause's position, which ends the line.
+    /// clause's position, which ends the line unless an entry went unrecorded, when a closing sentence
+    /// asking for a report follows it.
     met: Vec<String>,
     position: String,
 }
@@ -555,7 +556,7 @@ fn get_test_case<'rule>(
                 let mut messages = vec![];
 
                 for failure in report.not_compliant.iter() {
-                    for message in failure.get_message() {
+                    for message in failure.get_message_with_rule_records() {
                         if let rules::eval_context::ClauseReport::Rule(rule) = failure {
                             let name = match rule.name.contains(".guard/") {
                                 true => rule.name.split(".guard/").collect::<Vec<&str>>()[1],
@@ -675,7 +676,15 @@ pub(crate) struct FailingTestCase {
 #[derive(Default, Debug)]
 struct Failure<'report> {
     name: Option<&'report String>,
-    messages: Vec<&'report String>,
+    messages: Vec<FailureText<'report>>,
+}
+
+/// One text of a failure element and whose it is: the rule author's `<< >>` prose (a `custom_message`),
+/// written under the relaxed set, or the evaluator's (an `error_message`), written under the strict one.
+#[derive(Debug)]
+struct FailureText<'report> {
+    author: bool,
+    text: &'report str,
 }
 
 #[derive(Default, Debug)]
@@ -720,7 +729,7 @@ impl<'report, 'se: 'report> EventType<'report, 'se> {
         match self {
             EventType::Failure(failure) => {
                 if let Some(name) = &failure.name {
-                    tag.push_attribute(("message", name.as_str()));
+                    push_text_attribute(tag, "message", name);
                 }
             }
             // The reasons go in the element body rather than a `message` attribute, because there is
@@ -728,12 +737,10 @@ impl<'report, 'se: 'report> EventType<'report, 'se> {
             EventType::Skipped(..) => {}
             EventType::TestCase(test_case) => {
                 if let Some(id) = test_case.id {
-                    tag.push_attribute(("id", id));
+                    push_text_attribute(tag, "id", id);
                 }
-                tag.extend_attributes([
-                    ("name", test_case.name),
-                    ("time", format!("{:.3}", test_case.time).as_str()),
-                ]);
+                push_text_attribute(tag, "name", test_case.name);
+                tag.extend_attributes([("time", format!("{:.3}", test_case.time).as_str())]);
                 match &test_case.status {
                     TestCaseStatus::Fail(..) => {}
                     status => {
@@ -748,8 +755,8 @@ impl<'report, 'se: 'report> EventType<'report, 'se> {
                 }
             }
             EventType::TestSuite(test_suite) => {
+                push_text_attribute(tag, "name", test_suite.name.as_str());
                 tag.extend_attributes([
-                    ("name", test_suite.name.as_str()),
                     ("errors", test_suite.errors.to_string().as_str()),
                     ("failures", test_suite.failures.to_string().as_str()),
                     ("time", format!("{:.3}", test_suite.time).as_str()),
@@ -757,8 +764,8 @@ impl<'report, 'se: 'report> EventType<'report, 'se> {
             }
             EventType::Error(..) => {}
             EventType::TestSuites(suites) => {
+                push_text_attribute(tag, "name", suites.name);
                 tag.extend_attributes([
-                    ("name", suites.name),
                     ("tests", suites.tests.to_string().as_str()),
                     ("failures", suites.failures.to_string().as_str()),
                     ("errors", suites.errors.to_string().as_str()),
@@ -795,15 +802,22 @@ impl<'report, 'se: 'report> EventType<'report, 'se> {
                             // immediately after the `<failure>` tag. Dropping them here rather than at
                             // the join also makes the emptiness test above mean what it says.
                             let messages = failure.messages.iter().fold(vec![], |mut acc, msg| {
-                                if let Some(custom_message) = &msg.custom_message {
-                                    if !custom_message.is_empty() {
-                                        acc.push(custom_message);
-                                    }
+                                // A text of blanks says nothing (`rules::non_blank`, the one test for it).
+                                if let Some(custom_message) =
+                                    crate::rules::non_blank(&msg.custom_message)
+                                {
+                                    acc.push(FailureText {
+                                        author: true,
+                                        text: custom_message,
+                                    });
                                 }
-                                if let Some(error_message) = &msg.error_message {
-                                    if !error_message.is_empty() {
-                                        acc.push(error_message);
-                                    }
+                                if let Some(error_message) =
+                                    crate::rules::non_blank(&msg.error_message)
+                                {
+                                    acc.push(FailureText {
+                                        author: false,
+                                        text: error_message,
+                                    });
                                 }
                                 acc
                             });
@@ -876,8 +890,14 @@ impl<'report, 'se: 'report> EventType<'report, 'se> {
                 // boundary a consumer could split on to recover which message belonged to which.
                 let joined = messages
                     .iter()
-                    .map(|message| message.as_str())
-                    .collect::<Vec<&str>>()
+                    .map(|message| match message.author {
+                        true => xml_text_with_escaped_controls_by(
+                            message.text,
+                            crate::utils::writer::escaped_controls_for_xml_author_text,
+                        ),
+                        false => xml_text_with_escaped_controls(message.text),
+                    })
+                    .collect::<Vec<String>>()
                     .join("\n");
                 writer.write_event(Event::Text(BytesText::new(&joined)))?;
             }
@@ -887,16 +907,65 @@ impl<'report, 'se: 'report> EventType<'report, 'se> {
                 // `...nothing to checkb: no AWS::S3::Bucket...` and the second reason was unreadable.
                 // Some reasons happen to end in whitespace, which hid this in the fixtures that had
                 // only one rule to explain.
-                writer.write_event(Event::Text(BytesText::new(&reasons.join("\n"))))?;
+                let joined = reasons
+                    .iter()
+                    .map(|reason| xml_text_with_escaped_controls(reason))
+                    .collect::<Vec<String>>()
+                    .join("\n");
+                writer.write_event(Event::Text(BytesText::new(&joined)))?;
             }
             EventType::Error(err) => {
-                writer.write_event(Event::Text(BytesText::new(err)))?;
+                writer.write_event(Event::Text(BytesText::new(
+                    &xml_text_with_escaped_controls(err),
+                )))?;
             }
             _ => unreachable!(),
         }
 
         Ok(())
     }
+}
+
+/// `text` for an XML text node, with every control that breaks or hides a line written as its escape
+/// (`escaped_controls_for_xml_text`) except the line feed and the tab, which the text keeps: the messages
+/// of a failing case are joined by line feeds on purpose, a message's own line feeds are legal XML, and a
+/// tab is legal XML that neither ends nor hides a line. XML escaping alone leaves an ESC or another C0
+/// control as the byte itself, which XML 1.0 does not allow in a document at all (a conforming parser
+/// rejects the file) and which a terminal reading the report acts on; U+FFFE and U+FFFF, which XML 1.0
+/// forbids as well and which the JSON reader keeps, are written as their escapes too. A carriage return
+/// and line feed pair is one line feed, since a parser reads the pair as one; a carriage return alone is
+/// escaped, since a parser reads one as a line feed.
+fn xml_text_with_escaped_controls(text: &str) -> String {
+    xml_text_with_escaped_controls_by(text, crate::utils::writer::escaped_controls_for_xml_text)
+}
+
+/// [`xml_text_with_escaped_controls`] under the escape `escape` names: the strict set for the evaluator's
+/// text, the relaxed one for a rule author's prose (`escaped_controls_for_xml_author_text`), which keeps a
+/// zero-width joiner and the direction marks as typed, as the console does.
+fn xml_text_with_escaped_controls_by(text: &str, escape: fn(&str) -> String) -> String {
+    text.replace("\r\n", "\n")
+        .split('\n')
+        .map(escape)
+        .collect::<Vec<String>>()
+        .join("\n")
+}
+
+/// Adds the attribute `key` with the value `text` written by `xml_attribute_value` (`utils::writer`): a
+/// tab and a line feed as character references (a parser keeps a reference and turns a literal one into a
+/// space), a carriage return and every other control as its escape (a reference to a carriage return
+/// decodes to a raw one for every consumer), the markup characters as entities. A name that holds a
+/// zero-width joiner or a bidirectional mark prints it as an escape too: a name is an identifier compared
+/// by eye against another, which differs from the rule author's prose on the console. A backslash is
+/// written as it is, so a file name reads back as it was typed; a name holding a control and a name
+/// holding the typed characters of its escape read alike (`xml_attribute_value` says why that is
+/// accepted). The value is handed to the
+/// writer as bytes (`Attribute::from` for byte slices applies no transformation), so the character
+/// references are not escaped a second time.
+fn push_text_attribute(tag: &mut BytesStart<'_>, key: &str, text: &str) {
+    tag.push_attribute((
+        key.as_bytes(),
+        crate::utils::writer::xml_attribute_value(text).as_bytes(),
+    ));
 }
 
 impl<'report, 'se: 'report> Display for EventType<'report, 'se> {
@@ -911,5 +980,405 @@ impl<'report, 'se: 'report> Display for EventType<'report, 'se> {
         };
 
         f.write_str(text)
+    }
+}
+
+/// The text nodes and the attribute values of the JUnit report: a message, a skip reason, an error and a
+/// name that hold a raw ESC are written with the control as its escape, and the document stays
+/// well-formed (the two code points XML 1.0 forbids beside the controls are escapes too). A tab and a line
+/// feed stay in a text node and are written as character references in an attribute value; a carriage
+/// return is written as its escape `\r` in both, since a reference to it decodes to a raw one for every
+/// consumer. The ESC is built with `char::from`, since the source holds no raw control.
+#[cfg(test)]
+mod junit_escape_tests {
+    use super::{
+        xml_text_with_escaped_controls, EventType, FailingTestCase, TestCase, TestCaseStatus,
+        TestSuite, TestSuites,
+    };
+    use crate::rules::eval_context::Messages;
+    use quick_xml::{events::Event, Reader, Writer};
+
+    fn esc() -> char {
+        char::from(0x1b)
+    }
+
+    /// The report for one suite holding one case with `status`.
+    fn report_of(status: TestCaseStatus) -> String {
+        report_named("all", "suite", "case", status)
+    }
+
+    /// The report for one suite holding one case with `status`, with the names of the three elements
+    /// as given.
+    fn report_named(
+        suites_name: &str,
+        suite_name: &str,
+        case_name: &str,
+        status: TestCaseStatus,
+    ) -> String {
+        let case = TestCase {
+            id: None,
+            name: case_name,
+            time: 0,
+            status,
+        };
+        let suite = TestSuite::new(suite_name.to_string(), vec![case], 0, 0, 1);
+        let suites = [suite];
+        let mut writer = Writer::new(Vec::new());
+        EventType::TestSuites(TestSuites {
+            name: suites_name,
+            tests: 1,
+            failures: 1,
+            errors: 0,
+            time: 0,
+            test_suites: &suites,
+        })
+        .serialize(&mut writer)
+        .expect("writing to a Vec cannot fail");
+        String::from_utf8(writer.into_inner()).expect("the report is UTF-8")
+    }
+
+    /// The text of the report's text nodes only, joined with nothing between them, read back by an XML
+    /// parser; a parse error fails the cell, so the document is well-formed wherever this returns.
+    /// Attribute values are not in it: the cells that read them look at the document itself.
+    fn text_nodes(xml: &str) -> String {
+        let mut reader = Reader::from_str(xml);
+        let mut text = String::new();
+        loop {
+            match reader.read_event().expect("the report is well-formed XML") {
+                Event::Text(node) => {
+                    text.push_str(&node.unescape().expect("a text node unescapes"))
+                }
+                Event::Eof => return text,
+                _ => {}
+            }
+        }
+    }
+
+    /// A control other than a line feed or a tab, in the document: XML 1.0 allows a tab, a line feed and
+    /// a carriage return below U+0020 and nothing else, and the report writes a carriage return raw
+    /// nowhere; the tab and the line feed of a text node are written as they are.
+    fn has_a_raw_control(xml: &str) -> bool {
+        xml.chars()
+            .any(|c| c.is_control() && c != '\n' && c != '\t')
+    }
+
+    /// Expected, not yet run. Red: a failing case's message or error carries the ESC byte, so the
+    /// document holds a character XML 1.0 does not allow, a message's line feed is escaped and the
+    /// joined messages lose their separator, or the tab is written as `\t` where the text keeps it.
+    #[test]
+    fn a_failing_cases_messages_are_written_with_escaped_controls() {
+        let xml = report_of(TestCaseStatus::Fail(FailingTestCase {
+            name: Some("n".to_string()),
+            messages: vec![Messages {
+                custom_message: Some(format!("{}[2J\tfirst\nsecond", esc())),
+                error_message: Some(format!("bad {}[1mvalue", esc())),
+                location: None,
+                refusal: false,
+                parts: None,
+            }],
+        }));
+        assert!(
+            !has_a_raw_control(&xml),
+            "no raw control in the report:\n{:?}",
+            xml
+        );
+        assert_eq!(
+            "\\u{1b}[2J\tfirst\nsecond\nbad \\u{1b}[1mvalue",
+            text_nodes(&xml),
+            "the ESCs are escapes, the tab and the line feeds stay"
+        );
+    }
+
+    /// A rule that fails with no check under it (its own `when` could not be evaluated, or a call that
+    /// carries a `<< >>` body over a rule whose clauses reported nothing) reaches the failure element with
+    /// the rule record's own message, and the escape set follows the record's slot
+    /// (`RuleReport::custom_slot`): the author's body keeps a zero-width joiner as typed, the evaluator's
+    /// sentence and a refusal's write it as an escape. One row per slot, through
+    /// `get_message_with_rule_records` and the writer.
+    ///
+    /// Expected, not yet run. Red: the failure element is empty for a row (the rule's own record is not
+    /// read), the author's row writes the joiner as an escape, or an evaluator's or a refusal's row keeps
+    /// it raw.
+    #[test]
+    fn a_rule_with_no_check_reports_its_own_message_under_its_slots_escape_set() {
+        use crate::rules::eval_context::{ClauseReport, RuleReport};
+        use crate::rules::CustomSlot;
+        let joiner = char::from_u32(0x200d).expect("a scalar value");
+        let typed = format!("owner{}tag", joiner);
+        let escaped = "owner\\u{200d}tag";
+        for (slot, expected) in [
+            (CustomSlot::Author, typed.clone()),
+            (CustomSlot::Evaluator, escaped.to_string()),
+            (CustomSlot::Refusal, escaped.to_string()),
+        ] {
+            let report = ClauseReport::Rule(RuleReport {
+                name: "check",
+                messages: Messages {
+                    custom_message: Some(typed.clone()),
+                    error_message: None,
+                    location: None,
+                    refusal: false,
+                    parts: None,
+                },
+                custom_slot: slot,
+                ..Default::default()
+            });
+            let xml = report_of(TestCaseStatus::Fail(FailingTestCase {
+                name: Some("check".to_string()),
+                messages: report.get_message_with_rule_records(),
+            }));
+            assert_eq!(
+                expected,
+                text_nodes(&xml),
+                "the failure text of a rule record marked {:?}:\n{}",
+                slot,
+                xml
+            );
+        }
+    }
+
+    /// Expected, not yet run. Red: a skip reason carries the ESC byte.
+    #[test]
+    fn a_skip_reason_is_written_with_escaped_controls() {
+        let xml = report_of(TestCaseStatus::Skip {
+            reasons: vec![format!("rule: {}[1mnothing to check", esc())],
+        });
+        assert!(
+            !has_a_raw_control(&xml),
+            "no raw control in the report:\n{:?}",
+            xml
+        );
+        assert_eq!("rule: \\u{1b}[1mnothing to check", text_nodes(&xml));
+    }
+
+    /// Expected, not yet run. Red: an error text carries the ESC byte.
+    #[test]
+    fn an_error_text_is_written_with_escaped_controls() {
+        let xml = report_of(TestCaseStatus::Error {
+            error: format!("failed {}[1mhere", esc()),
+        });
+        assert!(
+            !has_a_raw_control(&xml),
+            "no raw control in the report:\n{:?}",
+            xml
+        );
+        assert_eq!("failed \\u{1b}[1mhere", text_nodes(&xml));
+    }
+
+    /// A text that is already escaped, and one with no control, are written as they are.
+    #[test]
+    fn an_escaped_or_plain_text_is_unchanged() {
+        assert_eq!(
+            "a\\u{1b}[1m\nb",
+            xml_text_with_escaped_controls("a\\u{1b}[1m\nb")
+        );
+        assert_eq!("plain; text", xml_text_with_escaped_controls("plain; text"));
+    }
+
+    /// A carriage return and line feed pair is one line feed in a text node, a carriage return alone is
+    /// written as its escape, and a tab stays.
+    ///
+    /// Expected, not yet run. Red: the pair is written as `\r` followed by a line feed.
+    #[test]
+    fn a_crlf_pair_is_one_line_feed_in_a_text_node() {
+        assert_eq!("a\nb", xml_text_with_escaped_controls("a\r\nb"));
+        assert_eq!("a\\rb", xml_text_with_escaped_controls("a\rb"));
+        assert_eq!("a\tb", xml_text_with_escaped_controls("a\tb"));
+    }
+
+    /// The `name` attribute values of the `testcase` elements, read back by an XML parser: the character
+    /// references are decoded, as a consumer of the report decodes them.
+    fn case_names(xml: &str) -> Vec<String> {
+        let mut reader = Reader::from_str(xml);
+        let mut names = Vec::new();
+        loop {
+            match reader.read_event().expect("the report is well-formed XML") {
+                Event::Start(tag) | Event::Empty(tag) if tag.name().as_ref() == b"testcase" => {
+                    for attribute in tag.attributes() {
+                        let attribute = attribute.expect("an attribute parses");
+                        if attribute.key.as_ref() == b"name" {
+                            names.push(
+                                attribute
+                                    .unescape_value()
+                                    .expect("a value unescapes")
+                                    .into_owned(),
+                            );
+                        }
+                    }
+                }
+                Event::Eof => return names,
+                _ => {}
+            }
+        }
+    }
+
+    /// The raw bytes of every attribute value in the document, as written and not unescaped: what a
+    /// consumer's parser normalizes before it hands a value over, so a raw tab, line feed or carriage
+    /// return in one is read here though the unescaped read-back (`case_names`) would not show it.
+    fn raw_attribute_values(xml: &str) -> Vec<Vec<u8>> {
+        let mut reader = Reader::from_str(xml);
+        let mut values = Vec::new();
+        loop {
+            match reader.read_event().expect("the report is well-formed XML") {
+                Event::Start(tag) | Event::Empty(tag) => {
+                    for attribute in tag.attributes() {
+                        values.push(attribute.expect("an attribute parses").value.to_vec());
+                    }
+                }
+                Event::Eof => return values,
+                _ => {}
+            }
+        }
+    }
+
+    /// The names of the three elements are attribute values: a tab and a line feed are written as
+    /// character references, which a parser reads back as the character (a literal one would be
+    /// normalized to a space), a carriage return and every other control as its escape (a reference to a
+    /// carriage return decodes to a raw one for every consumer), and no attribute holds a raw tab, line
+    /// feed or carriage return, which the unescaped read-back cannot show and the written bytes do.
+    ///
+    /// Red: an attribute carries the ESC byte, a raw tab, line feed or carriage
+    /// return, a carriage return written as a reference, or a tab or line feed written as the two
+    /// characters `\t`, `\n`.
+    #[test]
+    fn a_name_is_written_as_an_attribute_with_escaped_controls() {
+        let xml = report_named(
+            &format!("all{}[1m", esc()),
+            "suite\tone",
+            "case\ntwo\rthree\tfour",
+            TestCaseStatus::Pass,
+        );
+        assert!(
+            !has_a_raw_control(&xml) && !xml.contains('\t'),
+            "no raw control in the report:\n{:?}",
+            xml
+        );
+        assert!(
+            raw_attribute_values(&xml)
+                .iter()
+                .all(|value| !value.iter().any(|b| matches!(b, b'\t' | b'\n' | b'\r'))),
+            "no attribute holds a raw tab, line feed or carriage return:\n{:?}",
+            xml
+        );
+        assert!(xml.contains("name=\"all\\u{1b}[1m\""), "{}", xml);
+        assert!(xml.contains("name=\"suite&#9;one\""), "{}", xml);
+        assert!(
+            xml.contains("name=\"case&#10;two\\rthree&#9;four\""),
+            "{}",
+            xml
+        );
+        assert!(
+            !xml.contains("&#13;"),
+            "no reference to a carriage return, which every consumer decodes to a raw one:\n{}",
+            xml
+        );
+        assert_eq!(
+            vec!["case\ntwo\\rthree\tfour".to_string()],
+            case_names(&xml),
+            "a parser reads a tab and a line feed back as the characters they were, and a carriage return as its escape"
+        );
+    }
+
+    /// A name reads back from the report as typed, except that a carriage return reads as its escape. A
+    /// name that holds a tab and a name that holds a backslash and a `t` are two names; a carriage return
+    /// and a backslash and an `r` read ALIKE (`a\rb`, the escape's two characters), the collision the
+    /// design accepts, as it does for an ESC and the typed characters of its escape; a carriage return and
+    /// line feed pair is written as the escape and a line feed, and a name with the characters XML needs
+    /// escaped comes back as written. A backslash is written as it is, so a Windows path keeps its
+    /// separators. The written bytes of each control are pinned beside the read-back, which does not
+    /// normalize and so cannot show a raw control.
+    ///
+    /// Red: the tab and the backslash and `t` read back alike, a backslash reads
+    /// back doubled, a carriage return is written as a reference or raw, the pair is folded to a line
+    /// feed, or the markup characters come back changed.
+    #[test]
+    fn a_tab_and_a_backslash_t_are_two_distinct_names() {
+        let written = |name: &str| report_named("all", "suite", name, TestCaseStatus::Pass);
+        let tab = case_names(&written("a\tb"));
+        let slash = case_names(&written("a\\tb"));
+        assert_eq!(vec!["a\tb".to_string()], tab);
+        assert_eq!(vec!["a\\tb".to_string()], slash);
+        assert_ne!(tab, slash, "the two names stay distinct");
+        let carriage = case_names(&written("a\rb"));
+        let backslash_r = case_names(&written("a\\rb"));
+        assert_eq!(vec!["a\\rb".to_string()], carriage);
+        assert_eq!(vec!["a\\rb".to_string()], backslash_r);
+        assert_eq!(
+            carriage, backslash_r,
+            "a carriage return and a backslash and an `r` read alike: the accepted collision"
+        );
+        assert_eq!(
+            vec!["a\\r\nb".to_string()],
+            case_names(&written("a\r\nb")),
+            "a carriage return and line feed pair reads back as the escape and a line feed"
+        );
+        for (name, bytes) in [
+            ("a\tb", "name=\"a&#9;b\""),
+            ("a\nb", "name=\"a&#10;b\""),
+            ("a\rb", "name=\"a\\rb\""),
+            ("a\r\nb", "name=\"a\\r&#10;b\""),
+            ("a\\tb", "name=\"a\\tb\""),
+        ] {
+            let xml = written(name);
+            assert!(
+                xml.contains(bytes),
+                "{:?} is written as {}:\n{}",
+                name,
+                bytes,
+                xml
+            );
+            assert!(
+                !xml.contains("&#13;"),
+                "{:?}: no reference to a carriage return:\n{}",
+                name,
+                xml
+            );
+        }
+        let windows = "templates\\a.yaml";
+        assert_eq!(
+            vec![windows.to_string()],
+            case_names(&report_named("all", "suite", windows, TestCaseStatus::Pass)),
+            "a backslash in a file name is kept as written"
+        );
+        let markup = "a&b<c>\"d'";
+        assert_eq!(
+            vec![markup.to_string()],
+            case_names(&report_named("all", "suite", markup, TestCaseStatus::Pass)),
+            "the markup characters survive"
+        );
+    }
+
+    /// U+FFFE and U+FFFF, which XML 1.0 forbids and the JSON reader keeps, are written as their escapes
+    /// in a text node and in an attribute value, so the report stays well-formed and a parser that rejects
+    /// them reads it. A joiner and a bidirectional mark in a name are written as escapes too: a name is an
+    /// identifier read against other names.
+    ///
+    /// Expected, not yet run. Red: the report holds either code point raw (a strict parser rejects it), or
+    /// the joiner or the mark is kept as typed in a name.
+    #[test]
+    fn the_two_noncharacters_xml_forbids_are_written_as_escapes() {
+        let forbidden = ['\u{FFFE}', '\u{FFFF}'];
+        let xml = report_named(
+            "all",
+            "suite",
+            &format!("n{}{}x{}\u{200D}\u{200F}", forbidden[0], forbidden[1], 'y'),
+            TestCaseStatus::Error {
+                error: format!("bad {}{} text", forbidden[0], forbidden[1]),
+            },
+        );
+        assert!(
+            !xml.contains(forbidden[0]) && !xml.contains(forbidden[1]),
+            "no forbidden code point in the report:\n{:?}",
+            xml
+        );
+        assert_eq!("bad \\u{fffe}\\u{ffff} text", text_nodes(&xml));
+        assert_eq!(
+            vec!["n\\u{fffe}\\u{ffff}xy\\u{200d}\\u{200f}".to_string()],
+            case_names(&xml)
+        );
+        assert_eq!(
+            "\\u{fffe}\\u{ffff}",
+            xml_text_with_escaped_controls("\u{FFFE}\u{FFFF}")
+        );
     }
 }

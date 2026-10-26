@@ -12,9 +12,11 @@ use std::sync::{Mutex, MutexGuard};
 ///
 /// It is a crate-level helper rather than a private static of one test module so that a test in
 /// any module can take it. Today the only callers are the entry-point tests in `lib.rs`: every other
-/// unit test that reads a report rendered through `colored` (the code excerpt tests in the CFN
-/// reporter) reads it through `strip_escape_sequences`, and the remaining reporter tests compare text
-/// that `colored` never touches, so none of them depend on the flag. A new test that forces color,
+/// unit test that reads a report rendered through `colored` reads it through
+/// `strip_escape_sequences`, and the remaining reporter tests compare text that `colored` never
+/// touches. The code excerpt tests in the CFN reporter do not render through `colored` at all: the
+/// excerpt writer takes whether to colour as a parameter (`emit_code`), so they pass it and depend on
+/// no flag. A new test that forces color,
 /// or that asserts on text with its escapes kept, takes a [`ForcedColor`] too. A test that wants
 /// plain text with color OFF and no strip has no guard today: it would need forcers kept out while
 /// it runs, which this `Mutex` cannot express without also turning color on. If one is ever written,

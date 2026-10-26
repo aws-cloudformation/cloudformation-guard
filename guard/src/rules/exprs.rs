@@ -19,11 +19,19 @@ pub(crate) struct FileLocation<'loc> {
     pub(crate) file_name: &'loc str,
 }
 
+/// Written with the path escaped as a file name is (`utils::writer::file_name_for_display`: a character
+/// that breaks or hides a line as its Rust escape, a backslash as written), since the position travels in
+/// record contexts (`GuardBlockAccessClause#<location>`) and in the text of refusals and notices, and a
+/// rules file path may hold an ESC or a line feed on Linux. Every key a record is started and ended by is
+/// built from this one display, and the maps keyed by position (`site.file_name`, line, column) hold the
+/// path itself, never this text, so no reader matches an escaped text against a raw one.
 impl<'loc> std::fmt::Display for FileLocation<'loc> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         f.write_fmt(format_args!(
             "Location[file:{}, line:{}, column:{}]",
-            self.file_name, self.line, self.column
+            crate::utils::writer::file_name_for_display(self.file_name),
+            self.line,
+            self.column
         ))?;
         Ok(())
     }

@@ -1,3 +1,6 @@
+use crate::commands::reporters::validate::common::{
+    write_console_line, write_console_line_with_message,
+};
 use crate::commands::tracker::StatusContext;
 use crate::commands::validate::{OutputFormatType, Reporter};
 use crate::rules::eval_context::{unresolved_comparison_sentence, EventRecord};
@@ -13,6 +16,33 @@ use std::rc::Rc;
 
 #[derive(Debug)]
 pub(crate) struct ConsoleReporter {}
+
+/// An author's `<< >>` message on the failed-clause tree's one line: a line feed becomes `;`, and every
+/// other control that breaks or hides a line (an ESC, a tab, a bidi override) is written as its escape
+/// by the relaxed set (`escaped_controls_for_console`), as the per-resource output writes the same text,
+/// so a joiner or a mark in the author's prose is ordinary text. The evaluator records the message as the
+/// author typed it, so a raw ESC would otherwise reach the terminal.
+///
+/// The two sets meet on the tree as they do in the per-resource output, and which sink a line goes
+/// through depends on the arm: a line with no message is written through the strict console sink
+/// (`write_console_line`), which escapes the finished line, so a key, a path, a value or a context cannot
+/// reach the terminal raw. An arm that can carry the author's message ends its line with it and writes
+/// the line through `write_console_line_with_message`, which escapes the body strictly as a whole and
+/// the message, last, through the relaxed set, so a field added to such a line later is escaped strictly
+/// without the arm remembering to ask.
+fn on_one_line(message: &str) -> String {
+    crate::utils::writer::escaped_controls_for_console(&message.replace('\n', ";"))
+}
+
+/// The ` Error = [..]` the failed-clause tree appends to a comparison or unary line: the evaluator's
+/// error, not the author's prose, written through the strict set (the relaxed set is for the message
+/// beside it).
+fn error_suffix(error: &str) -> String {
+    format!(
+        " Error = [{}]",
+        crate::utils::writer::escaped_controls_for_display(error)
+    )
+}
 
 //
 // https://vallentin.dev/2019/05/14/pretty-print-tree
@@ -60,43 +90,51 @@ fn pprint_failed_sub_tree(
             status: Status::FAIL,
             ..
         })) => {
-            writeln!(writer, "{}{}{}", prefix, prefix_current, current)?;
+            write_console_line(
+                writer,
+                format_args!("{}{}{}", prefix, prefix_current, current),
+            )?;
             true
         }
 
         Some(RecordType::ClauseValueCheck(check)) => {
             match check {
                 ClauseCheck::NoValueForEmptyCheck(check) => {
-                    let custom_message = check
-                        .custom_message
-                        .as_ref()
-                        .map_or("".to_string(), |s| s.replace('\n', ";"));
+                    let custom_message = format!(
+                        "Message [{}]",
+                        check
+                            .custom_message
+                            .as_ref()
+                            .map_or("".to_string(), |s| on_one_line(s))
+                    );
 
                     // This record is written only when a `!empty` selected nothing, so the selection
                     // was empty and the line says so. It names the
                     // query the record carries, filters spelled out, so two clauses that filter one
                     // collection differently read differently here as they do in the summary.
-                    writeln!(
+                    write_console_line_with_message(
                         writer,
-                        "{}{}Check was not compliant as the query [{}] selected no values to test. Message [{}]",
-                        prefix,
-                        prefix_current,
-                        check.query,
-                        custom_message
+                        format_args!(
+                            "{}{}Check was not compliant as the query [{}] selected no values to test. ",
+                            prefix, prefix_current, check.query
+                        ),
+                        &custom_message,
                     )?;
                 }
 
                 ClauseCheck::Success => {}
 
                 ClauseCheck::DependentRule(missing) => {
-                    writeln!(
+                    write_console_line(
                         writer,
-                        "{prefix}{prefix_current}Check was not compliant as dependent rule [{rule}] evaluated to FAIL in [{file}]. Context [{cxt}]",
-                        prefix=prefix,
-                        prefix_current=prefix_current,
-                        rule=missing.rule,
-                        file=rules_file_name,
-                        cxt=current.context
+                        format_args!(
+                            "{prefix}{prefix_current}Check was not compliant as dependent rule [{rule}] evaluated to FAIL in [{file}]. Context [{cxt}]",
+                            prefix=prefix,
+                            prefix_current=prefix_current,
+                            rule=missing.rule,
+                            file=rules_file_name,
+                            cxt=current.context
+                        ),
                     )?;
                 }
 
@@ -107,14 +145,12 @@ fn pprint_failed_sub_tree(
                         }
                         _ => unreachable!(),
                     };
-                    writeln!(
+                    write_console_line(
                         writer,
-                        "{}{}Check was not compliant as property [{}] is missing in data [{}]. Value traversed to [{}]",
-                        prefix,
-                        prefix_current,
-                        property,
-                        data_file_name,
-                        far
+                        format_args!(
+                            "{}{}Check was not compliant as property [{}] is missing in data [{}]. Value traversed to [{}]",
+                            prefix, prefix_current, property, data_file_name, far
+                        ),
                     )?;
                 }
 
@@ -169,38 +205,41 @@ fn pprint_failed_sub_tree(
                     };
 
                     let custom_message = custom_message.as_ref().map_or("".to_string(), |s| {
-                        format!(" Message = [{}]", s.replace('\n', ";"))
+                        format!(" Message = [{}]", on_one_line(s))
                     });
 
-                    let error_message = message
-                        .as_ref()
-                        .map_or("".to_string(), |s| format!(" Error = [{}]", s));
+                    let error_message =
+                        message.as_ref().map_or("".to_string(), |s| error_suffix(s));
 
                     match from {
                         QueryResult::Literal(_) => unreachable!(),
                         QueryResult::Resolved(res) => {
-                            writeln!(
+                            write_console_line_with_message(
                                 writer,
-                                "{}{}Check was not compliant as property [{prop}] {cmp_msg}.{err}{msg}",
-                                prefix,
-                                prefix_current,
-                                prop=res.self_path(),
-                                cmp_msg=cmp_msg,
-                                err=error_message,
-                                msg=custom_message
+                                format_args!(
+                                    "{}{}Check was not compliant as property [{prop}] {cmp_msg}.{err}",
+                                    prefix,
+                                    prefix_current,
+                                    prop=res.self_path(),
+                                    cmp_msg=cmp_msg,
+                                    err=error_message
+                                ),
+                                &custom_message,
                             )?;
                         }
 
                         QueryResult::UnResolved(unres) => {
-                            writeln!(
+                            write_console_line_with_message(
                                 writer,
-                                "{}{}Check was not compliant as property [{remain}] is missing. Value traversed to [{tr}].{err}{msg}",
-                                prefix,
-                                prefix_current,
-                                remain=unres.remaining_query,
-                                tr=unres.traversed_to,
-                                err=error_message,
-                                msg=custom_message
+                                format_args!(
+                                    "{}{}Check was not compliant as property [{remain}] is missing. Value traversed to [{tr}].{err}",
+                                    prefix,
+                                    prefix_current,
+                                    remain=unres.remaining_query,
+                                    tr=unres.traversed_to,
+                                    err=error_message
+                                ),
+                                &custom_message,
                             )?;
                         }
                     }
@@ -221,12 +260,11 @@ fn pprint_failed_sub_tree(
                         ..
                     } = check;
                     let custom_message = custom_message.as_ref().map_or("".to_string(), |s| {
-                        format!(" Message = [{}]", s.replace('\n', ";"))
+                        format!(" Message = [{}]", on_one_line(s))
                     });
 
-                    let error_message = message
-                        .as_ref()
-                        .map_or("".to_string(), |s| format!(" Error = [{}]", s));
+                    let error_message =
+                        message.as_ref().map_or("".to_string(), |s| error_suffix(s));
 
                     // An unresolved operand on either side: the ONE sentence builder shared with the
                     // structured report (`unresolved_comparison_sentence`), which names a refused
@@ -239,13 +277,16 @@ fn pprint_failed_sub_tree(
                             value.to_string()
                         })
                     {
-                        writeln!(
+                        write_console_line_with_message(
                             writer,
-                            "{}{}{sentence}{err}{msg}",
-                            prefix,
-                            prefix_current,
-                            err = error_message,
-                            msg = custom_message
+                            format_args!(
+                                "{}{}{sentence}{err}",
+                                prefix,
+                                prefix_current,
+                                sentence = sentence,
+                                err = error_message
+                            ),
+                            &custom_message,
                         )?;
                         return Ok(());
                     }
@@ -266,24 +307,26 @@ fn pprint_failed_sub_tree(
                         }
 
                         QueryResult::Resolved(res) => {
-                            writeln!(
+                            write_console_line_with_message(
                                 writer,
-                                "{}{}Check was not compliant as property value [{from}] {op_msg} value [{to}].{err}{msg}",
-                                prefix,
-                                prefix_current,
-                                from=res,
-                                to=to_result.map_or("NULL".to_string(), |t| format!("{}", t)),
-                                op_msg=match cmp {
-                                    CmpOperator::Eq => if *not { "equal to" } else { "not equal to" },
-                                    CmpOperator::Le => if *not { "less than equal to" } else { "not less than equal to" },
-                                    CmpOperator::Lt => if *not { "less than" } else { "not less than" },
-                                    CmpOperator::Ge => if *not { "greater than equal to" } else { "not greater than equal" },
-                                    CmpOperator::Gt => if *not { "greater than" } else { "not greater than" },
-                                    CmpOperator::In => if *not { "in" } else { "not in" },
-                                    _ => unreachable!()
-                                },
-                                err=error_message,
-                                msg=custom_message
+                                format_args!(
+                                    "{}{}Check was not compliant as property value [{from}] {op_msg} value [{to}].{err}",
+                                    prefix,
+                                    prefix_current,
+                                    from=res,
+                                    to=to_result.map_or("NULL".to_string(), |t| format!("{}", t)),
+                                    op_msg=match cmp {
+                                        CmpOperator::Eq => if *not { "equal to" } else { "not equal to" },
+                                        CmpOperator::Le => if *not { "less than equal to" } else { "not less than equal to" },
+                                        CmpOperator::Lt => if *not { "less than" } else { "not less than" },
+                                        CmpOperator::Ge => if *not { "greater than equal to" } else { "not greater than equal" },
+                                        CmpOperator::Gt => if *not { "greater than" } else { "not greater than" },
+                                        CmpOperator::In => if *not { "in" } else { "not in" },
+                                        _ => unreachable!()
+                                    },
+                                    err=error_message
+                                ),
+                                &custom_message,
                             )?;
                         }
                     }
@@ -368,6 +411,245 @@ mod tests {
     use crate::rules::Status;
     use std::convert::TryFrom;
     use std::rc::Rc;
+
+    fn esc() -> char {
+        char::from(0x1b)
+    }
+
+    /// The failed-clause tree for `rules` over `data`, which the rules must fail. The ESC in a rule's
+    /// message is built with `char::from`, since the source holds no raw control.
+    fn failed_tree(rules: &str, data: &str) -> crate::rules::Result<String> {
+        let data = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(data)?)?;
+        let rules = RulesFile::try_from(rules)?;
+        let mut scope = root_scope(&rules, Rc::new(data));
+        assert_eq!(Status::FAIL, eval_rules_file(&rules, &mut scope, None)?);
+        let root = scope.reset_recorder().extract();
+        let mut out = Vec::new();
+        pprint_failed_sub_tree(&root, String::new(), true, "rules", "data", &mut out)?;
+        Ok(String::from_utf8(out).expect("the tree is text"))
+    }
+
+    /// An author's message on an empty selection's line is written with the ESC as its escape.
+    ///
+    /// Expected, not yet run. Red: the line carries the ESC byte.
+    #[test]
+    fn an_empty_selections_message_is_written_escaped() -> crate::rules::Result<()> {
+        let printed = failed_tree(
+            &format!(
+                "rule r {{ Items[ Name == 'zzz' ] !empty <<{}[2J>> }}",
+                esc()
+            ),
+            "Items:\n  - Name: a\n",
+        )?;
+        assert!(!printed.contains(esc()), "no raw ESC:\n{:?}", printed);
+        assert!(printed.contains("Message [\\u{1b}[2J]"), "{}", printed);
+        Ok(())
+    }
+
+    /// An author's message on a unary check's line is written with the ESC as its escape.
+    ///
+    /// Expected, not yet run. Red: the line carries the ESC byte.
+    #[test]
+    fn a_unary_checks_message_is_written_escaped_on_one_line() -> crate::rules::Result<()> {
+        let printed = failed_tree(
+            &format!("rule r {{ Name !exists <<{}[2J>> }}", esc()),
+            "Name: a\n",
+        )?;
+        assert!(!printed.contains(esc()), "no raw ESC:\n{:?}", printed);
+        assert!(printed.contains("Message = [\\u{1b}[2J]"), "{}", printed);
+        Ok(())
+    }
+
+    /// An author's message on a comparison's line is written with the ESC as its escape.
+    ///
+    /// Expected, not yet run. Red: the line carries the ESC byte.
+    #[test]
+    fn a_comparisons_message_is_written_escaped() -> crate::rules::Result<()> {
+        let printed = failed_tree(
+            &format!("rule r {{ Name == 'x' <<{}[2J>> }}", esc()),
+            "Name: a\n",
+        )?;
+        assert!(!printed.contains(esc()), "no raw ESC:\n{:?}", printed);
+        assert!(printed.contains("Message = [\\u{1b}[2J]"), "{}", printed);
+        Ok(())
+    }
+
+    /// A zero-width joiner in a field on each line that can carry the author's message is written as its
+    /// escape, whichever arm writes the line: the body of such a line is escaped strictly as a whole
+    /// (`write_console_line_with_message`), so no arm has to remember to ask for it. The arms: an empty
+    /// selection's query, a unary check's property, a unary check's missing property and the value
+    /// traversed to, a comparison whose operand is missing (the shared sentence), and a resolved
+    /// comparison's value.
+    ///
+    /// Expected, not yet run. Red: a line the tree writes holds the joiner raw, or an arm's line is not
+    /// the shape the row looks for.
+    #[test]
+    fn a_joiner_in_a_field_of_each_message_bearing_arm_is_written_escaped(
+    ) -> crate::rules::Result<()> {
+        let joiner = char::from_u32(0x200d).expect("a scalar value");
+        let key_data = "Items:\n  \"k\\u200d\": 1\n";
+        let rows: Vec<(&str, String, &str, &str)> = vec![
+            (
+                "an empty selection's query",
+                format!("rule r {{ Items[ Name == 'a{}b' ] !empty }}", joiner),
+                "Items:\n  - Name: x\n",
+                "selected no values",
+            ),
+            (
+                "a unary check's property",
+                "rule r { Items.* !exists }".to_string(),
+                key_data,
+                "existed",
+            ),
+            (
+                "a unary check's missing property and the value traversed to",
+                "rule r { Items.Missing exists }".to_string(),
+                key_data,
+                "is missing",
+            ),
+            (
+                "a comparison whose operand is missing",
+                "rule r { Items.Missing == 'x' }".to_string(),
+                key_data,
+                "Check was not compliant",
+            ),
+            (
+                "a resolved comparison's value",
+                "rule r { Name == 'x' }".to_string(),
+                "Name: \"a\\u200d\"\n",
+                "not equal to",
+            ),
+        ];
+        for (label, rules, data, shape) in rows {
+            let printed = failed_tree(&rules, data)?;
+            assert!(
+                printed.contains(shape),
+                "{}: the line has the shape looked for:\n{}",
+                label,
+                printed
+            );
+            assert!(
+                !printed.contains(joiner),
+                "{}: no raw joiner:\n{:?}",
+                label,
+                printed
+            );
+        }
+        Ok(())
+    }
+
+    /// An ordinary failing tree is written line for line as its records display: the file's line and the
+    /// rule's line (the two lines whose bytes are known from the records themselves) are the prefix, the
+    /// tree glyph and the record's display, one line feed each, and nothing in the output is a colour
+    /// sequence, an ESC or a carriage return. The strict sink adds nothing to a line that holds nothing
+    /// to escape: no colour and no line feed beyond the one that ends the line. A line feed inside a
+    /// field is written as the two characters `\n`, so a multi-line template string in a quoted value
+    /// prints on one line, which is the fail-closed shape.
+    ///
+    /// Expected, not yet run. Red: a line gains or loses a byte against the record's display, or the
+    /// output holds an ESC.
+    #[test]
+    fn an_ordinary_failing_tree_is_written_as_its_records_display() -> crate::rules::Result<()> {
+        let data =
+            PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>("Name: a\n")?)?;
+        let rules = RulesFile::try_from("rule r { Name == 'x' }")?;
+        let mut scope = root_scope(&rules, Rc::new(data));
+        assert_eq!(Status::FAIL, eval_rules_file(&rules, &mut scope, None)?);
+        let root = scope.reset_recorder().extract();
+        let mut out = Vec::new();
+        pprint_failed_sub_tree(&root, String::new(), true, "rules", "data", &mut out)?;
+        let printed = String::from_utf8(out).expect("the tree is text");
+        assert!(printed.ends_with('\n'), "{:?}", printed);
+        let lines: Vec<&str> = printed.lines().collect();
+        assert_eq!(format!("`- {}", root), lines[0], "the file's line");
+        assert_eq!(
+            format!("   `- {}", root.children[0]),
+            lines[1],
+            "the rule's line"
+        );
+        assert!(
+            !printed.contains(esc()) && !printed.contains('\r'),
+            "no ESC and no carriage return:\n{:?}",
+            printed
+        );
+        Ok(())
+    }
+
+    /// A value from the data on a comparison's line is written with the ESC as its escape, since the
+    /// body of the line is escaped strictly as a whole.
+    ///
+    /// Expected, not yet run. Red: a line the tree writes carries a raw ESC from a data value.
+    #[test]
+    fn a_data_value_on_a_comparisons_line_is_written_escaped() -> crate::rules::Result<()> {
+        let printed = failed_tree(
+            "rule r { Name == 'x' }",
+            &format!("Name: \"a{}[2J\"\n", "\\e"),
+        )?;
+        assert!(!printed.contains(esc()), "no raw ESC:\n{:?}", printed);
+        assert!(printed.contains("\\u{1b}[2J"), "{}", printed);
+        Ok(())
+    }
+
+    /// The value a missing property's line says the walk traversed to is written with the ESC as its
+    /// escape, a data key included.
+    ///
+    /// Expected, not yet run. Red: a line the tree writes carries a raw ESC from a data key.
+    #[test]
+    fn the_value_traversed_to_on_a_missing_propertys_line_is_written_escaped(
+    ) -> crate::rules::Result<()> {
+        let printed = failed_tree(
+            "rule r { Items.Missing exists }",
+            &format!("Items:\n  \"k{}[2J\": 1\n", "\\e"),
+        )?;
+        assert!(printed.contains("is missing"), "{}", printed);
+        assert!(!printed.contains(esc()), "no raw ESC:\n{:?}", printed);
+        Ok(())
+    }
+
+    /// An author's message on a comparison's line keeps a zero-width joiner as ordinary text (the relaxed
+    /// set, as the per-resource output writes it) while the ESC beside it, and a joiner in the data value
+    /// on the same line, are written as their escapes (the strict set).
+    ///
+    /// Expected, not yet run. Red: the message's joiner is written as `\u{200d}`, the joiner in the value
+    /// is written raw, or the ESC is raw.
+    #[test]
+    fn a_message_keeps_a_joiner_while_the_fields_beside_it_are_escaped_strictly(
+    ) -> crate::rules::Result<()> {
+        let joiner = char::from_u32(0x200d).expect("a scalar value");
+        let printed = failed_tree(
+            &format!("rule r {{ Name == 'x' <<a{}b{}[2J>> }}", joiner, esc()),
+            "Name: \"v\\u200dw\"\n",
+        )?;
+        assert!(!printed.contains(esc()), "no raw ESC:\n{:?}", printed);
+        assert!(
+            printed.contains(&format!("Message = [a{}b\\u{{1b}}[2J]", joiner)),
+            "the message keeps its joiner:\n{:?}",
+            printed
+        );
+        assert_eq!(
+            1,
+            printed.matches(joiner).count(),
+            "only the message's joiner is raw:\n{:?}",
+            printed
+        );
+        Ok(())
+    }
+
+    /// The error appended to a unary or comparison line is written through the strict set, once: the
+    /// relaxed set is for the author's message beside it.
+    ///
+    /// Expected, not yet run. Red: the suffix carries the ESC byte, or an escaped text is escaped again.
+    #[test]
+    fn an_errors_suffix_is_written_escaped() {
+        assert_eq!(
+            " Error = [bad \\u{1b}[1mvalue]",
+            super::error_suffix(&format!("bad {}[1mvalue", esc()))
+        );
+        assert_eq!(
+            " Error = [bad \\u{1b}[1mvalue]",
+            super::error_suffix("bad \\u{1b}[1mvalue")
+        );
+    }
 
     /// The failed-clause tree says an empty selection selected nothing, and names the query.
     ///

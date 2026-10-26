@@ -1779,9 +1779,7 @@ impl QueryResolver for PathAwareValue {
                             let inner = selection.timing.token();
                             let registered = if selection.register {
                                 Some(crate::rules::eval_context::ensure_registered_wrap(
-                                    &reason,
-                                    inner,
-                                    &crate::rules::eval::no_frame_ranking,
+                                    &reason, inner,
                                 ))
                             } else {
                                 inner

@@ -1614,27 +1614,31 @@ let api_gws = Resources.*[ Type == 'AWS::ApiGateway::RestApi' ]
     eval_tests.rs:a_refusal_to_compare_kinds_beside_a_marker_is_worded_as_its_own_refusal, which go red when the
     reading changes.
 
-20. <a name="plain-marker-report-arms-disagree"></a> The console's two report arms word a PLAIN marker (a filter
-    predicate's entry left undecided by a raise that was no refusal, carried in a capture) differently by the side of
-    the comparison it stands on. With the marker on the LEFT (`%b != %x`, `%b` the marker, `%x` the keys and a
-    refusal's marker), the arm that renders a failing comparison's `from` reads the marker as "the value to compare
-    from could not be read"; with the marker on the RIGHT (`%x != %b`), the arm that renders `to` reads the same
-    marker as a property the template lacks ("to compare to is missing"), the wording of an absence, for a key the
-    document holds. The comparison's own records of the marker's pairs differ by spelling too. In `%b != %x` the
-    marker is the one left-hand value, so it has ONE record, the marker as `from`, whose message carries the refusal's
-    sentence beside the marker's own and whose flag reads `refusal: true`: the `LhsUnresolved` arm flags a left
-    marker's record by the refused read among the right-hand values it was compared against
-    (`a_refused_read_on_the_right`), and the left report arm reads that flag. In `%x != %b` the marker is paired with
-    each key, so it has one record per key, the marker as `to`, each carrying the marker's own sentence and flagged
-    `refusal: false`: the `RhsUnresolved` arm flags a right marker's record by the marker's OWN kind
-    (`refused_read_text`), and the refusal's marker, now on the left, has its own record flagged `true`. Two open
-    choices, not one: whether the `to` arm should word a marker as the `from` arm does, and whether a record should
-    be flagged by the operand it holds alone or by its right-hand company as well. No verdict, exit or registry entry
-    moves with either; the shape is pinned as it reads by a test which selects the comparison's own records by the
-    comparison and by the marker operand (never by context or by `any` over the rule's records, which an earlier form of
-    the cell did, passing on records of the unrelated `Cfg[ x | Kind == 'k' ]` clause), reads each pair's flag and
-    message, and reads the report's sentences for the two wordings, so it goes red when either arm's reading or either
-    spelling's flags change
+20. <a name="plain-marker-report-arms-disagree"></a><a name="plain-marker-record-flag-by-side"></a> Whether a PLAIN marker's comparison record is flagged a refusal
+    depends on which side of the comparison the marker stands on; the choice that stays open is named at the end of
+    this item. The console's two report arms word a PLAIN marker (a filter
+    predicate's entry left undecided by a raise that was no refusal, carried in a capture) the SAME way on either
+    side of the comparison, as a value that "could not be decided", the undecidable wording, read off the operand's
+    own kind and not off the record's flag: with the marker on the LEFT (`%b != %x`, `%b` the marker, `%x` the keys
+    and a refusal's marker) the arm that renders a failing comparison's `from` no longer reads it as "the value to
+    compare from could not be read", the refusal wording the flag alone once read into it, and with the marker on the
+    RIGHT (`%x != %b`) the arm that renders `to` no longer reads it as a property the template lacks ("to compare to
+    is missing"), the wording of an absence, for a key the document holds. The comparison's own records of the
+    marker's pairs still differ by spelling. In `%b != %x` the marker is the one left-hand value, so it has ONE
+    record, the marker as `from`, whose message carries the refusal's sentence beside the marker's own and whose flag
+    reads `refusal: true`: the `LhsUnresolved` arm flags a left marker's record by the refused read among the
+    right-hand values it was compared against (`a_refused_read_on_the_right`), while the report arm reads the
+    operand. In `%x != %b` the marker is paired with each key, so it has one record per key, the marker as `to`, each
+    carrying the marker's own sentence and flagged `refusal: false`: the `RhsUnresolved` arm flags a right marker's
+    record by the marker's OWN kind (`refused_read_text`), and the refusal's marker, now on the left, has its own
+    record flagged `true` and is reported with the refusal wording for its own side. One choice stays open: whether a
+    record should be flagged by the operand it holds alone or by its right-hand company as well (the flag is the
+    console's print-whole switch). No verdict, exit or registry entry moves with it (the clause FAILs in both
+    spellings, the gate raising on the refusal); the shape is pinned as it reads by a test which selects the
+    comparison's own records by the comparison and by the marker operand (never by context or by `any` over the
+    rule's records, which an earlier form of the cell did, passing on records of the unrelated `Cfg[ x | Kind == 'k' ]`
+    clause), reads each pair's flag and message, and reads the report's sentences on both sides, so it goes red when
+    either arm's wording or either spelling's flags change
     (pinned by `eval_tests.rs:a_plain_left_marker_beside_a_right_refusal_is_reported_as_undecided_on_both_sides`).
 
 21. <a name="a-map-filters-capture-holds-the-key"></a> A filter's capture over a MAP holds the KEYS the filter kept, not the
@@ -1668,9 +1672,10 @@ let api_gws = Resources.*[ Type == 'AWS::ApiGateway::RestApi' ]
     refusal included, which note no refused read. Two record shapes: in a rule body the fail-closed `not` is a FAIL whose
     own record says why, in one of two variants chosen by what the basis holds: flagged a refusal and naming the read(s)
     where the FAIL rests on one ("the negated rule [check] failed only on reads it could not decide, so the negation
-    fails closed rather than passing: ..."), unflagged and naming none where the undecidable is no refusal, a spent regex
-    budget's marker or a type the operator has no answer for ("...; the undecided reads are reported where the rule met
-    them"); the author's `<< >>` message on the reference rides in the record's own field; and either variant writes NO
+    fails closed rather than passing: ..."), unflagged and naming the undecidable's own text where it is no refusal, a
+    spent regex budget's marker or a type the operator has no answer for ("... rather than passing: <the text>"; only a
+    FAIL that carries neither a read nor a text says the undecided reads are reported where the rule met them); the
+    author's `<< >>` message on the reference rides in the record's own field; and either variant writes NO
     refused-read line, since failing closed is acting on the refusal and "was not raised" would be false of it; as a
     `when` condition the negated rule runs in the gate role, where every undecidable leaves it as a raise that reaches the
     reference before any negation (no gate-role or filter-role `not` ever meets an undecidable-born FAIL; a debug build
@@ -1697,12 +1702,49 @@ let api_gws = Resources.*[ Type == 'AWS::ApiGateway::RestApi' ]
     block, each with the block's own line, and nothing decided, the block fails closed or raises on that read (see
     `eval_tests.rs:a_blocks_pending_refused_selection_is_settled_at_every_exit_in_both_roles (cases "HO", "PO", "PF", "PEp", "POp", "HOp", "HSa", "HSs", "HSp")`;
     an earlier build returned at once on such a body beside siblings, so the clause spelling's order inside the body
-    decided whether the siblings were consulted; one order dependence remains, a known limit: a body whose FIRST held
-    error is a marker's raise (an undecidable comparison over a key filter nobody can decide, `%m !empty` over a map
-    whose key spent the engine's budget) re-raises an undecidable comparison over the kept text where a body whose
-    first held error is the refused read itself re-raises the plain refusal, and a `when` condition reads only the
-    comparison kind as three-valued, so with no sibling deciding the block the two orders can still open or fail a gate
-    differently; the per-value mark such a body leaves, where it raised a marker of
+    decided whether the siblings were consulted; the gate's verdict no longer depends on that order (a `when`
+    condition reads both kinds the block can raise as three-valued, and a sibling condition that decided no decides
+    past either), and the record reads the same in both clause orders: with no sibling deciding the block and a
+    budget marker's comparison also held (a sibling's `%m !empty` over a map whose key spent the engine's budget), the
+    fold ranks a refusal, a comparison carrying a refusal's token or an `Unevaluatable` whose text the registry holds,
+    above a held error that is none, whichever was held first, so a body whose FIRST held error is that marker's raise
+    (which re-raises the refused read as a comparison carrying its token) and a body whose first held error is the
+    refused read itself (which re-raises the plain refusal) both leave the condition record flagged a refusal and
+    naming the read, where the plain refusal used to lose to the comparison already held and the record was unflagged
+    and named no read. The ranking moves the text and keeps the held error's variant and token, since a block reads
+    the variant (a comparison is the value's answer for the siblings to decide, a plain `Unevaluatable` ends the
+    block at once), and takes the text only outside a filter predicate run and only when the arriving error is a
+    refusal by its token or by its text (a sentence the registry holds): a tokened refusal whose text no one registers
+    (the key filter's wrap of a numbered text) leads the raise, with the held cause after it cut to a part, and the
+    joined text is registered under the token so the record is flagged as the block's mark for the same pair is,
+    since a held `Unevaluatable` carries no token to flag it by (the registered join is an entry that is no read of
+    its own; flagging by a token on a comparison variant is the alternative, and it moves what a block reads). A
+    later registered refusal over a held registered refusal is ranked by token, in either order and either
+    variant, and the higher-ranked one replaces the other whole, so a joined text holds one refusal sentence at
+    most; a tokened text that nobody registers leaves a held registered refusal as met. That leaves one pair
+    order-dependent: a registered refusal held as a plain `Unevaluatable` keeps its place against an unregistered
+    tokened wrap that arrives later, whichever of the two was minted later, while the same registered refusal
+    held as a comparison with no token, or the wrap held first, is ranked by minting, so the later-minted of the
+    two stands (the wrap's join, when the wrap arrived over a plain cause). The raise names one of the two
+    refusals either way. Inside a
+    predicate run a held `Unevaluatable` whose text the registry does not hold keeps its text, since the run
+    classifies its entry's marker by it. A held comparison inside a predicate run meets an arriving registered refusal as a pair: a
+    refusal minted inside the run replaces the held text, token and text together, so the entry is the run's refused
+    one, and a refusal minted before the run does not make it the run's, as for two comparisons.
+    Where a plain `Unevaluatable` is held first and a refusal arrives, the error handed up carries the refusal's text
+    and no token. The held error's own text, a converter's cause, is the one dropped where the refusal's text is a
+    registered sentence. Inside a predicate run the
+    order of the conjuncts still decides which form the failure takes (a refusal conjunct before a budget comparison
+    fails the whole filter as an error, the other order leaves a per-entry marker). The rows
+    that pin the arms are `the_pair_rule_keeps_the_latest_refusal_whole_else_the_first_reason_with_no_token`,
+    `a_budget_comparison_held_in_a_predicate_run_meets_an_arriving_refusal_as_a_pair` and
+    `a_tokened_refusal_arriving_after_a_plain_error_is_named_whether_or_not_its_text_is_registered`, and cases "OM",
+    "OR", "OMc" and "ORc" of `a_blocks_pending_refused_selection_is_settled_at_every_exit_in_both_roles` (the read's line is written once in either order where the sibling condition decides past the raise,
+    "was decided by a sibling clause's failure", since the refused selection's entry is pushed into the block's
+    absorbed entries whichever kind the block raises and the raise hands them up; and a body with NO sibling, which
+    holds nothing before its own error, hands the gate its own kind in both orders, the record flagged and naming the
+    read either way, cases "OMl" and "ORl"); the per-value
+    mark such a body leaves, where it raised a marker of
     another text, is written after the siblings' records, where it was written at once, so the record tree and
     `-o json` list it after them); a refused selection with no
     value beside it is judged after every selection has run, as a lone selection is: beside a second refused selection
@@ -1710,25 +1752,32 @@ let api_gws = Resources.*[ Type == 'AWS::ApiGateway::RestApi' ]
     either map order. A selection is refused by a read of a key the object LACKS; a key the object HOLDS (`Effect`
     over a one-object statement) is read as nothing over the refused selection, as the dotted spelling
     `Statement[*][ Principal == '*' ].Effect == 'Deny'` reads it, so a clause on it is not applicable and a `when` in
-    the body gated on it reads nothing and leaves the value not applicable, never refused (the chained-filter spelling
-    `[ Sid exists  Effect == 'Deny' ] !empty` decides on the keys it holds and is refused only when every key it names
-    is lacking, the second-filter rule in `docs/CLAUSES.md`; the "E1nk"/"E1i" pair). Beside a selection whose closed `when` read nothing the readings are a lone selection's (`not check` fails closed
-    without `not empty` and passes with it, the gate not applicable either way); earlier builds of this change
-    returned before that fold ran, on the
-    first selection judged and then at the exit over an empty value set, reading the pair as an empty selection (the
-    gate not applicable, the refusal dropped with no record and no line); siblings that every one skip are values the block has, so without the refused value
-    the block is SKIP under `not empty` as well, and the assertion role fails `not check` closed there (an earlier
-    build of this change read them as no value and passed the `not` on the refusal); as a `when` condition FAIL
-    against SKIP also counts as agreement, since both mean the guard did not hold (alone without `not empty`, and
-    either quantifier where every sibling skips: the gated rule is then not applicable), where the assertion role
-    fails closed. The block's record is flagged a
+    the body gated on it reads nothing and leaves the value not applicable, never refused (the "GKk"/"GKek" rows);
+    the chained-filter spelling `[ Sid exists  Effect == 'Deny' ] !empty` is refused only when every key it names is
+    lacking (the second-filter rule in `docs/CLAUSES.md`), so naming the held `Effect` it is not refused and keeps
+    nothing, the empty selection its list twin is, and its `!empty` fails where the block fails closed (the
+    "E1nk"/"E1i" pair). Beside a selection whose closed `when` read nothing a refused selection is judged as a lone
+    one, and the one body a `when` can refuse over a one-object statement is gated on a key the statement lacks, an
+    undecidable body: `not check` fails closed naming the read and the gate fails closed on its condition, in either
+    map order (the "GKr2"/"GKr2r" pair; the selection the `when` closed on is not applicable, never refused).
+    Siblings that every one skip are values the block has, so without the refused value the block is SKIP under `not
+    empty` as well and the assertion role fails `not check` closed there, where as a `when` condition FAIL against
+    SKIP counts as agreement, since both mean the guard did not hold (alone without `not empty`, the "E1d" row: the
+    gated rule is then not applicable); the every-sibling-skips arm of that agreement is reached by no row and stays
+    unpinned: over a one-object statement a `when` that closes on the sibling closes on the refused selection's held
+    key too, a comparison gate (the "GKk" row) and the unary `Effect !exists` gate alike (the "GKuk" row: the held key
+    reads as nothing there, so `!exists` is not applicable rather than true), or refuses its lacking one, so that
+    value is not applicable or undecidable and never a decided no
+    beside skipping siblings. The block's record is flagged a
     refusal by the block's own read whatever the body decided beside it (the flag says whether the message embeds a
     refusal); beside siblings the refused value leaves a flagged per-value FAIL record under the block in either role;
     where that `not` passes, the block's refused read is written "passed by the negation of a rule that failed", and
     where a `when` condition's block decided it, "was decided by a sibling clause's failure" (the body's no) or "was
     decided by a sibling entry's failure" (a failing sibling past the undecidable value) (pinned by
-    `eval_tests.rs:a_blocks_refused_read_over_the_empty_selection_is_judged_with_its_bodys_basis (cases "E1", "E1k", "E1nk", "E2", "V1", "SP", "SF", "GS", "GSf", "GSsf", "GSsfk", "GKk", "GKsk", "GKnk", "GKsnk", "GSu", "GSr", "GKr", "GKx", "GKd", "GKr2", "GKr2r", "GKr2k", "GKr2rk", "GKek", "GKenk", "SS", "GSs", "D")`
-    and `eval_tests.rs:a_gate_role_block_over_a_refused_selection_beside_a_sibling_raises_or_writes_its_own_line_once (cases "GU", "GUd", "GUf", "GD", "MF", "MO")`). A passing sibling decides past the fail-closed `not` as past any
+    `eval_tests.rs:a_blocks_refused_read_over_the_empty_selection_is_judged_with_its_bodys_basis (cases "E1", "E1d", "E1nk", "E1i", "E1io", "E2", "V1", "SP", "SF", "GS", "GSf", "GSsf", "GSsfd", "GKk", "GKuk", "GKsk", "GKnk", "GKsnk", "GSu", "GSr", "GKr", "GKx", "GKd", "GKr2", "GKr2r", "GKek", "GKenk", "SS", "GSs", "D")`
+    and `eval_tests.rs:a_gate_role_block_over_a_refused_selection_beside_a_sibling_raises_or_writes_its_own_line_once (cases "GU", "GUd", "GUf", "GD", "MF", "MO")`; the every-entry agreement and disagreement beside a body
+    whose no comes from a binding, and the line the two-selection shape writes, are pinned by the first test's
+    cases "GSfd", "GSpd", "GKr2d" and "GKr2rd"). A passing sibling decides past the fail-closed `not` as past any
     decided FAIL (`rule main { not check or Maps exists }` passes with one ordinary line). Raising the negation in the
     assertion role instead was considered and not taken: FAIL is the shape every other refusal reaching a strict role
     takes. A `when` or type-block condition raised on a refused read in a strict role fails its block closed as before;
@@ -1737,8 +1786,8 @@ let api_gws = Resources.*[ Type == 'AWS::ApiGateway::RestApi' ]
     (pinned by `eval_tests.rs:a_negated_reference_fails_closed_on_a_refusal_only_fail (cases "R1", "R1b", "R1c", "R3", "T1", "T1b")`);
     the structural rows, the two record shapes and the sites that note no refused read are each a labeled row
     (pinned by `eval_tests.rs:a_negated_reference_decides_by_the_structure_of_the_rules_folds (cases "A1", "A2", "O1", "O2", "S1", "S2", "S3", "M1", "M2", "G1", "N1", "D1", "B1", "B2", "B3", "B4", "L1", "L2", "X1", "X2", "C1", "C2", "U1", "U2", "U3")`).
-    The parameterized rows of the same shape are the "R1" and "R3" rows of
-    eval_tests.rs:frame_entries_decide_by_kind_and_a_rule_call_runs_in_its_own_frame, which read the same.
+    The parameterized rows of the same shape read the same (pinned by
+    `eval_tests.rs:frame_entries_decide_by_kind_and_a_rule_call_runs_in_its_own_frame (cases "R1", "R3")`).
 
 23. <a name="a-let-bound-numbered-re-read-loses-its-flag"></a> A `let`-bound refusal re-read inside a NUMBERED text
     beside an unregistered marker's reason reads `refusal: false` where the original raise read `true`. A failed
@@ -1752,3 +1801,83 @@ let api_gws = Resources.*[ Type == 'AWS::ApiGateway::RestApi' ]
     record's flag and the console's remedy line for that re-read; the verdict, the exit code and the registry are the
     same. Pinned as it reads by `eval_tests.rs:a_let_bound_refusal_re_read_keeps_its_flag_by_text_alone`, whose
     residual row goes red when the re-read recovers its token.
+
+24. <a name="a-bare-right-hand-query-reads-the-filtered-map-alone"></a> A key filter's bare right-hand query and a
+    function argument in the same place reach the document differently, by design: the bare query, `Props[ keys ==
+    Tags[ Key == 'Env' ].Value ]`, reads the map being filtered alone, while a function argument, `Props[ keys ==
+    to_upper(Tags[ Key == 'Env' ].Value) ]`, falls back to the resource beside the map when the map does not hold its
+    first key (the key filter's right-hand-side rules in `docs/CLAUSES.md`). So over a resource whose `Tags` sits
+    beside `Props` rather than inside it, the bare query's `Tags` is a key `Props` lacks, an absence and no refusal: the
+    map is answered with the plain marker, a clause over it fails closed as over any map nobody could decide, in the
+    gate role and in the assertion role alike, and a
+    block that holds that raise beside a sibling's error and is decided past by an `or` sibling owes no refused-read
+    line, where the same query over a `Props.Tags` that is a string, or a one-object map under `Tags[*][ Key == 'Env'
+    ]`, is refused and owes one. Nothing fails open (the plain marker fails the clause closed), and a `Tags` meant to
+    be read from the resource is written with the function spelling or sits inside the filtered map; whether the bare
+    query should take the function argument's fallback so the two spellings agree is an open design question, not a
+    defect (pinned by
+    `eval_tests.rs:a_blocks_pending_refused_selection_is_settled_at_every_exit_in_both_roles (cases "AF", "AFs", "AFr", "AFc", "AFx", "AFy", "AFz", "AFxa", "AFya", "AFza")`).
+
+25. <a name="a-gate-failing-closed-on-a-plain-error-does-not-name-a-refusal-settled-beside-it"></a> A gate that fails
+    closed on a plain error does not name a refusal settled beside it in the same condition. Take a `when` condition
+    that calls a rule whose block reads two selections under `Resources.*.Tags[*][ Key == 'Env' ]`: one is a
+    one-object map holding an intrinsic beside the compared entry (a refused selection), the other either a list or a
+    second one-object selection, and its body raises a converter's error (`parse_int` on a word). The rule fails
+    closed on the converter's error, and the run prints the condition's sentence ("The rule's condition could not be
+    evaluated, so the rule fails rather than being treated as not applicable: ..") naming that error, once per gated
+    rule, in the console and in `-o json`; the refusal that was pending beside it is named nowhere. The verdict is
+    right and the failing record names what decided it; the refusal did not decide, and `docs/CLAUSES.md` owes no
+    line where the failing record is the report. Whether the refusal is named once the converter's error is gone is
+    not pinned: the two gates would report it through different lines. The same two selections under `rule check {
+    .. }` (no gate) print both, in either sibling shape: the error's clause record and the refusal's sentence at the
+    refused map's path, once each. Naming every pending refusal in a failing gate's sentence is an alternative that
+    would add a sentence shape to both reporters; it is not made (pinned by
+    `tests/validate.rs:a_gate_failing_closed_on_a_plain_error_does_not_name_a_refusal_settled_beside_it`).
+
+26. <a name="a-refused-read-line-that-says-no-record-was-held"></a> A refused-read line that says a fold "held no
+    record of it" is the evaluator's own error and no finding about the rules file or the input data: nothing in
+    either reaches it. The line ends with a sentence that asks for a report to the project's issue tracker with the
+    rules file and the input data. It is written for the clause's refused read when an internal check that
+    a debug build asserts did not hold: it names the read as the other refused-read lines do and replaces only their
+    verdict wording. A release build writes the line and goes on (pinned by
+    `eval_tests.rs:the_neutral_word_for_an_unrecorded_entry_is_worded_as_an_internal_error`).
+
+27. <a name="a-binding-read-late-in-a-predicate-run-no-longer-turns-its-entry-plain"></a> A filter predicate whose
+    own body raised a refusal, and that reads a file-level `let` for the first time after it, now marks its entry
+    refused. The `let` is resolved at that first read and its query raises the same
+    sentence again, registered under a newer token; the run reads a token minted while an older scope's binding was
+    resolved as no entry's own, so an entry the run's own refusal had marked refused read as plain once the `let`
+    was read after it, and the refusal was not reported as one (a plain marker reads as a spent regex budget). The
+    verdict of a `some` over a selection that is the LEFT-hand operand of the outer comparison is unchanged: it is
+    decided by a member that passes, and a refused member is an undecided read that the record and the run's
+    refused-read line report. Where the selection is the RIGHT-hand operand of the outer comparison a clause
+    that no resolved right-hand value settles fails closed, so such a clause whose right-hand selection holds
+    the refused entry can move from PASS to FAIL with the entry's kind. The behavior before this
+    change depended on whether the `let` had been read earlier in the file: read before the run, the repeat raise
+    registered nothing and the entry was refused; read first inside the run, it was plain. Both now read refused.
+    The registry keeps the token a run read as its own beside a later registration of the same sentence whose
+    token that run does not read as its own: the binding's resolution registering the refusal, and also a comparison
+    that meets the memoized refusal's marker later in the run and registers the read, or a wrap of it. All three
+    registrations follow that one rule. A comparison held inside a run carries the token it was ranked by to the
+    end of the run, so the two variants of the held error (a comparison, and a plain error that a registry lookup
+    answers by text) read alike. A refusal that is no run's own, or that a block built inside the run raised, is
+    registered as before.
+
+    A filter predicate run that is opened inside the `let`'s own query (the `let` selects with a filter whose
+    predicate raises the same sentence) reads the tokens that query mints as its own, and the enclosing run
+    does not. One sentence can therefore carry several live tokens at once: the registry lists the newest token
+    minted for a sentence and the newest each live run reads as its own (the list is cut at each write, so
+    a closed run's token stays until the next write of the sentence), and answers each run with the token it
+    owns, the innermost run that owns one first, else the newest. An enclosing run that
+    raised the sentence earlier as a plain error, and never held it in a fold, still reads its own token and
+    its entry reads refused and the refusal is reported; a `some` over a selection that is the LEFT-hand operand
+    of the outer comparison still passes on a sibling that passes, while a selection that is the RIGHT-hand
+    operand fails the clause closed when no resolved value in it settles the clause. The nested run reads the token its own raise
+    carries, through a marker, a comparison's registration, a wrap or the text read at the end of the run, so
+    its entry reads refused and is memoized as refused for every reader of the `let`. A raise that reaches the
+    end of the nested run with no token of its own and no registration made inside the run (the run met the
+    sentence without raising it afresh) reads the nearest enclosing run's token, which the nested run does not
+    own, so that entry reads plain: a refusal minted before the run began, the reading a capture bound
+    outside a predicate has. Two root scopes alive on one thread (a shape of the tests alone) share the
+    list of live runs the registry reads, as they share the token counter, so a run of the outer
+    evaluation keeps its token against writes of the inner one.

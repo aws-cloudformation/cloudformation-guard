@@ -319,9 +319,11 @@ impl UnResolvedKind {
     /// the one it hands on for an enclosing filter predicate run (`carried`: a refusal minted before the
     /// run that left this entry plain, or the refusal a key filter's right-hand side raised, whose marker
     /// for the map is rebuilt plain because that arm has no run to read the token against; a right-hand
-    /// side refused as unevaluatable, a query with no answer on the data such as a filter over a string,
-    /// raises no token, so that marker carries none and the entry it is met under stays plain), `None`
-    /// for a value nobody could decide and for every other kind.
+    /// side refused as unevaluatable, a filter over a string or a one-object map under `[*]`, carries no
+    /// token in its error, so the key-filter arm recovers the one `refuse` minted when it registered the
+    /// sentence (`token_of_registered`) and the marker carries that; a right-hand query that resolved to
+    /// an ABSENCE, a key the filtered map lacks, is no refusal, so that marker carries none and the entry
+    /// it is met under stays plain), `None` for a value nobody could decide and for every other kind.
     /// What the error a clause raises over the marker carries in its second field
     /// (`Error::UndecidableComparison`), copied from here so the filter predicate run it ends reads
     /// where the refusal was minted against the count that run opened at, at any depth of nesting.
@@ -582,10 +584,66 @@ pub(crate) struct NamedStatus<'value> {
     pub(crate) name: &'value str,
     pub(crate) status: Status,
     pub(crate) message: Option<String>,
-    /// Whether `message` embeds a refusal; see [`ValueCheck::refusal`]. A rule whose condition raised
-    /// one carries it here, and the console prints that rule's line whole.
+    /// Whose text `message` holds; see [`CustomSlot`]. Set once, where the record is built: a rule whose
+    /// condition raised a refusal writes [`CustomSlot::Refusal`] (the console prints that rule's line
+    /// whole), the evaluator's call-site copy of a `<< >>` body writes [`CustomSlot::Author`].
     #[serde(skip)]
-    pub(crate) refusal: bool,
+    pub(crate) slot: CustomSlot,
+    /// The rule's own sentence a calling clause's `<< >>` body displaced from `message` (the sentence a
+    /// rule whose own `when` could not be evaluated writes, `eval::judged_rule_body`), with its kind
+    /// ([`CustomSlot::Evaluator`] or [`CustomSlot::Refusal`]): the record reports the body as `message`, as
+    /// every reader of a rule record's message expects, and keeps the sentence beside it so a refusal is
+    /// not reported as an ordinary failure of the author's rule. `None` where nothing was displaced.
+    /// Reported as the rule report's error message (`eval_context::report_all_failed_clauses_for_rules`).
+    /// The record tree (`--print-json`) writes the sentence under `displaced_message` where one was
+    /// displaced and nothing otherwise; the kind stays in memory (`serialize_displaced_text`).
+    #[serde(
+        rename = "displaced_message",
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "serialize_displaced_text"
+    )]
+    pub(crate) displaced: Option<(CustomSlot, String)>,
+}
+
+/// The text of a message slot when it says something: not absent, not empty and not only whitespace
+/// (`<<   >>` parses and says nothing). The one test for a blank message, read by the evaluator when it
+/// decides whether a call carries a body (`eval::ResolvedParameterContext::end_record`), by the rule
+/// report's own-message reader and its silence test (`eval_context::RuleReport`), and by the console and
+/// JUnit reporters, so no reader keeps a blank body that another drops.
+pub(crate) fn non_blank(message: &Option<String>) -> Option<&str> {
+    message.as_deref().filter(|text| !text.trim().is_empty())
+}
+
+/// Writes the text of a displaced sentence and not its kind (`NamedStatus::displaced`); a record with
+/// nothing displaced is skipped before this is reached.
+fn serialize_displaced_text<S: serde::Serializer>(
+    displaced: &Option<(CustomSlot, String)>,
+    serializer: S,
+) -> std::result::Result<S::Ok, S::Error> {
+    match displaced {
+        Some((_, text)) => serializer.serialize_str(text),
+        None => serializer.serialize_none(),
+    }
+}
+
+/// Whose text a rule record's `message` slot holds. The slot holds exactly one of three things and the
+/// text cannot say which (an error that wraps another error displays the same wrapper a refusal does, and
+/// an author's prose can quote anything), so the record does. The console picks the escape set and the
+/// cut from it: the relaxed set and no refusal bound for an author's prose (a joiner or a mark in prose is
+/// ordinary text), the strict set for the evaluator's sentence, which quotes keys from the rules file and
+/// the template, and the refusal pipeline for a refusal. One value, so a record cannot say "refusal" and
+/// "author" at once.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) enum CustomSlot {
+    /// The evaluator's own sentence, or no message at all.
+    #[default]
+    Evaluator,
+    /// The rule author's own `<< >>` body, copied onto the record of a called rule by the evaluator
+    /// (`eval::ResolvedParameterContext::end_record`).
+    Author,
+    /// The evaluator's sentence about a read it refused (`eval_context::is_refusal`); see
+    /// [`ValueCheck::refusal`].
+    Refusal,
 }
 
 impl<'value> Default for NamedStatus<'value> {
@@ -594,7 +652,8 @@ impl<'value> Default for NamedStatus<'value> {
             name: "",
             status: Status::PASS,
             message: None,
-            refusal: false,
+            slot: CustomSlot::Evaluator,
+            displaced: None,
         }
     }
 }
@@ -1278,12 +1337,15 @@ pub(crate) trait EvalContext<'value, 'loc: 'value>: RecordTracer<'value> {
 
     /// Note that a comparison at `site` (written as `context`) was decided without raising the REFUSED
     /// reads among its values, on either side (`refusals`, one text each): the clause's verdict
-    /// (`verdict`, one of ten: a value that holds settled it, a value the document lacks decided it, a
+    /// (`verdict`, one per `UnraisedVerdict` variant: a value that holds settled it, a value the document
+    /// lacks decided it, a
     /// value that does not match decided it, a value that matches a denied entry decided it, a value of
     /// another kind decided it; a sibling entry's failure decided the every-entry block whose body raised
     /// beside the refused read, or a sibling entry's pass settled the `some` block, the block fold's own
     /// calls; a sibling clause's failure decided the conjunction past the raise, or a sibling clause's
-    /// pass decided the disjunction past it, the conjunction fold's own calls) never raised them, and the
+    /// pass decided the disjunction past it, the conjunction fold's own calls; the negation of a referenced
+    /// rule that failed passed its leaf FAIL; or a fold found an entry where its invariant says none can be,
+    /// the neutral word) never raised them, and the
     /// line is what keeps such a refusal from being silent. Written only after the clause is decided (a
     /// clause raised on an undecided pair carries the refusal in its failure and writes nothing), once per
     /// clause site: the line counts the DISTINCT refusal texts the site met and how many evaluations
@@ -2132,9 +2194,174 @@ pub(crate) enum FailBasis {
     /// A FAIL that rests on undecidables alone, with the refused reads it rests on (each text once, in
     /// the order met, with the token its raise carried where it carried one, so a refusal known by its
     /// token alone, whose text no registry holds, keeps the token through every fold; empty for an
-    /// undecidable that is no refusal).
-    Undecidable { refused_reads: Vec<RefusedRead> },
+    /// undecidable that is no refusal), and the texts of the undecidables met that are NO refusal (a
+    /// spent regex budget, a value the engine could not read), each once in the order met: the cause a
+    /// fail-closed `not` names when no refused read is there to name, which flags no refusal. At most
+    /// `MARKER_REASONS_NAMED` causes are named (the first met, in order); every further distinct cause
+    /// is kept in `unnamed_causes`, an ordered set, and counted once in the sentence that names the rest
+    /// (a set and not a bare count: a cause met again, named or not, must not be counted again).
+    /// The payload is a struct with private fields (`UndecidableBasis`), built and changed through its
+    /// own constructors and join alone, so the index of the reads (`read_positions`, which lets a join
+    /// look each read of the basis it adds up in one step instead of scanning the running list) cannot
+    /// be left stale by a struct literal or by a change of the list made outside it.
+    Undecidable(UndecidableBasis),
 }
+
+/// The payload of `FailBasis::Undecidable`. Its fields are private to this module, so the one index it
+/// keeps beside the ordered list of refused reads is changed only where the list is, and the equality and
+/// the debug text read the ordered fields alone, never the index, whose order is run-dependent.
+mod undecidable_basis {
+    use super::eval::Ranking;
+    use super::{errors, RefusedRead, MARKER_REASONS_NAMED};
+    use std::collections::{BTreeSet, HashMap};
+
+    /// The refused reads and the causes an undecidable-born FAIL rests on, in the order met.
+    /// `read_positions` indexes `refused_reads` by text; it is derived from the list and never differs
+    /// from it, since the list changes through `add_read` only. Cloning copies each text twice (the list
+    /// and the index), which the cost of a join accepts: a clone is made once per basis a fold keeps.
+    #[derive(Clone)]
+    pub(crate) struct UndecidableBasis {
+        refused_reads: Vec<RefusedRead>,
+        read_positions: HashMap<String, usize>,
+        other_causes: Vec<String>,
+        unnamed_causes: BTreeSet<String>,
+    }
+
+    impl UndecidableBasis {
+        /// A basis over `reads`, each text once in the order met; a text met twice keeps its first position
+        /// and the token `ranking` ranks higher, the later-minted at a tie (`add_read`).
+        pub(crate) fn from_reads(reads: Vec<RefusedRead>, ranking: Ranking<'_>) -> Self {
+            let mut basis = UndecidableBasis {
+                refused_reads: Vec::with_capacity(reads.len()),
+                read_positions: HashMap::with_capacity(reads.len()),
+                other_causes: Vec::new(),
+                unnamed_causes: BTreeSet::new(),
+            };
+            for (text, token) in reads {
+                basis.add_read(text, token, ranking);
+            }
+            basis
+        }
+
+        /// A basis that rests on one undecidable that is no refusal, with the text of its error as the cause.
+        pub(crate) fn from_cause(cause: String) -> Self {
+            UndecidableBasis {
+                refused_reads: Vec::new(),
+                read_positions: HashMap::new(),
+                other_causes: vec![cause],
+                unnamed_causes: BTreeSet::new(),
+            }
+        }
+
+        /// Add one read to the list and its index: a text met before keeps its position and the token
+        /// `ranking` ranks higher, the later-minted at a tie (`eval::later_token`, the pair rule the
+        /// comparison's collection keeps its reads by), so the token a basis carries for a sentence is the
+        /// one the run reads as its own whatever order the reads arrive in; a new text goes last. The
+        /// ranking is handed in by the caller that holds the frames of its runs; a caller with none hands
+        /// the live runs' (`eval_context::live_runs_ranking`).
+        fn add_read(
+            &mut self,
+            text: String,
+            token: Option<errors::RefusalToken>,
+            ranking: Ranking<'_>,
+        ) {
+            match self.read_positions.get(&text) {
+                Some(&at) => {
+                    self.refused_reads[at].1 =
+                        super::eval::later_token(self.refused_reads[at].1, token, ranking);
+                }
+                None => {
+                    self.read_positions
+                        .insert(text.clone(), self.refused_reads.len());
+                    self.refused_reads.push((text, token));
+                }
+            }
+        }
+
+        /// The refused reads, each with its token, in the order met.
+        pub(crate) fn refused_reads(&self) -> &[RefusedRead] {
+            &self.refused_reads
+        }
+
+        /// The named causes that are no refusal, in the order met, at most `MARKER_REASONS_NAMED`. A cause
+        /// that IS a refusal is held in `refused_reads` instead, so where the lead cause is a refusal it is
+        /// not counted here: a caller that adds `other_causes` and `causes_not_named` counts the distinct
+        /// causes only for a basis with no refused read (`has_several_causes` in `eval.rs` reads it so).
+        pub(crate) fn other_causes(&self) -> &[String] {
+            &self.other_causes
+        }
+
+        /// How many further distinct causes the basis rests on beyond the named ones.
+        pub(crate) fn causes_not_named(&self) -> usize {
+            self.unnamed_causes.len()
+        }
+
+        /// Two bases as one: the reads of both in order, each once, tokens kept; the causes of both in
+        /// order, each once, the first `MARKER_REASONS_NAMED` named and the rest kept in the ordered set
+        /// of the unnamed. `self` is the running total and is extended in place: only the reads and the
+        /// causes of `other` are looked up (the reads in the index, the causes among the named four and in
+        /// the ordered set), so a fold over N failing resources costs the size of each basis it adds, not
+        /// the size of the total built so far. A read both bases hold keeps the token `ranking` ranks
+        /// higher (`add_read`).
+        pub(crate) fn joined_with(
+            mut self,
+            other: UndecidableBasis,
+            ranking: Ranking<'_>,
+        ) -> UndecidableBasis {
+            let UndecidableBasis {
+                refused_reads: added_reads,
+                other_causes: added_causes,
+                unnamed_causes: added_unnamed,
+                ..
+            } = other;
+            for (text, token) in added_reads {
+                self.add_read(text, token, ranking);
+            }
+            for cause in added_causes.into_iter().chain(added_unnamed) {
+                if self.other_causes.contains(&cause) || self.unnamed_causes.contains(&cause) {
+                    continue;
+                }
+                match self.other_causes.len() < MARKER_REASONS_NAMED {
+                    true => self.other_causes.push(cause),
+                    false => {
+                        self.unnamed_causes.insert(cause);
+                    }
+                }
+            }
+            self
+        }
+    }
+
+    /// Equal by the ordered reads and causes, never by the index (derived from the reads).
+    impl PartialEq for UndecidableBasis {
+        fn eq(&self, other: &Self) -> bool {
+            self.refused_reads == other.refused_reads
+                && self.other_causes == other.other_causes
+                && self.unnamed_causes == other.unnamed_causes
+        }
+    }
+
+    impl Eq for UndecidableBasis {}
+
+    /// The ordered fields alone: a derived `Debug` printed the index, a map whose order differs from run to
+    /// run, into every assertion message and cell failure that showed a basis.
+    impl std::fmt::Debug for UndecidableBasis {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.debug_struct("UndecidableBasis")
+                .field("refused_reads", &self.refused_reads)
+                .field("other_causes", &self.other_causes)
+                .field("unnamed_causes", &self.unnamed_causes)
+                .finish()
+        }
+    }
+}
+
+pub(crate) use undecidable_basis::UndecidableBasis;
+
+/// How many undecidable reasons a sentence names before it counts the rest once: the markers' reasons a
+/// raise joins beside a refusal (`eval::binary_operation`) and the causes a fail-closed negation names
+/// (`FailBasis::other_causes`), one bound so a template of many failing resources cannot grow either text.
+pub(crate) const MARKER_REASONS_NAMED: usize = 4;
 
 /// One refused read a FAIL rests on: its text and the token the raise that met it carried (`None` for a
 /// read known by its registered text alone).
@@ -2143,25 +2370,50 @@ pub(crate) type RefusedRead = (String, Option<errors::RefusalToken>);
 impl FailBasis {
     /// An undecidable-born basis over `refused_reads` known by text alone, deduplicated in order.
     pub(crate) fn undecidable(refused_reads: Vec<String>) -> Self {
-        FailBasis::undecidable_reads(refused_reads.into_iter().map(|text| (text, None)).collect())
+        // No token to rank: the texts carry none.
+        FailBasis::undecidable_reads_under(
+            refused_reads.into_iter().map(|text| (text, None)).collect(),
+            &eval::no_frame_ranking,
+        )
     }
 
     /// An undecidable-born basis over `refused_reads` with their tokens, each text once in the order met;
-    /// a text met twice keeps its first position and the first token it was met with, else a later one.
+    /// a text met twice keeps its first position and the token the LIVE runs rank higher, the
+    /// later-minted at a tie (`UndecidableBasis::add_read`). For the cells that build bases directly and
+    /// hold no frames; production code hands the ranking it has (`undecidable_reads_under`).
+    #[cfg(test)]
     pub(crate) fn undecidable_reads(refused_reads: Vec<RefusedRead>) -> Self {
-        let mut reads: Vec<RefusedRead> = Vec::with_capacity(refused_reads.len());
-        for (text, token) in refused_reads {
-            match reads.iter_mut().find(|(known, _)| *known == text) {
-                Some((_, known_token)) => {
-                    if known_token.is_none() {
-                        *known_token = token;
-                    }
-                }
-                None => reads.push((text, token)),
-            }
+        FailBasis::undecidable_reads_under(refused_reads, &eval_context::live_runs_ranking())
+    }
+
+    /// [`FailBasis::undecidable_reads`] under the ranking of the frames the caller holds.
+    pub(crate) fn undecidable_reads_under(
+        refused_reads: Vec<RefusedRead>,
+        ranking: eval::Ranking<'_>,
+    ) -> Self {
+        FailBasis::Undecidable(UndecidableBasis::from_reads(refused_reads, ranking))
+    }
+
+    /// An undecidable-born basis that rests on an undecidable that is no refusal, with the text of the
+    /// error it was made from as its cause.
+    pub(crate) fn undecidable_for_cause(cause: String) -> Self {
+        FailBasis::Undecidable(UndecidableBasis::from_cause(cause))
+    }
+
+    /// The texts of the undecidables this FAIL rests on that are no refusal, in the order met, at most
+    /// `MARKER_REASONS_NAMED` of them; none for a decided no.
+    pub(crate) fn other_causes(&self) -> &[String] {
+        match self {
+            FailBasis::Decided => &[],
+            FailBasis::Undecidable(basis) => basis.other_causes(),
         }
-        FailBasis::Undecidable {
-            refused_reads: reads,
+    }
+
+    /// How many further distinct causes the FAIL rests on beyond the named ones.
+    pub(crate) fn causes_not_named(&self) -> usize {
+        match self {
+            FailBasis::Decided => 0,
+            FailBasis::Undecidable(basis) => basis.causes_not_named(),
         }
     }
 
@@ -2172,14 +2424,14 @@ impl FailBasis {
     /// Whether an undecidable-born FAIL rests on at least one REFUSAL (a read the registry holds), as
     /// against a budget-only undecidable: the refusal flag of the record that reports it.
     pub(crate) fn rests_on_a_refusal(&self) -> bool {
-        matches!(self, FailBasis::Undecidable { refused_reads } if !refused_reads.is_empty())
+        matches!(self, FailBasis::Undecidable(basis) if !basis.refused_reads().is_empty())
     }
 
     /// The refused reads an undecidable-born FAIL rests on, each with its token; none for a decided no.
     pub(crate) fn refused_reads(&self) -> &[RefusedRead] {
         match self {
             FailBasis::Decided => &[],
-            FailBasis::Undecidable { refused_reads } => refused_reads,
+            FailBasis::Undecidable(basis) => basis.refused_reads(),
         }
     }
 
@@ -2193,29 +2445,58 @@ impl FailBasis {
 
     /// The basis of a conjunction's FAIL from two failing branches' (`AND(no, unknown)` is `no`): decided
     /// when either is, else undecidable over both branches' reads.
+    /// A read both hold keeps the token the LIVE runs rank higher. For the cells that build bases directly;
+    /// every production fold holds frames and hands their ranking (`and_under`).
+    #[cfg(test)]
     pub(crate) fn and(self, other: FailBasis) -> FailBasis {
+        self.and_under(other, &eval_context::live_runs_ranking())
+    }
+
+    /// [`FailBasis::and`] under the ranking of the frames the caller holds.
+    pub(crate) fn and_under(self, other: FailBasis, ranking: eval::Ranking<'_>) -> FailBasis {
         match (self, other) {
             (FailBasis::Decided, _) | (_, FailBasis::Decided) => FailBasis::Decided,
-            (a, b) => a.joined_with(b),
+            (a, b) => a.joined_with(b, ranking),
         }
     }
 
     /// The basis of a disjunction's, a `some` block's or a `some` clause's FAIL from two failing branches'
     /// (`OR(no, unknown)` is unknown): decided only when both are, else undecidable over the undecidable
     /// branches' reads.
+    /// A read both hold keeps the token the LIVE runs rank higher. For the cells that build bases directly;
+    /// every production fold holds frames and hands their ranking (`or_under`).
+    #[cfg(test)]
     pub(crate) fn or(self, other: FailBasis) -> FailBasis {
+        self.or_under(other, &eval_context::live_runs_ranking())
+    }
+
+    /// [`FailBasis::or`] under the ranking of the frames the caller holds.
+    pub(crate) fn or_under(self, other: FailBasis, ranking: eval::Ranking<'_>) -> FailBasis {
         match (self, other) {
             (FailBasis::Decided, FailBasis::Decided) => FailBasis::Decided,
             (FailBasis::Decided, undecidable) | (undecidable, FailBasis::Decided) => undecidable,
-            (a, b) => a.joined_with(b),
+            (a, b) => a.joined_with(b, ranking),
         }
     }
 
-    /// Two undecidable bases as one, the reads of both in order, each once, tokens kept.
-    fn joined_with(self, other: FailBasis) -> FailBasis {
-        let mut reads = self.refused_reads().to_vec();
-        reads.extend(other.refused_reads().iter().cloned());
-        FailBasis::undecidable_reads(reads)
+    /// Two undecidable bases as one, the reads of both in order, each once, tokens kept; the causes of
+    /// both in order, each once, the first `MARKER_REASONS_NAMED` named and the rest kept in the ordered
+    /// set of the unnamed. `self` is the running total and is extended in place: only the reads and the
+    /// causes of `other` are looked up (the reads in the index, the causes among the named four and in the
+    /// ordered set), so a fold over N failing resources costs the size of each basis it adds, not the size
+    /// of the total built so far.
+    fn joined_with(self, other: FailBasis, ranking: eval::Ranking<'_>) -> FailBasis {
+        match (self, other) {
+            (FailBasis::Undecidable(running), FailBasis::Undecidable(added)) => {
+                FailBasis::Undecidable(running.joined_with(added, ranking))
+            }
+            // A decided basis adds nothing to a join.
+            (FailBasis::Undecidable(basis), FailBasis::Decided)
+            | (FailBasis::Decided, FailBasis::Undecidable(basis)) => FailBasis::Undecidable(basis),
+            (FailBasis::Decided, FailBasis::Decided) => FailBasis::Undecidable(
+                UndecidableBasis::from_reads(Vec::new(), &eval::no_frame_ranking),
+            ),
+        }
     }
 }
 
@@ -2223,7 +2504,7 @@ impl FailBasis {
 /// SKIP, or a FAIL WITH the basis it rests on (`FailBasis`). A basis exists on a FAIL alone, so every site
 /// that answers FAIL names one by construction and no PASS or SKIP can carry an undecidable into a cache or
 /// a fold (a status beside a basis admitted both). Carried by every function of the chain, answered and
-/// cached by `EvalContext::rule_status`, and read by the folds (`FailBasis::and`, `::or`) and by a
+/// cached by `EvalContext::rule_status`, and read by the folds (`FailBasis::and_under`, `::or_under`) and by a
 /// reference's `not` (`eval::negate_a_failed_rule`); the status-only wrappers (`eval::eval_guard_clause`,
 /// `eval_conjunction_clauses`, `eval_rule`, the cells') read `status` at leaves that feed no fold.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -2254,11 +2535,16 @@ impl Judged {
     }
 
     /// A fold's status with the basis its failing branches folded (`basis`, `None` while none failed):
-    /// a FAIL carries the folded basis (a decided no where the fold counted a FAIL no branch named a
-    /// basis for), a PASS or a SKIP none.
+    /// a FAIL carries the folded basis, a PASS or a SKIP none. A FAIL whose fold named no basis for any
+    /// branch (a count of FAILs that no branch folded a basis for) is undecidable with no read, which
+    /// fails closed: read as a decided no, one unpaired count of a FAIL over refused reads would make a
+    /// `not` over the rule pass. Both callers pair every FAIL they count with a folded basis, and assert
+    /// it (`debug_assert!` that a FAIL has a basis), so the default is a floor and not a path.
     pub(crate) fn folded(status: Status, basis: Option<FailBasis>) -> Judged {
         match status {
-            Status::FAIL => Judged::Fail(basis.unwrap_or(FailBasis::Decided)),
+            Status::FAIL => {
+                Judged::Fail(basis.unwrap_or_else(|| FailBasis::undecidable(Vec::new())))
+            }
             other => Judged::decided(other),
         }
     }

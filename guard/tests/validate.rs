@@ -2229,21 +2229,184 @@ mod validate_tests {
             "the gate fails closed and the run goes on to its exit code:\n{}",
             output
         );
-        assert!(
-            output.contains("(1) ")
-                && output.contains("then no kept entry holds a key the predicate names")
-                && output.contains("path /Cfg/A/Sub")
-                && output.contains("(2) "),
-            "the refusal is printed whole, numbered first, its remedy and path included, and the \
-             budget marker's reason follows it numbered second (a plain recorded message is cut at 320 \
-             characters, before the path):\n{}",
-            output
+        // Read on EVERY line that carries the numbered raise, not anywhere in the output: a path
+        // falling before the 320th character would keep a `contains` over the whole output green with
+        // the record's flag lost, and the cut's own marker (`...[N more characters cut]`) is what the
+        // flag keeps off that line. A candidate line is picked by the number AND the refusal
+        // sentence's OPENING, which precedes the 320-character cut, so a cut copy is a candidate too (a
+        // bare "(1) " also matches `gate(1)` or an earlier numbered message; the remedy, the path and
+        // the second part come AFTER the cut, so picking by any of them would drop exactly the cut copy
+        // the check exists to catch). There has to be at least one candidate, and every candidate is
+        // held to the four conditions: the remedy sentence, the path, the budget part numbered second,
+        // and no cut marker. `whole_raise_lines` is the filter and the loop as one function, so the
+        // planted control below runs through the same code as the output.
+        const THE_OPENING: &str = "then no kept entry holds a key the predicate names";
+        fn whole_raise_lines(output: &str) -> Result<usize, String> {
+            let candidates: Vec<&str> = output
+                .lines()
+                .filter(|line| line.contains("(1) ") && line.contains(THE_OPENING))
+                .collect();
+            if candidates.is_empty() {
+                return Err("no line carries the numbered raise with its opening".to_string());
+            }
+            for line in &candidates {
+                let whole = line.contains("Write `")
+                    && line.contains("path /Cfg/A/Sub")
+                    && line.contains("(2) ")
+                    && !line.contains("...[");
+                if !whole {
+                    return Err(format!("a candidate line is not the whole raise: {line}"));
+                }
+            }
+            Ok(candidates.len())
+        }
+        // The control: one whole line and one cut copy (the opening kept, the remedy and everything
+        // after it replaced by the cut marker) read RED through the same filter and loop. A check that
+        // passed this control would be passing a record that lost its flag behind a whole copy.
+        let planted = format!(
+            "    Message = (1) `[*]` {THE_OPENING}. `Key` is `Kind`, a key of the map itself. Write `X[*] {{ Key == value }}`, where `X` is `Cfg`, at path /Cfg/A/Sub (2) the budget's reason\n\
+             \x20   Message = (1) `[*]` {THE_OPENING}. `Key` is `Kind`, a key of the map itself. Wr...[180 more characters cut]\n"
         );
+        assert!(
+            whole_raise_lines(&planted).is_err(),
+            "the control (a whole line beside a cut copy) has to read red"
+        );
+        assert!(
+            whole_raise_lines(&format!("    Message = (1) `[*]` {THE_OPENING}. `Key` is `Kind`, a key of the map itself. Write `X[*] {{ Key == value }}`, where `X` is `Cfg`, at path /Cfg/A/Sub (2) the budget's reason\n")).is_ok(),
+            "the control's whole line alone has to read green"
+        );
+        if let Err(why) = whole_raise_lines(&output) {
+            panic!(
+                "the refusal is printed whole on every line that carries it, numbered first, its remedy \
+                 and path included, the budget marker's reason following it numbered second on the same \
+                 line, and no cut marker on that line (a plain recorded message is cut at 320 characters, \
+                 before the remedy and the path): {why}\n{}",
+                output
+            );
+        }
         assert!(
             !output.contains("bailing"),
             "the run continues, never bails:\n{}",
             output
         );
+    }
+
+    /// A rule that fails closed on a plain error names that error, and names a refusal settled beside
+    /// it only where the loop that met both completed.
+    ///
+    /// `M` is a one-object map holding an intrinsic beside the compared entry (a refused selection), and
+    /// the sibling whose body raises a converter's error (`parse_int` on a word) is either `L`, a list
+    /// (the first template), or `N`, a second one-object selection (the second template). In the
+    /// ASSERTION role (`rule check { .. }`) both shapes print two checks: the converter error's clause
+    /// record and the refusal's sentence, once each (the list shape completes the loop over the values
+    /// and folds the refusal after it; the one-object shape exits the block with the refusal settled,
+    /// and the sentence at `M`'s path is carried by the block's own exit record, the one written when the
+    /// body's read of the empty selection was refused, not by the settled per-value record, which has no
+    /// message). Behind a `when` GATE (a
+    /// parameterized rule the condition calls, `some` and every-value blocks alike) the error exits the
+    /// block, the rule fails closed on it, and the run prints the condition's sentence naming the error
+    /// and nothing about the refusal, whatever its own text: the refusal did not decide the verdict, and
+    /// `docs/CLAUSES.md` owes no line where the failing record is the report (the known issue is
+    /// written in `docs/KNOWN_ISSUES.md`, "a gate failing closed on a plain error does not name a
+    /// refusal settled beside it"). The test over both shapes holds the counts below, in the console and
+    /// in `-o json`, including the reads of the refusal's own path (absent from a gate's output, present
+    /// in the assertion's).
+    /// Red directions: the refusal's sentence or its path in a gate's output means a settled refusal now
+    /// renders there (the known issue is closed: update the item and the counts together); no refusal
+    /// sentence or no path in the assertion output means the settled or folded refusal is lost, the case
+    /// this pin guards.
+    #[test]
+    fn a_gate_failing_closed_on_a_plain_error_does_not_name_a_refusal_settled_beside_it() {
+        const THE_CONVERTERS_ERROR: &str = "failed to convert a string: prod into an integer";
+        const THE_CONDITIONS_SENTENCE: &str =
+            "The rule's condition could not be evaluated, so the rule fails rather than being treated as not applicable";
+        const THE_REFUSAL: &str =
+            "The block's body read the empty selection a one-object filter left";
+        // The refused map's own path: a gate that named the refusal would print it, and the assertion's
+        // refusal sentence ends with it.
+        const THE_REFUSED_MAPS_PATH: &str = "/Resources/M/Tags";
+        fn run_one(
+            data_file: &str,
+            rules_file: &str,
+            output_format: Option<&str>,
+        ) -> (i32, String) {
+            let mut reader = Reader::default();
+            let mut writer = Writer::new(WBVec(vec![])).expect("Failed to create writer.");
+            let mut runner = ValidateTestRunner::default();
+            let runner = runner.data(vec![data_file]).rules(vec![rules_file]);
+            let status_code = match output_format {
+                Some(format) => runner
+                    .output_format(Some(format))
+                    .show_summary(vec!["none"])
+                    .run(&mut writer, &mut reader),
+                None => runner
+                    .show_summary(vec!["all"])
+                    .run(&mut writer, &mut reader),
+            };
+            (
+                status_code,
+                writer.stripped().expect("failed to read the writer"),
+            )
+        }
+        for (data_file, shape) in [
+            ("refused-map-beside-a-list-template.json", "list sibling"),
+            (
+                "refused-map-beside-a-one-object-template.json",
+                "one-object sibling",
+            ),
+        ] {
+            for (format, label) in [(None, "console"), (Some("json"), "json")] {
+                let (gate_status, gate_output) = run_one(
+                    data_file,
+                    "gate_failing_closed_beside_a_settled_refusal.guard",
+                    format,
+                );
+                assert_eq!(
+                    StatusCode::VALIDATION_ERROR,
+                    gate_status,
+                    "({shape}, {label}) both gated rules fail closed on the converter's error:\n{gate_output}"
+                );
+                assert_eq!(
+                    (2, 2, 0, 0),
+                    (
+                        gate_output.matches(THE_CONDITIONS_SENTENCE).count(),
+                        gate_output.matches(THE_CONVERTERS_ERROR).count(),
+                        gate_output.matches(THE_REFUSAL).count(),
+                        gate_output.matches(THE_REFUSED_MAPS_PATH).count()
+                    ),
+                    "({shape}, {label}) each gated rule prints the condition's sentence naming the \
+                     converter's error once, and neither the refusal sentence nor the refused map's \
+                     path:\n{gate_output}"
+                );
+
+                let (assert_status, assert_output) = run_one(
+                    data_file,
+                    "assertion_failing_beside_a_settled_refusal.guard",
+                    format,
+                );
+                assert_eq!(
+                    StatusCode::VALIDATION_ERROR,
+                    assert_status,
+                    "({shape}, {label}) the asserted rule fails:\n{assert_output}"
+                );
+                assert_eq!(
+                    (1, 1, 0, true),
+                    (
+                        assert_output.matches(THE_CONVERTERS_ERROR).count(),
+                        assert_output.matches(THE_REFUSAL).count(),
+                        assert_output.matches(THE_CONDITIONS_SENTENCE).count(),
+                        // The line (console) or the error message (json) that carries the refusal
+                        // also names the refused map's path.
+                        assert_output
+                            .lines()
+                            .filter(|line| line.contains(THE_REFUSAL))
+                            .all(|line| line.contains(THE_REFUSED_MAPS_PATH))
+                    ),
+                    "({shape}, {label}) the asserted rule prints the converter's error once and the \
+                     refusal once at the refused map's path, and no condition sentence:\n{assert_output}"
+                );
+            }
+        }
     }
 
     /// A resource keyed by three hundred right-to-left overrides keeps the console's line under its bound.

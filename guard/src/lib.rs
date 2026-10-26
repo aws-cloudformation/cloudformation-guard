@@ -725,6 +725,252 @@ mod cfn_guard_lib_tests {
             .output_format(format)
     }
 
+    /// A clause whose right-hand values are all markers (the map-key filter's right-hand side does not
+    /// resolve for any of three maps) fails the rule closed, and the record the clause writes for it, the
+    /// clause-error shape written by `eval_guard_access_clause`'s arm for a FAIL that rests on undecidable
+    /// reads, reaches the structured report: the sentence "when handling clause" and the first map's
+    /// reason are in the json, and `not check` over it fails closed with the record naming the causes of
+    /// the other maps (`/Resources/Q2/`, `/Resources/Q3/`), which only the joined basis produces. This is
+    /// the rendering path the recorded-explanations census asks for.
+    ///
+    /// Expected, not yet run. Red: the report lacks "FAIL", "when handling clause" or the first map's
+    /// reason (the record was written and dropped); no message in the parsed report carries the
+    /// fail-closed phrase (the negation's record was not written); or a message with the phrase omits
+    /// `/Resources/Q2/` or `/Resources/Q3/` (the Err path named the first map alone, the joined basis was
+    /// thrown away).
+    #[test]
+    fn a_clause_that_fails_closed_on_several_undecided_markers_reaches_the_structured_report() {
+        const RULE: &str = "let missing = Resources.*.Properties.M[ keys == Missing ]\nrule check { Resources.Q1.Properties.M.PROD IN %missing }\nrule main { not check }\n";
+        const TEMPLATE: &str = "Resources:\n  Q1:\n    Properties:\n      M:\n        PROD: 1\n  Q2:\n    Properties:\n      M:\n        PROD: 1\n  Q3:\n    Properties:\n      M:\n        PROD: 1\n";
+        let document = structured_builder(OutputFormatType::JSON)
+            .try_build_and_execute(&payload(&[RULE], &[TEMPLATE]))
+            .unwrap();
+        for expected in [
+            "FAIL",
+            "when handling clause",
+            "the right-hand side of the key filter did not resolve at /Resources/Q1/Properties/M",
+        ] {
+            assert!(
+                document.contains(expected),
+                "the report must carry {:?}; got:\n{}",
+                expected,
+                document
+            );
+        }
+        // Only the Ok path (the joined basis) produces the negation's record naming the causes beyond
+        // the first; the Err path would name the first map alone. The let's key-filter records also
+        // name Q2 and Q3, so the paths are asserted on the ONE message that carries the phrase, found
+        // by parsing the report and not by searching the whole document.
+        fn strings_with<'a>(value: &'a serde_json::Value, phrase: &str, out: &mut Vec<&'a str>) {
+            match value {
+                serde_json::Value::String(text) if text.contains(phrase) => out.push(text),
+                serde_json::Value::Array(items) => items
+                    .iter()
+                    .for_each(|item| strings_with(item, phrase, out)),
+                serde_json::Value::Object(map) => map
+                    .values()
+                    .for_each(|item| strings_with(item, phrase, out)),
+                _ => {}
+            }
+        }
+        let parsed: serde_json::Value = serde_json::from_str(&document).unwrap();
+        let mut closed = Vec::new();
+        strings_with(
+            &parsed,
+            "failed only on reads it could not decide",
+            &mut closed,
+        );
+        assert!(
+            !closed.is_empty(),
+            "the report must carry a message with the phrase; got:\n{}",
+            document
+        );
+        for message in &closed {
+            for path in ["/Resources/Q2/", "/Resources/Q3/"] {
+                assert!(
+                    message.contains(path),
+                    "the message with the phrase must name {:?}; it reads {:?}",
+                    path,
+                    message
+                );
+            }
+        }
+    }
+
+    /// A rule that exits with the failure code is explained in the structured report: the rule's `checks`
+    /// are not empty. The rule is a block over `Tags[*][ Key == 'Env' ]` whose body meets a converter's
+    /// error (`parse_int` on a word) beside a map whose filter is refused, the shape of a refused
+    /// one-object selection settled before the block exits; a report that lists the rule with empty
+    /// `checks` and null messages (the run that found this: status FAIL, exit 19, nothing else) explains
+    /// nothing. The report's walker falls back to a failing block's own record when its children report
+    /// nothing. The rule is in the ASSERTION role, so the block leaves through the alone exit or the strict
+    /// per-value record, which already carry the refusal's sentence: this cell pins that exit's output, not
+    /// the gate and filter roles' block record (the cells after this one do).
+    ///
+    /// Expected, not yet run. Red: the rule is listed with empty `checks`, the check lacks the refused
+    /// map's path (the sentence is not carried), or it is the generic fallback; the failure text prints
+    /// the whole document.
+    #[test]
+    fn a_failing_rule_whose_block_children_report_nothing_still_lists_a_check() {
+        const RULE: &str = "let kind = Resources.A.Kind\nrule check { Resources.*.Tags[*][ Key == 'Env' ] { Value == 'prod'\n let n = parse_int(%kind)\n %n == 1 } }\n";
+        const TEMPLATE: &str = "Resources:\n  A:\n    Kind: 'abc'\n    Tags:\n      Env: 'dev'\n      ENV:\n        Ref: 'Stage'\n  B:\n    Tags:\n      Value: 'prod'\n      Other: 'o'\n";
+        let document = structured_builder(OutputFormatType::JSON)
+            .try_build_and_execute(&payload(&[RULE], &[TEMPLATE]))
+            .unwrap();
+        let report: serde_json::Value =
+            serde_json::from_str(&document).expect("the document is JSON");
+        let checks = report[0]["not_compliant"][0]["Rule"]["checks"]
+            .as_array()
+            .map(|checks| checks.len());
+        assert!(
+            checks.is_some_and(|count| count > 0),
+            "the rule fails with exit 19 and must list a check; got:\n{}",
+            document
+        );
+        // The check carries the refusal's SENTENCE (it names the refused map's path), not the reporter's
+        // generic fallback, which is no refusal's and only stands for a record with no message.
+        let listed = report[0]["not_compliant"][0]["Rule"]["checks"].to_string();
+        assert!(
+            listed.contains("/Resources/A/Tags"),
+            "the listed check must carry the refusal's sentence; got:\n{}",
+            document
+        );
+        assert!(
+            !listed.contains("none of the checks recorded under it reports why"),
+            "the generic fallback must not stand for a record that has a sentence; got:\n{}",
+            document
+        );
+    }
+
+    /// The strings in `value` that contain `needle`, in document order.
+    fn strings_containing<'a>(value: &'a serde_json::Value, needle: &str, out: &mut Vec<&'a str>) {
+        match value {
+            serde_json::Value::String(text) if text.contains(needle) => out.push(text),
+            serde_json::Value::Array(items) => items
+                .iter()
+                .for_each(|item| strings_containing(item, needle, out)),
+            serde_json::Value::Object(map) => map
+                .values()
+                .for_each(|item| strings_containing(item, needle, out)),
+            _ => {}
+        }
+    }
+
+    /// The messages in the `checks` of the failing rule named `rule_name` that name the refused map's path,
+    /// for a rules file over the template of the cell above. The rules file must load: a fixture that did
+    /// not parse would read as a count of none, so a load error fails here.
+    fn refused_map_messages_in_checks(rule: &str, rule_name: &str) -> (Vec<String>, String) {
+        const TEMPLATE: &str = "Resources:\n  A:\n    Kind: 'abc'\n    Tags:\n      Env: 'dev'\n      ENV:\n        Ref: 'Stage'\n  B:\n    Tags:\n      Value: 'prod'\n      Other: 'o'\n";
+        let document = structured_builder(OutputFormatType::JSON)
+            .try_build_and_execute(&payload(&[rule], &[TEMPLATE]))
+            .unwrap();
+        let report: serde_json::Value =
+            serde_json::from_str(&document).expect("the document is JSON");
+        let errors = &report[0]["rule_file_errors"];
+        assert!(
+            errors.is_null()
+                || errors.as_array().is_some_and(|errors| errors.is_empty())
+                || errors.as_object().is_some_and(|errors| errors.is_empty()),
+            "the rules file must load; got:\n{}",
+            document
+        );
+        // One entry of `checks` is one listing for a reader. The strings that name the path are joined per
+        // entry: a record may carry its sentence in two fields (the sentence and its `Error = [..]` framing),
+        // which is one listing, where two entries are two.
+        let mut found = Vec::new();
+        for failing in report[0]["not_compliant"].as_array().into_iter().flatten() {
+            let rule = &failing["Rule"];
+            if rule["name"] == rule_name {
+                for entry in rule["checks"].as_array().into_iter().flatten() {
+                    let mut strings = Vec::new();
+                    strings_containing(entry, "/Resources/A/Tags", &mut strings);
+                    if !strings.is_empty() {
+                        found.push(strings.join(" | "));
+                    }
+                }
+            }
+        }
+        (found, document)
+    }
+
+    /// Every string anywhere in the failing rule `rule_name`'s entry (its message AND its checks) that
+    /// names the refused map's path, and the document.
+    fn refused_map_strings_in_rule(rule: &str, rule_name: &str) -> (Vec<String>, String) {
+        const TEMPLATE: &str = "Resources:\n  A:\n    Kind: 'abc'\n    Tags:\n      Env: 'dev'\n      ENV:\n        Ref: 'Stage'\n  B:\n    Tags:\n      Value: 'prod'\n      Other: 'o'\n";
+        let document = structured_builder(OutputFormatType::JSON)
+            .try_build_and_execute(&payload(&[rule], &[TEMPLATE]))
+            .unwrap();
+        let report: serde_json::Value =
+            serde_json::from_str(&document).expect("the document is JSON");
+        let errors = &report[0]["rule_file_errors"];
+        assert!(
+            errors.is_null()
+                || errors.as_array().is_some_and(|errors| errors.is_empty())
+                || errors.as_object().is_some_and(|errors| errors.is_empty()),
+            "the rules file must load; got:\n{}",
+            document
+        );
+        let mut found = Vec::new();
+        for failing in report[0]["not_compliant"].as_array().into_iter().flatten() {
+            if failing["Rule"]["name"] == rule_name {
+                strings_containing(&failing["Rule"], "/Resources/A/Tags", &mut found);
+            }
+        }
+        (found.into_iter().map(String::from).collect(), document)
+    }
+
+    /// A refused one-object selection met by a block that is a `when` GATE reaches the structured report
+    /// exactly once across the gated rule's whole entry, message included. The rule fails closed on its
+    /// condition, and carries the condition's explanation, the refusal's sentence among it, as its own
+    /// message; that message beats a silent block's generic sentence, so the walker does not descend into
+    /// the failed condition and `checks` stays empty (the console names such a rule by its message when
+    /// its checks are empty). The sentence is therefore in the message once and not in `checks`.
+    ///
+    /// The condition is a call of a parameterized rule whose body is the block (a block clause is not a
+    /// condition clause itself: the first version of this fixture wrote one there and did not load), so the
+    /// block runs in the gate role under the rule's `when` condition record.
+    ///
+    /// Expected, not yet run. Red: the rules file does not load; no string in the rule's entry names the
+    /// refused map (the rule's message does not carry it); or two do (the block's record is also walked
+    /// into `checks`). The fixture reaches the gate role's raising exit by reading, not by a run.
+    #[test]
+    fn a_when_gates_refused_block_reaches_the_structured_report_once() {
+        const RULE: &str = "rule gate(r) { %r.*.Tags[*][ Key == 'Env' ] { Value == 'prod' } }\nrule check when gate(Resources) { Resources exists }\n";
+        let (strings, document) = refused_map_strings_in_rule(RULE, "check");
+        assert_eq!(
+            1,
+            strings.len(),
+            "the refused map's sentence must appear once in the rule's entry; got {:?} from:\n{}",
+            strings,
+            document
+        );
+    }
+
+    /// The same selection refused inside a FILTER PREDICATE (the block is a clause of the predicate, so the
+    /// fold raises it as the entry's undecided reason in the filter role) is listed in `checks` exactly
+    /// once. A run of the first version counted two STRINGS: the bare sentence and the same sentence inside
+    /// `Error = [..]`, both from the clause's own records (the block's record sits under the `Filter`
+    /// record, which the walker does not visit). By the reporter's own account (the structured reporters
+    /// append a record's message to `error_message`, the console prints it in the `Error = [..]` slot) the
+    /// two strings may be one record's two fields, which is one listing for a reader, so the count is of
+    /// `checks` ENTRIES that name the path, not of strings. If the two strings are two entries, this reads 2
+    /// and the clause-error record and the per-value record both list the refusal: then one of them drops it.
+    ///
+    /// Expected, not yet run. Red: no entry of `checks` names the refused map, or two entries do.
+    #[test]
+    fn a_filter_predicates_refused_block_reaches_the_structured_report_once() {
+        const RULE: &str =
+            "rule check { Resources.*[ Tags[*][ Key == 'Env' ] { Value == 'prod' } ] !empty }\n";
+        let (messages, document) = refused_map_messages_in_checks(RULE, "check");
+        assert_eq!(
+            1,
+            messages.len(),
+            "the refused map's sentence must be listed once in `checks`; got {:?} from:\n{}",
+            messages,
+            document
+        );
+    }
+
     /// The notices a console run over `rules` and `data` records, read from the writer the run
     /// wrote through. A test that asserts a notice is absent from the entry's message first shows
     /// here that the run wrote one; otherwise the absence is not a measurement.
