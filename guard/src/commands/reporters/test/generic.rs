@@ -232,12 +232,14 @@ impl<'report> GenericReporter<'report> {
             }),
         );
 
-        // The rule's sentence where its failed condition met refusals beside the error that decided it
-        // (`Messages::parts`): `test` prints per-rule statuses and no messages, and the refused-read line
-        // that used to name such a refusal is not written for this shape, so an unmet expectation on such a
-        // rule says why here, with the refusal in it.
-        // Built on the first unmet expectation and not before: a case whose expectations all matched
-        // never needs the report walk.
+        // The rule's sentence where its OWN `when` failed closed on refusals (several joined to the
+        // sentence beside the error that decided it, `Messages::parts`, or one alone as the sentence):
+        // `test` prints per-rule statuses and no messages, and no refused-read line is written for this
+        // shape, so a rule evaluated FAIL says why here, with the refusal in it, whatever the expectation
+        // on it: on the unmet line, and on the met line of a FAIL expectation. A rule whose body assertion
+        // failed on a refusal is explained by its checks and carries no reason here. Built on the first
+        // rule that is evaluated FAIL or whose expectation is unmet, and not before: a case whose rules
+        // all passed or were skipped as expected never needs the report walk.
         let mut joined_reasons: Option<HashMap<String, String>> = None;
 
         for (rule_name, rule) in by_rules {
@@ -256,10 +258,21 @@ impl<'report> GenericReporter<'report> {
 
             match matched {
                 Some(status) => {
+                    let reason = match status {
+                        Status::FAIL => joined_reasons
+                            .get_or_insert_with(|| joined_rule_reasons(&top, ReasonForm::Console))
+                            .get(rule_name),
+                        _ => None,
+                    };
                     by_result
                         .entry(String::from("PASS"))
                         .or_insert_with(indexmap::IndexSet::new)
-                        .insert(format!("{rule_name}: Expected = {status}"));
+                        .insert(match reason {
+                            Some(reason) => {
+                                format!("{rule_name}: Expected = {status}, Reason = {reason}")
+                            }
+                            None => format!("{rule_name}: Expected = {status}"),
+                        });
                 }
 
                 None => {

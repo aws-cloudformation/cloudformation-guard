@@ -1417,6 +1417,177 @@ mod test_command_tests {
         );
     }
 
+    /// A FAIL expectation MET on a rule that failed closed on two refusals still says why, in every output:
+    /// the met line of the plain report reads `<rule>: Expected = FAIL, Reason = <sentence>`, `json` and
+    /// `yaml` carry `reason` on the passed rule, and `junit` writes the sentence as the passed case's
+    /// `<system-out>` text. Both gated rules of the rules file fail closed on one map's refusal with the
+    /// other map's beside it, so each reason names both refused maps, and names each once: two refusals
+    /// joined by one `; the condition also met: `, never a third.
+    ///
+    /// Fails when a met FAIL line carries no reason, when a reason names one map only or carries two
+    /// joiners (a refusal told twice), when the plain line takes the unmet shape (`Evaluated =`), or when
+    /// the junit case is written as a failure.
+    #[rstest]
+    #[case(None)]
+    #[case(Some("json"))]
+    #[case(Some("yaml"))]
+    #[case(Some("junit"))]
+    fn a_met_fail_expectation_on_a_rule_that_failed_closed_on_two_refusals_says_why(
+        #[case] output: Option<&str>,
+    ) {
+        let mut reader = Reader::default();
+        let mut writer =
+            Writer::new_with_err(WBVec(vec![]), WBVec(vec![])).expect("Failed to create writer.");
+        let mut runner = TestCommandTestRunner::default();
+        let runner = runner
+            .test_data(Option::from(
+                "resources/test-command/refusal-beside-a-gates-error/two-refusals-expected-fail.yaml",
+            ))
+            .rules(Some(
+                "resources/validate/gate_failing_closed_on_a_refusal_beside_a_second_refusal.guard",
+            ));
+        let _ = match output {
+            Some(format) => runner.output_format(format).run(&mut writer, &mut reader),
+            None => runner.run(&mut writer, &mut reader),
+        };
+        let stdout = writer.stripped().expect("failed to read stdout");
+        let names_each_once = |text: &str| {
+            text.contains("/Resources/M1/Tags")
+                && text.contains("/Resources/M2/Tags")
+                && text.matches("; the condition also met: ").count() == 1
+        };
+        let reason_marker = match output {
+            None => "Expected = FAIL, Reason = ",
+            Some("json") => "\"reason\": ",
+            Some("yaml") => "reason: ",
+            Some(_) => "<system-out>Reason = ",
+        };
+        let reasons: Vec<&str> = stdout
+            .lines()
+            .filter(|line| line.contains(reason_marker))
+            .collect();
+        let no_other_shape = match output {
+            None => !stdout.contains("Evaluated ="),
+            Some("junit") => {
+                !stdout.contains("<failure") && stdout.matches("status=\"pass\"").count() == 2
+            }
+            Some(_) => !stdout.contains("\"expected\"") && !stdout.contains("expected: "),
+        };
+        assert!(
+            reasons.len() == 2 && reasons.iter().all(|line| names_each_once(line)) && no_other_shape,
+            "both met FAIL lines carry a reason naming each refused map once, in the met shape:\n{}",
+            stdout
+        );
+    }
+
+    /// A rule that failed closed on ONE refusal, with nothing joined to its sentence, carries that sentence
+    /// as its reason: an unmet PASS expectation on a rule whose `when` holds one filter read over a scalar
+    /// `Tags` (refused) and whose body never runs names the refused map exactly once after `Reason = ` in
+    /// the plain report, under `reason` in `json` and `yaml`, and after `Reason = ` in the junit failure
+    /// text, with no `; the condition also met: ` joiner, since there is no second refusal to join. The
+    /// two-refusal fixture is not this shape: its gates have a block body whose read of the empty selection
+    /// is refused too, so the sentence there joins two refusals.
+    ///
+    /// Fails when the unmet line carries no reason (the reporters keyed on a joined sentence only), when
+    /// the reason names the map twice or not at all, or when it carries a joiner.
+    #[rstest]
+    #[case(None)]
+    #[case(Some("json"))]
+    #[case(Some("yaml"))]
+    #[case(Some("junit"))]
+    fn an_unmet_expectation_on_a_rule_that_failed_closed_on_one_refusal_carries_its_sentence(
+        #[case] output: Option<&str>,
+    ) {
+        let mut reader = Reader::default();
+        let mut writer =
+            Writer::new_with_err(WBVec(vec![]), WBVec(vec![])).expect("Failed to create writer.");
+        let mut runner = TestCommandTestRunner::default();
+        let runner = runner
+            .test_data(Option::from(
+                "resources/test-command/refusal-beside-a-gates-error/one-refusal.yaml",
+            ))
+            .rules(Some(
+                "resources/test-command/refusal-beside-a-gates-error/one-refusal.guard",
+            ));
+        let _ = match output {
+            Some(format) => runner.output_format(format).run(&mut writer, &mut reader),
+            None => runner.run(&mut writer, &mut reader),
+        };
+        let stdout = writer.stripped().expect("failed to read stdout");
+        let reason_marker = match output {
+            None => ", Reason = ",
+            Some("json") => "\"reason\": ",
+            Some("yaml") => "reason: ",
+            Some(_) => ", Reason = ",
+        };
+        let reasons: Vec<&str> = stdout
+            .lines()
+            .filter(|line| line.contains(reason_marker))
+            .collect();
+        assert!(
+            reasons.len() == 1
+                && reasons.iter().all(|line| {
+                    line.matches("/Resources/M1/Tags").count() == 1
+                        && !line.contains("the condition also met")
+                }),
+            "the unmet line carries the rule's own refusal sentence, naming the map once, with nothing joined:\n{}",
+            stdout
+        );
+    }
+
+    /// Where no refusal decided a rule, no reason is written, and the output is what it was before a
+    /// passed rule could carry one: a rule evaluated PASS under a met expectation, and a rule that failed
+    /// on a plain comparison (a key the document lacks) under a call with an author's `<< >>` text, met by a
+    /// FAIL expectation. The plain lines read `passes: Expected = PASS` and `author_body: Expected = FAIL`
+    /// with nothing after; the `json` records are the two-field objects pinned here, with no `reason` key.
+    /// The `json` check is on the quoted key, since the report's `rule_file` names the fixture file and
+    /// that name holds the word.
+    ///
+    /// Fails when either line gains a `Reason`, when the author's text is written as one, or when a
+    /// `"reason"` key (null or otherwise) appears in the `json`.
+    #[rstest]
+    #[case(None)]
+    #[case(Some("json"))]
+    fn a_passed_rule_and_a_plain_failure_under_an_author_text_carry_no_reason(
+        #[case] output: Option<&str>,
+    ) {
+        let mut reader = Reader::default();
+        let mut writer =
+            Writer::new_with_err(WBVec(vec![]), WBVec(vec![])).expect("Failed to create writer.");
+        let mut runner = TestCommandTestRunner::default();
+        let runner = runner
+            .test_data(Option::from(
+                "resources/test-command/refusal-beside-a-gates-error/no-reason-controls.yaml",
+            ))
+            .rules(Some(
+                "resources/test-command/refusal-beside-a-gates-error/no-reason-controls.guard",
+            ));
+        let _ = match output {
+            Some(format) => runner.output_format(format).run(&mut writer, &mut reader),
+            None => runner.run(&mut writer, &mut reader),
+        };
+        let stdout = writer.stripped().expect("failed to read stdout");
+        match output {
+            None => assert!(
+                stdout.contains("passes: Expected = PASS\n")
+                    && stdout.contains("author_body: Expected = FAIL\n")
+                    && !stdout.contains("Reason")
+                    && !stdout.contains("the author says so"),
+                "both met lines end at the status, with no reason and no author text:\n{}",
+                stdout
+            ),
+            Some(_) => assert!(
+                stdout.contains(
+                    "        {\n          \"name\": \"passes\",\n          \"evaluated\": \"PASS\"\n        }"
+                ) && stdout.contains(
+                    "        {\n          \"name\": \"author_body\",\n          \"evaluated\": \"FAIL\"\n        }"
+                ) && !stdout.contains("\"reason\""),
+                "both passed records are the two-field objects, with no reason key:\n{}",
+                stdout
+            ),
+        }
+    }
+
     /// An expectation for a parameterized rule is not told it names nothing.
     ///
     /// It does name something. `eval_rules_file` walks `guard_rules` only, and a parameterized rule

@@ -238,6 +238,8 @@ Name: "MyTest4"
     check_rest_api_is_private: Expected = PASS, Evaluated = PASS
 ```
 
+A rule whose `when` condition fails closed on a refusal (a read the evaluator refused, an intrinsic function beside the compared value for instance) is evaluated `FAIL`, and its line says why whatever the expectation on it: the default output ends the line with `, Reason = <the rule's sentence>`, on a met `Expected = FAIL` line as on an unmet one, the `json` and `yaml` outputs carry the sentence under `reason` on that rule's entry in `passed_rules` or `failed_rules`, and the `junit` output writes it as the passed case's `<system-out>` element or in the failed case's failure text.
+
 ### How do I know that `EndpointConfiguration` check did indeed succeed for PASS case?
 
 When testing you can specify the `--verbose` flag that lets you inspect evaluation results. [Before you ask, yes we plan to expose clause success failure summary like validate, but currently we have verbose as the option]. Often verbose context is needed to understand the evaluations. For this run, let us test only the last input, so you should comment out the earlier tests for this run (or create a file with this single input). Here is how it would look:

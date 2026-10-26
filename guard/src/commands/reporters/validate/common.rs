@@ -31,8 +31,8 @@ use serde::Serialize;
 use crate::commands::tracker::StatusContext;
 use crate::rules::eval_context::{
     find_skip_reason, BinaryCheck, BinaryComparison, ClauseReport, EventRecord, FileReport,
-    GuardClauseReport, InComparison, Messages, PartsJoin, RuleReport, SentenceSlot, UnaryCheck,
-    UnaryComparison, ValueComparisons, ValueUnResolved,
+    GuardClauseReport, InComparison, Messages, PartsJoin, RuleReport, SentenceParts, SentenceSlot,
+    UnaryCheck, UnaryComparison, ValueComparisons, ValueUnResolved,
 };
 
 use crate::rules::path_value::traversal::Traversal;
@@ -736,28 +736,51 @@ fn joined_console_text(
     joined_console_parts(messages, slot, bound).map(|(joined, _)| joined)
 }
 
-/// A rule's sentence that gained refusals, through the console's one pipeline (`joined_console_text`), for
-/// the PLAIN reporter of `test`, which prints a verdict per rule and no messages: the sentence is its
-/// `Reason`, on one line, escaped and bounded as the console bounds it. `None` for a rule whose sentence
-/// gained nothing. The structured reporters of `test` carry the raw parts whole instead
-/// (`joined_rule_sentence_raw`).
+/// The sentence a rule's failure rests on when a refusal decided it, through the console's one pipeline, for
+/// the PLAIN reporter of `test`, which prints a verdict per rule and no messages: the sentence is the rule's
+/// `Reason`, on one line, escaped and bounded as the console bounds it. Two shapes carry one. A sentence
+/// that gained refusals (`Messages::parts`, the refusals joined beside the error that decided the rule,
+/// whatever that error's kind) goes through `joined_console_text`, the plain head cut at its bound and the
+/// refusals bounded once. A rule that failed closed on ONE refusal has nothing joined and its sentence in
+/// `custom_message` with the refusal's slot (`own_refusal_sentence`): that sentence goes through the
+/// refusal pipeline whole, as a refusal-headed line does. `None` for a rule whose sentence is neither: a
+/// plain error with nothing joined, or an author's `<< >>` text, is no reason. The structured reporters of
+/// `test` carry the same sentences raw (`joined_rule_sentence_raw`).
 pub(crate) fn joined_rule_sentence(rule: &RuleReport<'_>) -> Option<String> {
-    let slot = match rule.messages.parts.as_ref()?.join() {
-        PartsJoin::Refusals { slot } => slot,
-        PartsJoin::Clause => return None,
-    };
-    joined_console_text(&rule.messages, slot, HeadBound::Plain)
+    match rule.messages.parts.as_ref().map(SentenceParts::join) {
+        Some(PartsJoin::Refusals { slot }) => {
+            joined_console_text(&rule.messages, slot, HeadBound::Plain)
+        }
+        _ => own_refusal_sentence(rule)
+            .map(|sentence| bounded_for_the_console(sentence, Origin::Refusal)),
+    }
 }
 
-/// A rule's sentence that gained refusals, raw and whole (the head, the join, the refusals), for the
-/// STRUCTURED reporters of `test` (`json`, `yaml`, `junit`): no cut and no console escape, since the
-/// serializer or the junit writer does its own escaping and the structured outputs carry every part whole.
-/// `None` for a rule whose sentence gained nothing.
+/// The sentence a rule's failure rests on when a refusal decided it, raw and whole, for the STRUCTURED
+/// reporters of `test` (`json`, `yaml`, `junit`): no cut and no console escape, since the serializer or the
+/// junit writer does its own escaping and the structured outputs carry every part whole. The two shapes of
+/// [`joined_rule_sentence`]: the joined sentence (the head, the join, the refusals), else the rule's own
+/// refusal sentence (`own_refusal_sentence`). `None` for a rule whose sentence is neither.
 pub(crate) fn joined_rule_sentence_raw(rule: &RuleReport<'_>) -> Option<String> {
-    let parts = rule.messages.parts.as_ref()?;
-    match parts.join() {
-        PartsJoin::Refusals { .. } => Some(parts.refusals_text()),
-        PartsJoin::Clause => None,
+    match rule.messages.parts.as_ref().map(SentenceParts::join) {
+        Some(PartsJoin::Refusals { .. }) => rule
+            .messages
+            .parts
+            .as_ref()
+            .map(SentenceParts::refusals_text),
+        _ => own_refusal_sentence(rule).map(str::to_string),
+    }
+}
+
+/// A rule's own sentence where it is a refusal's and nothing is joined to it: the `custom_message` when the
+/// record says that slot holds a refusal's text (`RuleReport::custom_slot`, `CustomSlot::Refusal`), which is
+/// how a rule that failed closed on one refusal in its own `when` is recorded. An author's `<< >>` body
+/// (`CustomSlot::Author`) and an evaluator's sentence that is no refusal's (`CustomSlot::Evaluator`) are
+/// not a reason: the first is the author's prose, the second named no refusal.
+fn own_refusal_sentence<'report>(rule: &'report RuleReport<'_>) -> Option<&'report str> {
+    match rule.custom_slot {
+        CustomSlot::Refusal => rule.messages.custom_message.as_deref(),
+        CustomSlot::Author | CustomSlot::Evaluator => None,
     }
 }
 
@@ -4591,6 +4614,106 @@ mod retrieval_error_tests {
             ),
             (text, cut, layout),
             "a head over the bound is cut at it, the flag says so, and the refusal stays whole"
+        );
+    }
+
+    /// The `test` command's reason for a rule (`joined_rule_sentence` for the plain reporter,
+    /// `joined_rule_sentence_raw` for the structured ones) is read from two shapes and nothing else, over
+    /// the record's custom slot kind crossed with whether its sentence joined refusals. With refusals
+    /// joined (`SentenceParts`, the Refusals join), every slot kind yields the joined text, whole in both
+    /// forms for a short control-free sentence. With nothing joined, only a record whose slot holds a
+    /// REFUSAL's sentence yields it: the raw form is the sentence as recorded, and the console form goes
+    /// through the refusal pipeline (one line, its line break as `; `, a raw ESC as its escape, and a
+    /// sentence over the refusal backstop cut there with the refusal marker). An author's `<< >>` body and
+    /// an evaluator's sentence that is no refusal's yield `None` with nothing joined: the first is the
+    /// author's prose, the second named no refusal.
+    ///
+    /// Fails when the Refusal-slot row with nothing joined yields `None` (the fallback removed), when an
+    /// Author or Evaluator row with nothing joined yields a text (the slot test widened), when a joined
+    /// row's text differs between the slots, when the console form keeps a raw ESC or a line break, or when
+    /// the over-backstop sentence is printed whole or without the marker.
+    #[test]
+    fn a_rules_test_reason_is_its_joined_sentence_or_its_own_refusal_sentence_and_nothing_else() {
+        use crate::rules::eval_context::{RuleReport, SentenceParts, SentenceSlot, ALSO_MET};
+        use crate::rules::CustomSlot;
+        let head = "the condition could not be evaluated";
+        let refusal = "the read of `A` was refused, at path /Resources/A/Tags";
+        let own = "the read of `\u{1b}[31mA\u{1b}[0m` was\nrefused, at path /Resources/A/Tags";
+        let own_console =
+            "the read of `\\u{1b}[31mA\\u{1b}[0m` was; refused, at path /Resources/A/Tags";
+        // The record as the report builder writes it: the flag agrees with the slot, except under an
+        // author's body, where the flag is the displaced sentence's and stays false here.
+        let rule_of = |custom_slot: CustomSlot, joined: bool, sentence: &str| RuleReport {
+            name: "gated",
+            messages: Messages {
+                custom_message: Some(match joined {
+                    true => format!("{head}{ALSO_MET}{refusal}"),
+                    false => sentence.to_string(),
+                }),
+                error_message: None,
+                location: None,
+                refusal: custom_slot == CustomSlot::Refusal,
+                parts: match joined {
+                    true => Some(SentenceParts::refusals_beside(
+                        head,
+                        refusal,
+                        SentenceSlot::Custom,
+                    )),
+                    false => None,
+                },
+            },
+            custom_slot,
+            ..Default::default()
+        };
+        let joined_text = format!("{head}{ALSO_MET}{refusal}");
+        let slots = [
+            CustomSlot::Refusal,
+            CustomSlot::Author,
+            CustomSlot::Evaluator,
+        ];
+        for custom_slot in slots.iter().copied() {
+            let rule = rule_of(custom_slot, true, own);
+            assert_eq!(
+                (Some(joined_text.clone()), Some(joined_text.clone())),
+                (
+                    super::joined_rule_sentence(&rule),
+                    super::joined_rule_sentence_raw(&rule)
+                ),
+                "{custom_slot:?} with refusals joined: the joined text, whole in both forms"
+            );
+            let rule = rule_of(custom_slot, false, own);
+            let expected = match custom_slot {
+                CustomSlot::Refusal => (Some(own_console.to_string()), Some(own.to_string())),
+                CustomSlot::Author | CustomSlot::Evaluator => (None, None),
+            };
+            assert_eq!(
+                expected,
+                (
+                    super::joined_rule_sentence(&rule),
+                    super::joined_rule_sentence_raw(&rule)
+                ),
+                "{custom_slot:?} with nothing joined: only a refusal's own sentence is a reason"
+            );
+        }
+        // A thousand characters over the backstop, so the cut removes far more than the marker adds; a
+        // sentence a few characters over is cut too, but its console form is then LONGER than the raw
+        // one (the ellipsis and the marker outweigh the few characters removed), so the length alone
+        // would not show the cut. The count of `x` does: the console form keeps fewer than the raw.
+        let long_own = format!(
+            "the read of `A` was refused: {}",
+            "x".repeat(super::LONGEST_REFUSAL_MESSAGE + 1000)
+        );
+        let rule = rule_of(CustomSlot::Refusal, false, &long_own);
+        let console =
+            super::joined_rule_sentence(&rule).expect("a refusal's own sentence is a reason");
+        let count_x = |text: &str| text.matches('x').count();
+        assert!(
+            count_x(&console) < count_x(&long_own)
+                && console.chars().count() < long_own.chars().count()
+                && console.ends_with(super::REFUSAL_CUT_MARKER)
+                && super::joined_rule_sentence_raw(&rule).as_deref() == Some(long_own.as_str()),
+            "the console form of an over-backstop sentence is cut with the refusal marker, the raw form is whole: {}",
+            console
         );
     }
 

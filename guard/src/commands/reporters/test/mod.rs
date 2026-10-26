@@ -256,15 +256,20 @@ pub(crate) enum ReasonForm {
     Raw,
 }
 
-/// The sentence of each rule whose failed condition met refusals beside the error that decided it
-/// (`Messages::parts`), whatever the head's kind, by rule name. `test` prints per-rule statuses and no
-/// messages, and the refused-read line that used to name such a refusal is not written for this shape, so an
-/// unmet expectation on such a rule says why with this text. The PLAIN reporter prints it as the console
-/// does (`validate::common::joined_rule_sentence`: one line, the strict escape set, the plain head cut at
-/// its bound, the refusals bounded once); the STRUCTURED reporters (`json`, `yaml`, `junit`) carry the raw
-/// parts whole (`joined_rule_sentence_raw`), since only the console bounds a line and the serializer or the
-/// junit writer does its own escaping. One walk of the case's report, so a caller builds it on the first
-/// unmet expectation and not before.
+/// The sentence each rule evaluated FAIL rests on where its OWN `when` failed closed on refusals, by rule
+/// name: the rule's sentence with the refusals its failed condition met beside the deciding error joined to
+/// it (`Messages::parts`, whatever the head's kind), or, with nothing joined, the rule's own refusal
+/// sentence (a `when` that failed closed on one refusal alone). `test` prints per-rule statuses and no
+/// messages, and no refused-read line is written for these shapes, so the rule's line says why with this
+/// text whatever the expectation on it: the unmet line, and the met line of a FAIL expectation. The PLAIN
+/// reporter prints it as the console does (`validate::common::joined_rule_sentence`: one line, the strict
+/// escape set, a plain head cut at its bound, the refusals bounded once); the STRUCTURED reporters (`json`,
+/// `yaml`, `junit`) carry the raw text whole (`joined_rule_sentence_raw`), since only the console bounds a
+/// line and the serializer or the junit writer does its own escaping. A rule evaluated PASS or SKIP has no
+/// entry (nothing refused it closed), and neither has a FAIL rule whose sentence is a plain error with
+/// nothing joined or an author's `<< >>` text, nor a rule whose body assertion failed on a refusal: that
+/// rule's checks explain it, and it carries no reason here. One walk of the case's report, so a caller
+/// builds it on the first rule that is evaluated FAIL or whose expectation is unmet, and not before.
 pub(crate) fn joined_rule_reasons(
     top: &crate::rules::eval_context::EventRecord<'_>,
     form: ReasonForm,

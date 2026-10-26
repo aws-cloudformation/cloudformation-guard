@@ -587,7 +587,7 @@ fn get_test_case<'rule>(
                 name,
                 time,
                 status: match status {
-                    Status::PASS => TestCaseStatus::Pass,
+                    Status::PASS => TestCaseStatus::Pass { reason: None },
                     // The evaluator records why a rule did not apply; carry those reasons through so
                     // junit says as much as the console does. Without this a skipped run reports
                     // `status="skip"` and nothing else, which is indistinguishable from a rule that
@@ -627,7 +627,12 @@ pub struct TestCase<'test> {
 
 #[derive(Deserialize, Serialize, Debug, Clone)]
 pub(crate) enum TestCaseStatus {
-    Pass,
+    /// `reason` is the sentence a `test` expectation met on a rule that failed closed rests on (a refusal
+    /// the rule's condition met), written as the case's `<system-out>` text; `None` for every other passed
+    /// case, which stays the empty element it always was.
+    Pass {
+        reason: Option<String>,
+    },
     /// `reasons` holds one `rule: why` line per inapplicable rule that the evaluator could explain,
     /// and is empty when it could not explain any -- which is the shape every consumer saw before,
     /// since a skip previously carried nothing at all.
@@ -702,6 +707,9 @@ enum EventType<'report, 'se: 'report> {
     Failure(Failure<'report>),
     /// The `<skipped>` child of a test case, carrying one line per rule that did not apply.
     Skipped(&'report [String]),
+    /// The `<system-out>` child of a passed `test` case whose rule failed closed on a refusal: the
+    /// rule's sentence after `Reason = `, as the failure text of an unmet expectation carries it.
+    SystemOut(&'report str),
     Error(&'report str),
     TestCase(&'se TestCase<'report>),
     TestSuite(&'se TestSuite<'report>),
@@ -734,7 +742,7 @@ impl<'report, 'se: 'report> EventType<'report, 'se> {
             }
             // The reasons go in the element body rather than a `message` attribute, because there is
             // one per inapplicable rule and an attribute holds a single value.
-            EventType::Skipped(..) => {}
+            EventType::Skipped(..) | EventType::SystemOut(..) => {}
             EventType::TestCase(test_case) => {
                 if let Some(id) = test_case.id {
                     push_text_attribute(tag, "id", id);
@@ -746,7 +754,7 @@ impl<'report, 'se: 'report> EventType<'report, 'se> {
                     status => {
                         let status = match status {
                             TestCaseStatus::Skip { .. } => "skip",
-                            TestCaseStatus::Pass => "pass",
+                            TestCaseStatus::Pass { .. } => "pass",
                             TestCaseStatus::Error { .. } => "error",
                             _ => unreachable!(),
                         };
@@ -843,11 +851,22 @@ impl<'report, 'se: 'report> EventType<'report, 'se> {
                     EventType::Skipped(reasons).serialize(writer)?;
                     self.serialize_end_event(writer)?;
                 }
+                // A passed case whose rule failed closed on a refusal (a `test` expectation of FAIL met
+                // on such a rule) carries the rule's sentence as its `<system-out>`; a passed case with
+                // no such sentence stays an empty element, so output only grows where there is something
+                // to say.
+                TestCaseStatus::Pass {
+                    reason: Some(reason),
+                } => {
+                    self.serialize_start_event(writer, tag)?;
+                    EventType::SystemOut(reason).serialize(writer)?;
+                    self.serialize_end_event(writer)?;
+                }
                 _ => {
                     writer.write_event(Event::Empty(tag))?;
                 }
             },
-            EventType::Skipped(..) | EventType::Error(..) => {
+            EventType::Skipped(..) | EventType::Error(..) | EventType::SystemOut(..) => {
                 self.serialize_start_event(writer, tag)?;
                 self.serialize_text_events(writer)?;
                 self.serialize_end_event(writer)?;
@@ -919,6 +938,13 @@ impl<'report, 'se: 'report> EventType<'report, 'se> {
                     &xml_text_with_escaped_controls(err),
                 )))?;
             }
+            // The passed case's reason, after the `Reason = ` the plain reporter and the failure text of an
+            // unmet expectation write before the same sentence; the evaluator's text, so the strict set.
+            EventType::SystemOut(reason) => {
+                writer.write_event(Event::Text(BytesText::new(
+                    &xml_text_with_escaped_controls(&format!("Reason = {reason}")),
+                )))?;
+            }
             _ => unreachable!(),
         }
 
@@ -973,6 +999,7 @@ impl<'report, 'se: 'report> Display for EventType<'report, 'se> {
         let text = match self {
             EventType::Failure(..) => "failure",
             EventType::Skipped(..) => "skipped",
+            EventType::SystemOut(..) => "system-out",
             EventType::Error(..) => "error",
             EventType::TestCase(..) => "testcase",
             EventType::TestSuite(..) => "testsuite",
@@ -1246,7 +1273,7 @@ mod junit_escape_tests {
             &format!("all{}[1m", esc()),
             "suite\tone",
             "case\ntwo\rthree\tfour",
-            TestCaseStatus::Pass,
+            TestCaseStatus::Pass { reason: None },
         );
         assert!(
             !has_a_raw_control(&xml) && !xml.contains('\t'),
@@ -1293,7 +1320,8 @@ mod junit_escape_tests {
     /// line feed, or the markup characters come back changed.
     #[test]
     fn a_tab_and_a_backslash_t_are_two_distinct_names() {
-        let written = |name: &str| report_named("all", "suite", name, TestCaseStatus::Pass);
+        let written =
+            |name: &str| report_named("all", "suite", name, TestCaseStatus::Pass { reason: None });
         let tab = case_names(&written("a\tb"));
         let slash = case_names(&written("a\\tb"));
         assert_eq!(vec!["a\tb".to_string()], tab);
@@ -1337,13 +1365,23 @@ mod junit_escape_tests {
         let windows = "templates\\a.yaml";
         assert_eq!(
             vec![windows.to_string()],
-            case_names(&report_named("all", "suite", windows, TestCaseStatus::Pass)),
+            case_names(&report_named(
+                "all",
+                "suite",
+                windows,
+                TestCaseStatus::Pass { reason: None }
+            )),
             "a backslash in a file name is kept as written"
         );
         let markup = "a&b<c>\"d'";
         assert_eq!(
             vec![markup.to_string()],
-            case_names(&report_named("all", "suite", markup, TestCaseStatus::Pass)),
+            case_names(&report_named(
+                "all",
+                "suite",
+                markup,
+                TestCaseStatus::Pass { reason: None }
+            )),
             "the markup characters survive"
         );
     }

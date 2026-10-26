@@ -232,7 +232,9 @@ impl TestCase {
         for test_case in &self.passed_rules {
             test_cases.push(JunitTestCase {
                 id: Some(&self.name),
-                status: TestCaseStatus::Pass,
+                status: TestCaseStatus::Pass {
+                    reason: test_case.reason.clone(),
+                },
                 name: &test_case.name,
                 time: self.time,
             })
@@ -298,6 +300,17 @@ impl TestCase {
 pub struct PassedRule {
     name: String,
     evaluated: Status,
+    /// Why, for a rule evaluated FAIL whose expectation was FAIL and whose OWN `when` failed closed on
+    /// refusals (several joined to the rule's sentence beside the error that decided it, or one alone as
+    /// the sentence): that sentence, raw and whole, as `FailedRule::reason` carries it for an unmet
+    /// expectation. A rule evaluated PASS or SKIP carries none (nothing refused it closed), and so does a
+    /// FAIL rule with no such sentence: a plain error in its `when`, an author's `<< >>` text, or a body
+    /// assertion that failed on a refusal, which the rule's checks explain and which carries no reason
+    /// here. The field is then omitted, so a report over a suite with none is byte for byte what it was
+    /// before this field existed. The plain reporter prints the same sentence after `Reason = ` on the met
+    /// line, and the junit report as the passed case's `<system-out>` text.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    reason: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -332,12 +345,15 @@ pub struct FailedRule {
     name: String,
     expected: Status,
     evaluated: Vec<Status>,
-    /// Why, for a rule whose failed condition met refusals beside the error that decided it, whether that
-    /// error was a plain one or a refusal (the rule's sentence with the refusals in it), raw and whole: no
-    /// cut and no console escape, since the serializer does its own escaping and every structured output
-    /// carries every part whole. The plain reporter prints the same sentence on its `Reason =` through the
-    /// console's pipeline (one line, controls escaped, cut). Omitted when the rule has no such sentence, so a report over a suite
-    /// with none is byte for byte what it was before this field existed.
+    /// Why, for a rule whose OWN `when` failed closed on refusals: several joined to the rule's sentence
+    /// beside the error that decided it, whether that error was a plain one or a refusal, or one refusal
+    /// alone as the sentence. The sentence is carried raw and whole: no cut and no console escape, since
+    /// the serializer does its own escaping and every structured output carries every part whole. The
+    /// plain reporter prints the same sentence on its `Reason =` through the console's pipeline (one line,
+    /// controls escaped, cut). Omitted when the rule has no such sentence (a plain error with nothing
+    /// joined, an author's `<< >>` text, or a body assertion that failed on a refusal, which the rule's
+    /// checks explain), so a report over a suite with none is byte for byte what it was before this field
+    /// existed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     reason: Option<String>,
 }
@@ -512,8 +528,10 @@ impl<'reporter> StructuredTestReporter<'reporter> {
                     ..Default::default()
                 };
 
-                // Built on the first unmet expectation and not before, as the plain reporter builds it: a
-                // case whose expectations all matched never needs the report walk.
+                // Built on the first rule that is evaluated FAIL or whose expectation is unmet, and not
+                // before, as the plain reporter builds it: a case whose rules all passed or were skipped
+                // as expected never needs the report walk, and a FAIL rule is told why whatever the
+                // expectation on it.
                 let mut joined_reasons: Option<HashMap<String, String>> = None;
 
                 for (rule_name, records) in by_rules {
@@ -543,10 +561,24 @@ impl<'reporter> StructuredTestReporter<'reporter> {
                     };
 
                     match get_status_result(expected, records) {
-                        (Some(status), _) => test_case.passed_rules.push(PassedRule {
-                            name: rule_name.to_string(),
-                            evaluated: status,
-                        }),
+                        (Some(status), _) => {
+                            // A met expectation of FAIL on a rule that failed closed on a refusal still
+                            // says why: the same sentence an unmet expectation would carry.
+                            let reason = match status {
+                                Status::FAIL => joined_reasons
+                                    .get_or_insert_with(|| {
+                                        joined_rule_reasons(&top, ReasonForm::Raw)
+                                    })
+                                    .get(rule_name)
+                                    .cloned(),
+                                _ => None,
+                            };
+                            test_case.passed_rules.push(PassedRule {
+                                name: rule_name.to_string(),
+                                evaluated: status,
+                                reason,
+                            })
+                        }
 
                         (None, statuses) => {
                             let reason = joined_reasons
