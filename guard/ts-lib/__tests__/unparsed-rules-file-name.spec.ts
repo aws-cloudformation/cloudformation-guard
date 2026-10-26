@@ -74,10 +74,14 @@ describe('validate on a rules file that does not parse', () => {
       dataPath: path.resolve(__dirname, './__fixtures__/data-dir'),
     });
 
+    // validate writes a file name with `/` as the separator on every platform, as it does for the
+    // data file names, so the expected name is the resolved path with any `\` turned into `/`.
+    const expectedName = rulesPath.split('\\').join('/');
+
     const [invocation] = result.runs[0].invocations ?? [];
     expect(invocation.executionSuccessful).toBe(false);
     expect(invocation.toolConfigurationNotifications?.[0].message.text).toBe(
-      `Rules file ${rulesPath} could not be parsed, so none of its rules were evaluated: Parser Error when parsing \`Parsing Error Error parsing file ${rulesPath} at line 1 at column 40, when handling expecting either a property access "engine.core" or value like "string" or ["this", "that"], fragment  }\n\``
+      `Rules file ${expectedName} could not be parsed, so none of its rules were evaluated: Parser Error when parsing \`Parsing Error Error parsing file ${expectedName} at line 1 at column 40, when handling expecting either a property access "engine.core" or value like "string" or ["this", "that"], fragment  }\n\``
     );
     expect(JSON.stringify(result)).not.toContain('RULES_STDIN');
   });
