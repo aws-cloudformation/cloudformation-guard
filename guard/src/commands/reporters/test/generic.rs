@@ -9,8 +9,9 @@ use crate::{
     commands::{
         files::iterate_over,
         reporters::test::{
-            get_by_rules, get_status_result, located_diagnostic, unchecked_expectation_message,
-            unmatched_expectation_names, write_diagnostics, Notices, StderrLineKind,
+            get_by_rules, get_status_result, joined_rule_reasons, located_diagnostic,
+            unchecked_expectation_message, unmatched_expectation_names, write_diagnostics, Notices,
+            ReasonForm, StderrLineKind,
         },
         test::{
             convert_input, duplicate_case_names, parse_test_specs, specs_noting_tags, TestSpec,
@@ -231,6 +232,14 @@ impl<'report> GenericReporter<'report> {
             }),
         );
 
+        // The rule's sentence where its failed condition met refusals beside the error that decided it
+        // (`Messages::parts`): `test` prints per-rule statuses and no messages, and the refused-read line
+        // that used to name such a refusal is not written for this shape, so an unmet expectation on such a
+        // rule says why here, with the refusal in it.
+        // Built on the first unmet expectation and not before: a case whose expectations all matched
+        // never needs the report walk.
+        let mut joined_reasons: Option<HashMap<String, String>> = None;
+
         for (rule_name, rule) in by_rules {
             let expected = match spec.expectations.rules.get(rule_name) {
                 Some(exp) => Status::try_from(exp.as_str())?,
@@ -254,12 +263,19 @@ impl<'report> GenericReporter<'report> {
                 }
 
                 None => {
+                    let reasons = joined_reasons
+                        .get_or_insert_with(|| joined_rule_reasons(&top, ReasonForm::Console));
                     by_result
                         .entry(String::from("FAIL"))
                         .or_insert_with(indexmap::IndexSet::new)
-                        .insert(format!(
-                            "{rule_name}: Expected = {expected}, Evaluated = {statues:?}"
-                        ));
+                        .insert(match reasons.get(rule_name) {
+                            Some(reason) => format!(
+                                "{rule_name}: Expected = {expected}, Evaluated = {statues:?}, Reason = {reason}"
+                            ),
+                            None => format!(
+                                "{rule_name}: Expected = {expected}, Evaluated = {statues:?}"
+                            ),
+                        });
                 }
             }
         }

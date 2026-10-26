@@ -267,27 +267,14 @@ fn single_line(
         num_of_resources
     )?;
     for (_, resource) in by_resources {
-        writeln!(writer, "Resource = {} {{", resource.name.yellow().bold())?;
-        let prefix = String::from("  ");
-        writeln!(
+        super::common::write_resource_header(
             writer,
-            "{prefix}{0:<width$}= {rt}",
-            "Type",
-            prefix = prefix,
-            width = 10,
-            rt = resource.resource_type,
+            &resource.name,
+            resource.resource_type,
+            resource.cdk_path.as_ref().map_or("", |p| *p),
+            colored::control::SHOULD_COLORIZE.should_colorize(),
         )?;
-        let cdk_path = resource.cdk_path.as_ref().map_or("", |p| *p);
-        if !cdk_path.is_empty() {
-            writeln!(
-                writer,
-                "{prefix}{0:<width$}= {cdk}",
-                "CDK-Path",
-                prefix = prefix,
-                width = 10,
-                cdk = cdk_path
-            )?;
-        }
+        let prefix = String::from("  ");
         for each_rule in &failure_report.not_compliant {
             let rule_name = match each_rule {
                 ClauseReport::Rule(RuleReport { name, .. }) => format!("/{}", name),

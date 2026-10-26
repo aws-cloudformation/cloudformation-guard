@@ -1,8 +1,9 @@
-use std::{convert::TryFrom, path::PathBuf, rc::Rc, time::Instant};
+use std::{collections::HashMap, convert::TryFrom, path::PathBuf, rc::Rc, time::Instant};
 
 use crate::commands::reporters::test::{
-    get_by_rules, get_status_result, located_diagnostic, unchecked_expectation_message,
-    unmatched_expectation_names, Diagnostics, Notices, StderrLineKind,
+    get_by_rules, get_status_result, joined_rule_reasons, located_diagnostic,
+    unchecked_expectation_message, unmatched_expectation_names, Diagnostics, Notices, ReasonForm,
+    StderrLineKind,
 };
 use crate::commands::reporters::{
     FailingTestCase, TestCase as JunitTestCase, TestCaseStatus, TestSuite,
@@ -248,7 +249,7 @@ impl TestCase {
                         parts: None,
                         custom_message: None,
                         error_message: Some(format!(
-                            "Expected = {}, Evaluated = [{}]",
+                            "Expected = {}, Evaluated = [{}]{}",
                             test_case.expected,
                             test_case
                                 .evaluated
@@ -260,7 +261,11 @@ impl TestCase {
                                         acc.push_str(&format!("{status}"))
                                     }
                                     acc
-                                })
+                                }),
+                            test_case
+                                .reason
+                                .as_ref()
+                                .map_or(String::new(), |reason| format!(", Reason = {reason}"))
                         )),
                     }],
                 }),
@@ -327,6 +332,14 @@ pub struct FailedRule {
     name: String,
     expected: Status,
     evaluated: Vec<Status>,
+    /// Why, for a rule whose failed condition met refusals beside the error that decided it, whether that
+    /// error was a plain one or a refusal (the rule's sentence with the refusals in it), raw and whole: no
+    /// cut and no console escape, since the serializer does its own escaping and every structured output
+    /// carries every part whole. The plain reporter prints the same sentence on its `Reason =` through the
+    /// console's pipeline (one line, controls escaped, cut). Omitted when the rule has no such sentence, so a report over a suite
+    /// with none is byte for byte what it was before this field existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    reason: Option<String>,
 }
 
 impl<'reporter> StructuredTestReporter<'reporter> {
@@ -499,6 +512,10 @@ impl<'reporter> StructuredTestReporter<'reporter> {
                     ..Default::default()
                 };
 
+                // Built on the first unmet expectation and not before, as the plain reporter builds it: a
+                // case whose expectations all matched never needs the report walk.
+                let mut joined_reasons: Option<HashMap<String, String>> = None;
+
                 for (rule_name, records) in by_rules {
                     let expected = match expectations.rules.get(rule_name) {
                         Some(exp) => match Status::try_from(exp.as_str()) {
@@ -531,11 +548,18 @@ impl<'reporter> StructuredTestReporter<'reporter> {
                             evaluated: status,
                         }),
 
-                        (None, statuses) => test_case.failed_rules.push(FailedRule {
-                            name: rule_name.to_string(),
-                            evaluated: statuses,
-                            expected,
-                        }),
+                        (None, statuses) => {
+                            let reason = joined_reasons
+                                .get_or_insert_with(|| joined_rule_reasons(&top, ReasonForm::Raw))
+                                .get(rule_name)
+                                .cloned();
+                            test_case.failed_rules.push(FailedRule {
+                                name: rule_name.to_string(),
+                                evaluated: statuses,
+                                expected,
+                                reason,
+                            })
+                        }
                     }
                 }
 

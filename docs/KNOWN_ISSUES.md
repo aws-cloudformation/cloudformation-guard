@@ -1759,7 +1759,7 @@ let api_gws = Resources.*[ Type == 'AWS::ApiGateway::RestApi' ]
     "E1nk"/"E1i" pair). Beside a selection whose closed `when` read nothing a refused selection is judged as a lone
     one, and the one body a `when` can refuse over a one-object statement is gated on a key the statement lacks, an
     undecidable body: `not check` fails closed naming the read and the gate fails closed on its condition, in either
-    map order (the "GKr2"/"GKr2r" pair; the selection the `when` closed on is not applicable, never refused).
+    map order (the "GKr2w"/"GKr2rw" pair; the selection the `when` closed on is not applicable, never refused).
     Siblings that every one skip are values the block has, so without the refused value the block is SKIP under `not
     empty` as well and the assertion role fails `not check` closed there, where as a `when` condition FAIL against
     SKIP counts as agreement, since both mean the guard did not hold (alone without `not empty`, the "E1d" row: the
@@ -1774,7 +1774,7 @@ let api_gws = Resources.*[ Type == 'AWS::ApiGateway::RestApi' ]
     where that `not` passes, the block's refused read is written "passed by the negation of a rule that failed", and
     where a `when` condition's block decided it, "was decided by a sibling clause's failure" (the body's no) or "was
     decided by a sibling entry's failure" (a failing sibling past the undecidable value) (pinned by
-    `eval_tests.rs:a_blocks_refused_read_over_the_empty_selection_is_judged_with_its_bodys_basis (cases "E1", "E1d", "E1nk", "E1i", "E1io", "E2", "V1", "SP", "SF", "GS", "GSf", "GSsf", "GSsfd", "GKk", "GKuk", "GKsk", "GKnk", "GKsnk", "GSu", "GSr", "GKr", "GKx", "GKd", "GKr2", "GKr2r", "GKek", "GKenk", "SS", "GSs", "D")`
+    `eval_tests.rs:a_blocks_refused_read_over_the_empty_selection_is_judged_with_its_bodys_basis (cases "E1w", "E1d", "E1nk", "E1i", "E1io", "E2", "V1", "SP", "SF", "GS", "GSf", "GSsw", "GSsfd", "GKk", "GKuk", "GKsk", "GKnk", "GKsnk", "GSu", "GSr", "GKr", "GKx", "GKd", "GKr2w", "GKr2rw", "GKek", "GKenk", "SS", "GSs", "D")`
     and `eval_tests.rs:a_gate_role_block_over_a_refused_selection_beside_a_sibling_raises_or_writes_its_own_line_once (cases "GU", "GUd", "GUf", "GD", "MF", "MO")`; the every-entry agreement and disagreement beside a body
     whose no comes from a binding, and the line the two-selection shape writes, are pinned by the first test's
     cases "GSfd", "GSpd", "GKr2d" and "GKr2rd"). A passing sibling decides past the fail-closed `not` as past any
@@ -1818,26 +1818,35 @@ let api_gws = Resources.*[ Type == 'AWS::ApiGateway::RestApi' ]
     defect (pinned by
     `eval_tests.rs:a_blocks_pending_refused_selection_is_settled_at_every_exit_in_both_roles (cases "AF", "AFs", "AFr", "AFc", "AFx", "AFy", "AFz", "AFxa", "AFya", "AFza")`).
 
-25. <a name="a-gate-failing-closed-on-a-plain-error-does-not-name-a-refusal-settled-beside-it"></a> A gate that fails
-    closed on a plain error does not name a refusal settled beside it in the same condition. Take a `when` condition
-    that calls a rule whose block reads two selections under `Resources.*.Tags[*][ Key == 'Env' ]`: one is a
-    one-object map holding an intrinsic beside the compared entry (a refused selection), the other either a list or a
-    second one-object selection, and its body raises a converter's error (`parse_int` on a word). The rule fails
-    closed on the converter's error, and the run prints the condition's sentence ("The rule's condition could not be
-    evaluated, so the rule fails rather than being treated as not applicable: ..") naming that error, once per gated
-    rule, in the console and in `-o json`; the refusal that was pending beside it is named nowhere. The verdict is
-    right and the failing record names what decided it; the refusal did not decide, and `docs/CLAUSES.md` owes no
-    line where the failing record is the report. Whether the refusal is named once the converter's error is gone is
-    not pinned: the two gates would report it through different lines. The same two selections under `rule check {
-    .. }` (no gate) print both, in either sibling shape: the error's clause record and the refusal's sentence at the
-    refused map's path, once each. Naming every pending refusal in a failing gate's sentence is an alternative that
-    would add a sentence shape to both reporters; it is not made (pinned by
-    `tests/validate.rs:a_gate_failing_closed_on_a_plain_error_does_not_name_a_refusal_settled_beside_it`).
+25. <a name="a-gate-failing-closed-on-a-plain-error-does-not-name-a-refusal-settled-beside-it"></a><a name="a-gate-failing-closed-on-a-plain-error-names-a-refusal-settled-beside-it"></a> A gate that fails
+    closed on a plain error names a refusal settled beside it in the same condition after the error, in the
+    rule's sentence. Take a `when` condition that calls a rule whose block reads two selections under
+    `Resources.*.Tags[*][ Key == 'Env' ]`: one is a one-object map holding an intrinsic beside the compared entry (a
+    refused selection), the other either a list or a second one-object selection, and its body raises a converter's
+    error (`parse_int` on a word). The rule fails closed on the converter's error, and the run prints the
+    condition's sentence ("The rule's condition could not be evaluated, so the rule fails rather than being treated
+    as not applicable: ..") naming that error, once per gated rule, followed by "; the condition also met: " and the
+    refusal that was pending beside it, bare and at the refused map's path (named nowhere else). The refusal
+    did not decide the verdict, so it follows the error and does not replace it. It is named
+    once: no refused-read line is written for it, since the sentence is where the walk of the failed condition
+    reports every refusal the condition met that the error's text does not carry. The verdict is unchanged. The
+    same two selections under `rule check { .. }` (no gate) print both, in either sibling shape: the error's clause
+    record and the refusal's sentence at the refused map's path, once each (pinned by
+    `tests/validate.rs:a_gate_failing_closed_on_a_plain_error_names_a_refusal_settled_beside_it_in_the_rules_sentence`, whose
+    console rows read the path in the output).
+    A related difference outside a filter predicate run: a REGISTERED refusal that arrives beside a held
+    converter's error replaces the converter's sentence in the raise, while a refusal that is tokened but not
+    registered is joined to it (the refusal first, the cause after it, bounded), so the first hides the cause and
+    the second keeps it. Both name the refusal; the cause is kept only in the second.
+
+    The first anchor above (`...-plain-error-does-not-name-a-refusal-settled-beside-it`) is the item's old name,
+    kept so links written before this item named the refusal still land here.
 
 26. <a name="a-refused-read-line-that-says-no-record-was-held"></a> A refused-read line that says a fold "held no
     record of it" is the evaluator's own error and no finding about the rules file or the input data: nothing in
-    either reaches it. The line ends with a sentence that asks for a report to the project's issue tracker with the
-    rules file and the input data. It is written for the clause's refused read when an internal check that
+    either reaches it. The line ends with a sentence that asks for a report to the project's issue tracker with a
+    minimal rules file and template that reproduce it, with account ids, ARNs, parameter values and other sensitive
+    values removed. It is written for the clause's refused read when an internal check that
     a debug build asserts did not hold: it names the read as the other refused-read lines do and replaces only their
     verdict wording. A release build writes the line and goes on (pinned by
     `eval_tests.rs:the_neutral_word_for_an_unrecorded_entry_is_worded_as_an_internal_error`).
@@ -1848,13 +1857,12 @@ let api_gws = Resources.*[ Type == 'AWS::ApiGateway::RestApi' ]
     sentence again, registered under a newer token; the run reads a token minted while an older scope's binding was
     resolved as no entry's own, so an entry the run's own refusal had marked refused read as plain once the `let`
     was read after it, and the refusal was not reported as one (a plain marker reads as a spent regex budget). The
-    verdict of a `some` over a selection that is the LEFT-hand operand of the outer comparison is unchanged: it is
-    decided by a member that passes, and a refused member is an undecided read that the record and the run's
-    refused-read line report. Where the selection is the RIGHT-hand operand of the outer comparison a clause
+    verdict of a `some` over a selection that is the LEFT-hand operand of the outer comparison is decided by a
+    member that passes, and a refused member is an undecided read that the record and the run's refused-read line
+    report (unmeasured on the releases: no release row holds this shape). Where the selection is the RIGHT-hand operand of the outer comparison a clause
     that no resolved right-hand value settles fails closed, so such a clause whose right-hand selection holds
-    the refused entry can move from PASS to FAIL with the entry's kind. The behavior before this
-    change depended on whether the `let` had been read earlier in the file: read before the run, the repeat raise
-    registered nothing and the entry was refused; read first inside the run, it was plain. Both now read refused.
+    the refused entry can move from PASS to FAIL with the entry's kind. Whether the `let` was read earlier in
+    the file or first inside the run, the entry reads refused.
     The registry keeps the token a run read as its own beside a later registration of the same sentence whose
     token that run does not read as its own: the binding's resolution registering the refusal, and also a comparison
     that meets the memoized refusal's marker later in the run and registers the read, or a wrap of it. All three

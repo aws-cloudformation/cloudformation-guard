@@ -1062,9 +1062,9 @@ mod junit_escape_tests {
             .any(|c| c.is_control() && c != '\n' && c != '\t')
     }
 
-    /// Expected, not yet run. Red: a failing case's message or error carries the ESC byte, so the
-    /// document holds a character XML 1.0 does not allow, a message's line feed is escaped and the
-    /// joined messages lose their separator, or the tab is written as `\t` where the text keeps it.
+    /// Fails when a failing case's message or error carries the ESC byte, so the document holds a
+    /// character XML 1.0 does not allow, when a message's line feed is escaped and the joined
+    /// messages lose their separator, or when the tab is written as `\t` where the text keeps it.
     #[test]
     fn a_failing_cases_messages_are_written_with_escaped_controls() {
         let xml = report_of(TestCaseStatus::Fail(FailingTestCase {
@@ -1096,9 +1096,9 @@ mod junit_escape_tests {
     /// sentence and a refusal's write it as an escape. One row per slot, through
     /// `get_message_with_rule_records` and the writer.
     ///
-    /// Expected, not yet run. Red: the failure element is empty for a row (the rule's own record is not
-    /// read), the author's row writes the joiner as an escape, or an evaluator's or a refusal's row keeps
-    /// it raw.
+    /// Fails when the failure element is empty for a row (the rule's own record is not read),
+    /// when the author's row writes the joiner as an escape, or when an evaluator's or a
+    /// refusal's row keeps it raw.
     #[test]
     fn a_rule_with_no_check_reports_its_own_message_under_its_slots_escape_set() {
         use crate::rules::eval_context::{ClauseReport, RuleReport};
@@ -1117,7 +1117,7 @@ mod junit_escape_tests {
                     custom_message: Some(typed.clone()),
                     error_message: None,
                     location: None,
-                    refusal: false,
+                    refusal: slot == CustomSlot::Refusal,
                     parts: None,
                 },
                 custom_slot: slot,
@@ -1137,7 +1137,7 @@ mod junit_escape_tests {
         }
     }
 
-    /// Expected, not yet run. Red: a skip reason carries the ESC byte.
+    /// Fails when a skip reason carries the ESC byte.
     #[test]
     fn a_skip_reason_is_written_with_escaped_controls() {
         let xml = report_of(TestCaseStatus::Skip {
@@ -1151,7 +1151,7 @@ mod junit_escape_tests {
         assert_eq!("rule: \\u{1b}[1mnothing to check", text_nodes(&xml));
     }
 
-    /// Expected, not yet run. Red: an error text carries the ESC byte.
+    /// Fails when an error text carries the ESC byte.
     #[test]
     fn an_error_text_is_written_with_escaped_controls() {
         let xml = report_of(TestCaseStatus::Error {
@@ -1178,7 +1178,7 @@ mod junit_escape_tests {
     /// A carriage return and line feed pair is one line feed in a text node, a carriage return alone is
     /// written as its escape, and a tab stays.
     ///
-    /// Expected, not yet run. Red: the pair is written as `\r` followed by a line feed.
+    /// Fails when the pair is written as `\r` followed by a line feed.
     #[test]
     fn a_crlf_pair_is_one_line_feed_in_a_text_node() {
         assert_eq!("a\nb", xml_text_with_escaped_controls("a\r\nb"));
@@ -1237,8 +1237,8 @@ mod junit_escape_tests {
     /// carriage return decodes to a raw one for every consumer), and no attribute holds a raw tab, line
     /// feed or carriage return, which the unescaped read-back cannot show and the written bytes do.
     ///
-    /// Red: an attribute carries the ESC byte, a raw tab, line feed or carriage
-    /// return, a carriage return written as a reference, or a tab or line feed written as the two
+    /// Fails when an attribute carries the ESC byte, a raw tab, line feed or carriage return, a
+    /// carriage return written as a reference, or a tab or line feed written as the two
     /// characters `\t`, `\n`.
     #[test]
     fn a_name_is_written_as_an_attribute_with_escaped_controls() {
@@ -1288,9 +1288,9 @@ mod junit_escape_tests {
     /// separators. The written bytes of each control are pinned beside the read-back, which does not
     /// normalize and so cannot show a raw control.
     ///
-    /// Red: the tab and the backslash and `t` read back alike, a backslash reads
-    /// back doubled, a carriage return is written as a reference or raw, the pair is folded to a line
-    /// feed, or the markup characters come back changed.
+    /// Fails when the tab and the backslash and `t` read back alike, a backslash reads back
+    /// doubled, a carriage return is written as a reference or raw, the pair is folded to a
+    /// line feed, or the markup characters come back changed.
     #[test]
     fn a_tab_and_a_backslash_t_are_two_distinct_names() {
         let written = |name: &str| report_named("all", "suite", name, TestCaseStatus::Pass);
@@ -1353,8 +1353,8 @@ mod junit_escape_tests {
     /// them reads it. A joiner and a bidirectional mark in a name are written as escapes too: a name is an
     /// identifier read against other names.
     ///
-    /// Expected, not yet run. Red: the report holds either code point raw (a strict parser rejects it), or
-    /// the joiner or the mark is kept as typed in a name.
+    /// Fails when the report holds either code point raw (a strict parser rejects it), or when the
+    /// joiner or the mark is kept as typed in a name.
     #[test]
     fn the_two_noncharacters_xml_forbids_are_written_as_escapes() {
         let forbidden = ['\u{FFFE}', '\u{FFFF}'];

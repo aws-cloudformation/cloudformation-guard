@@ -1209,6 +1209,214 @@ mod test_command_tests {
         );
     }
 
+    /// A refusal settled beside a gate's error is named by `test` when the expectation on the gated rule is
+    /// unmet. `test` prints per-rule statuses and no messages, and the refused-read line that used to name
+    /// such a refusal is not written for this shape, so the unmet line carries the rule's sentence as its
+    /// reason: the gated rule failed closed on the converter's error, and the refusal follows it whole.
+    ///
+    /// Fails when the unmet lines carry no reason, or when the reason lacks the refused map's path.
+    #[test]
+    fn an_unmet_expectation_on_a_gated_rule_names_the_refusal_settled_beside_the_error() {
+        let mut reader = Reader::default();
+        let mut writer =
+            Writer::new_with_err(WBVec(vec![]), WBVec(vec![])).expect("Failed to create writer.");
+        let _ = TestCommandTestRunner::default()
+            .test_data(Option::from(
+                "resources/test-command/refusal-beside-a-gates-error/gate.yaml",
+            ))
+            .rules(Some(
+                "resources/validate/gate_failing_closed_beside_a_settled_refusal.guard",
+            ))
+            .run(&mut writer, &mut reader);
+        let stdout = writer.stripped().expect("failed to read stdout");
+        let unmet: Vec<&str> = stdout
+            .lines()
+            .filter(|line| line.contains("Expected = PASS, Evaluated = [FAIL]"))
+            .collect();
+        assert!(
+            unmet.len() == 2
+                && unmet.iter().all(|line| {
+                    line.contains(", Reason = ")
+                        && line.contains("; the condition also met: ")
+                        && line.contains("/Resources/M/Tags")
+                }),
+            "both unmet lines carry the reason with the refusal and its path:\n{}",
+            stdout
+        );
+    }
+
+    /// The structured reports of `test` carry the reason of an unmet expectation on a gated rule as the plain
+    /// report does (`an_unmet_expectation_on_a_gated_rule_names_the_refusal_settled_beside_the_error`): the
+    /// rule's sentence with the refusal joined to it, in the failed rule's `reason` for `json` and `yaml` and
+    /// after `Reason = ` in the failure text of `junit`, once for each of the two gated rules.
+    ///
+    /// Fails when a report carries no reason (a count of 0), when one of the two rules lacks it (a
+    /// count of 1), or when the refusal's path is missing from the text.
+    #[rstest]
+    #[case("json")]
+    #[case("yaml")]
+    #[case("junit")]
+    fn a_structured_report_of_an_unmet_expectation_on_a_gated_rule_carries_the_reason(
+        #[case] output: &str,
+    ) {
+        let mut reader = Reader::default();
+        let mut writer =
+            Writer::new_with_err(WBVec(vec![]), WBVec(vec![])).expect("Failed to create writer.");
+        let _ = TestCommandTestRunner::default()
+            .test_data(Option::from(
+                "resources/test-command/refusal-beside-a-gates-error/gate.yaml",
+            ))
+            .rules(Some(
+                "resources/validate/gate_failing_closed_beside_a_settled_refusal.guard",
+            ))
+            .output_format(output)
+            .run(&mut writer, &mut reader);
+        let stdout = writer.stripped().expect("failed to read stdout");
+        assert_eq!(
+            2,
+            stdout.matches("; the condition also met: ").count(),
+            "each of the two gated rules carries the refusal joined to its sentence in the {output} report:\n{stdout}"
+        );
+        assert!(
+            stdout.matches("/Resources/M/Tags").count() >= 2,
+            "and the refusal's path, at least once for each:\n{}",
+            stdout
+        );
+    }
+
+    /// The reason an unmet expectation carries is written through the console's one pipeline: the sentence
+    /// collapsed on its line breaks alone, then its controls escaped, so a tab in the value the converter's
+    /// error quotes reads as the two characters `\t` and a no-break space (not a control, not a line break)
+    /// stays what it is. Folding every run of whitespace into a space before escaping, as the first form of
+    /// this line did, printed both as a plain space.
+    #[test]
+    fn the_reason_of_an_unmet_expectation_is_escaped_as_the_console_escapes_it() {
+        let mut reader = Reader::default();
+        let mut writer =
+            Writer::new_with_err(WBVec(vec![]), WBVec(vec![])).expect("Failed to create writer.");
+        let _ = TestCommandTestRunner::default()
+            .test_data(Option::from(
+                "resources/test-command/refusal-beside-a-gates-error/tab-and-no-break-space.yaml",
+            ))
+            .rules(Some(
+                "resources/validate/gate_converter_error_on_a_long_value_beside_a_settled_refusal.guard",
+            ))
+            .run(&mut writer, &mut reader);
+        let stdout = writer.stripped().expect("failed to read stdout");
+        let reasons: Vec<&str> = stdout
+            .lines()
+            .filter(|line| line.contains(", Reason = "))
+            .collect();
+        assert!(
+            reasons.len() == 2
+                && reasons
+                    .iter()
+                    .all(|line| line.contains("a\\tb\u{a0}c") && !line.contains('\t')),
+            "both unmet lines carry the reason with the tab escaped and the no-break space kept:\n{}",
+            stdout
+        );
+    }
+
+    /// The reason of an unmet expectation is bounded where the format is read by a person and carried whole
+    /// where it is read by a program: the plain reporter prints the console's form (the plain head cut at
+    /// the recorded-message bound, the one-word 910-character value dropped whole, the ellipsis before the
+    /// join), and `json`, `yaml` and `junit` carry the raw sentence, the whole value in each of the two
+    /// unmet rules' reasons.
+    ///
+    /// Fails when the plain line carries the long value (a run of 321 letters) or no cut, or when a
+    /// structured report cuts the value (fewer than two whole runs of 900).
+    #[rstest]
+    #[case(None)]
+    #[case(Some("json"))]
+    #[case(Some("yaml"))]
+    #[case(Some("junit"))]
+    fn the_reason_is_cut_in_the_plain_report_and_whole_in_the_structured_ones(
+        #[case] output: Option<&str>,
+    ) {
+        let mut reader = Reader::default();
+        let mut writer =
+            Writer::new_with_err(WBVec(vec![]), WBVec(vec![])).expect("Failed to create writer.");
+        let mut runner = TestCommandTestRunner::default();
+        let runner = runner
+            .test_data(Option::from(
+                "resources/test-command/refusal-beside-a-gates-error/long-value.yaml",
+            ))
+            .rules(Some(
+                "resources/validate/gate_converter_error_on_a_long_value_beside_a_settled_refusal.guard",
+            ));
+        let _ = match output {
+            Some(format) => runner.output_format(format).run(&mut writer, &mut reader),
+            None => runner.run(&mut writer, &mut reader),
+        };
+        let stdout = writer.stripped().expect("failed to read stdout");
+        let whole = "x".repeat(900);
+        match output {
+            None => assert!(
+                !stdout.contains(&"x".repeat(321))
+                    && stdout
+                        .matches("not a number...; the condition also met: ")
+                        .count()
+                        == 2,
+                "the plain reasons are cut at the console bound, the value dropped whole:\n{}",
+                stdout
+            ),
+            Some(_) => assert_eq!(
+                2,
+                stdout.matches(&whole).count(),
+                "the structured reasons carry the whole value, once for each unmet rule:\n{stdout}"
+            ),
+        }
+    }
+
+    /// A rule whose sentence has a REFUSAL for its head and a second refusal joined to it keeps its `Reason`
+    /// under `test`, as one with a plain head does: the reporters key on whether the sentence joined refusals
+    /// (`Messages::parts`, carried whatever the head's kind), not on the head being plain. Both gated rules of
+    /// the rules file fail closed on a refusal with the other map's refusal beside it; each unmet line names
+    /// both refused maps, in the plain reporter and in `json`.
+    ///
+    /// Fails when an unmet line carries no reason (the head being a refusal dropped the parts), or
+    /// when a reason names only one of the two maps.
+    #[rstest]
+    #[case(None)]
+    #[case(Some("json"))]
+    fn an_unmet_expectation_on_a_rule_with_a_refusal_head_keeps_its_reason(
+        #[case] output: Option<&str>,
+    ) {
+        let mut reader = Reader::default();
+        let mut writer =
+            Writer::new_with_err(WBVec(vec![]), WBVec(vec![])).expect("Failed to create writer.");
+        let mut runner = TestCommandTestRunner::default();
+        let runner = runner
+            .test_data(Option::from(
+                "resources/test-command/refusal-beside-a-gates-error/two-refusals.yaml",
+            ))
+            .rules(Some(
+                "resources/validate/gate_failing_closed_on_a_refusal_beside_a_second_refusal.guard",
+            ));
+        let _ = match output {
+            Some(format) => runner.output_format(format).run(&mut writer, &mut reader),
+            None => runner.run(&mut writer, &mut reader),
+        };
+        let stdout = writer.stripped().expect("failed to read stdout");
+        let both_maps =
+            |text: &str| text.contains("/Resources/M1/Tags") && text.contains("/Resources/M2/Tags");
+        let reasons: Vec<&str> = match output {
+            None => stdout
+                .lines()
+                .filter(|line| line.contains(", Reason = "))
+                .collect(),
+            Some(_) => stdout
+                .lines()
+                .filter(|line| line.contains("\"reason\""))
+                .collect(),
+        };
+        assert!(
+            reasons.len() == 2 && reasons.iter().all(|line| both_maps(line)),
+            "both unmet rules carry a reason naming both refused maps:\n{}",
+            stdout
+        );
+    }
+
     /// An expectation for a parameterized rule is not told it names nothing.
     ///
     /// It does name something. `eval_rules_file` walks `guard_rules` only, and a parameterized rule

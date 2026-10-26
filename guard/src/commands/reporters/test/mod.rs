@@ -247,6 +247,44 @@ pub(crate) fn get_by_rules<'top>(
     })
 }
 
+/// How a rule's joined sentence is written as a `test` reason, named so a caller cannot pick it by a bare
+/// flag: `Console` is the plain reporter's line (one line, controls escaped, cut as the console cuts it) and
+/// `Raw` is the structured reporters' (`json`, `yaml`, `junit`: whole and uncut, the serializer escaping).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ReasonForm {
+    Console,
+    Raw,
+}
+
+/// The sentence of each rule whose failed condition met refusals beside the error that decided it
+/// (`Messages::parts`), whatever the head's kind, by rule name. `test` prints per-rule statuses and no
+/// messages, and the refused-read line that used to name such a refusal is not written for this shape, so an
+/// unmet expectation on such a rule says why with this text. The PLAIN reporter prints it as the console
+/// does (`validate::common::joined_rule_sentence`: one line, the strict escape set, the plain head cut at
+/// its bound, the refusals bounded once); the STRUCTURED reporters (`json`, `yaml`, `junit`) carry the raw
+/// parts whole (`joined_rule_sentence_raw`), since only the console bounds a line and the serializer or the
+/// junit writer does its own escaping. One walk of the case's report, so a caller builds it on the first
+/// unmet expectation and not before.
+pub(crate) fn joined_rule_reasons(
+    top: &crate::rules::eval_context::EventRecord<'_>,
+    form: ReasonForm,
+) -> HashMap<String, String> {
+    use crate::commands::reporters::validate::common::{
+        joined_rule_sentence, joined_rule_sentence_raw,
+    };
+    crate::rules::eval_context::report_all_failed_clauses_for_rules(&top.children)
+        .iter()
+        .filter_map(|clause| match clause {
+            crate::rules::eval_context::ClauseReport::Rule(rule) => match form {
+                ReasonForm::Raw => joined_rule_sentence_raw(rule),
+                ReasonForm::Console => joined_rule_sentence(rule),
+            }
+            .map(|sentence| (rule.name.to_string(), sentence)),
+            _ => None,
+        })
+        .collect()
+}
+
 pub(crate) fn get_status_result(
     expected: Status,
     rule: Vec<&Option<RecordType<'_>>>,

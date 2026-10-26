@@ -733,11 +733,11 @@ mod cfn_guard_lib_tests {
     /// the other maps (`/Resources/Q2/`, `/Resources/Q3/`), which only the joined basis produces. This is
     /// the rendering path the recorded-explanations census asks for.
     ///
-    /// Expected, not yet run. Red: the report lacks "FAIL", "when handling clause" or the first map's
-    /// reason (the record was written and dropped); no message in the parsed report carries the
-    /// fail-closed phrase (the negation's record was not written); or a message with the phrase omits
-    /// `/Resources/Q2/` or `/Resources/Q3/` (the Err path named the first map alone, the joined basis was
-    /// thrown away).
+    /// Fails when the report lacks "FAIL", "when handling clause" or the first map's reason
+    /// (the record was written and dropped); when no message in the parsed report carries the
+    /// fail-closed phrase (the negation's record was not written); or when a message with the
+    /// phrase omits `/Resources/Q2/` or `/Resources/Q3/` (the Err path named the first map
+    /// alone, the joined basis was thrown away).
     #[test]
     fn a_clause_that_fails_closed_on_several_undecided_markers_reaches_the_structured_report() {
         const RULE: &str = "let missing = Resources.*.Properties.M[ keys == Missing ]\nrule check { Resources.Q1.Properties.M.PROD IN %missing }\nrule main { not check }\n";
@@ -761,21 +761,9 @@ mod cfn_guard_lib_tests {
         // the first; the Err path would name the first map alone. The let's key-filter records also
         // name Q2 and Q3, so the paths are asserted on the ONE message that carries the phrase, found
         // by parsing the report and not by searching the whole document.
-        fn strings_with<'a>(value: &'a serde_json::Value, phrase: &str, out: &mut Vec<&'a str>) {
-            match value {
-                serde_json::Value::String(text) if text.contains(phrase) => out.push(text),
-                serde_json::Value::Array(items) => items
-                    .iter()
-                    .for_each(|item| strings_with(item, phrase, out)),
-                serde_json::Value::Object(map) => map
-                    .values()
-                    .for_each(|item| strings_with(item, phrase, out)),
-                _ => {}
-            }
-        }
         let parsed: serde_json::Value = serde_json::from_str(&document).unwrap();
         let mut closed = Vec::new();
-        strings_with(
+        strings_containing(
             &parsed,
             "failed only on reads it could not decide",
             &mut closed,
@@ -807,13 +795,13 @@ mod cfn_guard_lib_tests {
     /// per-value record, which already carry the refusal's sentence: this cell pins that exit's output, not
     /// the gate and filter roles' block record (the cells after this one do).
     ///
-    /// Expected, not yet run. Red: the rule is listed with empty `checks`, the check lacks the refused
-    /// map's path (the sentence is not carried), or it is the generic fallback; the failure text prints
-    /// the whole document.
+    /// Fails when the rule is listed with empty `checks`, when the check lacks the refused
+    /// map's path (the sentence is not carried) or is the generic fallback, or when the failure
+    /// text prints the whole document.
     #[test]
     fn a_failing_rule_whose_block_children_report_nothing_still_lists_a_check() {
         const RULE: &str = "let kind = Resources.A.Kind\nrule check { Resources.*.Tags[*][ Key == 'Env' ] { Value == 'prod'\n let n = parse_int(%kind)\n %n == 1 } }\n";
-        const TEMPLATE: &str = "Resources:\n  A:\n    Kind: 'abc'\n    Tags:\n      Env: 'dev'\n      ENV:\n        Ref: 'Stage'\n  B:\n    Tags:\n      Value: 'prod'\n      Other: 'o'\n";
+        const TEMPLATE: &str = SILENT_BLOCK_TEMPLATE;
         let document = structured_builder(OutputFormatType::JSON)
             .try_build_and_execute(&payload(&[RULE], &[TEMPLATE]))
             .unwrap();
@@ -842,6 +830,30 @@ mod cfn_guard_lib_tests {
         );
     }
 
+    /// The template of the cells that run a block over a refused map beside a converter's error: `A` holds a
+    /// scalar `Kind` and a `Tags` map whose `ENV` entry is a reference, `B` a `Tags` map the filter reads.
+    const SILENT_BLOCK_TEMPLATE: &str = "Resources:\n  A:\n    Kind: 'abc'\n    Tags:\n      Env: 'dev'\n      ENV:\n        Ref: 'Stage'\n  B:\n    Tags:\n      Value: 'prod'\n      Other: 'o'\n";
+
+    /// One run of `rule` over `template` through the structured JSON reporter: the parsed report and the
+    /// document. The rules file must load: a fixture that did not parse would read as a count of none, so a
+    /// load error fails here.
+    fn run_json(rule: &str, template: &str) -> (serde_json::Value, String) {
+        let document = structured_builder(OutputFormatType::JSON)
+            .try_build_and_execute(&payload(&[rule], &[template]))
+            .unwrap();
+        let report: serde_json::Value =
+            serde_json::from_str(&document).expect("the document is JSON");
+        let errors = &report[0]["rule_file_errors"];
+        assert!(
+            errors.is_null()
+                || errors.as_array().is_some_and(|errors| errors.is_empty())
+                || errors.as_object().is_some_and(|errors| errors.is_empty()),
+            "the rules file must load; got:\n{}",
+            document
+        );
+        (report, document)
+    }
+
     /// The strings in `value` that contain `needle`, in document order.
     fn strings_containing<'a>(value: &'a serde_json::Value, needle: &str, out: &mut Vec<&'a str>) {
         match value {
@@ -860,27 +872,18 @@ mod cfn_guard_lib_tests {
     /// for a rules file over the template of the cell above. The rules file must load: a fixture that did
     /// not parse would read as a count of none, so a load error fails here.
     fn refused_map_messages_in_checks(rule: &str, rule_name: &str) -> (Vec<String>, String) {
-        const TEMPLATE: &str = "Resources:\n  A:\n    Kind: 'abc'\n    Tags:\n      Env: 'dev'\n      ENV:\n        Ref: 'Stage'\n  B:\n    Tags:\n      Value: 'prod'\n      Other: 'o'\n";
-        let document = structured_builder(OutputFormatType::JSON)
-            .try_build_and_execute(&payload(&[rule], &[TEMPLATE]))
-            .unwrap();
-        let report: serde_json::Value =
-            serde_json::from_str(&document).expect("the document is JSON");
-        let errors = &report[0]["rule_file_errors"];
-        assert!(
-            errors.is_null()
-                || errors.as_array().is_some_and(|errors| errors.is_empty())
-                || errors.as_object().is_some_and(|errors| errors.is_empty()),
-            "the rules file must load; got:\n{}",
-            document
-        );
+        const TEMPLATE: &str = SILENT_BLOCK_TEMPLATE;
+        let (report, document) = run_json(rule, TEMPLATE);
         // One entry of `checks` is one listing for a reader. The strings that name the path are joined per
-        // entry: a record may carry its sentence in two fields (the sentence and its `Error = [..]` framing),
-        // which is one listing, where two entries are two.
+        // entry: one Unary entry carries the sentence in its message and again in the serialized marker's
+        // `reason` (`UnaryCheck::UnResolved(ValueUnResolved { value, .. })`, `UnResolved` derives
+        // `Serialize`), which is one listing, where two entries are two.
         let mut found = Vec::new();
+        let mut seen = false;
         for failing in report[0]["not_compliant"].as_array().into_iter().flatten() {
             let rule = &failing["Rule"];
             if rule["name"] == rule_name {
+                seen = true;
                 for entry in rule["checks"].as_array().into_iter().flatten() {
                     let mut strings = Vec::new();
                     strings_containing(entry, "/Resources/A/Tags", &mut strings);
@@ -890,33 +893,93 @@ mod cfn_guard_lib_tests {
                 }
             }
         }
+        assert!(
+            seen,
+            "`not_compliant` must hold the rule {:?}; a rules file that did not load lists its error in `rule_file_errors` (`file_name`, `error`) and the file's status is SKIP; got:\n{}",
+            rule_name, document
+        );
         (found, document)
     }
 
-    /// Every string anywhere in the failing rule `rule_name`'s entry (its message AND its checks) that
-    /// names the refused map's path, and the document.
-    fn refused_map_strings_in_rule(rule: &str, rule_name: &str) -> (Vec<String>, String) {
-        const TEMPLATE: &str = "Resources:\n  A:\n    Kind: 'abc'\n    Tags:\n      Env: 'dev'\n      ENV:\n        Ref: 'Stage'\n  B:\n    Tags:\n      Value: 'prod'\n      Other: 'o'\n";
-        let document = structured_builder(OutputFormatType::JSON)
-            .try_build_and_execute(&payload(&[rule], &[TEMPLATE]))
-            .unwrap();
-        let report: serde_json::Value =
-            serde_json::from_str(&document).expect("the document is JSON");
-        let errors = &report[0]["rule_file_errors"];
-        assert!(
-            errors.is_null()
-                || errors.as_array().is_some_and(|errors| errors.is_empty())
-                || errors.as_object().is_some_and(|errors| errors.is_empty()),
-            "the rules file must load; got:\n{}",
-            document
-        );
-        let mut found = Vec::new();
+    /// For the failing rule `rule_name`: how many message fields in its entry (its own message and every
+    /// report beneath it) name the refused map's path, how many entries its `checks` holds, and the
+    /// document.
+    fn refused_map_strings_in_rule(rule: &str, rule_name: &str) -> (usize, usize, String) {
+        const TEMPLATE: &str = SILENT_BLOCK_TEMPLATE;
+        let (report, document) = run_json(rule, TEMPLATE);
+        let mut count = 0;
+        let mut checks = 0;
+        let mut seen = false;
         for failing in report[0]["not_compliant"].as_array().into_iter().flatten() {
             if failing["Rule"]["name"] == rule_name {
-                strings_containing(&failing["Rule"], "/Resources/A/Tags", &mut found);
+                seen = true;
+                count += reports_naming(&failing["Rule"], "/Resources/A/Tags");
+                checks += failing["Rule"]["checks"].as_array().map_or(0, Vec::len);
             }
         }
-        (found.into_iter().map(String::from).collect(), document)
+        assert!(
+            seen,
+            "`not_compliant` must hold the rule {:?}; a rules file that did not load lists its error in `rule_file_errors` (`file_name`, `error`) and the file's status is SKIP; got:\n{}",
+            rule_name, document
+        );
+        (count, checks, document)
+    }
+
+    /// How many times `needle` appears in the message fields (`error_message`, `custom_message`) of the
+    /// reports in `value`, the rule's own among them, summed over every field and report.
+    fn occurrences_naming(value: &serde_json::Value, needle: &str) -> usize {
+        let own = value
+            .get("messages")
+            .and_then(serde_json::Value::as_object)
+            .map_or(0, |messages| {
+                ["error_message", "custom_message"]
+                    .iter()
+                    .filter_map(|field| messages.get(*field).and_then(serde_json::Value::as_str))
+                    .map(|text| text.matches(needle).count())
+                    .sum()
+            });
+        let below: usize = match value {
+            serde_json::Value::Array(items) => items
+                .iter()
+                .map(|item| occurrences_naming(item, needle))
+                .sum(),
+            serde_json::Value::Object(map) => map
+                .values()
+                .map(|item| occurrences_naming(item, needle))
+                .sum(),
+            _ => 0,
+        };
+        own + below
+    }
+
+    /// How many message fields (`error_message`, `custom_message`) of the reports in `value`, the rule's
+    /// own among them, name `needle`: every report object has a `messages` object, and each field counts
+    /// on its own, so one sentence twice inside one report counts twice.
+    fn reports_naming(value: &serde_json::Value, needle: &str) -> usize {
+        let own = value
+            .get("messages")
+            .and_then(serde_json::Value::as_object)
+            .map_or(0, |messages| {
+                ["error_message", "custom_message"]
+                    .iter()
+                    .filter(|field| {
+                        messages
+                            .get(**field)
+                            .and_then(serde_json::Value::as_str)
+                            .is_some_and(|text| text.contains(needle))
+                    })
+                    .count()
+            });
+        let below: usize = match value {
+            serde_json::Value::Array(items) => {
+                items.iter().map(|item| reports_naming(item, needle)).sum()
+            }
+            serde_json::Value::Object(map) => {
+                map.values().map(|item| reports_naming(item, needle)).sum()
+            }
+            _ => 0,
+        };
+        own + below
     }
 
     /// A refused one-object selection met by a block that is a `when` GATE reaches the structured report
@@ -930,19 +993,27 @@ mod cfn_guard_lib_tests {
     /// condition clause itself: the first version of this fixture wrote one there and did not load), so the
     /// block runs in the gate role under the rule's `when` condition record.
     ///
-    /// Expected, not yet run. Red: the rules file does not load; no string in the rule's entry names the
-    /// refused map (the rule's message does not carry it); or two do (the block's record is also walked
-    /// into `checks`). The fixture reaches the gate role's raising exit by reading, not by a run.
+    /// The count the cell reads is the number of strings in the rule's entry that name the refused map: 0
+    /// means the rule's message does not carry it, 1 is the property, and 2 means the block's record is also
+    /// walked into `checks`. The cell also fails when the count is one but `checks` is not empty (the sentence
+    /// is in `checks` and the rule's message lacks it, which the console, naming such a rule by its message
+    /// when its checks are empty, would not print), and when the rules file does not load. The fixture reaches
+    /// the gate role's raising exit by reading, not by a run.
     #[test]
     fn a_when_gates_refused_block_reaches_the_structured_report_once() {
         const RULE: &str = "rule gate(r) { %r.*.Tags[*][ Key == 'Env' ] { Value == 'prod' } }\nrule check when gate(Resources) { Resources exists }\n";
-        let (strings, document) = refused_map_strings_in_rule(RULE, "check");
+        let (count, checks, document) = refused_map_strings_in_rule(RULE, "check");
         assert_eq!(
-            1,
-            strings.len(),
-            "the refused map's sentence must appear once in the rule's entry; got {:?} from:\n{}",
-            strings,
-            document
+            1, count,
+            "the refused map's sentence must appear once in the rule's entry (its message and its reports); got {} from:\n{}",
+            count, document
+        );
+        // Once in the rule's MESSAGE, with `checks` empty: a count of one alone cannot tell that from the
+        // message lacking the sentence and `checks` listing it.
+        assert_eq!(
+            0, checks,
+            "the rule that failed on its condition lists no checks; got {} from:\n{}",
+            checks, document
         );
     }
 
@@ -950,13 +1021,14 @@ mod cfn_guard_lib_tests {
     /// fold raises it as the entry's undecided reason in the filter role) is listed in `checks` exactly
     /// once. A run of the first version counted two STRINGS: the bare sentence and the same sentence inside
     /// `Error = [..]`, both from the clause's own records (the block's record sits under the `Filter`
-    /// record, which the walker does not visit). By the reporter's own account (the structured reporters
-    /// append a record's message to `error_message`, the console prints it in the `Error = [..]` slot) the
-    /// two strings may be one record's two fields, which is one listing for a reader, so the count is of
-    /// `checks` ENTRIES that name the path, not of strings. If the two strings are two entries, this reads 2
-    /// and the clause-error record and the per-value record both list the refusal: then one of them drops it.
+    /// record, which the walker does not visit). `Messages::parts` is not serialized, so the bare sentence
+    /// does not come from it; the second string in one Unary entry is the serialized marker's `reason`
+    /// (`UnaryCheck::UnResolved(ValueUnResolved { value, .. })`, `UnResolved` derives `Serialize`), which
+    /// is one listing for a reader, so the count is of `checks` ENTRIES that name the path, not of strings.
+    /// If the two strings are two entries, this reads 2 and the clause-error record and the per-value
+    /// record both list the refusal: then one of them drops it.
     ///
-    /// Expected, not yet run. Red: no entry of `checks` names the refused map, or two entries do.
+    /// Fails when no entry of `checks` names the refused map, or when two entries do.
     #[test]
     fn a_filter_predicates_refused_block_reaches_the_structured_report_once() {
         const RULE: &str =
@@ -969,6 +1041,275 @@ mod cfn_guard_lib_tests {
             messages,
             document
         );
+    }
+
+    /// How many times each of `needles` appears in the message fields of the failing rule `rule_name`'s
+    /// entry (its own message and every report beneath it, occurrences summed over the fields, so a
+    /// sentence quoted twice inside one field counts twice), how many entries the rule's `checks` holds,
+    /// and the document, over `template`. The rules file must load and `not_compliant` must hold the
+    /// rule.
+    fn refusals_named_in_rule(
+        rule: &str,
+        template: &str,
+        rule_name: &str,
+        needles: &[&str],
+    ) -> (Vec<usize>, usize, String) {
+        let (report, document) = run_json(rule, template);
+        let mut counts = vec![0; needles.len()];
+        let mut checks = 0;
+        let mut seen = false;
+        for failing in report[0]["not_compliant"].as_array().into_iter().flatten() {
+            if failing["Rule"]["name"] == rule_name {
+                seen = true;
+                checks += failing["Rule"]["checks"].as_array().map_or(0, Vec::len);
+                for (count, needle) in counts.iter_mut().zip(needles) {
+                    *count += occurrences_naming(&failing["Rule"], needle);
+                }
+            }
+        }
+        assert!(
+            seen,
+            "`not_compliant` must hold the rule {:?} (a rules file that did not load lists its error in `rule_file_errors`); got:\n{}",
+            rule_name, document
+        );
+        (counts, checks, document)
+    }
+
+    /// A type block whose `when` fails closed through a refused read lists that refusal once in the
+    /// structured report. The type check closes with no message for a failed condition, so the refusal
+    /// reaches the report only through the condition's records (the walker's `TypeCondition` arm). The
+    /// count is of occurrences of the path in the message text (`occurrences_naming`), as in the cells below.
+    ///
+    /// Fails when the refusal is named nowhere in the rule's entry (the type check is listed
+    /// with no explanation) or twice. The scalar `Tags` is a refused read by reading, not by a
+    /// run, so a count of none may be the fixture.
+    #[test]
+    fn a_type_blocks_condition_that_fails_closed_lists_its_refusal_once() {
+        const RULE: &str = "rule check { AWS::S3::Bucket when Properties.Tags[ Key == 'Env' ] !empty { Properties exists } }\n";
+        const TEMPLATE: &str =
+            "Resources:\n  A:\n    Type: 'AWS::S3::Bucket'\n    Properties:\n      Tags: 'x'\n";
+        let (counts, _checks, document) =
+            refusals_named_in_rule(RULE, TEMPLATE, "check", &["/Resources/A/Properties/Tags"]);
+        assert_eq!(
+            vec![1],
+            counts,
+            "the refusal must be named once in the rule's entry; got:\n{}",
+            document
+        );
+    }
+
+    /// A type block whose `when` is `A exists or B == %refused`, A a decided no and B a clause over a refused
+    /// read, lists the refusal once and never the decided "A" as a finding: the real evaluation, read
+    /// through `not_compliant`, not a hand-built tree. A decided answer in a condition is the type
+    /// block's test of whether it applies, not a violation. Counted in occurrences in the message text
+    /// (`occurrences_naming`).
+    ///
+    /// Fails when the decided answer about `A` is named in the rule's entry (the filter kept a
+    /// decided per-value check under a disjunct's clause record), or when the refusal is named
+    /// nowhere or twice.
+    #[test]
+    fn a_type_blocks_condition_lists_its_refusal_and_not_a_decided_disjunct() {
+        const RULE: &str = "let refused = Resources.Q.Properties.Tags[ Key == 'Env' ]\nrule check { AWS::S3::Bucket when Properties.A exists or Properties.B == %refused { Properties exists } }\n";
+        const TEMPLATE: &str = "Resources:\n  Bkt:\n    Type: 'AWS::S3::Bucket'\n    Properties:\n      B: 'x'\n  Q:\n    Type: 'AWS::SQS::Queue'\n    Properties:\n      Tags: 'x'\n";
+        let (counts, _checks, document) = refusals_named_in_rule(
+            RULE,
+            TEMPLATE,
+            "check",
+            &["/Resources/Q/Properties/Tags", "property [A]"],
+        );
+        assert_eq!(
+            vec![1, 0],
+            counts,
+            "the refusal once, the decided A never; got:\n{}",
+            document
+        );
+    }
+
+    /// A rule whose `when` condition has two disjuncts that each refuse reports BOTH refusals, each once:
+    /// the condition's explanation carries the one error the conjunction held, and the other disjunct's
+    /// refusal is added to the rule's message. The count is of occurrences in the message text, so the
+    /// held refusal quoted a second time (inside the disjunction's own "could not be decided" wrapper)
+    /// reads 2. The rule's `checks` stay empty.
+    ///
+    /// Fails when one of the two maps is named nowhere (the second refusal is dropped), when
+    /// either is named twice (a wrapper that quotes the held refusal was appended beside it),
+    /// or when the rule lists a check.
+    #[test]
+    fn a_when_of_two_refusing_disjuncts_reports_both_refusals_once() {
+        const RULE: &str = "rule check when Resources.A.Tags[ Key == 'Env' ] exists or Resources.B.Tags[ Key == 'Env' ] exists { Resources exists }\n";
+        const TEMPLATE: &str = "Resources:\n  A:\n    Tags: 'x'\n  B:\n    Tags: 'y'\n";
+        let (counts, checks, document) = refusals_named_in_rule(
+            RULE,
+            TEMPLATE,
+            "check",
+            &["/Resources/A/Tags", "/Resources/B/Tags"],
+        );
+        assert_eq!(
+            vec![1, 1],
+            counts,
+            "each refusal must be named once in the rule's entry; got:\n{}",
+            document
+        );
+        assert_eq!(
+            0, checks,
+            "the rule that failed on its condition lists no checks; got:\n{}",
+            document
+        );
+    }
+
+    /// An inline `when` block whose condition has two disjuncts that each refuse reports BOTH refusals,
+    /// each once: the `when` block's explanation carries the one error its condition held, and the other
+    /// disjunct's refusal is appended to it by the same filter and the same append as a rule's own
+    /// condition (`WhenCondition` beside `RuleCondition`). Counted in occurrences in the message text.
+    ///
+    /// Fails when one of the two maps is named nowhere (the inline `when`'s failed condition is not
+    /// read) or when either is named twice.
+    #[test]
+    fn an_inline_when_of_two_refusing_disjuncts_reports_both_refusals_once() {
+        const RULE: &str = "rule check { when Resources.A.Tags[ Key == 'Env' ] exists or Resources.B.Tags[ Key == 'Env' ] exists { Resources exists } }\n";
+        const TEMPLATE: &str = "Resources:\n  A:\n    Tags: 'x'\n  B:\n    Tags: 'y'\n";
+        let (counts, _checks, document) = refusals_named_in_rule(
+            RULE,
+            TEMPLATE,
+            "check",
+            &["/Resources/A/Tags", "/Resources/B/Tags"],
+        );
+        assert_eq!(
+            vec![1, 1],
+            counts,
+            "each refusal must be named once in the rule's entry; got:\n{}",
+            document
+        );
+    }
+
+    /// A refusal inside a FILTER PREDICATE of a `when` condition is named once in the rule's sentence. The
+    /// predicate's block body is refused over a statement written as one object (no `Principal`); the
+    /// predicate's own records carry no sentence, so the refusal reaches the sentence through the enclosing
+    /// clause's record, which fails on the marker the selection delivered. The walk of the failed condition
+    /// descends through the filter's record, so a second source for the same refusal would show as a count
+    /// of 2. Counted in occurrences of the predicate key the object lacks in the message text.
+    ///
+    /// Fails when the refusal is named nowhere (the predicate's refusal dropped out of the
+    /// sentence) or twice.
+    #[test]
+    fn a_refusal_inside_a_predicate_of_a_when_condition_is_named_once() {
+        const RULE: &str = "rule check when Resources.*[ Properties.PolicyDocument.Statement[*][ Principal == '*' ] { Condition exists } ] empty { Resources exists }\n";
+        const TEMPLATE: &str = "Resources:\n  Role:\n    Type: 'AWS::IAM::Role'\n    Properties:\n      PolicyDocument:\n        Statement:\n          Effect: Allow\n          Action: 's3:GetObject'\n          Resource: '*'\n  Other:\n    Type: 'AWS::IAM::Role'\n    Properties:\n      PolicyDocument:\n        Statement:\n          - Principal: '*'\n            Effect: Deny\n            Action: 's3:GetObject'\n            Resource: '*'\n";
+        let (counts, _checks, document) =
+            refusals_named_in_rule(RULE, TEMPLATE, "check", &["no `Principal`"]);
+        assert_eq!(
+            vec![1],
+            counts,
+            "the predicate's refusal must be named once in the rule's entry; got:\n{}",
+            document
+        );
+    }
+
+    /// A rule that calls a gate rule whose read is refused names the reference's refusal once in its own
+    /// sentence, read from a real evaluation: `gate` fails on a refused read, `check` opens on `gate` and
+    /// fails closed on the reference's error. The failure the reference stores (`ReferenceFailure`) is what
+    /// the walk of the failed condition reads, so a reverted extraction leaves the refusal unnamed here,
+    /// where a hand-built record would keep it.
+    ///
+    /// Fails when the refusal is named nowhere in `check`'s entry (the reference's failure is
+    /// not read) or twice (the reference's record and the callee's records both name it).
+    #[test]
+    fn a_rule_that_calls_a_gate_with_a_refused_read_names_the_refusal_once() {
+        const RULE: &str = "rule gate { Resources.A.Tags[ Key == 'Env' ] exists }\nrule check when gate { Resources exists }\n";
+        const TEMPLATE: &str = "Resources:\n  A:\n    Tags: 'x'\n";
+        let (counts, _checks, document) =
+            refusals_named_in_rule(RULE, TEMPLATE, "check", &["/Resources/A/Tags"]);
+        assert_eq!(
+            vec![1],
+            counts,
+            "the reference's refusal must be named once in the calling rule's entry; got:\n{}",
+            document
+        );
+    }
+
+    /// One gate block over THREE refused body values names each refusal once in the rule's sentence and
+    /// lists no entry of its own for the rule: the gate role's marks (one per value) feed the sentence, not
+    /// the entries. Read in `-o json` through the real evaluation.
+    ///
+    /// The variant with a run-ending error beside the marks, where the block is the one entry, is
+    /// pinned by `a_refusal_a_mark_carries_beside_a_run_ending_error_is_told_once_by_the_block`.
+    ///
+    /// Fails when a path is named nowhere or twice, or when the rule lists a check (a mark
+    /// became an entry).
+    #[test]
+    fn a_gate_block_over_three_refused_values_names_each_refusal_once_and_lists_no_check() {
+        const RULE: &str = "rule gate(r) { %r.*.Tags[*][ Key == 'Env' ] { Value == 'prod' } }\nrule check when gate(Resources) { Resources exists }\n";
+        const TEMPLATE: &str = "Resources:\n  A:\n    Tags:\n      Env: dev\n      ENV:\n        Ref: Stage\n  B:\n    Tags:\n      Env: dev\n      ENV:\n        Ref: Stage\n  C:\n    Tags:\n      Env: dev\n      ENV:\n        Ref: Stage\n";
+        let (counts, checks, document) = refusals_named_in_rule(
+            RULE,
+            TEMPLATE,
+            "check",
+            &[
+                "/Resources/A/Tags",
+                "/Resources/B/Tags",
+                "/Resources/C/Tags",
+            ],
+        );
+        assert_eq!(
+            (vec![1, 1, 1], 0),
+            (counts, checks),
+            "each refusal once in the rule's sentence and no check listed; got:\n{}",
+            document
+        );
+    }
+
+    /// An author's `<< >>` body on a failing call reaches the console whatever the called rule's
+    /// children report. Read from a real console run, in the ASSERTION role (`rule outer` calls
+    /// `inner(Resources)` with a body), over the three shapes of the records beneath the call:
+    /// - a refused one-object map beside a one-object sibling whose body raises a converter's error: the
+    ///   block exits before its fold and leaves a settled record with no message (the silent block);
+    /// - the same refused map beside a LIST sibling: the loop completes and the fold writes the refusal's
+    ///   record;
+    /// - a refused map beside a map with no `Key`, whose selection is empty, so the converter never runs
+    ///   (the shape the structured-report cell for a failing rule uses, here under a call with a body).
+    /// A rule with a text of its own (a call's body) lists no generic "none of the checks recorded under it
+    /// reports why" entry for a silent child (`rule_checks`), so its `checks` stay empty and the console
+    /// names the rule by its message (`collect_unattributed_explanations` reads whether any block or clause
+    /// beneath its checks is rendered per resource, and none is when `checks` is empty); the
+    /// JUnit failure text is the body as well
+    /// (`a_calls_body_over_a_silent_block_is_the_failure_text_and_the_generic_sentence_is_not`). Each row
+    /// asserts the body is in the output (how many times the console prints it is read from the message
+    /// when a row is red; the count is not pinned). A generic entry that filled `checks` would take the body's
+    /// place in the console; if a row is red, the output printed in the message says which record the body
+    /// is lost at.
+    #[test]
+    fn an_author_body_on_a_failing_call_over_a_silent_block_still_reaches_the_console() {
+        const BODY: &str = "AUTHOR BODY SENTINEL";
+        const BODY_RULES: &str = "rule inner(p) { %p.*.Tags[*][ Key == 'Env' ] { Value == 'prod'\n let n = parse_int(Value)\n %n == 1 } }\nrule outer { inner(Resources) << AUTHOR BODY SENTINEL >> }\n";
+        const KIND_RULES: &str = "let kind = Resources.A.Kind\nrule inner(p) { %p.*.Tags[*][ Key == 'Env' ] { Value == 'prod'\n let n = parse_int(%kind)\n %n == 1 } }\nrule outer { inner(Resources) << AUTHOR BODY SENTINEL >> }\n";
+        const ONE_OBJECT_SIBLING: &str = "Resources:\n  M:\n    Tags:\n      Env: 'dev'\n      ENV:\n        Ref: 'Stage'\n  N:\n    Tags:\n      Key: 'Env'\n      Value: 'prod'\n";
+        const LIST_SIBLING: &str = "Resources:\n  M:\n    Tags:\n      Env: 'dev'\n      ENV:\n        Ref: 'Stage'\n  L:\n    Tags:\n      - Key: 'Env'\n        Value: 'prod'\n";
+        for (label, rules, template) in [
+            ("one-object sibling", BODY_RULES, ONE_OBJECT_SIBLING),
+            ("list sibling", BODY_RULES, LIST_SIBLING),
+            (
+                "a map with no key beside it",
+                KIND_RULES,
+                SILENT_BLOCK_TEMPLATE,
+            ),
+        ] {
+            let mut writer = Writer::new_with_err(WBVec(vec![]), WBVec(vec![]))
+                .expect("Failed to create writer.");
+            let mut reader = Reader::new(crate::utils::reader::ReadBuffer::Cursor(
+                std::io::Cursor::new(Vec::from(payload(&[rules], &[template]).as_bytes())),
+            ));
+            let _ = console_builder()
+                .try_build()
+                .expect("the console builder builds")
+                .execute(&mut writer, &mut reader);
+            let output = writer.stripped().expect("the console output reads back");
+            assert!(
+                output.matches(BODY).count() >= 1,
+                "({}) the author's body must reach the console; got:\n{}",
+                label,
+                output
+            );
+        }
     }
 
     /// The notices a console run over `rules` and `data` records, read from the writer the run

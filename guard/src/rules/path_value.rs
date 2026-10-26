@@ -1755,11 +1755,15 @@ impl QueryResolver for PathAwareValue {
                         // evaluator (`evaluate.rs`, whose own root scope holds no frames) and from the
                         // metadata appender (`commands/aws_meta_appender.rs`), from neither `eval.rs`
                         // nor `eval_context.rs` as the code stands, so no frame is live when this runs.
-                        // A live-engine caller of this arm from inside a run would have to hand the
-                        // ranking in, as the comparison in `eval.rs` hands it to `select_key`; a caller
-                        // that did not would rank by minting alone under a live frame, the resource-order
-                        // swap the run-ranking cells in `eval_tests.rs` are written to catch, and no test
-                        // fails on the call itself.
+                        // The two ranking sources differ in kind, and agree here only because no run is
+                        // live: `select_key` is handed `no_frame_ranking` (minting alone), while
+                        // `ensure_registered_wrap` below reads the thread's live runs
+                        // (`live_run_frames`), which are empty at this call. A live-engine caller of this
+                        // arm from inside a run would have to hand `select_key` the live ranking, as the
+                        // comparison in `eval.rs` does; the wrap follows the live runs on its own. A
+                        // caller that did not would pair by minting alone under a live frame, the
+                        // resource-order swap the run-ranking cells in `eval_tests.rs` are written to
+                        // catch, and no test fails on the call itself.
                         let selection = key_filter::select_key(
                             cmp,
                             Rc::new(key.clone()),

@@ -307,6 +307,14 @@ pub(crate) fn xml_attribute_value(s: &str) -> String {
 /// well-formed). A writer that escapes its own fields (`console_field`) is unchanged by this; one that
 /// forgets cannot reach the terminal raw through it. One of the two sequences a template string carried
 /// itself would pass: it recolours the line and nothing else.
+///
+/// It escapes U+200C to U+200F (the joiners and marks the author's prose keeps,
+/// [`escaped_controls_for_console`]) like every other character the strict set names, which is right
+/// only because the backstop never runs over the author's prose: its one caller is `writer_output`, over a
+/// comparison writer's buffer, and a writer's lines hold the template's paths, values and source excerpt,
+/// never the rule author's `Message =` text, which `emit_messages` and `write_text_line` write through the
+/// relaxed set on their own. A ZWJ emoji in a `<< >>` body therefore reaches the console intact
+/// (`a_message_with_a_zero_width_joiner_does_not_pass_through_the_backstop`).
 pub(crate) fn escaped_but_for_colour_and_layout(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     let mut rest = s;
@@ -1468,8 +1476,8 @@ mod tests {
     /// context, a refusal's text), and a plain path is displayed as it is. The notice form is unchanged
     /// (escaping an escaped text changes nothing: a backslash is written as it is).
     ///
-    /// Expected, not yet run. Red: the display carries the raw ESC or line feed, doubles a backslash, or
-    /// changes a path with nothing to escape.
+    /// Fails when the display carries the raw ESC or line feed, doubles a backslash, or changes
+    /// a path with nothing to escape.
     #[test]
     fn a_locations_display_escapes_its_path_and_leaves_a_plain_one_alone() {
         let hidden = crate::rules::exprs::FileLocation {
@@ -1636,8 +1644,8 @@ mod tests {
     /// a sequence cut short (an ESC at the end of the text, or `ESC [` with no final letter), and an ESC
     /// that opens an operating-system command. Text that is already escaped passes unchanged.
     ///
-    /// Expected, not yet run. Red: a row keeps its ESC byte (the backstop kept a well-formed sequence of
-    /// any kind), or a kept sequence, the tab or the line feed is written as an escape.
+    /// Fails when a row keeps its ESC byte (the backstop kept a well-formed sequence of any
+    /// kind), or when a kept sequence, the tab or the line feed is written as an escape.
     #[test]
     fn the_backstop_keeps_only_the_writers_two_colour_sequences() {
         let esc = char::from(0x1b);

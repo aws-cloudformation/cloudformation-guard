@@ -1,11 +1,38 @@
+//! What the console reporters write for a template's and a rules file's text.
+//!
+//! Every line that prints a recorded message writes the controls in it as their escapes. The STRICT set
+//! (`escaped_controls_for_display`) is the default on every console line and field: a key, a path, a
+//! context (the rules file path a record context names, through `FileLocation`'s display, is escaped where
+//! the position is built, as a file name is), a value, an excerpt, an `Error =` or a `Reason =` text,
+//! because an evaluator's sentence quotes keys from the rules file and the template and the record stores
+//! it the same way (`reason_backstop`, `write_console_line`). The RELAXED set
+//! (`escaped_controls_for_console`), under which a joiner or a mark is ordinary text, applies only to the
+//! rule author's `<< >>` message text where it is printed (`plain_author_message`, the `Message =` lines
+//! through `write_text_line`, and a rule record's custom slot when the record says the slot holds the
+//! author's body, `custom_slot_origin`).
+//!
+//! A finished line is escaped AT LEAST once, and every escape is idempotent: some paths escape a piece
+//! early and the line again as a whole (`reason_backstop` then `console_line!`, `plain_evaluator_message`
+//! then `text_line!`, the author slot then `emit_messages`), and a second pass over text that is already
+//! escaped changes nothing. A line break inside a field is collapsed first (`one_line`), since both sinks
+//! write one line: a context is collapsed at its `Check =` line (`context_line`), and a line feed left in
+//! any other field is escaped as `\n` there, never written.
+//!
+//! The comparison writers format their own lines (`ComparisonErrorWriter`) and escape each field they take
+//! from the template before it is formatted in (`console_field`), because their lines also carry the
+//! writer's colour, which an escape of the whole line would print as text. The clause arm then applies a
+//! backstop to what a writer wrote (`writer_output`), which writes every control as its escape except the
+//! text's own layout and the writer's two colour sequences, so a field a writer forgot cannot reach the
+//! terminal raw.
+
 use colored::*;
 use serde::Serialize;
 
 use crate::commands::tracker::StatusContext;
 use crate::rules::eval_context::{
     find_skip_reason, BinaryCheck, BinaryComparison, ClauseReport, EventRecord, FileReport,
-    GuardClauseReport, InComparison, Messages, RuleReport, UnaryCheck, UnaryComparison,
-    ValueComparisons, ValueUnResolved,
+    GuardClauseReport, InComparison, Messages, PartsJoin, RuleReport, SentenceSlot, UnaryCheck,
+    UnaryComparison, ValueComparisons, ValueUnResolved,
 };
 
 use crate::rules::path_value::traversal::Traversal;
@@ -80,25 +107,7 @@ fn non_empty_message(message: &Option<String>) -> Option<&str> {
 /// pretending otherwise would suggest to a reader that it can.
 ///
 /// No defence against a terminal control sequence of its own: an ANSI cursor movement in a message
-/// survives the collapse. Every line that prints a recorded message writes the controls as their escapes
-/// after it. The STRICT set (`escaped_controls_for_display`) is the default on every console line and
-/// field: a key, a path, a context (the rules file path a record context names, through
-/// `FileLocation`'s display, is escaped where the position is built, as a file name is), a value, an
-/// excerpt, an `Error =` or a `Reason =` text, because an
-/// evaluator's sentence quotes keys from the rules file and the template and the record stores it the same
-/// way (`reason_backstop`, `write_console_line`). The RELAXED set (`escaped_controls_for_console`), under
-/// which a joiner or a mark is ordinary text, applies only to the rule author's `<< >>` message text where
-/// it is printed (`plain_author_message`, the `Message =` lines through `write_text_line`, and a rule
-/// record's custom slot when the record says the slot holds the author's body, `custom_slot_origin`). Each finished
-/// line is escaped once. A line break inside a field is collapsed here first, since both sinks write one
-/// line: a context is collapsed at its `Check =` line (`context_line`), and a line feed left in any other
-/// field is escaped as `\n` there, never written.
-/// The comparison writers format their own lines (`ComparisonErrorWriter`) and escape each field they take
-/// from the template before it is formatted in (`console_field`), because their lines also carry the
-/// writer's colour, which an escape of the whole line would print as text. The clause arm then applies a
-/// backstop to what a writer wrote (`writer_output`), which writes every control as its escape except the
-/// text's own layout and the writer's two colour sequences, so a field a writer forgot cannot reach the
-/// terminal raw.
+/// survives the collapse. The escaping every console line takes is described in the module's own doc.
 fn one_line(text: &str) -> String {
     text.split(['\n', '\r'])
         .map(str::trim)
@@ -112,8 +121,10 @@ fn one_line(text: &str) -> String {
 /// context that spans lines, which is joined as the unattributed section joins it (`one_line`), since the
 /// sink writes one line. `one_line` alone trimmed the spaces of every context, and the printed line moved.
 /// A break at an end of the text does not span lines: a rules file with CRLF line endings leaves a `\r`
-/// after a one-line context, and the context is that one piece as it was written, spacing kept. The
-/// join is made only where a break sits between two pieces that hold text.
+/// after a one-line context, and the context is that one piece with the break itself dropped (the other
+/// fields of the section write a `\r` as its escape; here the trailing break is not part of the line) and
+/// its spaces kept, as they were written. The join is made only where a break sits between two pieces that
+/// hold text.
 fn context_line(context: &str) -> String {
     if !context.contains(['\n', '\r']) {
         return context.to_string();
@@ -173,9 +184,9 @@ pub(super) fn write_text_line(
 /// the template themselves (`console_field`), so for them this changes nothing; a writer that forgets one
 /// field still cannot send a raw control to the terminal.
 pub(super) fn writer_output(buffer: Vec<u8>) -> String {
-    crate::utils::writer::escaped_but_for_colour_and_layout(
-        &String::from_utf8(buffer).unwrap_or_default(),
-    )
+    // Lossy, not `unwrap_or_default`: one invalid byte (a template's lossily-read text, a writer that sliced
+    // a character) keeps the rest of the excerpt, with the replacement character where the byte was.
+    crate::utils::writer::escaped_but_for_colour_and_layout(&String::from_utf8_lossy(&buffer))
 }
 
 /// A value, a path or a key a comparison writer takes from the template, as one console field: the strict
@@ -184,6 +195,46 @@ pub(super) fn writer_output(buffer: Vec<u8>) -> String {
 /// before it is formatted into their lines, and leave the lines' own colour and layout alone.
 pub(super) fn console_field(field: &dyn std::fmt::Display) -> String {
     crate::utils::writer::escaped_controls_for_display(&field.to_string())
+}
+
+/// The per-resource header both resource-organized reporters write: `Resource = <name> {`, then the `Type`
+/// line and, when the template has one, the `CDK-Path` line. Every field is template text (a logical id is
+/// a map key, `Type` and `aws:cdk:path` are values), so each passes the strict escape (`console_field`)
+/// BEFORE the name is coloured, as the other writers' fields do; the only escape byte left in the header is
+/// the writer's own colour, and `colour` says whether the name gets it (the process setting in the
+/// reporters; a cell passes it).
+pub(super) fn write_resource_header(
+    writer: &mut dyn Write,
+    name: &str,
+    resource_type: &str,
+    cdk_path: &str,
+    colour: bool,
+) -> crate::rules::Result<()> {
+    let name = console_field(&name);
+    match colour {
+        true => writeln!(writer, "Resource = {} {{", name.yellow().bold())?,
+        false => writeln!(writer, "Resource = {} {{", name)?,
+    }
+    let prefix = "  ";
+    writeln!(
+        writer,
+        "{prefix}{0:<width$}= {rt}",
+        "Type",
+        prefix = prefix,
+        width = 10,
+        rt = console_field(&resource_type),
+    )?;
+    if !cdk_path.is_empty() {
+        writeln!(
+            writer,
+            "{prefix}{0:<width$}= {cdk}",
+            "CDK-Path",
+            prefix = prefix,
+            width = 10,
+            cdk = console_field(&cdk_path)
+        )?;
+    }
+    Ok(())
 }
 
 /// Writes one finished console line made of a BODY and the rule author's MESSAGE, which is the last piece
@@ -280,6 +331,20 @@ impl<'record, 'value: 'record> Rendered<'record, 'value> {
         }
     }
 
+    /// Whether the per-resource output accounted for this check or for anything beneath it: a block or a
+    /// clause it rendered, found through the disjunctions and the called rules that hold them, since the
+    /// per-resource printer places only block and clause nodes (`shows` is an identity lookup, which a
+    /// disjunction or a nested rule never passes). A rule whose body sits in such a check is rendered by
+    /// the descendant, and its decided failure goes with the clause entries, never into the list of what
+    /// could not be evaluated.
+    fn shows_any(&self, check: &'record ClauseReport<'value>) -> bool {
+        match check {
+            ClauseReport::Disjunctions(ors) => ors.checks.iter().any(|child| self.shows_any(child)),
+            ClauseReport::Rule(rule) => rule.checks.iter().any(|child| self.shows_any(child)),
+            other => self.shows(other),
+        }
+    }
+
     /// Whether the per-resource output already accounted for this finding.
     fn shows(&self, clause: &'record ClauseReport<'value>) -> bool {
         if self.nodes.contains(&IdentityHash { key: clause }) {
@@ -367,10 +432,15 @@ pub(super) fn collect_unattributed_explanations<'record, 'value: 'record>(
         ClauseReport::Rule(rule) => {
             // A rule that failed on its own condition has no clause findings underneath it, so the
             // per-resource output has nothing to render and this message is the only account of why
-            // the rule failed. `checks.is_empty()` is the discriminator: a rule whose clauses produced
+            // the rule failed. The discriminator is that NO block or clause beneath the rule is rendered
+            // per resource (`checks` empty, or nothing under them shown, `Rendered::shows_any`, which
+            // looks through disjunctions and called rules): a rule whose clauses produced
             // findings has them rendered per resource already, under a `Rule =` block that prints the
             // rule's own `Message` line, and repeating the rule-level message there would duplicate
-            // rather than explain. This is narrower than `eval_context::speaks_for_itself`, the JUnit
+            // rather than explain. A rule that failed on its own condition has no checks only when it
+            // carries a message (its failed condition is then not walked); a failed rule with no message
+            // has its condition's raise-carrying records as checks, so it is not recognized here and the
+            // checks speak for it. This is narrower than `eval_context::speaks_for_itself`, the JUnit
             // failure text's test, which also takes a rule whose checks are all silent: the JUnit report
             // has no per-resource rendering that prints the rule's own message beside them.
             //
@@ -391,7 +461,10 @@ pub(super) fn collect_unattributed_explanations<'record, 'value: 'record>(
             // Leaving one arm raw is a difference with nothing
             // behind it. `non_empty_message` for the same reason the arms above use it -- an entry whose
             // explanation is blank reads as a rendering fault rather than as a message nobody wrote.
-            if rule.checks.is_empty() {
+            // Also when none of its checks is rendered per resource: those checks then do not speak
+            // for the rule, and an author's body on the call would be lost.
+            if rule.checks.is_empty() || !rule.checks.iter().any(|check| rendered.shows_any(check))
+            {
                 if let Some(explanation) = non_empty_message(&rule.messages.custom_message) {
                     out.push((
                         format!("rule {}", rule.name),
@@ -404,7 +477,13 @@ pub(super) fn collect_unattributed_explanations<'record, 'value: 'record>(
                         // sentence under its own kind's bound.
                         match custom_slot_origin(rule) {
                             Origin::Author => explanation_of(&rule.messages),
-                            origin => bounded_for_the_console(explanation, origin),
+                            // A sentence that gained refusals prints each part under its own kind.
+                            origin => joined_console_text(
+                                &rule.messages,
+                                SentenceSlot::Custom,
+                                HeadBound::Plain,
+                            )
+                            .unwrap_or_else(|| bounded_for_the_console(explanation, origin)),
                         },
                     ));
                 }
@@ -480,7 +559,7 @@ const LONGEST_RECORDED_MESSAGE: usize = 320;
 /// through `bounded_for_the_console`, the unattributed section's explanation (`explanation_of`), a
 /// retrieval error's two lines under a resource (`refusal_lines`), the `Error =` line of a block, a
 /// unary check and a decided comparison under a resource (`error_line_text`) and the two lines of a
-/// rule's own record under a rendered parent (`rule_line_texts`) alike, so no line's length
+/// rule's own record under a rendered parent (`rule_line_parts`) alike, so no line's length
 /// rests on the evaluator having bounded the text. The one exception is the verbose tree
 /// (`console_reporter.rs`, the `ClauseCheck::Comparison` arm), which writes each record's message as
 /// recorded, bounded by nothing: it is the tree a reader asks for to see the records whole, and it is
@@ -524,15 +603,15 @@ enum Origin {
     /// which a zero-width joiner or a direction mark is ordinary text. Cut at the recorded-message bound
     /// where an entry of the section for findings that belong to no resource is bounded
     /// (`bounded_for_the_console`, `explanation_of`); printed whole on the per-resource `Rule = { }`
-    /// block's `Message` line (`rule_line_texts`), as a clause's message is. Never a refusal.
+    /// block's `Message` line (`rule_line_parts`), as a clause's message is. Never a refusal.
     Author,
     /// The evaluator's own sentence, or text it quoted from the rules file or the template (a converter's
     /// error, the sentence of a refusal-free record): the strict set (`escaped_controls_for_display`), as
     /// every other line that names a key prints it, and the recorded-message cut.
     Evaluator,
     /// The evaluator's sentence about a read it refused (`Messages::refusal`, `CustomSlot::Refusal`): the
-    /// console's one refusal pipeline (`reason_backstop`, strict set), cut at the later refusal bound and
-    /// marked.
+    /// console's refusal pipeline (`refusal_backstop`, strict set: every `; ` and every known joiner in the
+    /// text is a floor of the cut), cut at the later refusal bound and marked.
     Refusal,
 }
 
@@ -549,7 +628,7 @@ fn error_slot_origin(messages: &Messages) -> Origin {
 /// A recorded message, cut to the length its kind allows: a refusal explanation to
 /// `LONGEST_REFUSAL_MESSAGE`, anything else to `LONGEST_RECORDED_MESSAGE`. Either way the text is put on
 /// one line and its raw controls are written as their escapes before the cut: the refusal through
-/// `reason_backstop`, an author's text through `plain_author_message` and the evaluator's through
+/// `refusal_backstop`, an author's text through `plain_author_message` and the evaluator's through
 /// `plain_evaluator_message`, so a control sequence in an author's `<< >>` text or in a converter's
 /// sentence never reaches the terminal raw from the unattributed section.
 ///
@@ -565,9 +644,13 @@ fn error_slot_origin(messages: &Messages) -> Origin {
 /// say it is one, and a refusal is printed whole whatever words it uses (the tests under
 /// `explanation_tests` hold both). `LONGEST_REFUSAL_MESSAGE` says why the text was not enough.
 ///
-/// A refusal's text takes the console's ONE pipeline for a refusal line (`reason_backstop`: collapsed
-/// onto one line, its remaining raw controls written as their escapes, cut on the printed width last,
-/// with the refusal's marker), so the `Error =` line of a block, a unary check and a decided comparison
+/// A refusal's text takes the console's pipeline for a refusal line (`refusal_backstop`: collapsed
+/// onto one line, its remaining raw controls written as their escapes, cut on the printed width last with
+/// every `; ` and known joiner a floor, with the refusal's marker; the joined sentence of a record with
+/// parts takes the same cut through `reason_backstop_joined`). There are two pipelines with different cut
+/// rules, and this is the refusal one: the lines that carry a refusal floor at every `; ` and every known
+/// joiner, while a reason that is no refusal's (`reason_backstop` with `REASON_CUT_MARKER`) has floor 0.
+/// So the `Error =` line of a block, a unary check and a decided comparison
 /// (`error_line_text`), the unattributed section's entries (`explanation_of`, the rule-level record) and
 /// the retrieval-error arm's lines (`refusal_lines`) are one pipeline. Cut here with no escape, those
 /// arms printed a raw ESC or a bidi override the evaluator had not bounded while the retrieval arm
@@ -578,9 +661,219 @@ fn error_slot_origin(messages: &Messages) -> Origin {
 /// alike, since both are the evaluator's text.
 fn bounded_for_the_console(message: &str, origin: Origin) -> String {
     match origin {
-        Origin::Refusal => reason_backstop(message, REFUSAL_CUT_MARKER),
+        Origin::Refusal => refusal_backstop(message),
         Origin::Author => plain_author_message(message).0,
         Origin::Evaluator => plain_evaluator_message(message).0,
+    }
+}
+
+/// The least a head keeps when the per-resource block line cuts it to make room for the refusals: a quarter
+/// of the plain bound, counted on the PRINTED head, ellipsis included (the cutter's floor is this less the
+/// three characters of the ellipsis, so a back-off to a word never leaves a printed head under it). Under
+/// it (the join and the refusals leave the head less than this, or nothing) the
+/// head is not cut to the room, since a head of a few characters, or only its ellipsis, says nothing and
+/// would hide the plain error that decided the verdict; the head's budget is this floor instead and the
+/// backstop cuts the end of the line, so the refusals lose min(head, floor) - room, plus up to
+/// `BACKSTOP_BACKOFF` characters to a word boundary, plus whatever the join and refusals already exceed
+/// the backstop by, plus up to one split escape.
+const HEAD_FLOOR: usize = LONGEST_RECORDED_MESSAGE / 4;
+
+/// How the head of a joined sentence is bounded on the console line it is printed on.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum HeadBound {
+    /// A plain head goes through the plain pipeline (collapsed, escaped, cut at the recorded-message bound):
+    /// the lines that print a rule's sentence and a block's entry in the unattributed section.
+    Plain,
+    /// The per-resource block line (`error_line_text`): a plain head with no refusal joined prints whole, the
+    /// recorded text as it is, and a joined line that fits the refusal backstop keeps its head whole too. A line
+    /// that carries a refusal and would exceed the backstop has its HEAD cut first, to the smaller of the
+    /// plain bound and what the backstop leaves after the join and the refusals, so the refusals and their
+    /// remedy stay whole, as long as that room is at least [`HEAD_FLOOR`]. Under the floor (the join and the
+    /// refusals fill the backstop, or leave the head less than the floor, where a cut to a few characters or
+    /// to its ellipsis alone would hide the plain error) the head's budget is the floor and the backstop cuts
+    /// the line's end, which carries the refusal marker: the remedy loses min(head, floor) - room, plus up
+    /// to 16 characters (`BACKSTOP_BACKOFF`) to a word boundary, plus whatever the join and refusals
+    /// already exceed the backstop by, plus up to one split escape (never the plain bound's worth). Every
+    /// cut on this arm is `cut_bounded`: it backs up to a word boundary at most 16 characters, never
+    /// across a joiner, and otherwise cuts by count. The head prints whole when it is no longer than the
+    /// room, otherwise as at most `room - 3` characters (at most 320) and an ellipsis; the line is
+    /// `LONGEST_REFUSAL_MESSAGE` characters at most before its ellipsis and marker. The `Plain` arm keeps
+    /// the released word-boundary cut for its head. A line the head's cut made fit carries the head's
+    /// ellipsis and no refusal marker. There is a cliff at the backstop: a head prints the same text with and without a
+    /// joined refusal only while the joined line fits, and one character past it the head may lose
+    /// everything the room does not hold (a 399-character head beside 3,800 characters of refusals keeps
+    /// about 270). The head yields rather than the remedy because the remedy is what a reader acts on;
+    /// the larger of the plain bound and the room would cut the remedy by up to the plain bound in the band
+    /// just under the backstop.
+    Whole,
+}
+
+/// The console text of a rule's or block's sentence that gained refusals, when `slot` is the slot of the
+/// record that holds that joined sentence (`Messages::parts` holds the sentence and the refusals, each whole,
+/// and says which slot): ONE cap per console line. On the rule and unattributed lines (`HeadBound::Plain`) a
+/// plain head is cut at the plain bound, the refusals follow joined whole, and ONE `reason_backstop`
+/// (`LONGEST_REFUSAL_MESSAGE` and the refusal's marker) runs over the refusal part; on the per-resource block
+/// line (`HeadBound::Whole`) the head is whole while the joined line fits the backstop, and is cut first
+/// when it would not (`cut_bounded`), to the smaller of the plain bound and the room the backstop leaves
+/// after the join and the refusals, and never to less than the floor (`HEAD_FLOOR`). A refusal-headed
+/// sentence is one line under the backstop, cut once (`backstop`). So a long value quoted
+/// by a plain head never carries a refusal's remedy away: on the `Whole` arm the remedy is cut only when the
+/// join and the refusals alone exceed the backstop, and a line carries the head's ellipsis or the refusal
+/// marker, the head's ellipsis alone when the head's cut made the line fit. The exact bounds: on the `Plain`
+/// arm the head is bounded by the plain bound (`LONGEST_RECORDED_MESSAGE` plus its ellipsis) always and the
+/// refusals are bounded once by the backstop (`LONGEST_REFUSAL_MESSAGE` plus an ellipsis, a space and the
+/// marker), so a `Plain` line can be as long as the two bounds and the join together and can carry both
+/// the head's ellipsis and the refusal marker; a `Whole` line never exceeds one backstop with its ellipsis,
+/// space and marker, and can carry both when the head is cut and the line, with the floor in place of
+/// the room, still exceeds the backstop (a 320-character head, a 4,017-character tail).
+/// Every structured output carries both parts whole.
+/// `None` for any other slot: the caller prints it under its record's one kind.
+fn joined_console_text(
+    messages: &Messages,
+    slot: SentenceSlot,
+    bound: HeadBound,
+) -> Option<String> {
+    joined_console_parts(messages, slot, bound).map(|(joined, _)| joined)
+}
+
+/// A rule's sentence that gained refusals, through the console's one pipeline (`joined_console_text`), for
+/// the PLAIN reporter of `test`, which prints a verdict per rule and no messages: the sentence is its
+/// `Reason`, on one line, escaped and bounded as the console bounds it. `None` for a rule whose sentence
+/// gained nothing. The structured reporters of `test` carry the raw parts whole instead
+/// (`joined_rule_sentence_raw`).
+pub(crate) fn joined_rule_sentence(rule: &RuleReport<'_>) -> Option<String> {
+    let slot = match rule.messages.parts.as_ref()?.join() {
+        PartsJoin::Refusals { slot } => slot,
+        PartsJoin::Clause => return None,
+    };
+    joined_console_text(&rule.messages, slot, HeadBound::Plain)
+}
+
+/// A rule's sentence that gained refusals, raw and whole (the head, the join, the refusals), for the
+/// STRUCTURED reporters of `test` (`json`, `yaml`, `junit`): no cut and no console escape, since the
+/// serializer or the junit writer does its own escaping and the structured outputs carry every part whole.
+/// `None` for a rule whose sentence gained nothing.
+pub(crate) fn joined_rule_sentence_raw(rule: &RuleReport<'_>) -> Option<String> {
+    let parts = rule.messages.parts.as_ref()?;
+    match parts.join() {
+        PartsJoin::Refusals { .. } => Some(parts.refusals_text()),
+        PartsJoin::Clause => None,
+    }
+}
+
+/// [`joined_console_text`] and whether the HEAD was cut: on the `Plain` arm at the recorded-message bound, as
+/// the cutter says it (`plain_evaluator_message`, a word-boundary cut); on the `Whole` arm by `cut_bounded`
+/// to the room the backstop leaves, never to a printed head of fewer than `HEAD_FLOOR` characters (its
+/// ellipsis included; the cutter's floor is `HEAD_FLOOR - 3` of kept text) and at most the plain bound
+/// before the ellipsis. The refusals are never cut at the head's bound,
+/// so the flag is the head's alone.
+fn joined_console_parts(
+    messages: &Messages,
+    slot: SentenceSlot,
+    bound: HeadBound,
+) -> Option<(String, bool)> {
+    let parts = messages.parts.as_ref()?;
+    // The parts say which shape they are in and which slot holds the sentence (`PartsJoin`): no string is
+    // rebuilt to find out.
+    if parts.join() != (PartsJoin::Refusals { slot }) {
+        return None;
+    }
+    // The slot the parts name holds exactly the sentence they rebuild: the old guard against a builder that
+    // tagged the wrong slot or wrote a text of its own, kept as an assertion and not as a branch.
+    debug_assert_eq!(
+        match slot {
+            SentenceSlot::Custom => messages.custom_message.as_deref(),
+            SentenceSlot::Error => messages.error_message.as_deref(),
+        },
+        Some(parts.refusals_text().as_str()),
+        "the parts of a joined sentence rebuild the text of the slot they name"
+    );
+    // The head, and below the groups of refusals as the sentence lists them (`SentenceParts::groups`),
+    // each behind its own joiner.
+    let head = parts.head();
+    // The head's kind is the record's (`Messages::refusal`). A refusal's head is held to the refusal bound,
+    // and the whole line is cut ONCE.
+    if error_slot_origin(messages) == Origin::Refusal {
+        let mut pieces = vec![("", head)];
+        pieces.extend(parts.groups());
+        return Some((reason_backstop_joined(&pieces, REFUSAL_CUT_MARKER), false));
+    }
+    match bound {
+        HeadBound::Plain => {
+            let (head, head_was_cut) = plain_evaluator_message(head);
+            // The refusals as listed: the first group has no joiner of its own here (the head's joiner
+            // precedes it), each later group keeps its own.
+            let mut pieces = parts.groups();
+            if let Some(first) = pieces.first_mut() {
+                first.0 = "";
+            }
+            Some((
+                format!(
+                    "{head}{}{}",
+                    parts.joiner(),
+                    reason_backstop_joined(&pieces, REFUSAL_CUT_MARKER)
+                ),
+                head_was_cut,
+            ))
+        }
+        // The per-resource block line: a plain head with no refusal joined prints whole (it did before any
+        // refusal was joined), and a joined line that fits the backstop keeps its head whole too. A line that
+        // CARRIES a refusal and would exceed the backstop cuts the HEAD to the room the backstop leaves after
+        // the join and the refusals, so the join and every refusal with its remedy stay whole, when that room
+        // is at least `HEAD_FLOOR`. Under the floor (the join and the refusals fill the backstop, or leave
+        // less than the floor) the head's budget is the floor and the backstop cuts the END of the line,
+        // which carries the refusal marker: the refusals already overflow, and a head cut to a few
+        // characters would say nothing.
+        HeadBound::Whole => {
+            // The line when it fits is built the way every other arm and the cut path build it, piece by
+            // piece (`joined_line`), so one sentence reads the same whether it fits or is cut.
+            let mut whole_pieces = vec![("", head)];
+            whole_pieces.extend(parts.groups());
+            let whole = joined_line(&whole_pieces).0;
+            match whole.chars().count() <= LONGEST_REFUSAL_MESSAGE {
+                true => Some((whole, false)),
+                false => {
+                    let (tail, tail_ends) = joined_line(&parts.groups());
+                    let room = LONGEST_REFUSAL_MESSAGE.saturating_sub(tail.chars().count());
+                    // The head yields: it prints whole when it is no longer than the room (at least the floor,
+                    // at most the plain bound); otherwise it is cut by `cut_bounded` (the same bounded
+                    // back-off to a word boundary, else by count) to the room less its ellipsis (never fewer
+                    // than the floor less the ellipsis), and at most the plain bound before the ellipsis.
+                    // Over the floor the line then fits and carries the head's ellipsis and no refusal
+                    // marker; under it the head keeps the floor and the line, longer than the backstop, is
+                    // cut at the backstop by the same cutter: the remedy loses min(head, floor) - room, plus
+                    // up to `BACKSTOP_BACKOFF` characters to a word boundary, plus whatever the join and
+                    // refusals already exceed the backstop by, plus up to one split escape; the ellipsis and
+                    // the marker follow, spelled once in `backstop`.
+                    let head_room = room.max(HEAD_FLOOR);
+                    let head_line =
+                        crate::utils::writer::escaped_controls_for_display(&one_line(head));
+                    let (head_text, head_was_cut) = match head_line.chars().count()
+                        <= head_room.min(LONGEST_RECORDED_MESSAGE)
+                    {
+                        true => (head_line, false),
+                        false => {
+                            let kept = head_room.saturating_sub(3).min(LONGEST_RECORDED_MESSAGE);
+                            // The head keeps at least `HEAD_FLOOR` printed characters (its ellipsis counts):
+                            // a back-off to a word boundary never lands below the floor less the ellipsis.
+                            let floor = HEAD_FLOOR.saturating_sub(3);
+                            (cut_bounded(&head_line, kept, floor).0, true)
+                        }
+                    };
+                    let head_len = head_text.chars().count();
+                    let line_ends: Vec<usize> =
+                        tail_ends.iter().map(|end| end + head_len).collect();
+                    let line = format!("{head_text}{tail}");
+                    Some((
+                        match line.chars().count() <= LONGEST_REFUSAL_MESSAGE {
+                            true => line,
+                            false => backstop_with(&line, REFUSAL_CUT_MARKER, &line_ends),
+                        },
+                        head_was_cut,
+                    ))
+                }
+            }
+        }
     }
 }
 
@@ -588,6 +881,16 @@ fn bounded_for_the_console(message: &str, origin: Origin) -> String {
 /// (`RuleReport::custom_slot`): a refusal's record holds the evaluator's refusal sentence there, an
 /// author's body the record says it copied, and anything else is the evaluator's own sentence.
 fn custom_slot_origin(rule: &RuleReport<'_>) -> Origin {
+    // The report builder derives both from the record's one `NamedStatus` slot (`report_failed_clauses`): when
+    // the slot is not the author's, the only message is the slot's own and `Messages::refusal` is its kind.
+    // With the author's body in the slot the flag belongs to the displaced sentence in the error slot.
+    debug_assert!(
+        rule.custom_slot == CustomSlot::Author
+            || rule.messages.refusal == (rule.custom_slot == CustomSlot::Refusal),
+        "a rule report whose slot is {:?} carries refusal={}",
+        rule.custom_slot,
+        rule.messages.refusal
+    );
     match rule.custom_slot {
         CustomSlot::Refusal => Origin::Refusal,
         CustomSlot::Author => Origin::Author,
@@ -599,21 +902,137 @@ fn custom_slot_origin(rule: &RuleReport<'_>) -> Origin {
 /// `LONGEST_REFUSAL_MESSAGE`, with `marker` after the ellipsis where something was cut
 /// (`REFUSAL_CUT_MARKER` for a refusal's explanation, `REASON_CUT_MARKER` for a reason that is no
 /// refusal's): the ellipsis alone does not tell a reader the text was shortened by the reporter and
-/// that `-o json` carries the whole text. The one cut `reason_backstop` takes, which every refusal
-/// line and every reason line reaches (`bounded_for_the_console`'s refusal branch goes through it),
-/// so the bound and the marker's place are spelled once; the caller names the marker, so the call says
-/// which kind of text it bounds. A cut that lands inside a `\u{..}` escape the text carries (the escapes
+/// that `-o json` carries the whole text. The one cut both pipelines take: `reason_backstop` (a reason that
+/// is no refusal's, floor 0) and `refusal_backstop` / `reason_backstop_joined` (every line that carries a
+/// refusal, with a floor at every `; ` and known joiner) end here, so the bound and the marker's place
+/// are spelled once; the caller names the marker, so the call says which kind of text it bounds. A cut that lands inside a `\u{..}` escape the text carries (the escapes
 /// `reason_backstop` writes for a raw control come before the cut, so the cut counts their characters)
 /// is moved back to the escape's start (`before_a_split_escape`): the fragment was no part of the
 /// author's text, and a line ending `\u{1... [explanation cut` read as a cut escape where nothing was
 /// cut but the reporter's own spelling.
+///
+/// The cut is [`cut_bounded`], the one cutter of every refusal line and of the head on the per-resource
+/// block line: it backs up to a word boundary at most `BACKSTOP_BACKOFF` characters, never to a boundary
+/// before the last joiner end the caller named (`joiner_ends`), and otherwise cuts by count, so an
+/// unbroken remedy is never dropped whole.
 fn backstop(text: &str, marker: &str) -> String {
-    let (cut, was_cut) = cut_to(text, LONGEST_REFUSAL_MESSAGE);
+    backstop_with(text, marker, &[])
+}
+
+/// [`backstop`] for a line whose joiners the caller knows: `joiner_ends` are the character offsets right
+/// after each joiner in `text` (`joined_line`), the floors the cut does not back up past.
+fn backstop_with(text: &str, marker: &str, joiner_ends: &[usize]) -> String {
+    let floor = joiner_ends
+        .iter()
+        .copied()
+        .filter(|end| *end <= LONGEST_REFUSAL_MESSAGE)
+        .max()
+        .unwrap_or(0);
+    let (cut, was_cut) = cut_bounded(text, LONGEST_REFUSAL_MESSAGE, floor);
     if was_cut {
-        format!("{} {marker}", before_a_split_escape(&cut))
+        format!("{cut} {marker}")
     } else {
         cut
     }
+}
+
+/// The one-line, escaped text of `pieces`, each `(joiner, body)` as a joiner followed by its body (each body
+/// collapsed and escaped, `one_line`, `escaped_controls_for_display`; the joiners are the sentence's own and
+/// hold no control), and the character offsets of every floor the cut does not back up past
+/// (`floor_ends`), read off the ASSEMBLED line and never off the pieces: the same escaped text yields the
+/// same floors whether it arrives as a joined sentence's pieces or as one string (`refusal_backstop`: a rule
+/// reference's "text; callee error" whose callee's sentence opens with a head after the `; `, or carries a
+/// joined refusal), so both routes take the same cut by construction. The cell
+/// `the_same_text_yields_the_same_floors_as_pieces_and_as_one_string` pins the two routes' equality and, for
+/// a head that opens a group right after its joiner, the floors themselves, computed from the text's own
+/// character lengths: the `; ` that opens the joiner, the joiner's end, the head's end right after it, the
+/// `; ` that opens the next joiner and that joiner's end, and no other. The one place the assembled
+/// lines can differ is whitespace at a piece boundary: `one_line` trims each body at both ends, so a body's
+/// leading or trailing whitespace is gone on the pieces route, while the one-string route trims the ends of
+/// the whole text only and keeps such whitespace inside it as written; the writers put none there (a joiner
+/// ends in `: `, a refusal starts with its first word), and the two routes agree on a text with no such
+/// whitespace at a boundary.
+fn joined_line(pieces: &[(&str, &str)]) -> (String, Vec<usize>) {
+    let mut line = String::new();
+    for (joiner, body) in pieces {
+        line.push_str(joiner);
+        line.push_str(&crate::utils::writer::escaped_controls_for_display(
+            &one_line(body),
+        ));
+    }
+    let ends = floor_ends(&line);
+    (line, ends)
+}
+
+/// The character offsets of the floors in `line`, a one-line escaped refusal text, each once and in order,
+/// none past the backstop (`backstop_with` keeps the greatest at or below it): the offset right after each
+/// `; ` (the separator between listed refusals, and the opening of each joiner text), the offset right after
+/// each joiner text the line holds (`SENTENCE_JOINERS`), and the offset right after a known head the
+/// evaluator writes before the error it quotes (`PARENT_SENTENCE_HEADS`) where the head stands at a
+/// BOUNDARY: the start of the line, right after a `; `, or right after a joiner text. The one floor rule for
+/// every refusal line. The joiners and heads are the writers' own texts, so the floors are the real
+/// boundaries and no punctuation is guessed from the text; a refusal whose own text holds a `; ` counts as a
+/// separator too, which only makes the cut count the characters (never drop a refusal) where it could have
+/// used a word boundary. Every offset is found in bytes and converted to characters with one cursor over the
+/// line, so a multi-byte text before a floor is counted as the characters it prints.
+fn floor_ends(line: &str) -> Vec<usize> {
+    use crate::rules::eval::PARENT_SENTENCE_HEADS;
+    use crate::rules::eval_context::SENTENCE_JOINERS;
+    let mut floors: Vec<usize> = Vec::new();
+    let mut boundaries: Vec<usize> = vec![0];
+    for (at, _) in line.match_indices("; ") {
+        floors.push(at + 2);
+        boundaries.push(at + 2);
+    }
+    for joiner in SENTENCE_JOINERS {
+        for (at, _) in line.match_indices(joiner) {
+            floors.push(at + joiner.len());
+            boundaries.push(at + joiner.len());
+        }
+    }
+    for at in boundaries {
+        for head in PARENT_SENTENCE_HEADS {
+            if line[at..].starts_with(head) {
+                floors.push(at + head.len());
+            }
+        }
+    }
+    floors.sort_unstable();
+    floors.dedup();
+    // Bytes to characters with one cursor, in offset order; nothing past the backstop is a floor.
+    let (mut cursor, mut count, mut ends) = (0usize, 0usize, Vec::new());
+    for at in floors {
+        count += line[cursor..at].chars().count();
+        cursor = at;
+        if !chars_below_the_backstop(count) {
+            break;
+        }
+        ends.push(count);
+    }
+    ends
+}
+
+/// Whether a character offset is still within the backstop, so a floor at it can matter.
+fn chars_below_the_backstop(offset: usize) -> bool {
+    offset <= LONGEST_REFUSAL_MESSAGE
+}
+
+/// The console's one bound for a refusal's text that arrives as a single string (an entry that lists
+/// refusals alone, a rule reference's "text; callee error", a numbered raise): [`reason_backstop_joined`]
+/// over the text as one body with the refusal's marker, so every `; ` in the text, every known joiner text
+/// it holds and every known head at its start or right after a `; ` is a floor (`joined_line`, the one floor
+/// rule), and the same text takes the same cut whether it reaches the console as a joined sentence's body or
+/// as one string (given no whitespace at a piece boundary, which the pieces route trims and this route keeps;
+/// `joined_line`). A refusal's own `; ` counts as a boundary too, which can only turn a word cut into a count
+/// cut, never drop a refusal.
+fn refusal_backstop(text: &str) -> String {
+    reason_backstop_joined(&[("", text)], REFUSAL_CUT_MARKER)
+}
+
+/// [`reason_backstop`] over the pieces of a joined sentence (`joined_line`), so the cut knows the joiners.
+fn reason_backstop_joined(pieces: &[(&str, &str)], marker: &str) -> String {
+    let (line, ends) = joined_line(pieces);
+    backstop_with(&line, marker, &ends)
 }
 
 /// `cut`, a `cut_to` result that ends in the ellipsis, with the cut moved back to the start of an
@@ -632,18 +1051,25 @@ fn backstop(text: &str, marker: &str) -> String {
 /// backslash; and read over the whole kept text, a literal `\u` thousands of characters back with no
 /// `}` after it cut the line back to there, remedy included, under a marker that claimed the bound.
 fn before_a_split_escape(cut: &str) -> String {
-    const LONGEST_SPLIT_ESCAPE: usize = "\\u{10ffff".len();
     let Some(kept) = cut.strip_suffix("...") else {
         return cut.to_string();
     };
-    let Some(at) = kept.rfind('\\') else {
-        return cut.to_string();
-    };
-    let tail = &kept[at..];
-    if tail.len() > LONGEST_SPLIT_ESCAPE || !is_a_split_escape(tail) {
-        return cut.to_string();
+    match split_escape_start(kept) {
+        Some(at) => format!("{}...", kept[..at].trim_end()),
+        None => cut.to_string(),
     }
-    format!("{}...", kept[..at].trim_end())
+}
+
+/// The byte offset of the backslash that opens the split escape `kept` ends in (the rule of
+/// [`before_a_split_escape`]), or `None` when the kept text ends in no split escape.
+fn split_escape_start(kept: &str) -> Option<usize> {
+    const LONGEST_SPLIT_ESCAPE: usize = "\\u{10ffff".len();
+    let at = kept.rfind('\\')?;
+    let tail = &kept[at..];
+    match tail.len() > LONGEST_SPLIT_ESCAPE || !is_a_split_escape(tail) {
+        true => None,
+        false => Some(at),
+    }
 }
 
 /// Whether `tail`, a text opening with a backslash, is a proper prefix of an escape and not a whole one:
@@ -715,6 +1141,79 @@ fn cut_to(message: &str, limit: usize) -> (String, bool) {
     (format!("{}...", kept.trim_end()), true)
 }
 
+/// How far [`cut_bounded`] backs up to a word boundary before it cuts by count.
+const BACKSTOP_BACKOFF: usize = 16;
+
+/// `text`, put on one line (`one_line`, idempotent), cut to at most `limit` characters before the ellipsis,
+/// and whether anything was cut. The one cutter of every refusal line (`backstop`) and of the head on the
+/// per-resource block line, so the bound and the layout are spelled once. The cut backs up to the nearest
+/// word boundary within `BACKSTOP_BACKOFF` characters, but only to a boundary at or above `floor` (a
+/// character offset), and otherwise cuts by count: an unbroken remedy is never dropped whole, as the
+/// released word-boundary cut `cut_to` dropped it back to the joiner. The caller sets the floor: the head
+/// on the block line passes what it must keep (`HEAD_FLOOR`, less its ellipsis), a joined refusal line the
+/// last real joiner end at or below the limit (`backstop_with`, from the offsets `joined_line` computes),
+/// a refusal line that arrives as one string the last `; ` or known joiner end in it (`refusal_backstop`),
+/// and a reason that is no refusal's (`reason_backstop`) 0. Prose with a `: ` in a line that carries no
+/// refusal is no joiner and backs up to its word boundary; in a refusal line every `; ` is a floor. Trailing whitespace is trimmed before the ellipsis, and a cut
+/// inside a `\u{..}` escape moves back to the escape's start (`before_a_split_escape`, up to nine
+/// characters more), but neither takes the kept text under `floor`: the floor is applied last, and a split
+/// escape whose move back would fall under the floor is cut at its start, untrimmed, when that keeps the
+/// floor (no fragment is printed), and by count inside it only when even that is under the floor. A cut by
+/// count can end inside a word: only when the window holds no boundary at or above the floor. The plain
+/// arm keeps `cut_to` for its head because a half word in fixture output fails the spell checker.
+fn cut_bounded(text: &str, limit: usize, floor: usize) -> (String, bool) {
+    let collapsed = one_line(text);
+    let text = collapsed.as_str();
+    let Some((at, _)) = text.char_indices().nth(limit) else {
+        return (text.to_string(), false);
+    };
+    let kept = &text[..at];
+    let kept = if text[at..].starts_with(char::is_whitespace) {
+        kept
+    } else {
+        let window = kept
+            .char_indices()
+            .rev()
+            .nth(BACKSTOP_BACKOFF - 1)
+            .map_or(0, |(i, _)| i);
+        match kept[window..].rfind(char::is_whitespace) {
+            Some(rel) => {
+                let head = &kept[..window + rel];
+                let below_the_floor = head.chars().count() < floor;
+                match head.trim().is_empty() || below_the_floor {
+                    true => kept,
+                    false => head,
+                }
+            }
+            None => kept,
+        }
+    };
+    // The floor is applied LAST, after the trim and after the move back out of a split escape: each of them
+    // only shortens the cut, and the floor is a promise about what is printed. A trim that would take the
+    // kept text under the floor is not taken, and neither is a move back out of an escape that would: such
+    // an escape is cut at its start UNTRIMMED where that keeps the floor (the joiner's space stays and no
+    // fragment of the escape prints; the branch below), and by count inside it (`\u{1...`) only where even
+    // its start is under the floor.
+    let trimmed = kept.trim_end();
+    let cut = match trimmed.chars().count() < floor {
+        true => kept,
+        false => trimmed,
+    };
+    let plain = format!("{cut}...");
+    let moved = before_a_split_escape(&plain);
+    let moved_kept = moved.chars().count().saturating_sub(3);
+    if moved_kept >= floor {
+        return (moved, true);
+    }
+    // The move back out of a split escape would take the cut under the floor (the joiner's trimmed space).
+    // Cut at the escape's start UNTRIMMED instead, when that keeps the floor: no fragment of the escape is
+    // printed and the joiner's space stays. Only when even that is under the floor is the escape cut by count.
+    match split_escape_start(cut) {
+        Some(at) if cut[..at].chars().count() >= floor => (format!("{}...", &cut[..at]), true),
+        _ => (plain, true),
+    }
+}
+
 /// One entry's explanation: the author's message, then the evaluator's account, each bounded on its own.
 ///
 /// Both messages, in the order a reader wants them, and both bounded. The author's `<< >>` text is the half
@@ -750,8 +1249,10 @@ fn explanation_of(messages: &Messages) -> String {
     // The author's half takes the relaxed set, the evaluator's half the strict one.
     let author = non_empty_message(&messages.custom_message)
         .map(|text| bounded_for_the_console(text, Origin::Author));
-    let evaluator = non_empty_message(&messages.error_message)
-        .map(|text| bounded_for_the_console(text, error_slot_origin(messages)));
+    let evaluator = non_empty_message(&messages.error_message).map(|text| {
+        joined_console_text(messages, SentenceSlot::Error, HeadBound::Plain)
+            .unwrap_or_else(|| bounded_for_the_console(text, error_slot_origin(messages)))
+    });
     vec![author, evaluator]
         .into_iter()
         .flatten()
@@ -1947,28 +2448,34 @@ fn emit_messages(
 /// itself the finding's `Error =` line, so the tail's own `Error = [` written inside it named the field
 /// twice. The structured outputs keep the sentence as recorded.
 fn refusal_lines(messages: &Messages, reason: &str) -> (String, Option<String>) {
-    // Every `Error =` text this function prints takes the one pipeline a `Reason =` line takes
-    // (`reason_backstop`: collapsed onto one line, then escaped, then cut on the PRINTED width with the
-    // refusal's marker): the evaluator writes the record's sentence with its template parts escaped, and
+    // Every `Error =` text this function prints takes the refusal pipeline a `Reason =` line of a refusal
+    // takes (`refusal_backstop`: collapsed onto one line, then escaped, then cut on the PRINTED width with
+    // every `; ` and known joiner a floor and the refusal's marker): the evaluator writes the record's sentence with its template parts escaped, and
     // this is the console's own defense for a sentence that reaches it with a raw control, so no branch
     // below prints one. Escaped before the collapse, a raw line break became a literal `\n` where the
     // pipeline joins the parts with `; `.
-    let bounded = |text: &str| reason_backstop(text, REFUSAL_CUT_MARKER);
+    let bounded = refusal_backstop;
     let displayed_whole =
         |text: &str| crate::utils::writer::escaped_controls_for_display(&one_line(text));
     // The reason is stored as its builder wrote it (raw controls included) and printed through the
-    // console's one pipeline (`reason_backstop`): on one line, the controls escaped, cut on the printed
-    // width last. Every reason this function prints is a refusal's (the record is flagged one), so the
-    // cut, where it falls, carries the refusal's marker.
+    // console's refusal pipeline (`refusal_backstop`): on one line, the controls escaped, cut on the
+    // printed width last. Every reason this function prints is a refusal's (the record is flagged one), so
+    // the cut, where it falls, carries the refusal's marker.
     let reason_line = || match reason.is_empty() {
         true => None,
-        false => Some(reason_backstop(reason, REFUSAL_CUT_MARKER)),
+        false => Some(refusal_backstop(reason)),
     };
-    let Some(parts) = &messages.parts else {
+    // Clause-shaped parts only (`PartsJoin::Clause`, the head and the evaluator's message of a clause
+    // record): a rule's or block's sentence that joined refusals has no `Reason =` block to lay out.
+    let Some(parts) = messages
+        .parts
+        .as_ref()
+        .filter(|parts| parts.join() == PartsJoin::Clause)
+    else {
         let sentence = messages.error_message.as_deref().unwrap_or("");
         return (bounded(sentence), reason_line());
     };
-    let (head, message) = (parts.head.as_str(), parts.message.as_str());
+    let (head, message) = (parts.head(), parts.message());
     let joined = format!("{head} {message}");
     if reason.is_empty() {
         return (bounded(&joined), None);
@@ -1987,7 +2494,7 @@ fn refusal_lines(messages: &Messages, reason: &str) -> (String, Option<String>) 
     if let Some(lead) = message.strip_suffix(&format!(": {displayed}")) {
         return (
             bounded(&format!("{head} {lead}:")),
-            Some(reason_backstop(reason, REFUSAL_CUT_MARKER)),
+            Some(refusal_backstop(reason)),
         );
     }
     // The message leads with the reason, as the evaluator writes a lead: joined on `Error =` where the
@@ -1998,10 +2505,7 @@ fn refusal_lines(messages: &Messages, reason: &str) -> (String, Option<String>) 
     let opened = displayed_whole(&joined);
     match opened.chars().count() <= LONGEST_REFUSAL_MESSAGE {
         true => (opened, None),
-        false => (
-            bounded(head),
-            Some(reason_backstop(message, REFUSAL_CUT_MARKER)),
-        ),
+        false => (bounded(head), Some(refusal_backstop(message))),
     }
 }
 
@@ -2035,17 +2539,51 @@ fn reason_backstop(reason: &str, marker: &str) -> String {
 /// The text a per-resource arm prints on its `Error =` line for `messages`: the recorded sentence as
 /// recorded for a record that is no refusal's (returned as it is; `emit_messages` joins its line breaks
 /// and the console's sink escapes its controls when it prints), and for a refusal's
-/// the console's one refusal pipeline (`bounded_for_the_console`, through `reason_backstop`: one line,
+/// the console's refusal pipeline (`bounded_for_the_console`, through `refusal_backstop`: one line,
 /// the remaining raw controls escaped, cut on the printed width last), so no console line that prints a
 /// refusal's sentence rests on the evaluator having bounded or escaped the text. For the arms that print
 /// a resolved comparison, a block and a unary check; the retrieval-error arm decides its lines from the
 /// record (`refusal_lines`), through the same pipeline.
 fn error_line_text(messages: &Messages) -> String {
     let error = messages.error_message.as_deref().unwrap_or("");
+    // A block's sentence that gained refusals prints as one line (`joined_console_text`, `HeadBound::Whole`):
+    // the head stays whole while the joined line (head, the join, the refusals) fits the refusal backstop;
+    // when it would exceed it, the head is cut first (`cut_bounded`) to the smaller of the plain bound
+    // and the room the backstop leaves after the join and the refusals (never to less than the head floor,
+    // under which the end of the line is cut and the refusals lose min(head, floor) - room, up to 16
+    // characters to a word boundary, and what the join and refusals already exceed the backstop by), so the
+    // refusals stay whole above the floor, and the refusal marker appears only when the line still exceeds
+    // the backstop. A block line with no joined refusal prints the recorded text as it is for a plain
+    // record, and through the refusal pipeline for a refusal's.
+    if let Some(joined) = joined_console_text(messages, SentenceSlot::Error, HeadBound::Whole) {
+        return joined;
+    }
     match messages.refusal {
         true => bounded_for_the_console(error, Origin::Refusal),
         false => error.to_string(),
     }
+}
+
+/// The first three values of [`rule_line_parts`] (its doc holds the contract), for the cells that do not read
+/// the layout.
+#[cfg(test)]
+fn rule_line_texts(rule: &RuleReport<'_>) -> (String, String, Option<bool>) {
+    let (message, error, cut, _) = rule_line_parts(rule);
+    (message, error, cut)
+}
+
+/// How `emit_rule_messages` writes the two texts of `rule_line_parts`, decided with the texts and apart from
+/// the cut flag, which says only whether the text was cut.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RuleLineLayout {
+    /// Both texts through `emit_messages`: the message divided at every `;`, the error joined into one line.
+    Messages,
+    /// The message as one `Message = ...` line (its text holds `; ` joins and a cut's marker that
+    /// `emit_messages` would divide), then the error through `emit_messages`: a custom slot that was cut at
+    /// the recorded-message bound, and one that is a sentence joined with the refusals its condition met.
+    OneLineMessage,
+    /// One `Message = ...` and one `Error = ...` line, each whole: a refusal's record.
+    RefusalLines,
 }
 
 /// The two texts the `Rule = { }` arm of the per-resource output prints for a rule's own record
@@ -2054,8 +2592,8 @@ fn error_line_text(messages: &Messages) -> String {
 /// (`custom_slot_origin`), so a caller cannot hand a refusal's record another origin's pipeline. A
 /// rule-level record carries the evaluator's sentence there (a condition that raised a refusal across a
 /// rule boundary, `report_all_failed_clauses_for_rules`) or the author's body copied onto a called rule,
-/// so for a refusal's record BOTH slots take the console's one refusal pipeline (`bounded_for_the_console`,
-/// through `reason_backstop`: one line, the remaining raw controls escaped, cut on the printed width last,
+/// so for a refusal's record BOTH slots take the console's refusal pipeline (`bounded_for_the_console`,
+/// through `refusal_backstop`: one line, the remaining raw controls escaped, cut on the printed width last,
 /// with the refusal's marker). For the evaluator's sentence the custom slot is collapsed onto one line,
 /// its raw controls escaped by the strict set, and cut at the recorded-message bound
 /// (`LONGEST_RECORDED_MESSAGE`, `cut_to`'s ellipsis), the cut the unattributed section gives the same
@@ -2083,28 +2621,65 @@ fn error_line_text(messages: &Messages) -> String {
 /// the author's body, which is never cut here, `None` for a refusal's, whose cut
 /// is the refusal pipeline's own and marked in the text, so the flag cannot be read for a record it
 /// does not describe.
-fn rule_line_texts(rule: &RuleReport<'_>) -> (String, String, Option<bool>) {
+///
+/// The fourth value is the layout the lines are written in (`RuleLineLayout`). The cut flag stays what is
+/// said above (the cutter's own answer, `None` for a refusal's record): a sentence joined with refusals
+/// reports whether its head was cut, and asks for the one-line layout through the layout value, so the flag
+/// is never set to get a layout.
+fn rule_line_parts(rule: &RuleReport<'_>) -> (String, String, Option<bool>, RuleLineLayout) {
     let messages = &rule.messages;
     let released = |slot: &Option<String>| slot.as_deref().unwrap_or("").to_string();
     match custom_slot_origin(rule) {
         Origin::Refusal => (
-            bounded_for_the_console(&released(&messages.custom_message), Origin::Refusal),
+            // A refusal's sentence that gained refusals prints as ONE line, cut once at the refusal
+            // backstop with one marker; any other is the refusal pipeline's whole, also one cut.
+            joined_console_text(messages, SentenceSlot::Custom, HeadBound::Plain).unwrap_or_else(
+                || bounded_for_the_console(&released(&messages.custom_message), Origin::Refusal),
+            ),
             bounded_for_the_console(&released(&messages.error_message), Origin::Refusal),
             None,
+            RuleLineLayout::RefusalLines,
         ),
         Origin::Author => (
             crate::utils::writer::escaped_controls_for_console(&one_line(&released(
                 &messages.custom_message,
             ))),
-            bounded_for_the_console(
-                &released(&messages.error_message),
-                error_slot_origin(messages),
+            // The displaced sentence that gained refusals prints part by part; any other under its kind.
+            joined_console_text(messages, SentenceSlot::Error, HeadBound::Plain).unwrap_or_else(
+                || {
+                    bounded_for_the_console(
+                        &released(&messages.error_message),
+                        error_slot_origin(messages),
+                    )
+                },
             ),
             Some(false),
+            RuleLineLayout::Messages,
         ),
         Origin::Evaluator => {
-            let (message, cut) = plain_evaluator_message(&released(&messages.custom_message));
-            (message, released(&messages.error_message), Some(cut))
+            let custom = released(&messages.custom_message);
+            match joined_console_parts(messages, SentenceSlot::Custom, HeadBound::Plain) {
+                // One line with the join's own `; ` in it, as a cut sentence is written.
+                Some((joined, head_was_cut)) => (
+                    joined,
+                    released(&messages.error_message),
+                    Some(head_was_cut),
+                    RuleLineLayout::OneLineMessage,
+                ),
+                None => {
+                    let (message, cut) = plain_evaluator_message(&custom);
+                    let layout = match cut {
+                        true => RuleLineLayout::OneLineMessage,
+                        false => RuleLineLayout::Messages,
+                    };
+                    (
+                        message,
+                        released(&messages.error_message),
+                        Some(cut),
+                        layout,
+                    )
+                }
+            }
         }
     }
 }
@@ -2141,7 +2716,7 @@ fn collapsed_escaped_and_cut(slot: &str, escape: fn(&str) -> String) -> (String,
     }
 }
 
-/// The `Message` and `Error` lines of a rule's own record (`rule_line_texts`). A refusal's record has
+/// The `Message` and `Error` lines of a rule's own record (`rule_line_parts`). A refusal's record has
 /// both texts on ONE line each already (collapsed, escaped and cut by the refusal pipeline), and they are
 /// written as one line each, `Message = ...` and `Error = ...`, never through `emit_messages`, which
 /// splits a message on every `;`: the collapse joins a line break as `; ` and the cut's marker holds a
@@ -2149,14 +2724,15 @@ fn collapsed_escaped_and_cut(slot: &str, escape: fn(&str) -> String) -> (String,
 /// came apart at every join. A record that is no refusal's whose custom slot was CUT at the
 /// recorded-message bound is written as one `Message = ...` line too (the collapse's joins would come
 /// apart the same way); every other plain record is written as every other record's messages are
-/// (`emit_messages`), the author's `;` list included. Whether the slot was cut is what `rule_line_texts`
-/// reports beside the two texts, read once where the cut is made; an earlier form of this function
-/// rebuilt the collapse and compared the two strings, and compared with the UNESCAPED collapse, a short
-/// plain message holding a raw control (a tab, an ESC) read as cut and took the one-line form the doc
+/// (`emit_messages`), the author's `;` list included. The layout is `rule_line_parts`' fourth value,
+/// decided where the text is made: a slot cut at the bound, and a sentence joined with refusals, take the
+/// one-line form, and the cut flag beside the texts stays the cutter's own answer; an earlier form of this
+/// function rebuilt the collapse and compared the two strings, and compared with the UNESCAPED collapse, a
+/// short plain message holding a raw control (a tab, an ESC) read as cut and took the one-line form the doc
 /// reserves for a cut. The rule-level record's custom slot holds
 /// EITHER the evaluator's sentence OR an author's `<< >>` message copied onto a called rule by the
 /// evaluator, and the record says which (`RuleReport::custom_slot`, read by `custom_slot_origin` inside
-/// `rule_line_texts`): the author's body takes the relaxed escape set and is printed whole, as the clause
+/// `rule_line_parts`): the author's body takes the relaxed escape set and is printed whole, as the clause
 /// arms print an author's message, and the evaluator's sentence takes the strict one and is cut at the
 /// recorded-message bound.
 fn emit_rule_messages(
@@ -2164,14 +2740,14 @@ fn emit_rule_messages(
     prefix: &str,
     rule: &RuleReport<'_>,
 ) -> crate::rules::Result<()> {
-    let (message, error, cut) = rule_line_texts(rule);
-    match cut {
-        Some(false) => return emit_messages(writer, prefix, &message, &error, 0),
-        Some(true) => {
+    let (message, error, _, layout) = rule_line_parts(rule);
+    match layout {
+        RuleLineLayout::Messages => return emit_messages(writer, prefix, &message, &error, 0),
+        RuleLineLayout::OneLineMessage => {
             text_line!(writer, "{prefix}Message = {message}")?;
             return emit_messages(writer, prefix, "", &error, 0);
         }
-        None => {}
+        RuleLineLayout::RefusalLines => {}
     }
     if !message.trim().is_empty() {
         text_line!(writer, "{prefix}Message = {message}")?;
@@ -2650,7 +3226,7 @@ mod emit_messages_tests {
     /// A raw ESC in a message is written as its escape on a single-message line. The ESC is built with
     /// `char::from`, since the source holds no raw control.
     ///
-    /// Expected, not yet run. Red: the line carries the ESC byte itself.
+    /// Fails when the line carries the ESC byte itself.
     #[test]
     fn a_control_in_a_single_message_is_written_as_its_escape() {
         let esc = char::from(0x1b);
@@ -2662,7 +3238,7 @@ mod emit_messages_tests {
     /// The items of a `;` list are escaped one by one, after the split: the separators still divide the
     /// message and a tab or an ESC inside an item is written as its escape.
     ///
-    /// Expected, not yet run. Red: an item carries the ESC or the tab byte itself.
+    /// Fails when an item carries the ESC or the tab byte itself.
     #[test]
     fn the_items_of_a_message_list_are_escaped_after_the_split() {
         let esc = char::from(0x1b);
@@ -2675,8 +3251,8 @@ mod emit_messages_tests {
     /// The error half is escaped as the message half is, and a text a caller already escaped is
     /// written as it is (the escape is idempotent).
     ///
-    /// Expected, not yet run. Red: the `Error =` line carries the ESC byte, or an escaped text is
-    /// escaped a second time.
+    /// Fails when the `Error =` line carries the ESC byte, or when an escaped text is escaped a
+    /// second time.
     #[test]
     fn an_error_with_a_control_is_written_as_its_escape_once() {
         let esc = char::from(0x1b);
@@ -2738,8 +3314,8 @@ mod emit_messages_tests {
     /// return together, and a CRLF pair is one break. Cut at the `;` alone, the break inside a piece was
     /// written as the two characters `\n` (or `\r\n`) beside the `; ` the rest of the console prints.
     ///
-    /// Expected, not yet run. Red: a piece holds the characters `\n` or `\r`, or a CRLF text gives an
-    /// empty or doubled item.
+    /// Fails when a piece holds the characters `\n` or `\r`, or when a CRLF text gives an empty or
+    /// doubled item.
     #[test]
     fn a_line_break_in_a_piece_that_holds_a_semicolon_divides_the_message() {
         assert_eq!(
@@ -2757,7 +3333,7 @@ mod emit_messages_tests {
     /// The error half is joined into one line before it is escaped, as a refusal's is: a line break in a
     /// plain record's error prints as `; `, not as the characters `\n`.
     ///
-    /// Expected, not yet run. Red: the `Error =` line holds the characters `\n` or `\r`.
+    /// Fails when the `Error =` line holds the characters `\n` or `\r`.
     #[test]
     fn a_line_break_in_an_error_is_joined_not_escaped() {
         assert_eq!(
@@ -2771,8 +3347,8 @@ mod emit_messages_tests {
     /// non-joiner and a left-to-right mark. The characters that hide or reorder a line (a zero-width
     /// space, a word joiner, a bidi override) stay escaped.
     ///
-    /// Expected, not yet run. Red: the ZWJ or the RLM line holds the characters `\u{200d}` or `\u{200f}`,
-    /// or a zero-width space or an override is written raw.
+    /// Fails when the ZWJ or the RLM line holds the characters `\u{200d}` or `\u{200f}`, or when a
+    /// zero-width space or an override is written raw.
     #[test]
     fn joiners_and_marks_in_a_message_are_written_as_typed() {
         let zwj = format!("owner{}tag required", '\u{200D}');
@@ -2875,7 +3451,7 @@ mod clause_arm_escape_tests {
         }
     }
 
-    /// Expected, not yet run. Red: the block's `Message =` line carries the ESC byte.
+    /// Fails when the block's `Message =` line carries the ESC byte.
     #[test]
     fn a_blocks_message_is_written_escaped() {
         let clause = ClauseReport::Block(GuardBlockReport {
@@ -2887,7 +3463,7 @@ mod clause_arm_escape_tests {
         assert_both_halves_escaped(&out, true);
     }
 
-    /// Expected, not yet run. Red: the unary check's `Message =` or `Error =` line carries the ESC byte.
+    /// Fails when the unary check's `Message =` or `Error =` line carries the ESC byte.
     #[test]
     fn a_unary_checks_message_is_written_escaped() {
         let clause = ClauseReport::Clause(GuardClauseReport::Unary(UnaryReport {
@@ -2902,8 +3478,7 @@ mod clause_arm_escape_tests {
         assert_both_halves_escaped(&out, true);
     }
 
-    /// Expected, not yet run. Red: the decided comparison's `Message =` or `Error =` line carries the
-    /// ESC byte.
+    /// Fails when the decided comparison's `Message =` or `Error =` line carries the ESC byte.
     #[test]
     fn a_decided_comparisons_message_is_written_escaped() {
         let clause = ClauseReport::Clause(GuardClauseReport::Binary(BinaryReport {
@@ -2919,8 +3494,7 @@ mod clause_arm_escape_tests {
         assert_both_halves_escaped(&out, true);
     }
 
-    /// Expected, not yet run. Red: the membership comparison's `Message =` or `Error =` line carries
-    /// the ESC byte.
+    /// Fails when the membership comparison's `Message =` or `Error =` line carries the ESC byte.
     #[test]
     fn a_membership_comparisons_message_is_written_escaped() {
         let clause = ClauseReport::Clause(GuardClauseReport::Binary(BinaryReport {
@@ -2940,7 +3514,7 @@ mod clause_arm_escape_tests {
     /// sentence is not printed there (`refusal_lines` decides it for a refusal alone), so the cell reads
     /// the message half.
     ///
-    /// Expected, not yet run. Red: the retrieval error's `Message =` line carries the ESC byte.
+    /// Fails when the retrieval error's `Message =` line carries the ESC byte.
     #[test]
     fn a_retrieval_errors_message_is_written_escaped() {
         let clause = ClauseReport::Clause(GuardClauseReport::Binary(BinaryReport {
@@ -2969,9 +3543,9 @@ mod clause_arm_escape_tests {
     /// a coloured, tab-indented excerpt line the way that writer does; a field it takes from the template
     /// goes through `console_field`, which also writes a line feed in it as the characters `\n`.
     ///
-    /// Expected, not yet run. Red: the output holds the characters `\u{1b}[92m` (the colour printed as
-    /// text) or the excerpt's tab as `\t`, the template field's ESC byte reaches the output raw, or a
-    /// line feed in the field starts a second line.
+    /// Fails when the output holds the characters `\u{1b}[92m` (the colour printed as text) or
+    /// the excerpt's tab as `\t`, when the template field's ESC byte reaches the output raw, or
+    /// when a line feed in the field starts a second line.
     #[test]
     fn a_comparison_writers_colour_and_tab_are_not_escaped_by_the_clause_arm() {
         struct ColouredExcerpt;
@@ -3044,8 +3618,8 @@ mod clause_arm_escape_tests {
     /// well-formed colour sequence. The writer here formats an unescaped field, a coloured line and a
     /// tab-indented line.
     ///
-    /// Expected, not yet run. Red: the output holds the ESC byte of the cursor movement, the colour
-    /// sequence is written as text, or the tab is written as `\t`.
+    /// Fails when the output holds the ESC byte of the cursor movement, when the colour sequence is
+    /// written as text, or when the tab is written as `\t`.
     #[test]
     fn a_writer_that_forgets_to_escape_a_field_is_caught_by_the_backstop() {
         struct Forgetful;
@@ -3122,8 +3696,8 @@ mod clause_arm_escape_tests {
     /// zero-width joiner would print like the key without it if the line were written with the relaxed
     /// set, which is for text. The same joiner in the rule's message prints as typed.
     ///
-    /// Expected, not yet run. Red: the `Check =` line holds the joiner raw, or the `Message =` line holds
-    /// the characters `\u{200d}`.
+    /// Fails when the `Check =` line holds the joiner raw, or when the `Message =` line holds the
+    /// characters `\u{200d}`.
     #[test]
     fn a_joiner_is_escaped_in_a_context_and_typed_in_a_message() {
         let clause = ClauseReport::Block(GuardBlockReport {
@@ -3156,7 +3730,7 @@ mod clause_arm_escape_tests {
     /// and closes with spaces keeps them, as the line has always printed it, so the goldens that read these
     /// lines byte for byte stay as they are. Only a context that spans lines is joined.
     ///
-    /// Expected, not yet run. Red: the spaces around the context are trimmed or doubled.
+    /// Fails when the spaces around the context are trimmed or doubled.
     #[test]
     fn a_context_keeps_the_spacing_the_rules_file_gave_it_on_the_check_line() {
         let clause = ClauseReport::Block(GuardBlockReport {
@@ -3181,7 +3755,7 @@ mod clause_arm_escape_tests {
     /// A context that spans lines is joined on its `Check =` line as `; `, as the unattributed section
     /// joins the same text, and is not written as the characters `\n` by the sink.
     ///
-    /// Expected, not yet run. Red: the line holds the characters `\n` or a second console line.
+    /// Fails when the line holds the characters `\n` or a second console line.
     #[test]
     fn a_context_with_a_line_break_is_joined_on_the_check_line() {
         let clause = ClauseReport::Block(GuardBlockReport {
@@ -3209,7 +3783,7 @@ mod clause_arm_escape_tests {
     /// any helper bounded, so a raw ESC in either would reach the console as a byte. Both go through
     /// the sink (`write_console_line`) that escapes each finished line.
     ///
-    /// Expected, not yet run. Red: an arm's output carries the ESC byte, or a context's escape reads
+    /// Fails when an arm's output carries the ESC byte, or when a context's escape reads
     /// differently from the one written for a message.
     #[test]
     fn a_context_and_a_missing_key_with_a_control_are_written_escaped() {
@@ -3327,9 +3901,12 @@ mod retrieval_error_tests {
                 crate::rules::BlockCheck {
                     status: Status::FAIL,
                     at_least_one_matches: false,
+                    raised: true,
                     message: Some(SENTENCE.to_string()),
                     refusal,
                     custom_message: custom_message.map(str::to_string),
+                    gate_mark: false,
+                    frame_reads: Vec::new(),
                 },
             )),
             children: vec![],
@@ -3412,10 +3989,7 @@ mod retrieval_error_tests {
             }),
             location: None,
             refusal,
-            parts: message.map(|message| SentenceParts {
-                head: head.to_string(),
-                message: message.to_string(),
-            }),
+            parts: message.map(|message| SentenceParts::clause(head, message)),
         }
     }
 
@@ -3826,16 +4400,26 @@ mod retrieval_error_tests {
     fn a_refusal_rule_records_two_lines_are_escaped_and_bounded_and_a_plain_ones_are_released() {
         use crate::rules::eval_context::RuleReport;
         use crate::rules::CustomSlot;
+        // A record built by the report builder holds a flag that agrees with its slot (unless the slot is
+        // the author's body, where the flag is the displaced sentence's), so the cell's records do too.
         let rule_of = |messages: Messages, custom_slot: CustomSlot| RuleReport {
             name: "nested",
-            messages,
+            messages: match custom_slot {
+                CustomSlot::Author => messages,
+                _ => Messages {
+                    refusal: custom_slot == CustomSlot::Refusal,
+                    ..messages
+                },
+            },
             custom_slot,
             ..Default::default()
         };
         let custom = "the condition `\u{1b}[31mgate\u{1b}[0m` could not be\nanswered";
         let error = "the key `\u{1b}[31ma\nb\u{1b}[0m` could not be read";
         // The two texts a rule report can hold; what differs between the rows is the record's slot, not
-        // the messages (a rule report's flag is not what the printer reads).
+        // the texts. The flag follows the slot (`rule_of`), as the report builder writes it: the printer
+        // reads the slot for the custom message and the flag for the displaced sentence in the error slot
+        // (the last rows depend on `refusal: true` there).
         let both_texts = Messages {
             custom_message: Some(custom.to_string()),
             error_message: Some(error.to_string()),
@@ -3957,12 +4541,1253 @@ mod retrieval_error_tests {
         );
     }
 
+    /// A rule record's custom slot that is a sentence joined with the refusals its condition met is written
+    /// as one `Message = ...` line (its `; ` joins would come apart through `emit_messages`), and the cut
+    /// flag beside the text stays what the cutter says: `Some(false)` for a head under the recorded-message
+    /// bound, `Some(true)` for a head cut there, the refusal whole in both. The layout is its own value.
+    ///
+    /// Fails when the flag reads `Some(true)` for the uncut head (set to get the layout), when the
+    /// layout is `Messages`, or when the refusal after a cut head is cut too.
+    #[test]
+    fn a_joined_rule_sentence_takes_the_one_line_layout_and_keeps_the_cut_flag_truthful() {
+        use super::RuleLineLayout;
+        use crate::rules::eval_context::{RuleReport, SentenceParts, ALSO_MET};
+        use crate::rules::CustomSlot;
+        let rule_of = |head: &str, message: &str| RuleReport {
+            name: "gated",
+            messages: Messages {
+                custom_message: Some(format!("{head}{ALSO_MET}{message}")),
+                error_message: None,
+                location: None,
+                refusal: false,
+                parts: Some(SentenceParts::refusals_beside(
+                    head,
+                    message,
+                    crate::rules::eval_context::SentenceSlot::Custom,
+                )),
+            },
+            custom_slot: CustomSlot::Evaluator,
+            ..Default::default()
+        };
+        let refusal = "the read of `A` was refused, at path /Resources/A/Tags";
+        let short_head = "the condition could not be evaluated";
+        let (text, _, cut, layout) = super::rule_line_parts(&rule_of(short_head, refusal));
+        assert_eq!(
+            (
+                format!("{short_head}{ALSO_MET}{refusal}"),
+                Some(false),
+                RuleLineLayout::OneLineMessage
+            ),
+            (text, cut, layout),
+            "an uncut head: the joined text whole, the flag false, the one-line layout"
+        );
+        let long_head = format!("{} {}", "y".repeat(300), "z".repeat(300));
+        let (text, _, cut, layout) = super::rule_line_parts(&rule_of(&long_head, refusal));
+        assert_eq!(
+            (
+                format!("{}...{ALSO_MET}{refusal}", "y".repeat(300)),
+                Some(true),
+                RuleLineLayout::OneLineMessage
+            ),
+            (text, cut, layout),
+            "a head over the bound is cut at it, the flag says so, and the refusal stays whole"
+        );
+    }
+
+    /// A refusal's own head that gained refusals is held to ONE cap per console line: the joined line is cut
+    /// once, at the refusal backstop, with one marker, whichever of the three paths prints it (a block's
+    /// `Error =` line, a refusal-headed rule's `Message =` line, and a displaced sentence under an author's
+    /// body). The head and the refusals are each long enough that the joined line is over the backstop, so
+    /// a cut applied per part would leave two markers, and a line cut at the plain bound would be far
+    /// shorter than the backstop.
+    ///
+    /// Fails when a line carries two markers, no marker, or is cut at the plain bound (shorter
+    /// than the backstop), or is longer than the backstop and its marker.
+    #[test]
+    fn a_refusal_head_over_the_backstop_with_a_long_joined_refusal_is_cut_once_with_one_marker() {
+        use crate::rules::eval_context::{RuleReport, SentenceParts, SentenceSlot, ALSO_MET};
+        let head = "head words ".repeat(300);
+        let refusals = "remedy words ".repeat(300);
+        let joined = format!("{head}{ALSO_MET}{refusals}");
+        let marker = super::REFUSAL_CUT_MARKER;
+        let bound = super::LONGEST_REFUSAL_MESSAGE;
+        // The exact ceiling is the backstop, the ellipsis (3 characters), one space and the marker; the
+        // `+ 4` below is the ellipsis and the space.
+        let one_cut = |label: &str, text: &str| {
+            assert_eq!(
+                1,
+                text.matches(marker).count(),
+                "({label}) exactly one marker, in: {text}"
+            );
+            assert!(
+                text.ends_with(marker)
+                    && text.chars().count() <= bound + marker.chars().count() + 4
+                    && text.chars().count() > super::LONGEST_RECORDED_MESSAGE * 2,
+                "({label}) cut once at the backstop, not at the plain bound and not past the backstop: {} characters",
+                text.chars().count()
+            );
+        };
+        let block = Messages {
+            custom_message: None,
+            error_message: Some(joined.clone()),
+            location: None,
+            refusal: true,
+            parts: Some(SentenceParts::refusals_beside(
+                &head,
+                &refusals,
+                SentenceSlot::Error,
+            )),
+        };
+        one_cut("a block's Error line", &super::error_line_text(&block));
+        // The per-resource block line of a PLAIN head: it prints whole when no refusal is joined, but a
+        // line that carries a refusal and would exceed the backstop cuts the HEAD to the room the join and
+        // the refusals leave (here 3,925 characters of tail leave 171), so the refusals and their remedy
+        // stay whole, the line fits the backstop, and it carries the head's ellipsis and no refusal marker.
+        let plain_block = Messages {
+            custom_message: None,
+            error_message: Some(joined.clone()),
+            location: None,
+            refusal: false,
+            parts: Some(SentenceParts::refusals_beside(
+                &head,
+                &refusals,
+                SentenceSlot::Error,
+            )),
+        };
+        let plain_line = super::error_line_text(&plain_block);
+        assert_eq!(
+            (0, true, true, true),
+            (
+                plain_line.matches(marker).count(),
+                plain_line.ends_with(refusals.trim_end()),
+                plain_line.chars().count() <= bound,
+                plain_line.contains(&format!("...{ALSO_MET}"))
+            ),
+            "a plain-headed block's Error line: the head cut to the room, the remedy whole, no refusal marker: {} characters",
+            plain_line.chars().count()
+        );
+        let refusal_rule = RuleReport {
+            name: "gated",
+            messages: Messages {
+                custom_message: Some(joined.clone()),
+                error_message: None,
+                location: None,
+                refusal: true,
+                parts: Some(SentenceParts::refusals_beside(
+                    &head,
+                    &refusals,
+                    SentenceSlot::Custom,
+                )),
+            },
+            custom_slot: crate::rules::CustomSlot::Refusal,
+            ..Default::default()
+        };
+        let (message, _, cut, layout) = super::rule_line_parts(&refusal_rule);
+        one_cut("a refusal-headed rule's Message line", &message);
+        assert_eq!(
+            (None, super::RuleLineLayout::RefusalLines),
+            (cut, layout),
+            "a refusal's record reports no head cut and takes the refusal layout"
+        );
+        // A refusal-headed sentence displaced by an author's body sits in the error slot.
+        let displaced = RuleReport {
+            name: "gated",
+            messages: Messages {
+                custom_message: Some("the author's body".to_string()),
+                error_message: Some(joined.clone()),
+                location: None,
+                refusal: true,
+                parts: Some(SentenceParts::refusals_beside(
+                    &head,
+                    &refusals,
+                    SentenceSlot::Error,
+                )),
+            },
+            custom_slot: crate::rules::CustomSlot::Author,
+            ..Default::default()
+        };
+        let (_, error, _, _) = super::rule_line_parts(&displaced);
+        one_cut("the displaced sentence under a body", &error);
+        // The sentence the plain reporter of `test` prints for the same refusal-headed rule is the same
+        // single-cut line, and the raw one for the structured reporters is whole.
+        one_cut(
+            "the test reporter's plain reason",
+            &super::joined_rule_sentence(&refusal_rule).expect("the rule joined refusals"),
+        );
+        assert_eq!(
+            Some(joined.clone()),
+            super::joined_rule_sentence_raw(&refusal_rule),
+            "the structured reporters carry the joined sentence whole"
+        );
+    }
+
+    /// A plain block head prints the same text whether or not a refusal was joined to it WHILE THE JOINED LINE
+    /// FITS the backstop: the per-resource block line prints the head WHOLE (no plain-bound cut), as it did
+    /// before any refusal was joined, and the refusal follows after the join. The head is over the plain
+    /// bound, so a cut that depended on a sibling's refusal being appended would show here as a head that
+    /// changed. Past the backstop the head yields to the refusals (the cliff, `HeadBound::Whole`): a
+    /// 399-character head beside 3,800 characters of refusals is cut to the room that is left, shorter than
+    /// the same head alone, and the remedy stays whole. The second row pins that side.
+    ///
+    /// Fails when the head is cut at the plain bound only when the refusal is joined (the two rows
+    /// print different heads), or when the joined row's refusal is not after the head whole.
+    #[test]
+    fn a_plain_block_head_prints_the_same_with_and_without_a_joined_refusal() {
+        use crate::rules::eval_context::{SentenceParts, ALSO_MET};
+        // No trailing space: the joined line is collapsed to single spaces and trimmed, as the line without a
+        // refusal is printed by the sink, so the two rows compare the head itself.
+        let head = format!("failed to convert a string: {}", "word ".repeat(100))
+            .trim_end()
+            .to_string();
+        let refusal = "the read of `Tags` was refused, at path /Resources/M/Tags";
+        assert!(
+            head.chars().count() > super::LONGEST_RECORDED_MESSAGE,
+            "the head is past the plain bound"
+        );
+        let alone = Messages {
+            custom_message: None,
+            error_message: Some(head.clone()),
+            location: None,
+            refusal: false,
+            parts: None,
+        };
+        let joined = Messages {
+            custom_message: None,
+            error_message: Some(format!("{head}{ALSO_MET}{refusal}")),
+            location: None,
+            refusal: false,
+            parts: Some(SentenceParts::refusals_beside(
+                &head,
+                refusal,
+                crate::rules::eval_context::SentenceSlot::Error,
+            )),
+        };
+        assert_eq!(
+            (head.clone(), format!("{head}{ALSO_MET}{refusal}")),
+            (
+                super::error_line_text(&alone),
+                super::error_line_text(&joined)
+            ),
+            "the same head whole on both rows, the refusal after the join on the second"
+        );
+        // Past the backstop the head yields: shorter than the same head alone, the remedy whole.
+        let long_head = "word ".repeat(80).trim_end().to_string();
+        let long_refusals = "remedy ".repeat(543).trim_end().to_string();
+        assert_eq!(399, long_head.chars().count());
+        let cut = super::error_line_text(&Messages {
+            custom_message: None,
+            error_message: Some(format!("{long_head}{ALSO_MET}{long_refusals}")),
+            location: None,
+            refusal: false,
+            parts: Some(SentenceParts::refusals_beside(
+                &long_head,
+                &long_refusals,
+                crate::rules::eval_context::SentenceSlot::Error,
+            )),
+        });
+        assert_eq!(
+            (true, true, true),
+            (
+                cut.starts_with("word word") && cut.contains(&format!("...{ALSO_MET}")),
+                cut.ends_with(&long_refusals),
+                cut.chars().count() <= super::LONGEST_REFUSAL_MESSAGE
+            ),
+            "head 399 + refusals 3,800: the head cut to the room left, the remedy whole: {} characters",
+            cut.chars().count()
+        );
+    }
+
+    /// A plain head longer than the whole backstop, with one refusal joined: the per-resource block line
+    /// cuts the HEAD first (to the room the backstop leaves, at most the plain bound), so the refusal and its
+    /// remedy are present whole behind it and at most one marker appears; the same head with no refusal
+    /// joined prints whole.
+    ///
+    /// Fails when the refusal or its remedy is gone behind the cut marker (the head spent the whole
+    /// backstop), when the head is printed whole beside a refusal, or when the head alone is cut.
+    #[test]
+    fn a_head_longer_than_the_backstop_is_cut_first_and_the_refusal_stays_whole() {
+        use crate::rules::eval_context::{SentenceParts, SentenceSlot, ALSO_MET};
+        let head = "word ".repeat(1000).trim_end().to_string();
+        let refusal = "the read of `Tags` was refused, at path /Resources/M/Tags, where `X` is `Resources.*.Properties.Tags`: read it as the map's own entries";
+        assert!(
+            head.chars().count() > super::LONGEST_REFUSAL_MESSAGE,
+            "the head is past the whole backstop"
+        );
+        let alone = Messages {
+            custom_message: None,
+            error_message: Some(head.clone()),
+            location: None,
+            refusal: false,
+            parts: None,
+        };
+        let joined = Messages {
+            custom_message: None,
+            error_message: Some(format!("{head}{ALSO_MET}{refusal}")),
+            location: None,
+            refusal: false,
+            parts: Some(SentenceParts::refusals_beside(
+                &head,
+                refusal,
+                SentenceSlot::Error,
+            )),
+        };
+        let line = super::error_line_text(&joined);
+        assert_eq!(
+            (true, true, true),
+            (
+                line.contains(&format!("{ALSO_MET}{refusal}")),
+                line.matches("word").count() < 1000,
+                line.matches(super::REFUSAL_CUT_MARKER).count() <= 1,
+            ),
+            "the refusal and its remedy whole, the head cut, at most one marker: {}",
+            line
+        );
+        assert_eq!(
+            head,
+            super::error_line_text(&alone),
+            "the head with no refusal joined prints whole"
+        );
+    }
+
+    /// The block line as it is PRINTED (through `emit_messages`, the console write path of the per-resource
+    /// output), for a head that carries a line break and doubled spaces and is longer than the backstop, with
+    /// one refusal joined: the printed lines hold the refusal and its remedy whole, the head is cut (it is
+    /// the head that the cut names, not the refusal), and no more than one cut marker is printed. A text
+    /// compared before the write step would not see what the write does to a break or a doubled space.
+    ///
+    /// Fails when the printed output lacks the refusal or its remedy, holds the whole head, or
+    /// holds two markers.
+    #[test]
+    fn a_printed_block_line_with_a_broken_long_head_keeps_the_refusal_whole() {
+        use crate::rules::eval_context::{SentenceParts, SentenceSlot, ALSO_MET};
+        let head = "word  word\nword ".repeat(500).trim_end().to_string();
+        let refusal = "the read of `Tags` was refused, at path /Resources/M/Tags, where `X` is `Resources.*.Properties.Tags`: read it as the map's own entries";
+        let joined = Messages {
+            custom_message: None,
+            error_message: Some(format!("{head}{ALSO_MET}{refusal}")),
+            location: None,
+            refusal: false,
+            parts: Some(SentenceParts::refusals_beside(
+                &head,
+                refusal,
+                SentenceSlot::Error,
+            )),
+        };
+        let mut written: Vec<u8> = Vec::new();
+        super::emit_messages(&mut written, "  ", "", &super::error_line_text(&joined), 0)
+            .expect("writing to a Vec cannot fail");
+        let printed = String::from_utf8(written).expect("the output is UTF-8");
+        assert_eq!(
+            (true, true, true),
+            (
+                printed.contains(refusal),
+                printed.matches("word").count() < 1000,
+                printed.matches(super::REFUSAL_CUT_MARKER).count() <= 1,
+            ),
+            "the refusal whole, the head cut, at most one marker, as printed: {}",
+            printed
+        );
+    }
+
+    /// The head yields to the refusals on the block line. Three lines, each counted for both ends of a cut,
+    /// the head's ellipsis before the join and the refusal marker at the end:
+    /// - a head under the plain bound (299 characters) beside 3,800 characters of refusals, which together
+    ///   with the join exceed the backstop by about 30: the head is cut to the room that is left, the
+    ///   remedy is whole to its last character, and there is no refusal marker;
+    /// - a head of 1,999 characters beside the same refusals: the head's ellipsis only, the remedy whole;
+    /// - refusals of 4,500 characters beside a short head: the head whole, the refusal marker once at the
+    ///   end, and no head ellipsis.
+    #[test]
+    fn the_head_yields_to_the_refusals_and_the_refusal_marker_is_for_refusals_that_exceed_the_backstop(
+    ) {
+        use crate::rules::eval_context::{SentenceParts, SentenceSlot, ALSO_MET};
+        let line_of = |head: &str, refusals: &str| {
+            super::error_line_text(&Messages {
+                custom_message: None,
+                error_message: Some(format!("{head}{ALSO_MET}{refusals}")),
+                location: None,
+                refusal: false,
+                parts: Some(SentenceParts::refusals_beside(
+                    head,
+                    refusals,
+                    SentenceSlot::Error,
+                )),
+            })
+        };
+        let words = |word: &str, times: usize| word.repeat(times).trim_end().to_string();
+        let counts = |line: &str| {
+            (
+                line.matches(super::REFUSAL_CUT_MARKER).count(),
+                line.matches(&format!("...{ALSO_MET}")).count(),
+            )
+        };
+        let medium_refusals = words("remedy ", 543);
+        assert_eq!(3800, medium_refusals.chars().count());
+
+        let head_300 = words("word ", 60);
+        let line = line_of(&head_300, &medium_refusals);
+        assert_eq!(
+            ((0, 1), true, true),
+            (
+                counts(&line),
+                line.ends_with(&medium_refusals),
+                line.chars().count() <= super::LONGEST_REFUSAL_MESSAGE
+            ),
+            "head 300 + refusals 3,800: head ellipsis only, remedy whole, within the backstop: {} characters",
+            line.chars().count()
+        );
+
+        let head_2000 = words("word ", 400);
+        let line = line_of(&head_2000, &medium_refusals);
+        assert_eq!(
+            ((0, 1), true, true),
+            (
+                counts(&line),
+                line.ends_with(&medium_refusals),
+                line.chars().count() <= super::LONGEST_REFUSAL_MESSAGE
+            ),
+            "head 2,000 + refusals 3,800: head ellipsis only, remedy whole: {} characters",
+            line.chars().count()
+        );
+
+        let long_refusals = words("remedy ", 643);
+        assert_eq!(4500, long_refusals.chars().count());
+        let short_head = "the head, short";
+        let line = line_of(short_head, &long_refusals);
+        assert_eq!(
+            ((1, 0), true, true),
+            (
+                counts(&line),
+                line.starts_with(&format!("{short_head}{ALSO_MET}")),
+                line.ends_with(super::REFUSAL_CUT_MARKER)
+            ),
+            "refusals alone past the backstop: the marker once, the head whole, no head ellipsis"
+        );
+
+        // The floor: a tail of 4,090 characters leaves the head 6, under the floor of 80, so the head is
+        // not cut to the room (it would be a fragment) and the backstop cuts the end of the line.
+        let near_refusals = format!("{}abcd", "remedy ".repeat(580));
+        assert_eq!(4064, near_refusals.chars().count());
+        let head_50 = "word ".repeat(10).trim_end().to_string();
+        let line = line_of(&head_50, &near_refusals);
+        assert_eq!(
+            ((1, 0), true),
+            (
+                counts(&line),
+                line.starts_with(&format!("{head_50}{ALSO_MET}"))
+            ),
+            "tail 4,090, head 50: the head whole, no fragment, the marker once at the end: {} characters",
+            line.chars().count()
+        );
+    }
+
+    /// A sentence that gained only body marks joins them behind `a body clause also met` on the console in
+    /// both bounds. Plain (the rule line and the unattributed section): a head over the plain bound is cut
+    /// with its ellipsis and the marks follow whole behind the body joiner. Whole (the per-resource block
+    /// line): the head stays whole while the line fits the backstop, and past it the head is cut to the room
+    /// and the marks stay whole behind the same joiner. Fails when either bound words the marks with the
+    /// condition joiner, or loses the marks.
+    #[test]
+    fn body_marks_keep_their_joiner_on_the_plain_and_the_whole_console_lines() {
+        use crate::rules::eval_context::{SentenceParts, SentenceSlot, BODY_ALSO_MET};
+        let messages = |head: &str, marks: &str| Messages {
+            custom_message: None,
+            error_message: Some(format!("{head}{BODY_ALSO_MET}{marks}")),
+            location: None,
+            refusal: false,
+            parts: Some(SentenceParts::refusals_beside_groups(
+                head,
+                "",
+                "",
+                marks,
+                SentenceSlot::Error,
+            )),
+        };
+        let marks = "the read of `Tags` was refused, at path /Resources/M/Tags";
+        let long_head = "word ".repeat(100).trim_end().to_string();
+        let plain = super::joined_console_text(
+            &messages(&long_head, marks),
+            SentenceSlot::Error,
+            super::HeadBound::Plain,
+        )
+        .expect("the plain line joins");
+        assert_eq!(
+            (true, true, false),
+            (
+                plain.contains(&format!("...{BODY_ALSO_MET}{marks}")),
+                plain.ends_with(marks),
+                plain.contains(crate::rules::eval_context::ALSO_MET)
+            ),
+            "plain: the head cut with its ellipsis, the marks whole behind the body joiner: {}",
+            plain
+        );
+        let whole = super::error_line_text(&messages(&long_head, marks));
+        assert_eq!(
+            (true, false),
+            (
+                whole == format!("{long_head}{BODY_ALSO_MET}{marks}"),
+                whole.contains(crate::rules::eval_context::ALSO_MET)
+            ),
+            "whole: the joined line fits the backstop, so the head stays whole: {}",
+            whole
+        );
+        let remedy = "remedy ".repeat(543).trim_end().to_string();
+        let past = super::error_line_text(&messages(&long_head, &remedy));
+        assert_eq!(
+            (true, true, true),
+            (
+                past.contains(&format!("...{BODY_ALSO_MET}")),
+                past.ends_with(&remedy),
+                past.chars().count() <= super::LONGEST_REFUSAL_MESSAGE
+            ),
+            "whole, past the backstop: the head cut to the room, the marks whole behind the body joiner"
+        );
+    }
+
+    /// The head's budget under the floor is the floor, never the plain bound: a 320-character head beside
+    /// refusals that leave it room 80 prints as 77 characters and an ellipsis with the remedy whole and no
+    /// refusal marker; at room 79 the head prints the same 77 and an ellipsis and the remedy loses exactly
+    /// one character to the backstop (an unbroken run has no word boundary within `BACKSTOP_BACKOFF`, so
+    /// the cut is by count; a remedy of words would lose up to 16 more), where a budget that jumped to the plain bound would have cut about 240. A head longer than
+    /// the floor beside a tail of 4,090 keeps the floor too, and a 500-character head with room 400 prints
+    /// 320 characters and the ellipsis, as the released line does.
+    ///
+    /// Fails when the head at room 79 is longer than at room 80 (the cliff), when the remedy at room 80
+    /// loses a character or carries the marker, when the remedy at room 79 loses other than one character,
+    /// or when the head under the floor or over the room is not cut to the stated width.
+    #[test]
+    fn under_the_floor_the_head_keeps_the_floor_and_the_remedy_loses_only_the_shortfall() {
+        use crate::rules::eval_context::{SentenceParts, SentenceSlot, ALSO_MET};
+        let line_of = |head: &str, refusals: &str| {
+            super::error_line_text(&Messages {
+                custom_message: None,
+                error_message: Some(format!("{head}{ALSO_MET}{refusals}")),
+                location: None,
+                refusal: false,
+                parts: Some(SentenceParts::refusals_beside(
+                    head,
+                    refusals,
+                    SentenceSlot::Error,
+                )),
+            })
+        };
+        let head = "x".repeat(320);
+        let kept_head = format!("{}...{ALSO_MET}", "x".repeat(77));
+        let at_80 = "r".repeat(super::LONGEST_REFUSAL_MESSAGE - ALSO_MET.chars().count() - 80);
+        let at_79 = "r".repeat(at_80.chars().count() + 1);
+        let (line_80, line_79) = (line_of(&head, &at_80), line_of(&head, &at_79));
+        assert_eq!(
+            (true, true, 0, true, 1),
+            (
+                line_80.starts_with(&kept_head),
+                line_80.ends_with(&at_80),
+                line_80.matches(super::REFUSAL_CUT_MARKER).count(),
+                line_79.starts_with(&kept_head),
+                line_79.matches(super::REFUSAL_CUT_MARKER).count()
+            ),
+            "room 80: head 77 + ellipsis, remedy whole, no marker; room 79: the same head, the marker once"
+        );
+        // At room 79 the line is one over the backstop, so the remedy loses exactly one character (no
+        // word boundary within the back-off, so the cut is by count), then the ellipsis and the marker.
+        let kept_remedy = &at_79[..at_79.len() - 1];
+        assert_eq!(
+            (true, false),
+            (
+                line_79.contains(&format!("{kept_remedy}... {}", super::REFUSAL_CUT_MARKER)),
+                line_79.contains(&at_79)
+            ),
+            "room 79: the remedy short by exactly one character, the marker after the ellipsis"
+        );
+        // A head over the plain bound beside room for more than 323 keeps the released shape: 320 characters
+        // and the ellipsis, no marker, the remedy whole.
+        let at_400 = "r".repeat(super::LONGEST_REFUSAL_MESSAGE - ALSO_MET.chars().count() - 400);
+        let long_head = "x".repeat(500);
+        let line_400 = line_of(&long_head, &at_400);
+        assert_eq!(
+            (
+                true,
+                true,
+                0,
+                320 + 3 + ALSO_MET.chars().count() + at_400.chars().count()
+            ),
+            (
+                line_400.starts_with(&format!("{}...{ALSO_MET}", "x".repeat(320))),
+                line_400.ends_with(&at_400),
+                line_400.matches(super::REFUSAL_CUT_MARKER).count(),
+                line_400.chars().count()
+            ),
+            "room 400: the head 320 and its ellipsis (323), the remedy whole, no marker"
+        );
+        let near = format!("{}abcd", "remedy ".repeat(580));
+        let line = line_of(&head, &near);
+        assert_eq!(
+            (true, 1),
+            (
+                line.starts_with(&kept_head),
+                line.matches(super::REFUSAL_CUT_MARKER).count()
+            ),
+            "tail 4,090, head 320: the head keeps the floor and the end of the line carries the marker"
+        );
+        // A head of WORDS under the floor: the word back-off may not take it below the floor, so at room 80
+        // it prints the same 77 characters and an ellipsis as the unbroken head (a back-off alone would
+        // have ended it at a word 61 or so characters in), and with room for more it ends at a word
+        // boundary that is still at or above the floor.
+        let words_head = "abcdefg ".repeat(40);
+        let kept_words = format!("{}...{ALSO_MET}", &words_head[..77]);
+        let line_words_80 = line_of(&words_head, &at_80);
+        assert!(
+            line_words_80.starts_with(&kept_words),
+            "room 80, a head of words: 77 characters by count and the ellipsis, not a shorter word back-off: {:?}",
+            line_words_80
+        );
+        let at_120 = "r".repeat(super::LONGEST_REFUSAL_MESSAGE - ALSO_MET.chars().count() - 120);
+        let line_words_120 = line_of(&words_head, &at_120);
+        let head_part = line_words_120
+            .split_once(&format!("...{ALSO_MET}"))
+            .map(|(head, _)| head.to_string())
+            .expect("the head was cut and its ellipsis precedes the joiner");
+        assert_eq!(
+            (true, true),
+            (
+                head_part.chars().count() + 3 >= super::HEAD_FLOOR,
+                head_part.ends_with("abcdefg")
+            ),
+            "room 120, a head of words: cut at a word boundary, printed width at least the floor: {head_part:?}"
+        );
+    }
+
+    /// Every refusal line takes the one bounded cut (`backstop`, through `cut_bounded`): it backs up to a
+    /// word boundary at most 16 characters, never before the last real joiner, and otherwise cuts by
+    /// count, so the remedy is present and the marker appears once. Each row names the cutter it refutes
+    /// (`cut_to`: the released walk back to the last whitespace; the punctuation guard: a cutter that took
+    /// any `:` or `;` before a space for a joiner; the early floor: one that applied the floor before the
+    /// trim and the move back out of an escape; the floor-0 line: one that gave a single-string refusal
+    /// line no floors) and is green on this one:
+    /// - path 1, a refusal-headed joined sentence on the block line with an unbroken refusal (refutes
+    ///   `cut_to`): it walked back to the head joiner's trailing space and printed
+    ///   `head; the condition also met:...`;
+    /// - path 2, the plain arm's refusal part with two listed refusals, `R1; ` then an unbroken one
+    ///   (refutes `cut_to`): it walked back to the space after `R1;` and dropped the second whole;
+    /// - path 3, an unjoined refusal `fix: ` and an unbroken remedy (refutes `cut_to`): it walked back to
+    ///   `fix:`;
+    /// - path 4, prose with `: ` inside the window (passes on `cut_to`, whose walk back also ends at
+    ///   ` see Tags:`; refutes the punctuation guard): it cut a half word; only the sentence's real
+    ///   joiners are floors, so the cut is at the word boundary;
+    /// - path 5, the joiner ending 5 characters before the bound (refutes `cut_to`): the cut is not backed
+    ///   into the joiner;
+    /// - path 6, an escape right behind the joiner, cut inside (refutes the early floor): the move back
+    ///   would take the joiner's space;
+    /// - path 7, a line with no parts, `R1; ` and an unbroken second refusal near the bound (refutes the
+    ///   floor-0 line): the second refusal's prefix stays;
+    /// - path 7 again, the same shape as `A; B` with `A` of 4,087 characters, so the space after `A;` sits
+    ///   inside the window (refutes the floor-0 line): `B` keeps its prefix behind the boundary;
+    /// - path 8, a head with a space at its 77th character at room 80 (refutes the early floor): the head
+    ///   prints exactly 80 with its ellipsis;
+    /// - path 9, the text of path 5 as ONE string with no parts (refutes a cutter that gave a single
+    ///   string no joiner floors): the joiner text inside the string is a floor, so the cut is the one the
+    ///   joined form takes. A head after a `; ` inside one string is the next cell's.
+    ///
+    /// Ten assertion blocks in all, one per path above and two for path 7, in the body's order 1, 2, 3, 5,
+    /// 9, 6, 7, 7, 8, 4. Fails when a line loses its refusal whole, keeps other than the bound's characters
+    /// on paths 1 to 3 and 7, carries the marker other than once, prints a head under 80, cuts the
+    /// single-string form of path 9 other than the joined form, or ends in a half word on path 4.
+    #[test]
+    fn every_refusal_line_keeps_its_remedy_to_within_the_back_off_and_the_marker_once() {
+        use crate::rules::eval_context::{SentenceParts, SentenceSlot, ALSO_MET};
+        let marker = format!(" {}", super::REFUSAL_CUT_MARKER);
+        let bound = super::LONGEST_REFUSAL_MESSAGE;
+        // The text kept before the ellipsis and the marker, or None when the line was not cut.
+        let kept_of = |line: &str| {
+            line.strip_suffix(marker.as_str())
+                .and_then(|cut| cut.strip_suffix("..."))
+                .map(str::to_string)
+        };
+        let messages_of = |head: &str, refusals: &str, refusal: bool| Messages {
+            custom_message: None,
+            error_message: Some(format!("{head}{ALSO_MET}{refusals}")),
+            location: None,
+            refusal,
+            parts: Some(SentenceParts::refusals_beside(
+                head,
+                refusals,
+                SentenceSlot::Error,
+            )),
+        };
+        let head = "the condition could not be evaluated";
+        let unbroken = "r".repeat(bound + 900);
+
+        // Path 1, a refusal-headed sentence on the block line, an unbroken refusal behind the head's
+        // joiner. A cutter that backed up to the last whitespace would stop at the joiner's own trailing
+        // space and print `head; the condition also met:...` with the whole refusal gone.
+        let line = super::error_line_text(&messages_of(head, &unbroken, true));
+        let kept =
+            kept_of(&line).expect("a refusal-headed line over the backstop is cut and marked");
+        let prefix = format!("{head}{ALSO_MET}");
+        assert_eq!(
+            (true, bound, 1),
+            (
+                kept.starts_with(&format!("{prefix}rrrr")),
+                kept.chars().count(),
+                line.matches(super::REFUSAL_CUT_MARKER).count()
+            ),
+            "refusal-headed block line: the unbroken refusal is cut by count behind the joiner, never dropped"
+        );
+
+        // Path 2, the plain arm's refusal part, two listed refusals: `R1; ` and an unbroken one. A cutter
+        // that backed up to the space after `R1;` would drop the second refusal whole.
+        let listed = format!("R1; {unbroken}");
+        let (plain, _) = super::joined_console_parts(
+            &messages_of(head, &listed, false),
+            SentenceSlot::Error,
+            super::HeadBound::Plain,
+        )
+        .expect("the parts join refusals");
+        let kept = plain
+            .strip_prefix(&prefix)
+            .and_then(kept_of)
+            .expect("the plain arm keeps the head and the joiner and marks the cut refusals");
+        assert_eq!(
+            (true, bound, 1),
+            (
+                kept.starts_with("R1; rrrr"),
+                kept.chars().count(),
+                plain.matches(super::REFUSAL_CUT_MARKER).count()
+            ),
+            "plain arm: the second, unbroken refusal keeps the bound behind `R1; ` and the marker follows once"
+        );
+
+        // Path 3, an unjoined refusal's Error line: a prefix with a space, then an unbroken remedy.
+        let unjoined = Messages {
+            custom_message: None,
+            error_message: Some(format!("fix: {unbroken}")),
+            location: None,
+            refusal: true,
+            parts: None,
+        };
+        let line = super::error_line_text(&unjoined);
+        let kept = kept_of(&line).expect("an unjoined refusal over the backstop is cut and marked");
+        assert_eq!(
+            (true, bound, 1),
+            (
+                kept.starts_with("fix: rrrr"),
+                kept.chars().count(),
+                line.matches(super::REFUSAL_CUT_MARKER).count()
+            ),
+            "unjoined Error line: the remedy is present up to the bound, never walked back to the prefix"
+        );
+
+        // Path 5, the joiner's space 5 characters before the bound: the floor holds, the cut is not backed
+        // into the joiner and the five characters after it stay (marker once).
+        let near_head = "h".repeat(bound - 5 - ALSO_MET.chars().count());
+        let line = super::error_line_text(&messages_of(&near_head, &unbroken, true));
+        let kept = kept_of(&line).expect("the line is cut and marked");
+        assert_eq!(
+            (true, bound, 1),
+            (
+                kept.ends_with(&format!("{ALSO_MET}rrrrr")),
+                kept.chars().count(),
+                line.matches(super::REFUSAL_CUT_MARKER).count()
+            ),
+            "the joiner ends 5 characters before the bound: the cut stays after it"
+        );
+
+        // Path 9, the text of path 5 as ONE string with no parts (a rule reference's "text; callee error"
+        // where the callee's sentence carries a joined refusal): the joiner text it holds is a floor, so
+        // the cut is the one the joined form takes and R's prefix stays.
+        let one_string = Messages {
+            custom_message: None,
+            error_message: Some(format!("{near_head}{ALSO_MET}{unbroken}")),
+            location: None,
+            refusal: true,
+            parts: None,
+        };
+        let partless = kept_of(&super::error_line_text(&one_string)).expect("the line is cut");
+        let joined = kept_of(&super::error_line_text(&messages_of(
+            &near_head, &unbroken, true,
+        )))
+        .expect("the line is cut");
+        assert_eq!(
+            (true, joined),
+            (partless.ends_with(&format!("{ALSO_MET}rrrrr")), partless),
+            "a joiner inside a single string is a floor: the parts-less text is cut as the joined form is"
+        );
+
+        // Path 6, a refusal that starts with an escape right behind the joiner, the count cut inside the
+        // escape: the move back out of the escape would land on the joiner's end and its trim would take the
+        // joiner's space (`... also met:... [explanation cut ...]`). The floor is applied last, so the cut is
+        // at the escape's start, untrimmed: the joiner's space stays and no fragment of the escape prints.
+        let esc_head = "h".repeat(bound - 3 - ALSO_MET.chars().count());
+        let escapes = "\u{1b}".repeat(40);
+        let line = super::error_line_text(&messages_of(&esc_head, &escapes, true));
+        let kept = kept_of(&line).expect("the line is cut and marked");
+        assert_eq!(
+            (true, false, 1),
+            (
+                kept.ends_with(ALSO_MET),
+                kept.contains("\\u{"),
+                line.matches(super::REFUSAL_CUT_MARKER).count()
+            ),
+            "an escape right behind the joiner, cut inside: cut at its start with the joiner's space, no fragment"
+        );
+
+        // Path 7, a line with no parts, `R1; ` and an unbroken second refusal starting within 16 of the bound:
+        // the `; ` is a boundary, so the cut keeps the second refusal's first characters, as a joined
+        // sentence's body does (a cutter that backed up to the space after `R1;` would drop it whole).
+        let unjoined_refusals = Messages {
+            custom_message: None,
+            error_message: Some(format!("{}R1; {}", "f".repeat(bound - 9), "r".repeat(900))),
+            location: None,
+            refusal: true,
+            parts: None,
+        };
+        let line = super::error_line_text(&unjoined_refusals);
+        let kept = kept_of(&line).expect("the line is cut and marked");
+        assert_eq!(
+            (true, bound, 1),
+            (
+                kept.ends_with("R1; rrrrr"),
+                kept.chars().count(),
+                line.matches(super::REFUSAL_CUT_MARKER).count()
+            ),
+            "a refusal line without parts: the boundary after `R1;` is a floor, the second refusal keeps its prefix"
+        );
+
+        // Path 7, the same text as `A; B` with A of 4,087 characters: the space after `A;` sits in the window.
+        let a_then_b = Messages {
+            custom_message: None,
+            error_message: Some(format!("{}; {}", "a".repeat(4087), "b".repeat(900))),
+            location: None,
+            refusal: true,
+            parts: None,
+        };
+        let line = super::error_line_text(&a_then_b);
+        let kept = kept_of(&line).expect("the line is cut and marked");
+        assert_eq!(
+            (true, 1),
+            (
+                kept.ends_with("; bbbbbbb"),
+                line.matches(super::REFUSAL_CUT_MARKER).count()
+            ),
+            "`A; B`: B keeps its prefix behind the boundary"
+        );
+
+        // Path 8, a block-line head whose space is at its 77th character, at room 80: the trim would print 79
+        // characters with the ellipsis; the floor is applied last, so the head prints exactly 80.
+        let space_head = format!("{} {}", "a".repeat(76), "b".repeat(300));
+        let at_80 = "r".repeat(bound - ALSO_MET.chars().count() - 80);
+        let line = super::error_line_text(&Messages {
+            custom_message: None,
+            error_message: Some(format!("{space_head}{ALSO_MET}{at_80}")),
+            location: None,
+            refusal: false,
+            parts: Some(SentenceParts::refusals_beside(
+                &space_head,
+                &at_80,
+                SentenceSlot::Error,
+            )),
+        });
+        assert!(
+            line.starts_with(&format!("{} ...{ALSO_MET}", "a".repeat(76))),
+            "the head prints 80 characters with its ellipsis, the space at 77 kept: {:?}",
+            &line[..90.min(line.len())]
+        );
+
+        // Path 4, ordinary prose with a `: ` inside the window is no joiner: the cut backs up to the word
+        // boundary and prints no half word (`... see Tags: re...` was the output of a cutter that took
+        // any `:` before a space for a joiner).
+        let prose = Messages {
+            custom_message: None,
+            error_message: Some(format!(
+                "{}{}",
+                "r".repeat(bound - 13),
+                " see Tags: remedy words"
+            )),
+            location: None,
+            refusal: true,
+            parts: None,
+        };
+        let line = super::error_line_text(&prose);
+        let kept = kept_of(&line).expect("a refusal over the backstop is cut and marked");
+        assert_eq!(
+            (true, 1),
+            (
+                kept.ends_with(" see Tags:"),
+                line.matches(super::REFUSAL_CUT_MARKER).count()
+            ),
+            "prose with a colon in the window: cut at the word boundary, no half word"
+        );
+    }
+
+    /// A rule reference's text, `<reference text>; <callee error>`, arrives as ONE string, and the callee's
+    /// error opens with a head the evaluator writes before the error it quotes (`WHEN_UNEVALUATED_HEAD`,
+    /// which ends in `: `). The head's end stands right after the `; ` boundary, 5 characters before the
+    /// bound, and the refusal behind it is unbroken: the head's end is a floor (`joined_line`: a known head
+    /// at the start of a body or right after a `; `), so the cut stays 5 characters into the refusal and
+    /// its prefix prints, with the marker once. The callee error as a GROUP of a joined sentence (the
+    /// reference text as the head, the group behind a joiner) is cut at the same place: 5 characters into
+    /// the refusal, at the bound. Fails when the cut backs off to the head's trailing space (the floor taken
+    /// only for a head at the string's start) and the refusal's first characters are dropped, or the two
+    /// routes cut differently.
+    #[test]
+    fn a_head_after_a_boundary_inside_one_string_keeps_the_refusals_prefix() {
+        use crate::rules::eval::WHEN_UNEVALUATED_HEAD;
+        use crate::rules::eval_context::{SentenceParts, SentenceSlot, ALSO_MET};
+        let marker = format!(" {}", super::REFUSAL_CUT_MARKER);
+        let bound = super::LONGEST_REFUSAL_MESSAGE;
+        let kept_of = |line: &str| {
+            line.strip_suffix(marker.as_str())
+                .and_then(|cut| cut.strip_suffix("..."))
+                .map(str::to_string)
+        };
+        let head = WHEN_UNEVALUATED_HEAD;
+        let unbroken = "r".repeat(bound + 900);
+        // `<reference>; <head><refusal>`, the head ending 5 characters before the bound.
+        let reference = "f".repeat(bound - 5 - head.chars().count() - 2);
+        let one_string = Messages {
+            custom_message: None,
+            error_message: Some(format!("{reference}; {head}{unbroken}")),
+            location: None,
+            refusal: true,
+            parts: None,
+        };
+        let line = super::error_line_text(&one_string);
+        let kept = kept_of(&line).expect("the line is cut and marked");
+        assert_eq!(
+            (true, bound, 1),
+            (
+                kept.ends_with(&format!("{head}rrrrr")),
+                kept.chars().count(),
+                line.matches(super::REFUSAL_CUT_MARKER).count()
+            ),
+            "a head right after the `; ` boundary is a floor: the refusal keeps its first characters"
+        );
+        // The same text as a joined sentence's pieces: the reference text as the head, the callee error as
+        // the condition group behind a joiner of the same width as `; ` plus the head. The kept text is the
+        // same as the one string's, since both routes read one floor rule.
+        let joiner_width = ALSO_MET.chars().count();
+        let reference = "f".repeat(bound - 5 - head.chars().count() - joiner_width);
+        let callee = format!("{head}{unbroken}");
+        let as_pieces = Messages {
+            custom_message: None,
+            error_message: Some(format!("{reference}{ALSO_MET}{callee}")),
+            location: None,
+            refusal: true,
+            parts: Some(SentenceParts::refusals_beside(
+                &reference,
+                &callee,
+                SentenceSlot::Error,
+            )),
+        };
+        let joined = kept_of(&super::error_line_text(&as_pieces)).expect("the line is cut");
+        assert_eq!(
+            (true, bound),
+            (
+                joined.ends_with(&format!("{head}rrrrr")),
+                joined.chars().count()
+            ),
+            "the joined route reads the same head floor inside its group"
+        );
+    }
+
+    /// The path-9 shape with NON-ASCII text before the joiner: a head of two-, three- and four-byte
+    /// characters (accented letters, CJK, a mathematical letter) so that the joiner inside the one string
+    /// ends 5 characters before the bound while its BYTE offset lies far past the bound. The floor at the
+    /// joiner's end is a character offset (`joined_line` counts the bytes before it as characters before it
+    /// tests the backstop), so the cut stays 5 characters into the refusal: the kept text ends
+    /// `<joiner>rrrrr`, counts exactly the bound in characters, and the marker appears once. The first
+    /// non-ASCII row of the cutter: every other row is ASCII, where bytes and characters agree. Fails when a
+    /// byte offset is tested against the character limit and the floor is skipped, so the cut backs off into
+    /// the joiner's trailing space and the refusal's prefix is dropped.
+    #[test]
+    fn a_joiner_after_multi_byte_text_inside_one_string_is_still_a_floor() {
+        use crate::rules::eval_context::ALSO_MET;
+        let marker = format!(" {}", super::REFUSAL_CUT_MARKER);
+        let bound = super::LONGEST_REFUSAL_MESSAGE;
+        let kept_of = |line: &str| {
+            line.strip_suffix(marker.as_str())
+                .and_then(|cut| cut.strip_suffix("..."))
+                .map(str::to_string)
+        };
+        let wide_head: String = ['\u{e9}', '\u{4e2d}', '\u{1d538}']
+            .iter()
+            .cycle()
+            .take(bound - 5 - ALSO_MET.chars().count())
+            .collect();
+        assert!(
+            wide_head.len() > bound,
+            "the head's bytes exceed the bound while its characters stay under it: {} bytes",
+            wide_head.len()
+        );
+        let unbroken = "r".repeat(bound + 900);
+        let one_string = Messages {
+            custom_message: None,
+            error_message: Some(format!("{wide_head}{ALSO_MET}{unbroken}")),
+            location: None,
+            refusal: true,
+            parts: None,
+        };
+        let line = super::error_line_text(&one_string);
+        let kept = kept_of(&line).expect("the line is cut and marked");
+        assert_eq!(
+            (true, bound, 1),
+            (
+                kept.ends_with(&format!("{ALSO_MET}rrrrr")),
+                kept.chars().count(),
+                line.matches(super::REFUSAL_CUT_MARKER).count()
+            ),
+            "a joiner after multi-byte text: its end is a floor in characters, the refusal's prefix stays"
+        );
+    }
+
+    /// One floor set for one text, however it arrives: the same sentence built as the pieces of a joined
+    /// sentence (a head, then each group behind its joiner) and as ONE string yields the same line and the
+    /// same floors from `joined_line`, because the floors are read off the assembled line and not off the
+    /// pieces. Three texts: an ASCII head with two groups whose second refusal opens with a known head after
+    /// a `; ` (a head floor at a boundary inside a body, where the pieces route sees a piece start and the
+    /// one-string route a `; `); the same with a head that opens a group right after a joiner (a boundary
+    /// the pieces route sees as a piece start and the one-string route as a joiner end); and the non-ASCII
+    /// head of the cell above. No body here starts or ends in whitespace: the pieces route trims each body
+    /// (`one_line`) while the one-string route keeps interior whitespace as written, so the two assembled
+    /// lines agree only for a text with no such whitespace at a boundary, which is every text the writers
+    /// produce. Fails when either route records a floor the other does not.
+    #[test]
+    fn the_same_text_yields_the_same_floors_as_pieces_and_as_one_string() {
+        use crate::rules::eval::WHEN_UNEVALUATED_HEAD;
+        use crate::rules::eval_context::{ALSO_MET, BODY_ALSO_MET};
+        let bound = super::LONGEST_REFUSAL_MESSAGE;
+        let head = WHEN_UNEVALUATED_HEAD;
+        let wide_head: String = ['\u{e9}', '\u{4e2d}', '\u{1d538}']
+            .iter()
+            .cycle()
+            .take(bound - 5 - ALSO_MET.chars().count())
+            .collect();
+        let texts: Vec<(&str, Vec<(&str, String)>)> = vec![
+            (
+                "a head after a `; ` inside a group, two groups",
+                vec![
+                    ("", String::from("the rule failed")),
+                    (ALSO_MET, format!("R1; {head}R2")),
+                    (BODY_ALSO_MET, String::from("B1; B2")),
+                ],
+            ),
+            (
+                "a head opening a group right after its joiner",
+                vec![
+                    ("", String::from("the rule failed")),
+                    (ALSO_MET, format!("{head}R1")),
+                    (BODY_ALSO_MET, String::from("B1")),
+                ],
+            ),
+            (
+                "a multi-byte head before the joiner",
+                vec![("", wide_head), (ALSO_MET, "r".repeat(bound + 900))],
+            ),
+        ];
+        for (label, pieces) in &texts {
+            let as_pieces: Vec<(&str, &str)> = pieces
+                .iter()
+                .map(|(joiner, body)| (*joiner, body.as_str()))
+                .collect();
+            let mut one_string = String::new();
+            for (joiner, body) in pieces {
+                one_string.push_str(joiner);
+                one_string.push_str(body);
+            }
+            let (line_from_pieces, ends_from_pieces) = super::joined_line(&as_pieces);
+            let (line_from_string, ends_from_string) = super::joined_line(&[("", &one_string)]);
+            assert_eq!(
+                (line_from_pieces, ends_from_pieces),
+                (line_from_string, ends_from_string),
+                "{label}: the line and its floors read the same from the pieces and from one string"
+            );
+        }
+        // The floors themselves for the head that opens a group right after its joiner, from the text's own
+        // character lengths, so an equality of two empty or two short vectors cannot pass: the `; ` that
+        // opens the condition joiner, that joiner's end, the head's end right after it, the `; ` that opens
+        // the body joiner, and that joiner's end; nothing else (the head and the refusals hold no `; `).
+        let (_, ends) = super::joined_line(&[
+            ("", "the rule failed"),
+            (ALSO_MET, &format!("{head}R1")),
+            (BODY_ALSO_MET, "B1"),
+        ]);
+        let joiner_end = "the rule failed".chars().count() + ALSO_MET.chars().count();
+        let head_end = joiner_end + head.chars().count();
+        let body_joiner_start = head_end + "R1".chars().count();
+        assert_eq!(
+            vec![
+                "the rule failed".chars().count() + 2,
+                joiner_end,
+                head_end,
+                body_joiner_start + 2,
+                body_joiner_start + BODY_ALSO_MET.chars().count(),
+            ],
+            ends,
+            "the floors of a head opening a group right after its joiner, in character offsets"
+        );
+    }
+
+    /// A rule's `Error` line for a refusal-shaped record whose parts joined refusals is the recorded
+    /// sentence through the refusal pipeline, never a clause-shaped rebuild of "head message": the retrieval
+    /// error arm's `refusal_lines` filters to clause-shaped parts, and a record whose parts are a join takes
+    /// the sentence as recorded. The sentence an author's body displaced prints through the console's one
+    /// pipeline under its kind too.
+    ///
+    /// Fails when `refusal_lines` returns the head and the message joined by a space (the clause
+    /// rebuild), or drops the sentence.
+    #[test]
+    fn a_joined_sentence_is_never_laid_out_as_a_clause_shaped_head_and_message() {
+        use crate::rules::eval_context::{RuleReport, SentenceParts, ALSO_MET};
+        let head = "the condition could not be evaluated";
+        let refusal = "the read of `A` was refused, at path /Resources/A/Tags";
+        let sentence = format!("{head}{ALSO_MET}{refusal}");
+        let messages = Messages {
+            custom_message: None,
+            error_message: Some(sentence.clone()),
+            location: None,
+            refusal: true,
+            parts: Some(SentenceParts::refusals_beside(
+                head,
+                refusal,
+                crate::rules::eval_context::SentenceSlot::Error,
+            )),
+        };
+        let (error, reason) = super::refusal_lines(&messages, "");
+        assert_eq!(
+            (sentence.clone(), None),
+            (error, reason),
+            "the recorded sentence, not `head message`"
+        );
+        let body = RuleReport {
+            name: "gated",
+            messages: Messages {
+                custom_message: Some("the author's body".to_string()),
+                error_message: Some(sentence.clone()),
+                location: None,
+                refusal: false,
+                parts: Some(SentenceParts::refusals_beside(
+                    head,
+                    refusal,
+                    crate::rules::eval_context::SentenceSlot::Error,
+                )),
+            },
+            custom_slot: crate::rules::CustomSlot::Author,
+            ..Default::default()
+        };
+        assert_eq!(
+            Some(sentence),
+            super::joined_rule_sentence(&body),
+            "an author's body on the call: the displaced sentence is the one joined, in the error slot"
+        );
+    }
+
+    /// A plain head over the recorded-message bound with a long refusal joined to it is cut at the plain
+    /// bound and the refusal is printed whole, remedy included, at BOTH places the console prints a rule's
+    /// sentence: the per-resource `Rule = { }` arm and the unattributed section's entry, and with or without a
+    /// `<< >>` body on the call (the body takes the author's slot and the sentence moves to the error slot).
+    ///
+    /// Fails when a row prints the head whole (the run of words survives), cuts the refusal, or
+    /// loses the ellipsis before the join.
+    #[test]
+    fn a_long_plain_head_is_cut_and_its_joined_refusal_is_whole_in_both_arms_with_and_without_a_body(
+    ) {
+        use super::{
+            collect_unattributed_explanations, pprint_clauses, LocalResourceAggr, Rendered,
+        };
+        use crate::rules::eval_context::{RuleReport, SentenceParts, ALSO_MET};
+        use std::collections::{BTreeSet, HashSet};
+        let head = format!("failed to convert a string: {}", "word ".repeat(100));
+        // Longer than the plain bound (its remedy padded), so a regression that cuts every part at the plain
+        // bound cuts it here and the cell reads it.
+        let refusal = format!(
+            "the read of `Tags` was refused, at path /Resources/M/Tags, where `X` is `Resources.*.Properties.Tags`: read it as the map's own entries; {}",
+            "then name each entry in the clause, one at a time, ".repeat(8).trim_end()
+        );
+        assert!(
+            refusal.chars().count() > super::LONGEST_RECORDED_MESSAGE,
+            "the refusal is past the plain bound, or the cell proves nothing about it"
+        );
+        let refusal = refusal.as_str();
+        let whole = format!("{head}{ALSO_MET}{refusal}");
+        let in_slot = |slot| SentenceParts::refusals_beside(&head, refusal, slot);
+        let resource = LocalResourceAggr {
+            name: "R".to_string(),
+            resource_type: "AWS::Example::Thing",
+            cdk_path: None,
+            clauses: HashSet::new(),
+            paths: BTreeSet::new(),
+        };
+        let rows = [
+            (
+                "no body",
+                Messages {
+                    custom_message: Some(whole.clone()),
+                    error_message: None,
+                    location: None,
+                    refusal: false,
+                    parts: Some(in_slot(crate::rules::eval_context::SentenceSlot::Custom)),
+                },
+                crate::rules::CustomSlot::Evaluator,
+            ),
+            (
+                "a body",
+                Messages {
+                    custom_message: Some("the author's body".to_string()),
+                    error_message: Some(whole.clone()),
+                    location: None,
+                    refusal: false,
+                    parts: Some(in_slot(crate::rules::eval_context::SentenceSlot::Error)),
+                },
+                crate::rules::CustomSlot::Author,
+            ),
+        ];
+        for (label, messages, custom_slot) in rows {
+            let report = ClauseReport::Rule(RuleReport {
+                name: "nested",
+                messages,
+                custom_slot,
+                ..Default::default()
+            });
+            let mut written: Vec<u8> = Vec::new();
+            pprint_clauses(
+                &mut written,
+                &report,
+                &resource,
+                "  ".to_string(),
+                &mut NoExcerpt,
+            )
+            .expect("writing to a Vec cannot fail");
+            let per_resource = String::from_utf8(written).expect("the output is UTF-8");
+            let rendered = Rendered::of(std::iter::empty::<&LocalResourceAggr>());
+            let mut entries = Vec::new();
+            collect_unattributed_explanations(&report, None, &rendered, &mut entries);
+            let unattributed = entries
+                .iter()
+                .map(|(_, text)| text.as_str())
+                .collect::<Vec<_>>()
+                .join("\n");
+            for (arm, text) in [
+                ("per-resource", per_resource.as_str()),
+                ("unattributed", unattributed.as_str()),
+            ] {
+                // Counted, not searched for the whole run of words: the line is collapsed to one space
+                // between words and trimmed, so a search for the full run (with its trailing space) is
+                // vacuous. A head cut at the plain bound keeps well under the hundred words it quotes.
+                assert!(
+                    text.matches("word").count() < 100
+                        && text.contains(&format!("...{ALSO_MET}{refusal}")),
+                    "({}, {}) the head is cut at the plain bound with the ellipsis before the join, and the refusal is whole with its remedy:\n{}",
+                    label,
+                    arm,
+                    text
+                );
+            }
+        }
+    }
+
     /// `cut_to` says whether it dropped anything, from the branch that drops it, and its two readers take
     /// that answer: text of exactly the bound (after the collapse) is returned whole and unflagged, one
     /// character more is cut and flagged, and whitespace around a short text is no cut. `backstop` marks
-    /// a text only when the cutter flagged it, and `plain_author_message` passes the flag on. Expected, not
-    /// yet run; a red is a flag that disagrees with the ellipsis (a cut text unflagged, or a whole text
-    /// flagged) or a marker on a text the cutter returned whole.
+    /// a text only when the cutter flagged it, and `plain_author_message` passes the flag on.
     #[test]
     fn the_cutter_says_whether_it_cut_and_its_readers_take_its_answer() {
         let bound = super::LONGEST_RECORDED_MESSAGE;
@@ -4033,7 +5858,14 @@ mod retrieval_error_tests {
         let render = |messages: Messages, custom_slot: crate::rules::CustomSlot| -> Vec<String> {
             let report = ClauseReport::Rule(RuleReport {
                 name: "nested",
-                messages,
+                // The flag follows the slot, as the report builder writes it.
+                messages: match custom_slot {
+                    crate::rules::CustomSlot::Author => messages,
+                    _ => Messages {
+                        refusal: custom_slot == crate::rules::CustomSlot::Refusal,
+                        ..messages
+                    },
+                },
                 custom_slot,
                 ..Default::default()
             });
@@ -4530,7 +6362,7 @@ mod retrieval_error_tests {
         let head = messages
             .parts
             .as_ref()
-            .map(|parts| parts.head.as_str())
+            .map(|parts| parts.head())
             .unwrap_or_default();
         assert_eq!(
             LHS_HEAD_TEXT, head,
@@ -5074,10 +6906,7 @@ mod retrieval_error_tests {
             error_message: Some(format!("{head}Error = [{REFUSAL}]")),
             location: None,
             refusal: true,
-            parts: Some(SentenceParts {
-                head: head.to_string(),
-                message: REFUSAL.to_string(),
-            }),
+            parts: Some(SentenceParts::clause(head, REFUSAL)),
         };
         let out = finding_of("%x exists", messages, &vur);
         assert_eq!(
@@ -5201,8 +7030,8 @@ mod explanation_tests {
     /// the rules file and the template, so `reason_backstop` writes the same joiner as its escape (the
     /// strict set, one text with the record that stores it).
     ///
-    /// Expected, not yet run. Red: the author's joiner or mark is written as `\u{200d}` or `\u{200f}`, the
-    /// zero-width space is written raw, or the reason keeps the joiner raw.
+    /// Fails when the author's joiner or mark is written as `\u{200d}` or `\u{200f}`, when the
+    /// zero-width space is written raw, or when the reason keeps the joiner raw.
     #[test]
     fn the_authors_prose_keeps_joiners_as_typed_and_a_reason_escapes_them() {
         let typed = format!("owner{}tag{}x", '\u{200D}', '\u{200F}');
@@ -5248,9 +7077,9 @@ mod explanation_tests {
     /// (`Messages::refusal` is not serialized), so the section's reading of the flag is the one the text
     /// depends on.
     ///
-    /// Expected, not yet run. Red: the joined text is not registered (`is_refusal` false), the section
-    /// prints it cut mid-sentence under the refusal flag, or the plain-flag copy is not cut at the plain
-    /// bound.
+    /// Fails when the joined text is not registered (`is_refusal` false), when the section
+    /// prints it cut mid-sentence under the refusal flag, or when the plain-flag copy is not
+    /// cut at the plain bound.
     #[test]
     fn a_refusal_sentence_joined_to_a_cut_cause_is_printed_whole_and_flagged() {
         let held = format!(
@@ -5325,9 +7154,10 @@ mod explanation_tests {
     /// `a_rule_records_slot_takes_the_escape_set_of_whose_text_it_holds`). The ESC is built with
     /// `char::from`, since the source holds no raw control.
     ///
-    /// Expected, not yet run. Red: the section prints the ESC raw (an uncut message was passed through
-    /// the cutter alone), the two readings of the rule record's slot differ, the joiner row reads a set
-    /// other than the origin's, or the cut leaves `\u{` at the end of the line.
+    /// Fails when the section prints the ESC raw (an uncut message was passed through the
+    /// cutter alone), when the two readings of the rule record's slot differ, when the joiner
+    /// row reads a set other than the origin's, or when the cut leaves `\u{` at the end of the
+    /// line.
     #[test]
     fn a_plain_explanation_in_the_section_is_escaped_as_the_rule_record_under_a_resource_is() {
         let esc = char::from(0x1b);
@@ -5622,8 +7452,8 @@ mod evaluator_text_tests {
     /// takes the same escape: the evaluator's sentence is not the author's prose, so none of the three
     /// reads the joiner as typed.
     ///
-    /// Expected, not yet run. Red: the unattributed entry or the rule-level slot holds the joiner raw
-    /// while the `Error =` line holds its escape.
+    /// Fails when the unattributed entry or the rule-level slot holds the joiner raw while the
+    /// `Error =` line holds its escape.
     #[test]
     fn a_look_alike_key_in_an_evaluator_sentence_is_escaped_on_every_line_that_carries_it() {
         let joiner = char::from_u32(0x200d).expect("a scalar value");
@@ -5664,8 +7494,9 @@ mod evaluator_text_tests {
     /// the evaluator's prints the joiner as its escape in both places. The rows run the section's Rule arm
     /// itself, so reverting that arm to one set for both origins turns a row red.
     ///
-    /// Expected, not yet run. Red: the author's row prints `\u{200d}` on either line (the arm or the
-    /// printer reads the strict set for the author's body), or the evaluator's row keeps the joiner raw.
+    /// Fails when the author's row prints `\u{200d}` on either line (the arm or the printer
+    /// reads the strict set for the author's body), or when the evaluator's row keeps the
+    /// joiner raw.
     #[test]
     fn a_rule_records_slot_takes_the_escape_set_of_whose_text_it_holds() {
         let joiner = char::from_u32(0x200d).expect("a scalar value");
@@ -5702,6 +7533,109 @@ mod evaluator_text_tests {
                 slot
             );
         }
+    }
+
+    /// A rule's body is listed as undecidable only when nothing beneath the rule is rendered per resource.
+    /// The per-resource printer places block and clause nodes alone, so a check that is a disjunction or a
+    /// called rule is never "shown" itself; the test looks through them for a rendered block or clause. Rows:
+    /// a block check nothing rendered (listed); the same block rendered (not listed); a disjunction holding
+    /// a block nothing rendered (listed); the same block rendered (not listed: a decided body goes with the
+    /// clause entries and is not announced as undecidable).
+    ///
+    /// Fails when a rule whose descendant block is rendered is listed too (the test looks one level
+    /// down), or when a rule with nothing rendered is not listed.
+    #[test]
+    fn a_rules_body_is_listed_as_undecidable_only_when_no_descendant_is_rendered() {
+        use super::IdentityHash;
+        use crate::rules::eval_context::{DisjunctionsReport, GuardBlockReport};
+        use std::collections::{BTreeSet, HashSet};
+        let block = || {
+            ClauseReport::Block(GuardBlockReport {
+                context: String::from("Resources.*.Properties.A == 'x'"),
+                messages: Messages {
+                    custom_message: None,
+                    error_message: Some(String::from("a decided failure")),
+                    location: None,
+                    refusal: false,
+                    parts: None,
+                },
+                unresolved: None,
+            })
+        };
+        let rule_over = |checks: Vec<ClauseReport<'static>>| {
+            ClauseReport::Rule(RuleReport {
+                name: "check",
+                messages: Messages {
+                    custom_message: Some(String::from("the body")),
+                    error_message: None,
+                    location: None,
+                    refusal: false,
+                    parts: None,
+                },
+                checks,
+                custom_slot: CustomSlot::Author,
+                ..Default::default()
+            })
+        };
+        fn first_block<'a>(check: &'a ClauseReport<'static>) -> &'a ClauseReport<'static> {
+            match check {
+                ClauseReport::Rule(rule) => first_block(&rule.checks[0]),
+                ClauseReport::Disjunctions(ors) => first_block(&ors.checks[0]),
+                other => other,
+            }
+        }
+        let listed = |report: &ClauseReport<'static>, rendered_block: bool| {
+            let mut aggr = LocalResourceAggr {
+                name: String::new(),
+                resource_type: "",
+                cdk_path: None,
+                clauses: HashSet::new(),
+                paths: BTreeSet::new(),
+            };
+            if rendered_block {
+                aggr.clauses.insert(IdentityHash {
+                    key: first_block(report),
+                });
+            }
+            let rendered = Rendered::of(std::iter::once(&aggr));
+            let mut entries = Vec::new();
+            collect_unattributed_explanations(report, None, &rendered, &mut entries);
+            entries.iter().any(|(context, _)| context == "rule check")
+        };
+        let direct = rule_over(vec![block()]);
+        let through_a_disjunction =
+            rule_over(vec![ClauseReport::Disjunctions(DisjunctionsReport {
+                checks: vec![block()],
+            })]);
+        // The block under a CALLED rule, the inner rule named differently from the outer ("callee" under
+        // "check"), so the `rule check` entry probed for is the outer rule's alone and can never be the
+        // inner entry: deleting the called-rule arm of `Rendered::shows_any` lists the outer rule though
+        // the callee's block was rendered.
+        let through_a_callee = rule_over(vec![ClauseReport::Rule(RuleReport {
+            name: "callee",
+            messages: Messages {
+                custom_message: Some(String::from("the callee's body")),
+                error_message: None,
+                location: None,
+                refusal: false,
+                parts: None,
+            },
+            checks: vec![block()],
+            custom_slot: CustomSlot::Author,
+            ..Default::default()
+        })]);
+        assert_eq!(
+            vec![true, false, true, false, true, false],
+            vec![
+                listed(&direct, false),
+                listed(&direct, true),
+                listed(&through_a_disjunction, false),
+                listed(&through_a_disjunction, true),
+                listed(&through_a_callee, false),
+                listed(&through_a_callee, true),
+            ],
+            "the body is listed as undecidable exactly when no block beneath it is rendered, through a disjunction or a called rule as directly"
+        );
     }
 
     /// The producer side of a rule record's slot origin: the records are built by the evaluator, not by
@@ -5932,8 +7866,8 @@ mod evaluator_text_tests {
     /// The author's half of an entry keeps the joiner as typed while the evaluator's half beside it is
     /// escaped, in the one explanation.
     ///
-    /// Expected, not yet run. Red: the author's joiner is written as its escape, or the evaluator's
-    /// joiner is written raw.
+    /// Fails when the author's joiner is written as its escape, or when the evaluator's joiner is
+    /// written raw.
     #[test]
     fn an_entry_keeps_the_authors_joiner_and_escapes_the_evaluators() {
         let joiner = char::from_u32(0x200d).expect("a scalar value");
@@ -5951,8 +7885,8 @@ mod evaluator_text_tests {
     /// the text's layout, and writes every other escape sequence as its escape, a well-formed one
     /// included: a conceal (`ESC [8m`) in a field a writer forgot to escape would hide the text after it.
     ///
-    /// Expected, not yet run. Red: the output holds the ESC byte of the conceal, or the green or the
-    /// reset is written as text.
+    /// Fails when the output holds the ESC byte of the conceal, or when the green or the reset is
+    /// written as text.
     #[test]
     fn the_backstop_writes_a_forgotten_conceal_as_its_escape_and_keeps_the_writers_colour() {
         let esc = char::from(0x1b);
@@ -5968,7 +7902,7 @@ mod evaluator_text_tests {
     /// context it was written as, spacing kept; a context that spans lines is joined where a break sits
     /// between two pieces that hold text.
     ///
-    /// Expected, not yet run. Red: the first two rows are trimmed or joined, or the third is not joined.
+    /// Fails when the first two rows are trimmed or joined, or when the third is not joined.
     #[test]
     fn a_trailing_carriage_return_does_not_trim_a_one_line_context() {
         assert_eq!("Name == 'x'", context_line("Name == 'x'\r"));
@@ -6135,5 +8069,155 @@ mod cut_message_tests {
         let short = plain_author_message(&message).0;
 
         assert_eq!("REALREASON", short);
+    }
+}
+
+#[cfg(test)]
+mod resource_header_tests {
+    use super::write_resource_header;
+
+    /// The header's three template fields (the logical id, the `Type`, the `aws:cdk:path`) reach the console
+    /// as their escapes: an ESC and a C1 control in each is written as text, no raw control is left in the
+    /// output, and the escaped spelling of each appears. The controls are built with `char::from`, since the
+    /// source holds no raw control; the colour is off, so the output depends on no global setting.
+    ///
+    /// Fails when a raw ESC byte appears in the output, or when a field is written without its
+    /// escape.
+    #[test]
+    fn the_resource_header_escapes_its_template_fields() {
+        let esc = char::from(0x1b);
+        let c1 = char::from(0x9b);
+        let name = format!("Id{esc}[31m{c1}x");
+        let resource_type = format!("AWS::T{esc}[8m{c1}y");
+        let cdk_path = format!("Stack/Path{esc}[2J{c1}z");
+        let mut out: Vec<u8> = Vec::new();
+        write_resource_header(&mut out, &name, &resource_type, &cdk_path, false)
+            .expect("writing to a Vec cannot fail");
+        let written = String::from_utf8(out).expect("utf8");
+        assert!(
+            !written.contains(esc) && !written.contains(c1),
+            "no raw control is left in the header: {:?}",
+            written
+        );
+        for (field, spelled) in [
+            ("logical id", "Id\\u{1b}[31m\\u{9b}x"),
+            ("Type", "AWS::T\\u{1b}[8m\\u{9b}y"),
+            ("CDK-Path", "Stack/Path\\u{1b}[2J\\u{9b}z"),
+        ] {
+            assert!(
+                written.contains(spelled),
+                "the {} is written as its escape {:?}: {:?}",
+                field,
+                spelled,
+                written
+            );
+        }
+    }
+
+    /// With `colour` true the header differs from the plain one by the colour sequences around the name
+    /// alone. Whether `colored` writes those sequences depends on the process setting (`SHOULD_COLORIZE`,
+    /// which the environment and a parallel test can change), so the cell does not look for them: it
+    /// removes every `ESC [ .. m` sequence from the coloured output and requires what is left to equal
+    /// the plain output, which holds whether or not the process colours. The fields are escaped before
+    /// the colour is applied, so the template's own ESC bytes never survive as a sequence that this
+    /// removal could mistake for the writer's.
+    ///
+    /// Fails when a raw ESC from a field is left in the coloured output, or when a field is written
+    /// differently by the colour branch than by the plain one.
+    #[test]
+    fn the_coloured_header_differs_from_the_plain_one_by_colour_sequences_alone() {
+        let esc = char::from(0x1b);
+        let name = format!("Id{esc}[31mx");
+        let resource_type = format!("AWS::T{esc}[8my");
+        let cdk_path = format!("Stack/Path{esc}[2Jz");
+        let write = |colour: bool| {
+            let mut out: Vec<u8> = Vec::new();
+            write_resource_header(&mut out, &name, &resource_type, &cdk_path, colour)
+                .expect("writing to a Vec cannot fail");
+            String::from_utf8(out).expect("utf8")
+        };
+        fn without_sequences(text: &str) -> String {
+            let mut kept = String::new();
+            let mut chars = text.chars().peekable();
+            while let Some(c) = chars.next() {
+                if c == char::from(0x1b) && chars.peek() == Some(&'[') {
+                    for inner in chars.by_ref() {
+                        if inner == 'm' {
+                            break;
+                        }
+                    }
+                } else {
+                    kept.push(c);
+                }
+            }
+            kept
+        }
+        let plain = write(false);
+        let coloured = write(true);
+        assert!(
+            !plain.contains(esc),
+            "the plain header holds no raw ESC: {:?}",
+            plain
+        );
+        assert_eq!(
+            plain,
+            without_sequences(&coloured),
+            "the coloured header is the plain one plus colour sequences: {:?}",
+            coloured
+        );
+    }
+}
+
+#[cfg(test)]
+mod writer_output_tests {
+    use super::{emit_messages, writer_output};
+
+    /// The backstop writes U+200D as an escape, and the author's `Message =` text never goes through it:
+    /// `emit_messages` writes a woman-technologist emoji (a woman, a zero-width joiner, a laptop) intact,
+    /// where `writer_output` over the same text would escape the joiner. The first half shows the backstop
+    /// does escape it, so the second half's intact joiner is a measurement and not an absent check.
+    ///
+    /// Fails when `emit_messages` writes the joiner as its escape (the author's text took the
+    /// backstop), or when the backstop leaves the joiner raw (the first half proves nothing).
+    #[test]
+    fn a_message_with_a_zero_width_joiner_does_not_pass_through_the_backstop() {
+        let joiner = char::from_u32(0x200d).expect("a scalar value");
+        let emoji = format!("\u{1f469}{joiner}\u{1f4bb}");
+        assert_eq!(
+            "\u{1f469}\\u{200d}\u{1f4bb}",
+            writer_output(emoji.clone().into_bytes()),
+            "the backstop escapes the joiner"
+        );
+        let mut out: Vec<u8> = Vec::new();
+        emit_messages(&mut out, "  ", &emoji, "", 10).expect("writing to a Vec cannot fail");
+        let written = String::from_utf8(out).expect("utf8");
+        assert!(
+            written.contains(&emoji),
+            "the author's message keeps its joiner: {:?}",
+            written
+        );
+    }
+
+    /// One invalid byte in a comparison writer's buffer keeps the rest of the excerpt: the byte is written
+    /// as the replacement character, and the lines on either side of it are printed. A buffer dropped
+    /// whole (the old `unwrap_or_default`) printed nothing for the whole `Code:` excerpt.
+    ///
+    /// Fails when the output is empty or lacks a line on either side of the bad byte.
+    #[test]
+    fn a_buffer_with_one_invalid_byte_keeps_the_rest_of_the_excerpt() {
+        let mut buffer = b"    1. first line\n    2. bad ".to_vec();
+        buffer.push(0xff);
+        buffer.extend_from_slice(b" byte\n    3. last line\n");
+        let written = writer_output(buffer);
+        assert!(
+            written.contains("1. first line") && written.contains("3. last line"),
+            "the lines around the invalid byte are kept: {:?}",
+            written
+        );
+        assert!(
+            written.contains("2. bad \u{fffd} byte"),
+            "the invalid byte is the replacement character: {:?}",
+            written
+        );
     }
 }

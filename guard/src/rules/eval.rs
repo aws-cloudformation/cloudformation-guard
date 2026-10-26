@@ -450,7 +450,10 @@ pub(crate) fn fold_marker_pair_ranking<'v>(
 /// plain `Unevaluatable` keeps its place against a later unregistered tokened wrap, whichever of the two
 /// was minted later, while the same registered refusal held as a comparison, or the wrap held first, is
 /// ranked by minting and the later-minted of the two stands (the wrap's join, when the wrap arrived over a
-/// plain cause). The block folds and the conjunction fold each read it with the frames their
+/// plain cause). A second pair is order-dependent inside a filter predicate run: a plain converter's
+/// `Unevaluatable` held first keeps its place against an arriving refusal (the held text classifies the
+/// run's entry marker), while a refusal held first keeps its place against the converter arriving after it
+/// (`inside_a_run_a_converters_error_and_a_refusal_are_held_by_arrival_order` pins both orders). The block folds and the conjunction fold each read it with the frames their
 /// context holds (`frames`: the ranking of the live runs, every token eligible under none, and whether any
 /// run is live).
 fn keep_latest_refusal_else_first_error(
@@ -460,24 +463,15 @@ fn keep_latest_refusal_else_first_error(
     frames: &crate::rules::eval_context::RefusalFrames,
 ) {
     match undecided.take() {
+        // Nothing held: the pair rule against nothing takes the arrival whole (`would_replace_ranking`
+        // answers true for an empty kept side whatever the tokens), so the held error is the arrival.
         None => {
-            let ranking = frames.ranking();
-            let (mut kept_reason, mut kept_token) = (None, None);
-            keep_latest_refusal_else_first_ranking(
-                &mut kept_reason,
-                &mut kept_token,
-                reason,
+            let kept_token = token_held_in_a_run(
                 token,
-                &ranking,
+                || crate::rules::eval_context::token_of_registered_under(&reason, frames),
+                frames,
             );
-            *undecided = kept_reason.map(|reason| {
-                let kept_token = token_held_in_a_run(
-                    kept_token,
-                    || crate::rules::eval_context::token_of_registered(&reason, &ranking),
-                    frames,
-                );
-                Error::UndecidableComparison(reason, kept_token)
-            });
+            *undecided = Some(Error::UndecidableComparison(reason, kept_token));
         }
         Some(Error::UndecidableComparison(kept_reason, kept_token)) => {
             *undecided = Some(fold_held_comparison(
@@ -536,9 +530,9 @@ fn refusal_outranks_held_refusal(
         return None;
     }
     let ranking = frames.ranking();
-    let held = crate::rules::eval_context::token_of_registered(held_text, &ranking)?;
+    let held = crate::rules::eval_context::token_of_registered_under(held_text, frames)?;
     let arriving = arriving_token
-        .or_else(|| crate::rules::eval_context::token_of_registered(arriving_text, &ranking))?;
+        .or_else(|| crate::rules::eval_context::token_of_registered_under(arriving_text, frames))?;
     if !would_replace_ranking(true, Some(held), Some(arriving), &ranking) {
         return None;
     }
@@ -548,7 +542,8 @@ fn refusal_outranks_held_refusal(
 /// The pair rule between a held `UndecidableComparison` (`kept_reason`, `kept_token`) and an arriving
 /// refusal pair, the one fold both holders read (`keep_latest_refusal_else_first_error`, `hold_undecided`).
 /// The held side is ranked as a refused read is everywhere else (`latest_token_of`): by the token it
-/// carries, else by the one the registry holds for its text (`token_of_registered`), so a held refusal
+/// carries, else by the one the registry holds for its text (`token_of_registered_under`, which ranks
+/// by the run's frames), so a held refusal
 /// whose payload carries no token (a registered sentence raised as a comparison with none) ranks by its
 /// text's token against any arrival, in either order. A held text the registry does not hold recovers none
 /// and stays token-less, as before. The arriving side is read the same way, so the pair is ranked by two
@@ -577,9 +572,9 @@ fn fold_held_comparison(
 ) -> Error {
     let ranking = frames.ranking();
     let kept_ranked = kept_token
-        .or_else(|| crate::rules::eval_context::token_of_registered(&kept_reason, &ranking));
+        .or_else(|| crate::rules::eval_context::token_of_registered_under(&kept_reason, frames));
     let met_ranked =
-        token.or_else(|| crate::rules::eval_context::token_of_registered(&reason, &ranking));
+        token.or_else(|| crate::rules::eval_context::token_of_registered_under(&reason, frames));
     // The token each side carries on is `token_held_in_a_run`: its own, else, inside a run, the one it was
     // ranked by. Each ranked token above is `own.or_else(registry)`, so inside a run the helper's answer
     // is the ranked token itself, and outside a run the own token alone.
@@ -615,7 +610,9 @@ fn token_held_in_a_run(
 /// Hold `e`, a conjunct's or a disjunct's error that `is_unevaluatable` admits, in `held`
 /// (`eval_conjunction_clauses`): an `UndecidableComparison` is folded with the one kept there by the pair
 /// rule (`keep_latest_refusal_else_first_error`), so the error the conjunction hands up carries the
-/// latest-minted refusal's reason and token whichever conjunct met it; an error of any other variant is
+/// latest-minted refusal's reason and token whichever of TWO REFUSALS met it (a plain converter's error
+/// and a refusal minted inside a filter predicate run are held by arrival order, a known limit pinned in
+/// both orders by `inside_a_run_a_converters_error_and_a_refusal_are_held_by_arrival_order`); an error of any other variant is
 /// kept as met first, unless `refusal_outranks` says the arriving one takes its text (outside a filter
 /// predicate run, the held error no refusal and the arriving error one by its token or its text): a
 /// refusal outranks a held error that is none whichever came first (the held error feeds the record and
@@ -3121,6 +3118,15 @@ fn error_text_of(error: &Error) -> String {
     }
 }
 
+/// The token a raise carried, for the one error shape that carries one; none for any other error. The ONE
+/// reading `basis_of_error` and a reference's failure record share.
+fn raise_token(error: &Error) -> Option<crate::rules::errors::RefusalToken> {
+    match error {
+        Error::UndecidableComparison(_, token) => *token,
+        _ => None,
+    }
+}
+
 /// Whether a basis built over a comparison's undecided reasons rests on more than one distinct cause: the
 /// ONE test both strict returns of the joined basis use (the compared-nothing arm through
 /// `ResultEvidence::several_causes_basis` and the gate's strict raise). With no refused read among the
@@ -3217,10 +3223,7 @@ fn basis_of_error(error: &Error) -> crate::rules::FailBasis {
     // The token the raise carried travels with each read it names, so a refusal vouched for by its
     // token alone (a text no registry holds) keeps it through every fold and the fallback raise reads
     // it off the basis itself.
-    let token = match error {
-        Error::UndecidableComparison(_, token) => *token,
-        _ => None,
-    };
+    let token = raise_token(error);
     // One error's reads all carry the one token the raise carried, so a text met twice meets the same
     // token and no ranking can pick between two: the ranking is moot here, and none is read from the live
     // runs' mirror.
@@ -3362,6 +3365,16 @@ fn unlocated<'loc>() -> FileLocation<'loc> {
     }
 }
 
+/// The refused reads a frame's entries carry (`AbsorbedRaise::reads`), for the closing record of the
+/// condition that converts the frame (`convert_condition_raise`): the record keeps them so the report walk
+/// can check that each is told (`eval_context::assert_frame_reads_told`).
+fn frame_reads_of(frame: &[crate::rules::AbsorbedRaise<'_>]) -> Vec<String> {
+    frame
+        .iter()
+        .flat_map(|raise| raise.reads.iter().cloned())
+        .collect()
+}
+
 /// Hand every entry of `frame` up into the open frame as it was, kind included: a fold that decided
 /// nothing about them (a raise exit, a rule or block that FAILed) leaves them for the fold above.
 fn hand_up<'value, 'loc: 'value>(
@@ -3410,6 +3423,13 @@ fn convert_condition_raise<'value, 'loc: 'value>(
         );
         sites.push(site.to_string());
     }
+    // No refused-read line is written here for a refusal the error's text does not carry. The condition's
+    // refusals are reported ONCE, by the walk of the failed condition's records at report time: the
+    // rule's sentence carries the error that stopped the condition and appends the other refusals the
+    // records name (`eval_context::join_rule_refusals`), and a refusal a block settled beside
+    // a sibling's plain error has such a record in the gate role (`HeldForTheFold::settle_before_an_exit`).
+    // A line here would name the same read a second time, and under a kind that is false for a read the
+    // conjunction's fold kept only the latest refusal of and held the rest for it.
     resolver.held_raises_failed_closed(&sites);
 }
 
@@ -3487,9 +3507,11 @@ fn write_unrecorded_leftovers<'value, 'loc: 'value>(
 /// entry on it. The raise is the refusal it rests on (`fail_closed_negation_raise`), so `is_refusal` reads
 /// it as one, the conjunction's hold ranks it against a later conjunct's refusal as a tokened pair and a
 /// filter predicate run marks its entry REFUSED. The raise PROPAGATES: the named spelling closes its own
-/// record as a dependent rule's FAIL naming the error (`fail_reference_on_error`, a record with no refusal
-/// field) and hands the error on, the parameterized spelling hands it on with no record, and the record
-/// that carries the refusal flag is the CALLER's, which reads it off the token.
+/// record as a dependent rule's FAIL naming the error (`fail_reference_on_error`; the record stores the
+/// error once as a `ReferenceFailure`, its text, its refusal token and whether it is a refusal, so the walk
+/// of a failed condition names the refusal from that field and not from the words of the record's message)
+/// and hands the error on, the parameterized spelling hands it on with no record, and the block record that
+/// carries the refusal flag for the clause is the CALLER's, which reads it off the token.
 fn negate_a_failed_rule<'value, 'loc: 'value>(
     resolver: &mut dyn EvalContext<'value, 'loc>,
     entries: Vec<crate::rules::AbsorbedRaise<'loc>>,
@@ -3567,9 +3589,12 @@ fn record_fail_closed_negation<'value, 'loc: 'value>(
         RecordType::GuardClauseBlockCheck(BlockCheck {
             status: Status::FAIL,
             at_least_one_matches: false,
+            raised: true,
             message: Some(negation_fail_message(rule_name, basis)),
             refusal: basis.rests_on_a_refusal(),
             custom_message: custom_message.map(str::to_string),
+            gate_mark: false,
+            frame_reads: Vec::new(),
         }),
     )
 }
@@ -7088,37 +7113,28 @@ fn judged_binary_operation<'value, 'loc: 'value>(
                 // `LhsUnresolved` arm above, which files a FAIL status for it (so `statues` is not empty)
                 // and notes the refused read for the collection after this match, the ONE registrar of
                 // refused reads and the one place a text two markers brought is registered under the
-                // pair rule's token whatever the order of the values. A scan registering them here too
-                // would fix a marker's token for a text the registry lacks BEFORE that collection runs,
-                // the order dependence the collection exists to avoid, so this is not a registration
-                // loop: it only NOTES such a marker for the collection, as the `LhsUnresolved` arm does,
-                // a net for a release build in which an operator ever yielded an unresolved left value
-                // without a `LhsUnresolved` result (then `refused_pairs` would stay empty, the raise
-                // could become the joined-basis FAIL, and the refusal would lose its flag). The net is
-                // expected never to run: every result of the per-value loop is mapped to statuses
-                // (`let statuses = if skipped_marker_pair { Vec::new() } else { .. }`) and
-                // `statues.extend(statuses)` runs before the `LhsUnresolved` arm; `skipped_marker_pair`
-                // is `marker_pair_under_in`, true only for a `ComparisonResult::RhsUnresolved` pair under
-                // a positive `IN`, never for an `LhsUnresolved` result; and `refused_read` answers
-                // `Some` only for a marker with a token or a registered text, which the arm notes. No
-                // known shape reaches the net, and no cell exercises it on purpose: it is one behavior in
-                // both builds (no panic), and it makes the state changes the arm's refused branch makes for
-                // a refused left marker that the code after it reads: the collection note, the
-                // left-marker flag, the undecided reason with its token, and the marked read the gate
-                // decides after the clause.
-                for value in &lhs {
-                    if let QueryResult::UnResolved(unresolved) = value {
-                        if let Some((text, token, register)) = refused_read(unresolved) {
-                            evidence.lhs_marker = true;
-                            if let Some(reason) = undecidable_reason(unresolved) {
-                                marked_a_read |=
-                                    undecided_marker_read(eval_context, unresolved, role, location);
-                                evidence.undecided_by(reason, unresolved.kind.refusal());
-                            }
-                            evidence.note_left_refusal(text, token, register);
-                        }
-                    }
-                }
+                // pair rule's token whatever the order of the values. A scan registering them here would
+                // fix a marker's token for a text the registry lacks BEFORE that collection runs, the
+                // order dependence the collection exists to avoid, and a hand copy of the arm's other
+                // state changes (the left-marker flag, the undecided reason, the marked read) would
+                // leave states the code after this match does not assume (the early `Err` returns below
+                // run before the decision that settles a marked read; the strict `None` arm answers an
+                // `EmptyQueryResult` whose basis must be decided). So there is NO release-build
+                // behavior here, only a tripwire for a debug build. The arm is unreachable for a refused
+                // left marker: every result of the per-value loop is mapped to statuses (`let statuses =
+                // if skipped_marker_pair { Vec::new() } else { .. }`) and `statues.extend(statuses)`
+                // runs before the `LhsUnresolved` arm; `skipped_marker_pair` is `marker_pair_under_in`,
+                // true only for a `ComparisonResult::RhsUnresolved` pair under a positive `IN`, never for
+                // an `LhsUnresolved` result; and `refused_read` answers `Some` only for a marker with a
+                // token or a registered text, which that arm notes. A shape that trips this assertion is
+                // a defect in the per-pair arm's status filing, which the message names.
+                debug_assert!(
+                    !lhs.iter().any(|value| matches!(
+                        value,
+                        QueryResult::UnResolved(unresolved) if refused_read(unresolved).is_some()
+                    )),
+                    "a refused left-hand marker reached the compared-nothing arm; the per-pair arm files a status for it (`LhsUnresolved`), so this is a defect in that status filing"
+                );
                 // Every right-hand value an undecidable marker of either kind (a capture that holds a
                 // refusal's marker alone, read as `%x`; a key filter that could decide none of its
                 // maps), and the comparator a positive `IN`: under every other comparator the
@@ -7389,15 +7405,19 @@ fn judged_binary_operation<'value, 'loc: 'value>(
             // collection (`note_left_refusal` in the `LhsUnresolved` arm, the right-hand scan), the
             // single source of refused reads, and no producer of a token beside an empty collection was
             // found by reading the bytes. The test stays as a guard, so a path that did produce one keeps
-            // its flag.
-            if refused_pairs.is_empty() && token.is_none() {
+            // its flag. A token the registrations recovered is implied by the same emptiness: every
+            // registration pairs with a collected pair (`registered_reads` is drawn from the same
+            // markers `refused_pairs` is), so an empty collection recovered none. A debug build asserts
+            // that invariant; the test below keeps it in a release build too, so a path that did recover
+            // a token takes the `Err` path and keeps its refusal flag, where the FAIL-with-basis return
+            // would drop the token.
+            debug_assert!(
+                !(refused_pairs.is_empty() && token.is_none()) || recovered.is_none(),
+                "a token was recovered with no refused read collected"
+            );
+            if refused_pairs.is_empty() && token.is_none() && recovered.is_none() {
                 evidence.note_right_hand_causes();
                 if let Some(basis) = evidence.several_causes_basis(rhs) {
-                    debug_assert!(
-                        recovered.is_none(),
-                        "no refused read was collected, so the registrations recovered no token: {:?}",
-                        recovered
-                    );
                     return Ok((
                         EvaluationResult::EmptyQueryResult(Status::FAIL, Some(reason)),
                         basis,
@@ -7871,13 +7891,13 @@ fn judged_binary_operation<'value, 'loc: 'value>(
             // under the same guard: no refused read collected and no token on the raise. The basis is
             // the one built before the gate (the pre-pass having asked for the right-hand markers'
             // reasons); the evidence itself went to the gate.
-            if refused_pairs.is_empty() && token.is_none() && several_causes {
+            debug_assert!(
+                !(refused_pairs.is_empty() && token.is_none()) || recovered.is_none(),
+                "a token was recovered with no refused read collected"
+            );
+            if refused_pairs.is_empty() && token.is_none() && recovered.is_none() && several_causes
+            {
                 if let Some(basis) = undecided_basis {
-                    debug_assert!(
-                        recovered.is_none(),
-                        "no refused read was collected, so the registrations recovered no token: {:?}",
-                        recovered
-                    );
                     return Ok((
                         EvaluationResult::EmptyQueryResult(Status::FAIL, Some(reason)),
                         basis,
@@ -8314,16 +8334,19 @@ impl ResultEvidence {
     ) {
         // Every distinct reason is kept for the basis of a strict FAIL (`undecided_basis`), beside the one
         // pair the raise names.
-        self.record_cause(reason.clone(), refusal);
-        // Ranked by the frames of the runs the comparison runs under (`frames`, `ranking_under`): ranked
-        // by minting alone, the resource-order swap the conjunction fold closes survived through this
-        // fold in a single comparison with the binding on the left.
+        // The copy is made only when the comparison collects causes (`record_cause` is a no-op otherwise).
+        if self.collects_causes {
+            self.record_cause(reason.clone(), refusal);
+        }
+        // Ranked by the frames of the runs the comparison runs under (`frames`, `RefusalFrames::ranking`
+        // over the frames in place): ranked by minting alone, the resource-order swap the conjunction fold
+        // closes survived through this fold in a single comparison with the binding on the left.
         keep_latest_refusal_else_first_ranking(
             &mut self.undecided,
             &mut self.refusal,
             reason,
             refusal,
-            &ranking_under(self.frames.clone()),
+            &self.frames.ranking(),
         );
     }
 
@@ -10076,12 +10099,117 @@ fn when_clause_location<'c, 'loc>(condition: &'c WhenGuardClause<'loc>) -> &'c F
 /// `refusal` flag beside it is `is_refusal(e)`, so a refusal's sentence (a registered refusal,
 /// `eval_context::refuse`) is printed whole by the console where another sentence is held to the
 /// recorded-message bound.
-fn clause_error_message(e: &Error) -> String {
+pub(crate) fn clause_error_message(e: &Error) -> String {
     if is_unevaluatable(e) {
         format!("Error {e} when handling clause; the clause is raised and the run continues")
     } else {
         format!("Error {e} when handling clause, bailing")
     }
+}
+
+/// What the "bailing" sentences of a type block, a type block's condition and a block clause say AFTER the
+/// error they quote (`Error {e}` and the tail): one constant for the writers and for the reader that tells
+/// whether an entry beneath already carries the quoted error (`eval_context::sentence_told_by`), so a change
+/// of wording here cannot make every such sentence be written twice.
+pub(crate) const TYPE_CONDITION_BAILING_TAIL: &str = " during type condition evaluation, bailing";
+/// See [`TYPE_CONDITION_BAILING_TAIL`]: a type block's own evaluation.
+pub(crate) const TYPE_BLOCK_BAILING_TAIL: &str = " during type block evaluation, bailing";
+/// See [`TYPE_CONDITION_BAILING_TAIL`]: a block clause.
+pub(crate) const BLOCK_CLAUSE_BAILING_TAIL: &str = " when handling block clause, bailing";
+/// See [`TYPE_CONDITION_BAILING_TAIL`]: a block clause's per-value evaluation (`Error {e}` and this tail).
+pub(crate) const BLOCK_VALUE_ERROR_TAIL: &str = " when evaluating the block clause for this value";
+
+/// What a block's record says BEFORE the error it quotes, by the failure that ended it
+/// (`fail_block_on_unevaluatable`, `refused_selection`). The record's `message` is always the evaluator's own
+/// sentence (the author's `<< >>` text sits in `custom_message`), and the reader that tells whether an entry
+/// beneath already carries the quoted error (`eval_context::quoted_error`) knows these heads, so a sentence
+/// is told or written by what it is and never by whether its wording is recognized.
+pub(crate) const BLOCK_BODY_READ_REFUSED_HEAD: &str =
+    "The block's body read the empty selection a one-object filter left, and the read was refused: ";
+/// See [`BLOCK_BODY_READ_REFUSED_HEAD`]: the block's query could not be evaluated on this data.
+pub(crate) const BLOCK_QUERY_UNEVALUATABLE_HEAD: &str =
+    "The block's query could not be evaluated on this data: ";
+/// See [`BLOCK_BODY_READ_REFUSED_HEAD`]: the block's query raised an error that is not about the data.
+pub(crate) const BLOCK_QUERY_ERROR_HEAD: &str =
+    "The block's query raised an error that is not about the data, so the run stops: ";
+
+/// What a disjunction's record says before the error it held (`eval_conjunction_clauses`): the record's
+/// message is this head and the held error's text. One constant for the writer and the reader
+/// (`eval_context::condition_refusal_sentences`, which strips it to read the quoted error), so the two
+/// cannot drift apart.
+pub(crate) const DISJUNCTION_UNDECIDED_HEAD: &str =
+    "Disjunction could not be decided: no disjunct answered, and one could not be evaluated: ";
+
+/// What a rule's record says before the error its own `when` condition held; see
+/// [`DISJUNCTION_UNDECIDED_HEAD`]. The reader strips it from a called rule's sentence
+/// (`eval_context::condition_refusal_sentences`). A body-only call's refusals lead with a neutral head
+/// of the report builder's (`eval_context::RULE_FAILED_ON_AN_ERROR_HEAD`), which claims nothing about the
+/// condition being the deciding error.
+pub(crate) const RULE_CONDITION_UNEVALUATED_HEAD: &str = "The rule's condition could not be evaluated, so the rule fails rather than being treated as not applicable: ";
+
+/// What an inline `when` block's record says before the error its condition held; see
+/// [`DISJUNCTION_UNDECIDED_HEAD`].
+pub(crate) const WHEN_UNEVALUATED_HEAD: &str =
+    "The condition could not be evaluated, so the block it guards is not checked: ";
+
+/// Every head the evaluator writes before the error a parent record's sentence quotes, in ONE list: the
+/// reader (`eval_context::quoted_error`) iterates it, and the cell that pins the writers
+/// (`every_sentence_the_evaluator_writes_on_a_parent_record_is_read_back_by_the_reader`) iterates it and
+/// scans the module's non-test source for a wording written inline instead of through a constant. A new
+/// head is added here.
+pub(crate) const PARENT_SENTENCE_HEADS: [&str; 6] = [
+    DISJUNCTION_UNDECIDED_HEAD,
+    WHEN_UNEVALUATED_HEAD,
+    RULE_CONDITION_UNEVALUATED_HEAD,
+    BLOCK_BODY_READ_REFUSED_HEAD,
+    BLOCK_QUERY_UNEVALUATABLE_HEAD,
+    BLOCK_QUERY_ERROR_HEAD,
+];
+
+/// `(name, value)` pairs for constants, the name spelled by the compiler (`stringify!`) so a rename cannot
+/// leave a stale name behind.
+macro_rules! named_constants {
+    ($($name:ident),+ $(,)?) => { [$((stringify!($name), $name)),+] };
+}
+
+/// Every tail the evaluator writes after `Error {e}` on a parent record or a per-value clause record, in ONE
+/// list read by `quoted_error` and by the same cell (see [`PARENT_SENTENCE_HEADS`]), as (constant name,
+/// wording) pairs: the name is what the cell looks for in the statement of an `"Error {` writer, so the
+/// cell keeps no copy of the names.
+pub(crate) const PARENT_SENTENCE_TAILS: [(&str, &str); 4] = named_constants![
+    TYPE_CONDITION_BAILING_TAIL,
+    TYPE_BLOCK_BAILING_TAIL,
+    BLOCK_CLAUSE_BAILING_TAIL,
+    BLOCK_VALUE_ERROR_TAIL,
+];
+
+/// The error's own text inside a clause-error message (`clause_error_message`): what the reporters need to
+/// tell whether a rule's message already carries a refusal a clause record names. Written beside the
+/// writer, and pinned to it by `eval_tests::the_clause_error_sentence_reads_back_what_the_message_wrote`.
+/// A text that is not a clause-error message is returned as it is.
+///
+/// The display of `Error::Unevaluatable` wraps its sentence ("Clause could not be evaluated against the
+/// incoming context `R`"), and a clause-error record carries that wrapped form where a settle record
+/// carries the bare `R`; the wrapper is removed here too, so the two read as one sentence.
+pub(crate) fn clause_error_sentence(message: &str) -> &str {
+    let inner = message
+        .strip_prefix("Error ")
+        .and_then(|rest| rest.rfind(" when handling clause").map(|end| &rest[..end]))
+        .unwrap_or(message);
+    bare_refusal_sentence(inner)
+}
+
+/// `text` without the wrapper `Error::Unevaluatable`'s display puts around its sentence ("Clause could not
+/// be evaluated against the incoming context `R`" is `R`), or `text` as it is when it carries none. The ONE
+/// normalization of a refusal's spelling: every place that compares two accounts of a refusal (the
+/// sentences a failed condition's walk collects, the refusals a sentence already carries, the quoted error
+/// of a `when` or a disjunction) applies it to each candidate first, so the wrapped form a record's message
+/// holds and the bare form a settle record holds are one refusal whichever spelling a record wrote.
+pub(crate) fn bare_refusal_sentence(text: &str) -> &str {
+    const WRAPPER_HEAD: &str = "Clause could not be evaluated against the incoming context `";
+    text.strip_prefix(WRAPPER_HEAD)
+        .and_then(|wrapped| wrapped.strip_suffix('`'))
+        .unwrap_or(text)
 }
 
 /// The prefix of an access clause's block record context: the record `eval_guard_access_clause` opens
@@ -10190,6 +10318,7 @@ pub(in crate::rules) fn eval_guard_access_clause<'value, 'loc: 'value>(
                                 RecordType::GuardClauseBlockCheck(BlockCheck {
                                     status: Status::FAIL,
                                     at_least_one_matches: !all,
+                                    raised: true,
                                     message: Some(clause_error_message(&e)),
                                     refusal: is_refusal(&e),
                                     // The author's `<< >>` message travels on every record whose
@@ -10197,6 +10326,8 @@ pub(in crate::rules) fn eval_guard_access_clause<'value, 'loc: 'value>(
                                     // reference or call); a block, a `when`, a type block and a
                                     // disjunction have none, and their records say `None`.
                                     custom_message: gac.access_clause.custom_message.clone(),
+                                    gate_mark: false,
+                                    frame_reads: Vec::new(),
                                 }),
                             )?;
                             net_unnoted_raise(resolver, mark, &e, gac, role);
@@ -10215,9 +10346,12 @@ pub(in crate::rules) fn eval_guard_access_clause<'value, 'loc: 'value>(
                                 RecordType::GuardClauseBlockCheck(BlockCheck {
                                     status: Status::FAIL,
                                     at_least_one_matches: !all,
+                                    raised: true,
                                     message: Some(clause_error_message(&e)),
                                     refusal: is_refusal(&e),
                                     custom_message: gac.access_clause.custom_message.clone(),
+                                    gate_mark: false,
+                                    frame_reads: Vec::new(),
                                 }),
                             )?;
                             net_unnoted_raise(resolver, mark, &e, gac, role);
@@ -10232,12 +10366,15 @@ pub(in crate::rules) fn eval_guard_access_clause<'value, 'loc: 'value>(
                     RecordType::GuardClauseBlockCheck(BlockCheck {
                         status: Status::FAIL,
                         at_least_one_matches: !all,
+                        raised: true,
                         message: Some(
                             "Error not RHS for binary clause when handling clause, bailing"
                                 .to_string(),
                         ),
                         refusal: false,
                         custom_message: gac.access_clause.custom_message.clone(),
+                        gate_mark: false,
+                        frame_reads: Vec::new(),
                     }),
                 )?;
                 // A binary clause with no right-hand side is a shape the parser does not produce, so
@@ -10314,6 +10451,16 @@ pub(in crate::rules) fn eval_guard_access_clause<'value, 'loc: 'value>(
             // record's refusal flag comes from the basis (no read, so false). A basis that is decided
             // (every absence arm and every empty-side verdict) leaves this arm as it was.
             EvaluationResult::EmptyQueryResult(Status::FAIL, message) if !basis.is_decided() => {
+                // Both producers of an undecidable basis on this return (the compared-nothing arm and the
+                // gate's strict raise) sit under `role.is_strict()`. A non-strict one would answer a FAIL
+                // that rests on an undecidable here as a condition that did not match (a SKIP of the rule
+                // above): a fail-open, so a debug build says so. The arm is not guarded, since falling
+                // through to the next arm would answer a DECIDED FAIL, which is worse.
+                debug_assert!(
+                    role.is_strict(),
+                    "an undecidable basis came back from a comparison outside the strict role: {:?}",
+                    basis
+                );
                 let error = Error::UndecidableComparison(message.unwrap_or_default(), None);
                 resolver.end_record(
                     &blk_context,
@@ -10322,7 +10469,10 @@ pub(in crate::rules) fn eval_guard_access_clause<'value, 'loc: 'value>(
                         message: Some(clause_error_message(&error)),
                         refusal: basis.rests_on_a_refusal(),
                         at_least_one_matches: !all,
+                        raised: true,
                         custom_message: gac.access_clause.custom_message.clone(),
+                        gate_mark: false,
+                        frame_reads: Vec::new(),
                     }),
                 )?;
                 net_unnoted_raise(resolver, mark, &error, gac, role);
@@ -10342,7 +10492,10 @@ pub(in crate::rules) fn eval_guard_access_clause<'value, 'loc: 'value>(
                         // the disagreement was invisible; it would become a wrong branch the first
                         // time a reporter consumed it.
                         at_least_one_matches: !all,
+                        raised: false,
                         custom_message: gac.access_clause.custom_message.clone(),
+                        gate_mark: false,
+                        frame_reads: Vec::new(),
                     }),
                 )?;
                 // A clause decided on nothing read (an empty selection, an empty reference) is a decided
@@ -10403,8 +10556,11 @@ pub(in crate::rules) fn eval_guard_access_clause<'value, 'loc: 'value>(
                         message: None,
                         status: outcome,
                         at_least_one_matches: !all,
+                        raised: false,
                         refusal: false,
                         custom_message: gac.access_clause.custom_message.clone(),
+                        gate_mark: false,
+                        frame_reads: Vec::new(),
                     }),
                 )?;
                 // The operator's basis goes with a FAIL; a PASS or a SKIP has none to carry.
@@ -10418,9 +10574,12 @@ pub(in crate::rules) fn eval_guard_access_clause<'value, 'loc: 'value>(
                 RecordType::GuardClauseBlockCheck(BlockCheck {
                     status: Status::FAIL,
                     at_least_one_matches: !all,
+                    raised: true,
                     message: Some(clause_error_message(&e)),
                     refusal: is_refusal(&e),
                     custom_message: gac.access_clause.custom_message.clone(),
+                    gate_mark: false,
+                    frame_reads: Vec::new(),
                 }),
             )?;
             net_unnoted_raise(resolver, mark, &e, gac, role);
@@ -10578,6 +10737,7 @@ pub(in crate::rules) fn eval_guard_named_clause<'value, 'loc: 'value>(
                     status: Status::FAIL,
                     message: None,
                     custom_message: gnc.custom_message.clone(),
+                    failure: None,
                 })),
             )?;
         }
@@ -10599,6 +10759,7 @@ pub(in crate::rules) fn eval_guard_named_clause<'value, 'loc: 'value>(
                 RecordType::GuardClauseBlockCheck(BlockCheck {
                     status: Status::SKIP,
                     at_least_one_matches: false,
+                    raised: false,
                     message: Some(format!(
                         "the rule did not apply because it referenced rule [{}], which did not apply to this input",
                         gnc.dependent_rule
@@ -10609,6 +10770,8 @@ pub(in crate::rules) fn eval_guard_named_clause<'value, 'loc: 'value>(
                     // sentence `find_skip_reason` reads as the rule's reason; the author's text would
                     // explain a failure that did not happen.
                     custom_message: None,
+                    gate_mark: false,
+                    frame_reads: Vec::new(),
                 }),
             )?;
         }
@@ -10631,6 +10794,14 @@ fn fail_reference_on_error<'value, 'loc: 'value>(
             status: Status::FAIL,
             message: Some(format!("{} failed due to error {}", context, e)),
             custom_message: gnc.custom_message.clone(),
+            // The error the reference failed on, stored once: its account is part of `message` (a
+            // refusal's prints whole), and the walk of a failed condition names a refusal from here, not
+            // from the words of `message`.
+            failure: Some(crate::rules::ReferenceFailure {
+                text: error_text_of(&e),
+                token: raise_token(&e),
+                refusal: is_refusal(&e),
+            }),
         })),
     )?;
     Err(e)
@@ -10660,10 +10831,12 @@ where
 /// marker raising `UndecidableComparison` and a data-dependent error arriving at the block's `Err(e)` arm
 /// after the selection refused a read, so the tree reads the same whichever clause of the body ran first:
 /// `{ let n = parse_int(%kind)  %n == 1  Sid exists }` leaves the mark `{ Sid exists  let n =
-/// parse_int(%kind)  %n == 1 }` leaves. The record carries no sentence of its own, as the
-/// per-value arm's does not: every reporter stops at the filter's record (`find_failing_clauses`), so a
-/// sentence here would be recorded and never rendered; the refusal's text reaches the reader through the
-/// enclosing clause, which fails on the undecidable marker the selection delivered and prints its reason.
+/// parse_int(%kind)  %n == 1 }` leaves. In the assertion and filter-predicate roles the record carries no
+/// sentence of its own, as the per-value arm's does not: every reporter stops at the filter's record
+/// (`find_failing_clauses`), so a sentence there would be recorded and never rendered; the refusal's text
+/// reaches the reader through the enclosing clause, which fails on the undecidable marker the selection
+/// delivered and prints its reason. In the GATE role the mark carries the refusal's bare sentence
+/// (`mark_refused_body`), which the failed condition's walk reads.
 /// `fails` and `undecided` are the block's fold: one more failed body, and the reason and token of the
 /// value whose raise is the LATEST-minted refusal kept together, or the first reason with `None` when
 /// none is (`keep_latest_refusal_else_first`). Both arms hand it the FIRST refusal the selection delivered
@@ -10678,6 +10851,7 @@ where
 /// refusal was minted inside the run; the fold itself registers nothing, so a body's regular expression
 /// out of budget or a key filter's undecided map is folded as the undecided value it is and never becomes
 /// a refusal by being folded.
+#[allow(clippy::too_many_arguments)]
 fn fold_refused_body<'value, 'loc: 'value>(
     resolver: &mut dyn EvalContext<'value, 'loc>,
     guard_cxt: &str,
@@ -10686,6 +10860,7 @@ fn fold_refused_body<'value, 'loc: 'value>(
     undecided: &mut Option<Error>,
     reason: String,
     refusal: Option<crate::rules::errors::RefusalToken>,
+    role: ClauseRole,
 ) -> Result<()> {
     // The mark's record reads the raise's kind as every record does (`is_refusal`: the token it carries,
     // else a registered text), so a gate-role block body's raise beside a refused read reads `refusal:
@@ -10695,7 +10870,7 @@ fn fold_refused_body<'value, 'loc: 'value>(
         reason.clone(),
         refusal,
     ));
-    mark_refused_body(resolver, guard_cxt, match_all, a_refusal)?;
+    mark_refused_body(resolver, guard_cxt, match_all, a_refusal, &reason, role)?;
     *fails += 1;
     // No basis is folded here: the body's refusal is a failure this fold has no decided answer for, and
     // the block's reason (`undecided`) is what it keeps. The block returns that reason as a raise unless
@@ -10719,9 +10894,11 @@ fn fold_refused_body<'value, 'loc: 'value>(
 }
 
 /// The mark `fold_refused_body` leaves beneath the block for one refused body: a failed
-/// `GuardClauseBlockCheck` in the block's own access-clause context with no children and no sentence
-/// (every reporter stops at the filter's record, so a sentence here would be recorded and never
-/// rendered), flagged by the raise's kind (`a_refusal`), so a gate-role body's raise beside a refused read
+/// `GuardClauseBlockCheck` in the block's own access-clause context with no children. It carries no
+/// sentence in the assertion and filter-predicate roles (every reporter stops at the filter's record, so a
+/// sentence there would be recorded and never rendered) and the refusal's bare sentence, with its
+/// `gate_mark` field set (`refused_body_block_check`), in the GATE role, where the failed condition's walk
+/// reads it. Flagged by the raise's kind (`a_refusal`), so a gate-role body's raise beside a refused read
 /// reads `refusal: true` one layer up and the console prints the remedy whole. The one record every
 /// refused body the gate holds leaves, whether its raise is folded into the block's own reason
 /// (`fold_refused_body`) or kept re-minted over the selection's kept text, in the kind the deferring arm
@@ -10731,18 +10908,54 @@ fn mark_refused_body<'value, 'loc: 'value>(
     guard_cxt: &str,
     match_all: bool,
     a_refusal: bool,
+    sentence: &str,
+    role: ClauseRole,
 ) -> Result<()> {
+    let check = refused_body_block_check(match_all, a_refusal, sentence, role);
     resolver.start_record(guard_cxt)?;
-    resolver.end_record(
-        guard_cxt,
-        RecordType::GuardClauseBlockCheck(BlockCheck {
-            status: Status::FAIL,
-            at_least_one_matches: !match_all,
-            message: None,
-            refusal: a_refusal,
-            custom_message: None,
-        }),
-    )
+    resolver.end_record(guard_cxt, RecordType::GuardClauseBlockCheck(check))
+}
+
+/// The record a block leaves for one refused body, by role, built whole so the one place that spells its
+/// `message:` field is here (the census in `every_recorded_explanation_has_a_rendering_path` counts the
+/// spelling, and a shorthand field defeats it). In the GATE role a refusal's record is a MARK: it carries
+/// the refusal bare, with `gate_mark` set, in the block's own access-clause context, and the walk of the
+/// failed condition reads it by that field (`eval_context::is_gate_mark`,
+/// `eval_context::condition_refusal_sentences`): the read is named once in the rule's sentence from here,
+/// since no refused-read line is written for it. The assertion role prints the refusal through the block's
+/// own exit record and carries none. The filter-predicate role, which a block clause inside a predicate
+/// also reaches, carries none either: the walk of a failed condition does descend through a filter's record
+/// (`condition_records` keeps it whole and the walk's catch-all arm reads what lies beneath), but the
+/// refusal of a predicate's body is carried by the ENCLOSING clause's record, which fails on the marker the
+/// selection delivered (a unary check flagged a refusal, its message the error's display; pinned by
+/// `a_refused_block_body_inside_a_predicate_records_the_refusal_beneath_the_block`), and a sentence on the
+/// predicate's own record would be recorded and never rendered
+/// (`every_recorded_explanation_has_a_rendering_path`). Used by `mark_refused_body` and the settle at the
+/// block's exits.
+fn refused_body_block_check(
+    match_all: bool,
+    a_refusal: bool,
+    sentence: &str,
+    role: ClauseRole,
+) -> BlockCheck {
+    let a_mark = a_refusal && matches!(role, ClauseRole::Gate);
+    BlockCheck {
+        status: Status::FAIL,
+        at_least_one_matches: !match_all,
+        // Written because a refused body RAISED, whatever the raise's kind (`a_refusal` is that kind, in
+        // the refusal flag beside). Also true for every pending selection the settle drains, whatever
+        // its `raise` field holds: the settle runs for a selection whose body raised and for one whose
+        // body failed closed alike, and the exit it settles before is an error the block hands up.
+        raised: true,
+        message: match a_mark {
+            true => Some(sentence.to_string()),
+            false => None,
+        },
+        refusal: a_refusal,
+        custom_message: None,
+        gate_mark: a_mark,
+        frame_reads: Vec::new(),
+    }
 }
 
 /// The entry a block fold keeps for a raise where the block itself is the raising clause: the marker its
@@ -10819,10 +11032,7 @@ impl RefusedSelection {
             Some(text) => basis_of_error(&Error::Unevaluatable(text)),
             None => crate::rules::FailBasis::undecidable_for_cause(refusal.clone()),
         };
-        let sentence = format!(
-            "The block's body read the empty selection a one-object filter left, and the read was \
-             refused: {refusal}"
-        );
+        let sentence = format!("{BLOCK_BODY_READ_REFUSED_HEAD}{refusal}");
         RefusedSelection {
             own_basis,
             body_basis,
@@ -10891,19 +11101,20 @@ impl<'loc> HeldForTheFold<'loc> {
     /// selection's body met an error over its empty selection with no refusal kept, a sibling value's body
     /// raised an error the gate hands up, an error stops the run, or the fold itself raises. In ONE order:
     /// each refused selection still pending has its record written beneath the block, flagged by the
-    /// block's own read and carrying NO sentence (a sentence recorded here reached no reader when it was
-    /// tried in the GATE role: the structured report of a gated rule whose block took this exit after
-    /// deferring a refused map listed no check at all; in the assertion role the refusal's sentence is
+    /// block's own read. In the ASSERTION role the record carries NO sentence: the refusal's sentence is
     /// printed by the block's own exit record (`fail_block_on_unevaluatable` with `BodyReadRefused`), so
-    /// the record's flag and that record are what a reader has; a sentence that cannot be shown to
-    /// render is not recorded, the rule the census of recorded explanations keeps), and its block-own entry handed into the open frame as a raise of the role's
-    /// kind (the pending values are the block's own reads, so their entries lead); then the values'
-    /// `absorbed` entries, then their `leaf_failed` entries, each as
-    /// it is, kind included, as the fold after the loop has always handed them up where it raises. So the
-    /// fold above that decides past the block's raise writes every refusal's line; the condition site
-    /// that fails closed on the raise prints the error that stopped the block alone, and names none of the
-    /// refusals (the known issue "a gate failing closed on a plain error does not name a refusal settled
-    /// beside it"). Left pending, a refused selection deferred
+    /// the record's flag and that record are what a reader has. In the GATE role (and a filter
+    /// predicate's) it carries the refusal the selection kept, bare: a gated rule that fails closed on the
+    /// error that stopped the block names that error alone in its verdict, and the walk of the failed
+    /// condition (`eval_context::condition_refusal_sentences`) reads this record to append the refusal
+    /// settled beside it to the rule's sentence, once. The record's block-own entry is handed into the open frame as a raise of
+    /// the role's kind (the pending values are the block's own reads, so their entries lead); then the
+    /// values' `absorbed` entries, then their `leaf_failed` entries, each as it is, kind included, as the
+    /// fold after the loop has always handed them up where it raises. So the fold above that decides past
+    /// the block's raise writes every refusal's line, and the condition site that fails closed on the
+    /// raise writes none of its own (`convert_condition_raise`); the behavior is known issue 25 in
+    /// `docs/KNOWN_ISSUES.md`. Left pending, a
+    /// refused selection deferred
     /// by the arms was LOST at these exits: the block raised the later error with the refusal unnamed, its
     /// record unwritten and no entry for an outer fold; and an earlier value's refusal folded into
     /// `absorbed` (a raise of another text the fold took at once) was lost the same way.
@@ -10920,19 +11131,22 @@ impl<'loc> HeldForTheFold<'loc> {
             let match_all = block_clause.query.match_all;
             let guard_cxt = format!("GuardBlockAccessClause#{}", block_clause.location);
             let clause = crate::rules::eval_context::block_clause_text(block_clause);
-            for RefusedSelection { own_basis, .. } in self.refused.drain(..) {
+            for RefusedSelection {
+                own_basis, refusal, ..
+            } in self.refused.drain(..)
+            {
                 let a_refusal = own_basis.rests_on_a_refusal();
+                // The GATE role carries the refusal the selection kept, bare, as a mark (a filter
+                // predicate never defers one: `deferred_refusal` returns `None` inside a predicate,
+                // so no pending selection reaches this settle there): `refused_body_block_check`.
+                // The error that stopped the block decides the verdict, the condition site names it
+                // alone, and the walk of the failed condition reads the refusal settled beside it
+                // from this record. The assertion role leaves it to the block's own exit record
+                // (`fail_block_on_unevaluatable` with `BodyReadRefused`), which prints the sentence,
+                // so it carries none.
+                let check = refused_body_block_check(match_all, a_refusal, &refusal, role);
                 resolver.start_record(&guard_cxt)?;
-                resolver.end_record(
-                    &guard_cxt,
-                    RecordType::GuardClauseBlockCheck(BlockCheck {
-                        status: Status::FAIL,
-                        at_least_one_matches: !match_all,
-                        message: None,
-                        refusal: a_refusal,
-                        custom_message: None,
-                    }),
-                )?;
+                resolver.end_record(&guard_cxt, RecordType::GuardClauseBlockCheck(check))?;
                 if a_refusal {
                     resolver.note_absorbed_raise(
                         &clause,
@@ -11182,28 +11396,26 @@ fn fail_block_on_unevaluatable<'value, 'loc: 'value>(
         RecordType::BlockGuardCheck(BlockCheck {
             status: Status::FAIL,
             at_least_one_matches: !match_all,
+            raised: true,
             // The kind of the error embedded below, whichever sentence wraps it: a body read refused
             // with the refusal itself prints whole on the console; one refused with a text that wraps
             // another error, or a query that raised a converter's message with the value it could not
             // convert, is held to the cap like any message that may carry a value.
             refusal: is_refusal(&e),
             message: Some(match (failure, unevaluatable) {
-                (BlockFailure::BodyReadRefused, _) => format!(
-                    "The block's body read the empty selection a one-object filter left, and the \
-                     read was refused: {}",
-                    e
-                ),
-                (BlockFailure::QueryUnevaluatable, true) => format!(
-                    "The block's query could not be evaluated on this data: {}",
-                    e
-                ),
-                (BlockFailure::QueryUnevaluatable, false) => format!(
-                    "The block's query raised an error that is not about the data, so the run \
-                     stops: {}",
-                    e
-                ),
+                (BlockFailure::BodyReadRefused, _) => {
+                    format!("{BLOCK_BODY_READ_REFUSED_HEAD}{e}")
+                }
+                (BlockFailure::QueryUnevaluatable, true) => {
+                    format!("{BLOCK_QUERY_UNEVALUATABLE_HEAD}{e}")
+                }
+                (BlockFailure::QueryUnevaluatable, false) => {
+                    format!("{BLOCK_QUERY_ERROR_HEAD}{e}")
+                }
             }),
             custom_message: None,
+            gate_mark: false,
+            frame_reads: Vec::new(),
         }),
     )?;
     fail_closed_or_raise(e, role)
@@ -11519,9 +11731,12 @@ fn eval_guard_block_values<'value, 'loc: 'value>(
                     RecordType::BlockGuardCheck(BlockCheck {
                         status: Status::FAIL,
                         at_least_one_matches: !match_all,
+                        raised: true,
                         message: Some(sentence),
                         refusal: a_refusal,
                         custom_message: None,
+                        gate_mark: false,
+                        frame_reads: Vec::new(),
                     }),
                 )?;
                 return Ok(Judged::Fail(basis));
@@ -11649,6 +11864,7 @@ fn eval_guard_block_values<'value, 'loc: 'value>(
                     &mut undecided,
                     first,
                     refusal,
+                    role,
                 )?;
             }
             // The held refusal handed up by a gate: the enclosing condition site fails its rule
@@ -11685,9 +11901,12 @@ fn eval_guard_block_values<'value, 'loc: 'value>(
                         RecordType::BlockGuardCheck(BlockCheck {
                             status: Status::FAIL,
                             at_least_one_matches: !match_all,
+                            raised: true,
                             message: None,
                             refusal: false,
                             custom_message: None,
+                            gate_mark: false,
+                            frame_reads: Vec::new(),
                         }),
                     )?;
                     return Err(e);
@@ -11720,6 +11939,7 @@ fn eval_guard_block_values<'value, 'loc: 'value>(
                             &mut undecided,
                             refusal,
                             Some(token),
+                            role,
                         )?;
                         continue;
                     }
@@ -11808,9 +12028,12 @@ fn eval_guard_block_values<'value, 'loc: 'value>(
             RecordType::BlockGuardCheck(BlockCheck {
                 status,
                 at_least_one_matches: !match_all,
+                raised: false,
                 message,
                 refusal: false,
                 custom_message: None,
+                gate_mark: false,
+                frame_reads: Vec::new(),
             }),
         )?;
         // Decided on the selection's shape alone (an empty selection, a value read as the empty
@@ -11998,9 +12221,12 @@ fn eval_guard_block_values<'value, 'loc: 'value>(
                             RecordType::GuardClauseBlockCheck(BlockCheck {
                                 status: Status::FAIL,
                                 at_least_one_matches: !match_all,
+                                raised: true,
                                 message: Some(text.clone()),
                                 refusal: true,
                                 custom_message: None,
+                                gate_mark: false,
+                                frame_reads: Vec::new(),
                             }),
                         )?;
                         fails += 1;
@@ -12042,6 +12268,7 @@ fn eval_guard_block_values<'value, 'loc: 'value>(
                             &mut undecided,
                             text,
                             Some(refusal),
+                            role,
                         )?;
                     }
                     continue;
@@ -12191,6 +12418,7 @@ fn eval_guard_block_values<'value, 'loc: 'value>(
                             &mut undecided,
                             reason,
                             refusal,
+                            role,
                         )?;
                     }
 
@@ -12202,12 +12430,12 @@ fn eval_guard_block_values<'value, 'loc: 'value>(
                             RecordType::GuardClauseBlockCheck(BlockCheck {
                                 status: Status::FAIL,
                                 at_least_one_matches: !match_all,
-                                message: Some(format!(
-                                    "Error {} when evaluating the block clause for this value",
-                                    e
-                                )),
+                                raised: true,
+                                message: Some(format!("Error {e}{BLOCK_VALUE_ERROR_TAIL}")),
                                 refusal: is_refusal(&e),
                                 custom_message: None,
+                                gate_mark: false,
+                                frame_reads: Vec::new(),
                             }),
                         )?;
                         fails += 1;
@@ -12254,12 +12482,12 @@ fn eval_guard_block_values<'value, 'loc: 'value>(
                             RecordType::BlockGuardCheck(BlockCheck {
                                 status: Status::FAIL,
                                 at_least_one_matches: !match_all,
-                                message: Some(format!(
-                                    "Error {} when handling block clause, bailing",
-                                    e
-                                )),
+                                raised: true,
+                                message: Some(format!("Error {}{}", e, BLOCK_CLAUSE_BAILING_TAIL)),
                                 refusal: is_refusal(&e),
                                 custom_message: None,
+                                gate_mark: false,
+                                frame_reads: Vec::new(),
                             }),
                         )?;
                         return Err(e);
@@ -12323,22 +12551,34 @@ fn eval_guard_block_values<'value, 'loc: 'value>(
             // the block has no other child to speak for it; the gate's per-value record carries none.
             // This branch is entered only where the refusal is DECIDED past (`decided`: the selection
             // folds into `fail_basis` as a FAIL, so the `!decided` exit below never raises it) or in the
-            // assertion role. In the gate role a decided FAIL means the condition did not match, the rule
-            // is skipped (a SKIP `RuleCondition`, which the walker does not descend into), and the
-            // failing children of a condition that did not open its block are not printed, so a sentence
-            // here would be recorded and discarded. The walker reads a FAILED condition's children (the
-            // `RuleCondition(FAIL)` arm), and that is the `!decided` exit's record, which carries its
-            // own sentence. The refusal flag, the gate's status and the read's line are what a reader of
-            // this record has.
+            // assertion role. In the gate role a decided FAIL means the condition did not match and the
+            // rule is skipped: `judged_rule_body` writes `RuleCondition(status)`, FAIL for a decided no,
+            // under a `RuleCheck(SKIP)`, and the walker does not descend into it because its `RuleCheck`
+            // arm matches FAIL rules alone. This record carries no sentence by CHOICE: the clause's own
+            // records name the refusal, and a sentence here would name it a second time wherever a
+            // walker reaches this record. A message-less failed rule is a run-ending error; its tree is
+            // still reported before the run exits, so the walker renders what its condition met
+            // (`judged_rule_body` always sets the rule's message for a condition it could not
+            // evaluate, so an ordinary `rule r when A or B` with A this block does not reach it); a
+            // TYPE block's failed condition reaches it in an ordinary run, and a
+            // disjunction there lists a block-check record with a message whatever its flag. The
+            // `!decided` exit's record carries its own sentence. The refusal flag, the gate's status
+            // and the read's line are what a reader of this record has.
             resolver.start_record(&guard_cxt)?;
             resolver.end_record(
                 &guard_cxt,
                 RecordType::GuardClauseBlockCheck(BlockCheck {
                     status: Status::FAIL,
                     at_least_one_matches: !match_all,
+                    // A raise only in the assertion role, where the failure is the clause's own; in the
+                    // gate role a decided FAIL means the condition did not match (see above), and the
+                    // record is the refusal's flag alone.
+                    raised: role.is_strict(),
                     message: role.is_strict().then_some(sentence),
                     refusal: a_refusal,
                     custom_message: None,
+                    gate_mark: false,
+                    frame_reads: Vec::new(),
                 }),
             )?;
             fails += 1;
@@ -12378,7 +12618,15 @@ fn eval_guard_block_values<'value, 'loc: 'value>(
                 // error is one by its token or its text), so the block raises what the alone exit of
                 // that arm raises and the kind never depends on the sibling count.
                 Some(raised) => {
-                    mark_refused_body(resolver, &guard_cxt, match_all, is_refusal(&raised))?;
+                    let sentence = error_text_of(&raised);
+                    mark_refused_body(
+                        resolver,
+                        &guard_cxt,
+                        match_all,
+                        is_refusal(&raised),
+                        &sentence,
+                        role,
+                    )?;
                     fails += 1;
                     hold_undecided(&mut undecided, raised, &frames);
                 }
@@ -12394,6 +12642,7 @@ fn eval_guard_block_values<'value, 'loc: 'value>(
                         &mut undecided,
                         refusal,
                         token,
+                        role,
                     )?;
                 }
             }
@@ -12452,9 +12701,12 @@ fn eval_guard_block_values<'value, 'loc: 'value>(
                 RecordType::BlockGuardCheck(BlockCheck {
                     status: Status::FAIL,
                     at_least_one_matches: !match_all,
+                    raised: true,
                     message: raised_sentence,
                     refusal: raised_a_refusal,
                     custom_message: None,
+                    gate_mark: false,
+                    frame_reads: Vec::new(),
                 }),
             )?;
             // Nothing here decided the block, so what it collected is not its to report: each entry is
@@ -12543,9 +12795,12 @@ fn eval_guard_block_values<'value, 'loc: 'value>(
         RecordType::BlockGuardCheck(BlockCheck {
             status,
             at_least_one_matches: !match_all,
+            raised: false,
             message: None,
             refusal: false,
             custom_message: None,
+            gate_mark: false,
+            frame_reads: Vec::new(),
         }),
     )?;
     // The basis of this block's FAIL, folded over its failing values in the loop (`fail_basis`); a PASS
@@ -12636,9 +12891,12 @@ fn eval_when_condition_block<'value, 'loc: 'value>(
                     RecordType::WhenCheck(BlockCheck {
                         status: Status::SKIP,
                         at_least_one_matches: false,
+                        raised: false,
                         message: None,
                         refusal: false,
                         custom_message: None,
+                        gate_mark: false,
+                        frame_reads: Vec::new(),
                     }),
                 )?;
                 return Ok(Judged::Skip);
@@ -12651,17 +12909,26 @@ fn eval_when_condition_block<'value, 'loc: 'value>(
         Err(e) => {
             resolver.end_record(&when_context, RecordType::WhenCondition(Status::FAIL))?;
             let unevaluatable = is_unevaluatable(&e);
+            // The frame is converted below where the raise fails this block closed (the strict role), and
+            // the closing record keeps the reads it carried so the report can check each is told.
+            let converts = unevaluatable && role.is_strict();
             resolver.end_record(
                 &context,
                 RecordType::WhenCheck(BlockCheck {
                     status: Status::FAIL,
                     refusal: is_refusal(&e),
                     message: Some(match unevaluatable {
-                        true => format!("The condition could not be evaluated, so the block it guards is not checked: {}", e),
-                        false => format!("Error {} during type condition evaluation, bailing", e),
+                        true => format!("{WHEN_UNEVALUATED_HEAD}{e}"),
+                        false => format!("Error {}{}", e, TYPE_CONDITION_BAILING_TAIL),
                     }),
                     at_least_one_matches: false,
+                    raised: true,
                     custom_message: None,
+                    gate_mark: false,
+                    frame_reads: match converts {
+                        true => frame_reads_of(&condition_frame),
+                        false => Vec::new(),
+                    },
                 }),
             )?;
             // A condition that cannot be evaluated fails the block it guards rather than aborting
@@ -12693,7 +12960,7 @@ fn eval_when_condition_block<'value, 'loc: 'value>(
             //
             // What the conditions noted goes with the answer: re-noted as this block's own leaf FAILs
             // where the raise becomes a FAIL, handed up as it is where the raise is kept.
-            if unevaluatable && role.is_strict() {
+            if converts {
                 let site = conditions_site(conditions).unwrap_or_else(unlocated);
                 convert_condition_raise(
                     resolver,
@@ -12727,8 +12994,11 @@ fn eval_when_condition_block<'value, 'loc: 'value>(
                         status: judged.status(),
                         message: None,
                         at_least_one_matches: false,
+                        raised: false,
                         refusal: false,
                         custom_message: None,
+                        gate_mark: false,
+                        frame_reads: Vec::new(),
                     }),
                 )?;
                 judged
@@ -12739,13 +13009,13 @@ fn eval_when_condition_block<'value, 'loc: 'value>(
                     &context,
                     RecordType::WhenCheck(BlockCheck {
                         status: Status::FAIL,
-                        message: Some(format!(
-                            "Error {} during type condition evaluation, bailing",
-                            e
-                        )),
+                        message: Some(format!("Error {}{}", e, TYPE_CONDITION_BAILING_TAIL)),
                         at_least_one_matches: false,
+                        raised: true,
                         refusal: is_refusal(&e),
                         custom_message: None,
+                        gate_mark: false,
+                        frame_reads: Vec::new(),
                     }),
                 )?;
                 return Err(e);
@@ -13857,6 +14127,10 @@ impl<'eval, 'value, 'loc: 'value> RecordTracer<'value>
                             let kind = ns.slot;
                             ns.message.map(|sentence| (kind, sentence))
                         },
+                        // The reads the rule's own `when` converted travel with the record: the displaced
+                        // sentence is the account of them the report is checked against.
+                        frame_reads: ns.frame_reads,
+                        ended_by_error: ns.ended_by_error,
                     }),
                     false => RecordType::RuleCheck(ns),
                 }
@@ -14041,12 +14315,15 @@ pub(in crate::rules) fn eval_parameterized_rule_call<'value, 'loc: 'value>(
                 RecordType::GuardClauseBlockCheck(BlockCheck {
                     status: Status::FAIL,
                     at_least_one_matches: false,
+                    raised: true,
                     message: Some(format!(
                         "{} failed because an argument could not be evaluated on this data: {}",
                         context, e
                     )),
                     refusal: is_refusal(&e),
                     custom_message: call_rule.named_rule.custom_message.clone(),
+                    gate_mark: false,
+                    frame_reads: Vec::new(),
                 }),
             )?;
             // The call's FAIL on a refused argument is its own leaf FAIL, noted at the call's position
@@ -14361,6 +14638,7 @@ pub(in crate::rules) fn eval_type_block_clause<'value, 'loc: 'value>(
                     block: BlockCheck {
                         status: Status::FAIL,
                         at_least_one_matches: false,
+                        raised: true,
                         refusal: false,
                         // No message, unlike the block clause's query arm, which records a sentence
                         // in both roles because the tree is reported before the error stops the
@@ -14372,6 +14650,8 @@ pub(in crate::rules) fn eval_type_block_clause<'value, 'loc: 'value>(
                         // arm, give it a message then and confirm the output.
                         message: None,
                         custom_message: None,
+                        gate_mark: false,
+                        frame_reads: Vec::new(),
                     },
                 }),
             )?;
@@ -14400,6 +14680,7 @@ pub(in crate::rules) fn eval_type_block_clause<'value, 'loc: 'value>(
                 block: BlockCheck {
                     status: Status::SKIP,
                     at_least_one_matches: false,
+                    raised: false,
                     // Reaches the reader now that a skipped rule carries its reason through to the
                     // reporters. Naming which of the two skips happened is the whole point: an
                     // absent resource type is the ordinary, correct reason for a rule not to
@@ -14411,6 +14692,8 @@ pub(in crate::rules) fn eval_type_block_clause<'value, 'loc: 'value>(
                     )),
                     refusal: false,
                     custom_message: None,
+                    gate_mark: false,
+                    frame_reads: Vec::new(),
                 },
             }),
         )?;
@@ -14427,6 +14710,10 @@ pub(in crate::rules) fn eval_type_block_clause<'value, 'loc: 'value>(
     let mut selected = 0;
     let mut exempted = 0;
     let mut unresolved_reason: Option<String> = None;
+    // The refused reads the conditions of the resources that failed closed carried
+    // (`convert_condition_raise`), kept on the type block's closing record so the report can check that each
+    // is told.
+    let mut converted_reads: Vec<String> = Vec::new();
     // The basis of the type block's FAIL, folded over the resources that failed (`fold_fail_basis`, every
     // resource at once): decided when any failing resource's is; a resource failed closed on its
     // condition's raise rests on that undecidable, a body's FAIL carries its own.
@@ -14606,7 +14893,11 @@ pub(in crate::rules) fn eval_type_block_clause<'value, 'loc: 'value>(
                                             // exists to refuse -- it caught this one.
                                             message: None,
                                             at_least_one_matches: false,
+                                            // Written on a raise: the error is returned just below.
+                                            raised: true,
                                             custom_message: None,
+                                            gate_mark: false,
+                                            frame_reads: Vec::new(),
                                         },
                                     }),
                                 )?;
@@ -14616,6 +14907,7 @@ pub(in crate::rules) fn eval_type_block_clause<'value, 'loc: 'value>(
                             // The raise is this resource's FAIL: what the condition noted becomes the
                             // type block's own leaf FAILs, noted once at the condition's position if
                             // nothing was, and the resource's FAIL rests on the undecidable.
+                            converted_reads.extend(frame_reads_of(&condition_frame));
                             convert_condition_raise(
                                 &mut condition_scope,
                                 &condition_frame,
@@ -14653,12 +14945,17 @@ pub(in crate::rules) fn eval_type_block_clause<'value, 'loc: 'value>(
                                     block: BlockCheck {
                                         status: Status::FAIL,
                                         message: Some(format!(
-                                            "Error {} during type condition evaluation, bailing",
-                                            e
+                                            "Error {}{}",
+                                            e, TYPE_CONDITION_BAILING_TAIL
                                         )),
                                         at_least_one_matches: false,
+                                        raised: true,
                                         refusal: is_refusal(&e),
                                         custom_message: None,
+                                        gate_mark: false,
+                                        // The earlier resources' conversions travel with the record that
+                                        // ends the run: they are checked like the final record's.
+                                        frame_reads: converted_reads,
                                     },
                                 }),
                             )?;
@@ -14704,12 +15001,15 @@ pub(in crate::rules) fn eval_type_block_clause<'value, 'loc: 'value>(
                                 block: BlockCheck {
                                     status: Status::FAIL,
                                     message: Some(format!(
-                                        "Error {} during type block evaluation, bailing",
-                                        e
+                                        "Error {}{}",
+                                        e, TYPE_BLOCK_BAILING_TAIL
                                     )),
                                     at_least_one_matches: false,
+                                    raised: true,
                                     refusal: is_refusal(&e),
                                     custom_message: None,
+                                    gate_mark: false,
+                                    frame_reads: converted_reads,
                                 },
                             }),
                         )?;
@@ -14811,7 +15111,10 @@ pub(in crate::rules) fn eval_type_block_clause<'value, 'loc: 'value>(
                     _ => None,
                 },
                 at_least_one_matches: false,
+                raised: false,
                 custom_message: None,
+                gate_mark: false,
+                frame_reads: converted_reads,
             },
         }),
     )?;
@@ -15006,7 +15309,14 @@ fn judged_rule_body<'value, 'loc: 'value>(
 
             Err(e) => {
                 resolver.end_record(&when_context, RecordType::RuleCondition(Status::FAIL))?;
-                if is_unevaluatable(&e) && role.is_strict() {
+                // The reads the frame carries when this rule fails closed on the raise, kept on the closing
+                // record so the report can check that each is told.
+                let converts = is_unevaluatable(&e) && role.is_strict();
+                let converted_reads = match converts {
+                    true => frame_reads_of(&condition_frame),
+                    false => Vec::new(),
+                };
+                if converts {
                     let site = conditions_site(conditions).unwrap_or_else(unlocated);
                     convert_condition_raise(
                         resolver,
@@ -15024,11 +15334,7 @@ fn judged_rule_body<'value, 'loc: 'value>(
                         status: Status::FAIL,
                         name: &rule.rule_name,
                         message: match is_unevaluatable(&e) {
-                            true => Some(format!(
-                                "The rule's condition could not be evaluated, so the rule fails \
-                                 rather than being treated as not applicable: {}",
-                                e
-                            )),
+                            true => Some(format!("{RULE_CONDITION_UNEVALUATED_HEAD}{e}")),
                             false => None,
                         },
                         slot: match is_refusal(&e) {
@@ -15036,6 +15342,10 @@ fn judged_rule_body<'value, 'loc: 'value>(
                             false => CustomSlot::Evaluator,
                         },
                         displaced: None,
+                        frame_reads: converted_reads,
+                        // The rule's own `when` ended on an error (the rule fails closed on it, or the run
+                        // ends): the record's account for the head of a call's sentence.
+                        ended_by_error: true,
                     }),
                 )?;
                 // The rule fails closed. Returning SKIP -- which is what every *status* on a condition
@@ -15084,6 +15394,8 @@ fn judged_rule_body<'value, 'loc: 'value>(
                     // naming the clause, which a rule-level restatement cannot. A message added here
                     // reached the JSON only, beside the clause's, and
                     // `every_recorded_explanation_has_a_rendering_path` is what caught it.
+                    // The flag is the record's account that an error ended the body, not a sentence.
+                    ended_by_error: true,
                     ..Default::default()
                 }),
             )?;
@@ -15432,9 +15744,12 @@ where
                                     RecordType::Disjunction(BlockCheck {
                                         message: None,
                                         at_least_one_matches: true,
+                                        raised: false,
                                         status: Status::PASS,
                                         refusal: false,
                                         custom_message: None,
+                                        gate_mark: false,
+                                        frame_reads: Vec::new(),
                                     }),
                                 )?;
                             }
@@ -15540,8 +15855,12 @@ where
                                     message: None,
                                     status: Status::FAIL,
                                     at_least_one_matches: true,
+                                    // Written on a raise: the run-stopping error is returned below.
+                                    raised: true,
                                     refusal: false,
                                     custom_message: None,
+                                    gate_mark: false,
+                                    frame_reads: Vec::new(),
                                 }),
                             )?;
                         }
@@ -15555,15 +15874,14 @@ where
                     resolver.end_record(
                         &context,
                         RecordType::Disjunction(BlockCheck {
-                            message: Some(format!(
-                                "Disjunction could not be decided: no disjunct answered, and one \
-                                 could not be evaluated: {}",
-                                e
-                            )),
+                            message: Some(format!("{DISJUNCTION_UNDECIDED_HEAD}{e}")),
                             status: Status::FAIL,
                             at_least_one_matches: true,
+                            raised: true,
                             refusal: is_refusal(&e),
                             custom_message: None,
+                            gate_mark: false,
+                            frame_reads: Vec::new(),
                         }),
                     )?;
                 }
@@ -15593,8 +15911,11 @@ where
                             message: None,
                             status: Status::FAIL,
                             at_least_one_matches: true,
+                            raised: false,
                             refusal: false,
                             custom_message: None,
+                            gate_mark: false,
+                            frame_reads: Vec::new(),
                         }),
                     )?;
                 } else {
@@ -15604,8 +15925,11 @@ where
                             message: None,
                             status: Status::SKIP,
                             at_least_one_matches: true,
+                            raised: false,
                             refusal: false,
                             custom_message: None,
+                            gate_mark: false,
+                            frame_reads: Vec::new(),
                         }),
                     )?;
                 }

@@ -510,6 +510,23 @@ pub(crate) struct MissingValueCheck<'value> {
     pub(crate) message: Option<String>,
     pub(crate) custom_message: Option<String>,
     pub(crate) status: Status,
+    /// The error the reference failed on, stored once: `Some` exactly where `message` carries the error's
+    /// account, `None` for a reference that merely did not pass. Every reader keys on this one field, so
+    /// the record cannot say "raised" through one reader and "not raised" through another. Not part of any
+    /// structured output (`serde(skip)`).
+    #[serde(skip)]
+    pub(crate) failure: Option<ReferenceFailure>,
+}
+
+/// The error a failed rule reference raised: its own text, the refusal token it carried, and whether it is
+/// a refusal (`eval_context::is_refusal`). The console keeps a refusal's remedy past the bound a plain
+/// message gets, from `refusal` (no structured report serializes the flag); a failed condition's walk names
+/// the refusal from `text` and `token`, never recovered from the words of `MissingValueCheck::message`.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct ReferenceFailure {
+    pub(crate) text: String,
+    pub(crate) token: Option<crate::rules::errors::RefusalToken>,
+    pub(crate) refusal: bool,
 }
 
 /// A `!empty` whose query selected nothing, so there is no value to record against.
@@ -565,6 +582,14 @@ pub(crate) struct BlockCheck {
     /// evaluator's own sentence with no error in it.
     #[serde(skip)]
     pub(crate) refusal: bool,
+    /// Whether the record was written on a RAISE (an error the clause met and handled: a clause-error
+    /// record, a refused read, a fail-closed negation) and not for a DECIDED answer (a missing property, a
+    /// comparison that did not hold, an empty selection explained). The reporters' walk of a failed
+    /// condition keeps a block record by this flag, by its children or by its refusal flag, never by the
+    /// mere presence of `message`: a decided empty selection keeps its explanatory message and is still no
+    /// finding. Not part of any structured output (`serde(skip)`).
+    #[serde(skip)]
+    pub(crate) raised: bool,
     /// The author's own `<< >>` message on the clause the record closes, set wherever the clause carries
     /// one and the block shape is the record of that clause: the fail-closed `not` over a reference (`not r
     /// << msg >>`, `eval::record_fail_closed_negation`, whose record is a block check so the message can
@@ -577,6 +602,22 @@ pub(crate) struct BlockCheck {
     /// tree `--print-json` writes keeps its shape for those, since the key is written only where it is set.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) custom_message: Option<String>,
+    /// Whether the record is the GATE role's mark for one refused body: a childless failed record that
+    /// carries the refusal's bare sentence beneath a block (`eval::refused_body_block_check`). Read by
+    /// `eval_context::is_gate_mark`, so a mark is told by this field and never by the shape of the
+    /// records of the strict role, which are childless, failed, raised refusals with a sentence in the
+    /// same context and are findings of their own. Not part of any structured output (`serde(skip)`), and
+    /// the context string of a mark is the block's own, so the `--print-json` tree keeps its shape.
+    #[serde(skip)]
+    pub(crate) gate_mark: bool,
+    /// The refused reads the entries of the condition of an inline `when` or a type block carried when the
+    /// condition raised an unevaluatable error and the block failed closed on it
+    /// (`eval::convert_condition_raise`: the frame's `AbsorbedRaise::reads`), as `NamedStatus::frame_reads`
+    /// carries them for a rule's own `when`. Compared by the report walk with the refusals it collected
+    /// (`eval_context::assert_frame_reads_told`). Empty for a record that converted nothing. Not part of any
+    /// structured output.
+    #[serde(skip)]
+    pub(crate) frame_reads: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -603,6 +644,21 @@ pub(crate) struct NamedStatus<'value> {
         serialize_with = "serialize_displaced_text"
     )]
     pub(crate) displaced: Option<(CustomSlot, String)>,
+    /// The refused reads the entries of a rule's own `when` carried when its condition raised an
+    /// unevaluatable error and the rule failed closed on it (`eval::convert_condition_raise`: the frame's
+    /// `AbsorbedRaise::reads`). No refused-read line is written for them any more; the report walk tells
+    /// them from the condition's records, and compares them with what it collected, so a read that the
+    /// frame held and no record names is caught (`eval_context::assert_frame_reads_told`, a debug
+    /// assertion). Empty for a record that converted nothing. Not part of any structured output.
+    #[serde(skip)]
+    pub(crate) frame_reads: Vec<String>,
+    /// Whether an error ended the evaluation of the rule's body: the record was closed on the `Err` of the
+    /// body (`eval::judged_rule_body`), not on a decided status. The report states "the rule failed on an
+    /// error" from this signal alone, whatever the refusal lists hold (`eval_context::RULE_FAILED_ON_AN_ERROR_HEAD`).
+    /// Carried onto the record a calling clause's body rebuilds (`ResolvedParameterContext::end_record`).
+    /// Not part of any structured output.
+    #[serde(skip)]
+    pub(crate) ended_by_error: bool,
 }
 
 /// The text of a message slot when it says something: not absent, not empty and not only whitespace
@@ -654,6 +710,8 @@ impl<'value> Default for NamedStatus<'value> {
             message: None,
             slot: CustomSlot::Evaluator,
             displaced: None,
+            frame_reads: Vec::new(),
+            ended_by_error: false,
         }
     }
 }
@@ -2178,7 +2236,7 @@ pub(crate) enum UnraisedVerdict {
 /// regex budget), with the refused reads it rests on. Every strict site that turns an undecidable into a
 /// FAIL names `Undecidable` (`eval::fail_closed_or_raise`, the block, `when`, type-block and rule folds'
 /// strict arms, the comparison and the unary operator over their own pairs), every fold combines its
-/// branches' bases (`and`, `or`), and a reference's `not` reads the basis of the rule it negates
+/// branches' bases (`and_under`, `or_under`), and a reference's `not` reads the basis of the rule it negates
 /// (`eval::negate_a_failed_rule`): a decided no is inverted to a PASS, an undecidable-born FAIL fails the
 /// `not` closed, since a PASS there would be a verdict the undecidable manufactured. Carried with the
 /// outcome and never as state on the context, so a site that forgets to choose does not compile, nothing
@@ -2368,7 +2426,9 @@ pub(crate) const MARKER_REASONS_NAMED: usize = 4;
 pub(crate) type RefusedRead = (String, Option<errors::RefusalToken>);
 
 impl FailBasis {
-    /// An undecidable-born basis over `refused_reads` known by text alone, deduplicated in order.
+    /// An undecidable-born basis over `refused_reads` known by text alone, deduplicated in order. For the
+    /// cells that build bases from texts; production code names its reads with their tokens.
+    #[cfg(test)]
     pub(crate) fn undecidable(refused_reads: Vec<String>) -> Self {
         // No token to rank: the texts carry none.
         FailBasis::undecidable_reads_under(
@@ -2386,7 +2446,8 @@ impl FailBasis {
         FailBasis::undecidable_reads_under(refused_reads, &eval_context::live_runs_ranking())
     }
 
-    /// [`FailBasis::undecidable_reads`] under the ranking of the frames the caller holds.
+    /// The basis of `undecidable_reads` (the test-only form that reads the live runs) under the ranking of
+    /// the frames the caller holds.
     pub(crate) fn undecidable_reads_under(
         refused_reads: Vec<RefusedRead>,
         ranking: eval::Ranking<'_>,
@@ -2452,7 +2513,8 @@ impl FailBasis {
         self.and_under(other, &eval_context::live_runs_ranking())
     }
 
-    /// [`FailBasis::and`] under the ranking of the frames the caller holds.
+    /// The fold of two bases for a conjunction (`and`, the test-only form that reads the live runs) under
+    /// the ranking of the frames the caller holds.
     pub(crate) fn and_under(self, other: FailBasis, ranking: eval::Ranking<'_>) -> FailBasis {
         match (self, other) {
             (FailBasis::Decided, _) | (_, FailBasis::Decided) => FailBasis::Decided,
@@ -2470,7 +2532,8 @@ impl FailBasis {
         self.or_under(other, &eval_context::live_runs_ranking())
     }
 
-    /// [`FailBasis::or`] under the ranking of the frames the caller holds.
+    /// The fold of two bases for a disjunction (`or`, the test-only form that reads the live runs) under
+    /// the ranking of the frames the caller holds.
     pub(crate) fn or_under(self, other: FailBasis, ranking: eval::Ranking<'_>) -> FailBasis {
         match (self, other) {
             (FailBasis::Decided, FailBasis::Decided) => FailBasis::Decided,
@@ -2538,17 +2601,42 @@ impl Judged {
     /// a FAIL carries the folded basis, a PASS or a SKIP none. A FAIL whose fold named no basis for any
     /// branch (a count of FAILs that no branch folded a basis for) is undecidable with no read, which
     /// fails closed: read as a decided no, one unpaired count of a FAIL over refused reads would make a
-    /// `not` over the rule pass. Both callers pair every FAIL they count with a folded basis, and assert
-    /// it (`debug_assert!` that a FAIL has a basis), so the default is a floor and not a path.
+    /// `not` over the rule pass. Both callers pair every FAIL they count with a folded basis, so a debug
+    /// build asserts it here, and the default is a floor and not a path: a release build keeps the
+    /// fail-closed answer, with the neutral cause [`UNRECORDED_BASIS_CAUSE`] rather than an empty basis,
+    /// so the record that reports the FAIL never says its undecided reads are reported where the rule met
+    /// them when none was met.
     pub(crate) fn folded(status: Status, basis: Option<FailBasis>) -> Judged {
+        debug_assert!(
+            status != Status::FAIL || basis.is_some(),
+            "a FAIL was counted with no folded basis"
+        );
+        Judged::folded_or_floor(status, basis)
+    }
+
+    /// What [`Judged::folded`] returns once its debug assertion has passed, and all it returns in a
+    /// release build: the FAIL's folded basis, else the floor ([`unrecorded_basis`]). Separate and
+    /// non-asserting so both builds exercise the shipped fail-closed path.
+    pub(crate) fn folded_or_floor(status: Status, basis: Option<FailBasis>) -> Judged {
         match status {
-            Status::FAIL => {
-                Judged::Fail(basis.unwrap_or_else(|| FailBasis::undecidable(Vec::new())))
-            }
+            Status::FAIL => Judged::Fail(basis.unwrap_or_else(unrecorded_basis)),
             other => Judged::decided(other),
         }
     }
 }
+
+/// The basis a FAIL carries when a fold counted it and named none (`Judged::folded`'s release floor): an
+/// undecidable with the neutral cause [`UNRECORDED_BASIS_CAUSE`]. A function of its own so a cell reads the
+/// floor in a debug build too, where `folded` asserts before it reaches it.
+pub(crate) fn unrecorded_basis() -> FailBasis {
+    FailBasis::undecidable_for_cause(UNRECORDED_BASIS_CAUSE.to_string())
+}
+
+/// The cause a FAIL carries when a fold counted it and named no basis for it (`Judged::folded`): neutral,
+/// since the fold cannot know what the FAIL rests on. It flags no refusal and is named by a fail-closed
+/// `not` in place of a refused read.
+pub(crate) const UNRECORDED_BASIS_CAUSE: &str =
+    "no basis was recorded for this FAIL, so it is not read as a decided no";
 
 /// What a frame entry (`AbsorbedRaise`) was when it was noted, decided by the role of the clause that
 /// raised (`eval::kind_for`): every fold that meets an entry decides by this kind, never by which of its

@@ -495,7 +495,8 @@ pub(crate) fn unraised_refusal_notice(
     let closing = match verdicts.unrecorded > 0 {
         true => {
             " This is an internal error of the evaluator; report it to the project's issue tracker \
-             with the rules file and the input data."
+             with a minimal rules file and template that reproduce it, with account ids, ARNs, \
+             parameter values and other sensitive values removed."
         }
         false => "",
     };
@@ -890,6 +891,11 @@ pub(crate) struct RootScope<'value, 'loc: 'value> {
     /// reached.
     #[cfg(test)]
     undecided_reads_entries: usize,
+    /// How many of those entries took the `read_entries == 0` exit of `undecided_reads_decided` (no
+    /// `Read` entry stands behind the clause's marker): the counter that tells the exit taken from a
+    /// walk count that is flat because no walk was due.
+    #[cfg(test)]
+    undecided_reads_exits: usize,
     #[cfg(test)]
     held_fails_entries: usize,
     /// Set by the hold-machine cells that pend one token twice on purpose, to pin the merge of a
@@ -4801,39 +4807,45 @@ pub(crate) fn register_refusal(text: &str) -> RefusalToken {
 /// it raised as a plain `Unevaluatable` and never folded is read back from the registry at the run's end,
 /// and is the token it owns. With no live registry nothing is written.
 fn write_registry_token(text: &str, new: RefusalToken) {
-    let frames = live_run_frames();
-    REFUSALS.with(|refusals| {
-        if let Some((_, registry)) = refusals.borrow_mut().last_mut() {
-            let tokens = registry.entry(text.to_string()).or_default();
-            if !tokens.contains(&new) {
-                tokens.push(new);
-            }
-            // Cut back to what a read can answer with: the newest token overall, and the newest each
-            // live run owns (`token_standing_for` answers with one of those), so the list holds at most
-            // one token more than the runs live, however often the sentence is registered.
-            let mut kept: Vec<RefusalToken> = tokens
-                .iter()
-                .copied()
-                .reduce(later_of)
-                .into_iter()
-                .collect();
-            for frame in &frames {
-                if let Some(own) = tokens
+    // The live runs are borrowed in place, not copied: the registry write below touches the registry
+    // alone, and nothing it calls opens or closes a run.
+    LIVE_RUN_FRAMES.with(|frames| {
+        let frames = frames.borrow();
+        REFUSALS.with(|refusals| {
+            if let Some((_, registry)) = refusals.borrow_mut().last_mut() {
+                let tokens = registry.entry(text.to_string()).or_default();
+                if !tokens.contains(&new) {
+                    tokens.push(new);
+                }
+                // Cut back to what a read can answer with: the newest token overall, and the newest each
+                // live run owns (`token_standing_for` answers with one of those), so the list holds at
+                // most one token more than the runs live, however often the sentence is registered.
+                let mut kept: Vec<RefusalToken> = tokens
                     .iter()
                     .copied()
-                    .filter(|token| owns_token(frame, *token))
                     .reduce(later_of)
-                {
-                    kept.push(own);
+                    .into_iter()
+                    .collect();
+                for frame in frames.iter() {
+                    if let Some(own) = tokens
+                        .iter()
+                        .copied()
+                        .filter(|token| owns_token(frame, *token))
+                        .reduce(later_of)
+                    {
+                        kept.push(own);
+                    }
                 }
+                tokens.retain(|token| kept.contains(token));
             }
-            tokens.retain(|token| kept.contains(token));
-        }
+        });
     });
 }
 
-/// The frames of the runs live on this thread, outermost first, as a copy (`LIVE_RUN_FRAMES`): what the
-/// registry's writers and readers rank the tokens they hold by.
+/// The frames of the runs live on this thread, outermost first, as a copy (`LIVE_RUN_FRAMES`), for a cell
+/// that plants them in a stack of its own (`live_runs_ranking`). The registry's writers and readers borrow
+/// the list in place instead.
+#[cfg(test)]
 fn live_run_frames() -> Vec<RefusalFrame> {
     LIVE_RUN_FRAMES.with(|frames| frames.borrow().clone())
 }
@@ -4855,10 +4867,18 @@ fn later_of(a: RefusalToken, b: RefusalToken) -> RefusalToken {
 /// enclosing run that owns one reads, which is what a nested run's plain marker carries up. `None` for no
 /// token.
 fn token_standing_for(tokens: &[RefusalToken], frames: &[RefusalFrame]) -> Option<RefusalToken> {
+    token_standing_for_iter(tokens.iter().copied(), frames)
+}
+
+/// [`token_standing_for`] over tokens given as a cloneable iterator, so a caller that holds the tokens in
+/// two places (a registry's list and the marker's own) reads them chained, with no list built.
+fn token_standing_for_iter<I>(tokens: I, frames: &[RefusalFrame]) -> Option<RefusalToken>
+where
+    I: Iterator<Item = RefusalToken> + Clone,
+{
     for frame in frames.iter().rev() {
         if let Some(own) = tokens
-            .iter()
-            .copied()
+            .clone()
             .filter(|token| owns_token(frame, *token))
             .reduce(later_of)
         {
@@ -4867,7 +4887,7 @@ fn token_standing_for(tokens: &[RefusalToken], frames: &[RefusalFrame]) -> Optio
     }
     // The one fallback in this module is MINTING: every reader of the registry answers the newest token
     // of a text no live run owns a token of, so a reader by the token and a reader by the text agree.
-    tokens.iter().copied().fold(None, |kept, token| {
+    tokens.fold(None, |kept, token| {
         crate::rules::eval::later_token(kept, Some(token), &crate::rules::eval::no_frame_ranking)
     })
 }
@@ -4944,13 +4964,15 @@ pub(crate) fn registered_refusal_texts_containing(needle: &str) -> Vec<String> {
 /// mint is returned, as `register_refusal` does.
 pub(crate) fn ensure_registered(text: &str, token: Option<RefusalToken>) -> RefusalToken {
     let stored = registered_tokens_in_any_live_registry(text);
-    let mut candidates = stored.clone();
-    candidates.extend(token);
-    // The caller's own token: the one the innermost live run that owns any candidate reads as its own,
-    // else the later by minting. The marker the caller builds carries it, so a nested run's marker never
-    // carries a token of a run it is not (`token_standing_for`).
-    let kept =
-        token_standing_for(&candidates, &live_run_frames()).unwrap_or_else(mint_refusal_token);
+    // The caller's own token: the one the innermost live run that owns any candidate (the stored tokens
+    // and the marker's own) reads as its own, else the later by minting. The marker the caller builds
+    // carries it, so a nested run's marker never carries a token of a run it is not
+    // (`token_standing_for`).
+    let kept = LIVE_RUN_FRAMES
+        .with(|frames| {
+            token_standing_for_iter(stored.iter().copied().chain(token), &frames.borrow())
+        })
+        .unwrap_or_else(mint_refusal_token);
     // The newest registry is written only where the token kept is NEW to the registries (the marker's
     // own later token, or a mint): a token merely RECOVERED from a live registry is returned and never
     // copied into the newest one. The comparison did meet the read here, so the text is this
@@ -4990,12 +5012,13 @@ pub(crate) fn ensure_registered(text: &str, token: Option<RefusalToken>) -> Refu
 /// returned.
 pub(crate) fn ensure_registered_wrap(text: &str, token: Option<RefusalToken>) -> RefusalToken {
     let stored = registered_tokens_in_any_live_registry(text);
-    let mut candidates = stored.clone();
-    candidates.extend(token);
     // The fallback is by minting (`no_frame_ranking`), as `ensure_registered` and every other reader of
     // the registry fall back: a wrap text no live run owns a token of takes the later-minted.
-    let token =
-        token_standing_for(&candidates, &live_run_frames()).unwrap_or_else(mint_refusal_token);
+    let token = LIVE_RUN_FRAMES
+        .with(|frames| {
+            token_standing_for_iter(stored.iter().copied().chain(token), &frames.borrow())
+        })
+        .unwrap_or_else(mint_refusal_token);
     // As in `ensure_registered`: the caller's own token is returned, and written only where it is new.
     if !stored.contains(&token) {
         write_registry_token(text, token);
@@ -5039,7 +5062,15 @@ fn registered_tokens_in_any_live_registry(text: &str) -> Vec<RefusalToken> {
 /// token the run neither owns nor was handed, so a reader by the token and a reader by the text could
 /// answer differently.
 fn registered_token_for_runs(text: &str, frames: &[RefusalFrame]) -> Option<RefusalToken> {
-    token_standing_for(&registered_tokens_in_any_live_registry(text), frames)
+    // Read in place: the newest registry that holds the text answers, and its list is not copied.
+    REFUSALS.with(|refusals| {
+        refusals
+            .borrow()
+            .iter()
+            .rev()
+            .find_map(|(_, registry)| registry.get(text))
+            .and_then(|tokens| token_standing_for(tokens, frames))
+    })
 }
 
 /// The refusal token a REGISTERED text stands for, for a site that holds the text and no error around it:
@@ -5063,7 +5094,9 @@ pub(crate) fn token_of_registered(
     text: &str,
     ranking: crate::rules::eval::Ranking<'_>,
 ) -> Option<RefusalToken> {
-    token_of_registered_for_runs(text, &live_run_frames(), ranking)
+    // The live runs are borrowed in place (`ranking` is a pure function of a token and borrows nothing
+    // mutably).
+    LIVE_RUN_FRAMES.with(|frames| token_of_registered_for_runs(text, &frames.borrow(), ranking))
 }
 
 /// [`token_of_registered`] for a caller that holds the frames of the runs it reads for and not a ranking
@@ -12277,9 +12310,11 @@ fn run_filter_predicate<'value, 'loc: 'value>(
         // (`a_named_map_refusal_inside_a_filter_predicate_fails_the_whole_selection_closed`: a
         // compliant one-object policy under the set-of-violators
         // spelling is refused too, and a list-shaped sibling is not decided past it), and the refused
-        // capture's warning is written once. Routing it to this entry's marker instead (so a STRICT
-        // clause nested in the predicate, a block body `[ this { %y != /re/ } ]`, takes the refusal per
-        // entry with its siblings tested) was cut and measured: it moved twenty-one pinned rows of three
+        // capture's warning is written once. Routing it to this entry's marker instead (so a block body
+        // nested in the predicate, `[ this { %y != /re/ } ]`, which runs in the filter role like the
+        // predicate itself (a block's body clauses inherit the block's role, and only the assertion role is
+        // strict, so no leaf FAIL reaches the predicate's frame and `settle_predicate_frame`'s assertion
+        // holds), takes the refusal per entry with its siblings tested) was cut and tried: it moved twenty-one pinned rows of three
         // landed cells (nine of the named-map cell, four of the refused-capture cell, eight of the
         // sibling-settles cell, whose warnings doubled and whose wording moved), so that routing is a
         // ruling over those cells and is not made here; the nested strict clause's refusal fails the
@@ -25046,6 +25081,8 @@ pub(crate) fn root_scope_with<'value, 'loc: 'value>(
         #[cfg(test)]
         undecided_reads_entries: 0,
         #[cfg(test)]
+        undecided_reads_exits: 0,
+        #[cfg(test)]
         held_fails_entries: 0,
         #[cfg(test)]
         allow_repend: false,
@@ -25555,6 +25592,13 @@ impl<'value, 'loc: 'value> RootScope<'value, 'loc> {
         self.undecided_reads_entries
     }
 
+    /// How many times `undecided_reads_decided` took its `read_entries == 0` exit over the evaluation
+    /// (`undecided_reads_exits`).
+    #[cfg(test)]
+    pub(crate) fn undecided_reads_exits(&self) -> usize {
+        self.undecided_reads_exits
+    }
+
     /// How many times `held_fails_judged` was entered over the evaluation (`held_fails_entries`).
     #[cfg(test)]
     pub(crate) fn held_fails_entries(&self) -> usize {
@@ -25990,6 +26034,10 @@ impl<'value, 'loc: 'value> EvalContext<'value, 'loc> for RootScope<'value, 'loc>
             self.undecided_reads_entries += 1;
         }
         if self.read_entries == 0 {
+            #[cfg(test)]
+            {
+                self.undecided_reads_exits += 1;
+            }
             return;
         }
         #[cfg(test)]
@@ -31145,13 +31193,200 @@ pub(crate) struct Messages {
 /// The parts of a clause record's sentence (`Messages::parts`): `head`, the report builder's wording,
 /// and `message`, the evaluator's message the sentence carries in its bracketed tail, each as written,
 /// so `head` plus the tail the builder wraps `message` in is the record's `error_message` byte for byte.
-#[derive(Clone, Debug, Default, PartialEq)]
+/// A RULE or BLOCK record whose sentence gained refusals carries the parts in another shape: `head` the
+/// sentence the record failed on, and the refusals joined to it in three groups, each whole: the refusals the
+/// record's OWN failed condition met (`condition`), the refusals a failed condition NESTED beneath it met
+/// when they are joined at a rule (`nested`) and the refusals of its BODY or clauses that no entry names
+/// (`marks`). `message` is the refusals alone, the groups in that order joined by `; `, with no joiner text
+/// inside. The record's sentence is `head`, then [`ALSO_MET`] and the condition refusals when there are any,
+/// then [`NESTED_ALSO_MET`] and the nested ones, then [`BODY_ALSO_MET`] and the marks when there are any
+/// (`SentenceParts::refusals_text`), whatever the head's kind (the record's `refusal` flag says it: a plain head is cut at the recorded-message bound by the
+/// console, a refusal's head is held to the refusal bound). `join` says which shape the parts are in and,
+/// for refusals, WHICH of the record's two message slots holds the joined sentence, so a reader never infers
+/// either by rebuilding the sentence and comparing strings. There is no default: a builder names the shape
+/// through a constructor (`clause`, `refusals_beside`, `refusals_beside_groups`), and the fields are read
+/// through accessors.
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) struct SentenceParts {
-    pub(crate) head: String,
-    pub(crate) message: String,
+    head: String,
+    /// The refusals alone: the condition's, the nested conditions' and then the marks', joined by `; `.
+    message: String,
+    /// The refusals the record's own failed condition met, joined by `; `; empty when there are none.
+    condition: String,
+    /// The refusals a failed condition nested beneath the record met, joined at a rule by `; `; empty when
+    /// there are none.
+    nested: String,
+    /// The refusals of the body or the clauses no entry names, joined by `; `; empty when there are none.
+    marks: String,
+    join: PartsJoin,
+}
+
+/// How the parts of a [`SentenceParts`] join into the record's sentence.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum PartsJoin {
+    /// A clause record: the head, an opener, the message and a closing bracket (`SentenceParts::joined`).
+    Clause,
+    /// A rule's or block's sentence that gained refusals: the head, then the three groups in order, each
+    /// behind its own joiner when it is not empty: the record's own condition's refusals behind
+    /// [`ALSO_MET`], the nested conditions' behind [`NESTED_ALSO_MET`] and the marks of clauses behind
+    /// [`BODY_ALSO_MET`] (`SentenceParts::refusals_text`), held in the record's `slot` of the two message
+    /// slots.
+    Refusals { slot: SentenceSlot },
+}
+
+/// Which of a record's two message slots (`Messages::custom_message`, `Messages::error_message`) holds a
+/// sentence.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SentenceSlot {
+    Custom,
+    Error,
 }
 
 impl SentenceParts {
+    /// The parts of a clause record's sentence: `head`, and the evaluator's `message` the sentence carries
+    /// in its bracketed tail.
+    pub(crate) fn clause(head: &str, message: &str) -> Self {
+        SentenceParts {
+            head: head.to_string(),
+            message: message.to_string(),
+            condition: String::new(),
+            nested: String::new(),
+            marks: String::new(),
+            join: PartsJoin::Clause,
+        }
+    }
+
+    /// The parts of a rule's or block's sentence that gained `refusals` beyond `head`, all of them refusals
+    /// of a failed condition, held in `slot` of the record's two message slots. The slot is a required
+    /// argument: a builder that forgot it would leave a reader looking in the other slot, which finds no
+    /// joined sentence and falls back to the single-kind pipeline (a plain head cut at the plain bound,
+    /// taking the refusal's remedy with it).
+    #[cfg(test)]
+    pub(crate) fn refusals_beside(head: &str, refusals: &str, slot: SentenceSlot) -> Self {
+        Self::refusals_beside_groups(head, refusals, "", "", slot)
+    }
+
+    /// [`SentenceParts::refusals_beside`] with the three groups named: `condition`, the refusals the record's
+    /// own failed condition met, `nested`, the refusals a failed condition nested beneath it met (joined at
+    /// a rule), and `marks`, the refusals of the body or the clauses no entry names, which no condition met.
+    /// Any may be empty.
+    pub(crate) fn refusals_beside_groups(
+        head: &str,
+        condition: &str,
+        nested: &str,
+        marks: &str,
+        slot: SentenceSlot,
+    ) -> Self {
+        // A join with no refusal in any group would build a joiner with nothing after it. The fields are
+        // private and this is the only constructor of the shape, so `message` is always the groups joined
+        // here and cannot drift from them.
+        debug_assert!(
+            !condition.is_empty() || !nested.is_empty() || !marks.is_empty(),
+            "a refusals join holds at least one refusal (head {:?})",
+            head
+        );
+        let message = [condition, nested, marks]
+            .iter()
+            .filter(|group| !group.is_empty())
+            .copied()
+            .collect::<Vec<_>>()
+            .join("; ");
+        SentenceParts {
+            head: head.to_string(),
+            message,
+            condition: condition.to_string(),
+            nested: nested.to_string(),
+            marks: marks.to_string(),
+            join: PartsJoin::Refusals { slot },
+        }
+    }
+
+    /// The texts of the three groups in the order the joiners read ([`SENTENCE_JOINERS`]): the condition's,
+    /// the nested conditions', the marks'. Typed by the same length constant as the joiner list
+    /// (`SENTENCE_JOINER_COUNT`), so a joiner added to the list without its group here is a type error.
+    fn group_texts(&self) -> [&str; SENTENCE_JOINER_COUNT] {
+        [
+            self.condition.as_str(),
+            self.nested.as_str(),
+            self.marks.as_str(),
+        ]
+    }
+
+    /// The non-empty groups with the joiner each sits behind, in sentence order ([`SENTENCE_JOINERS`], the
+    /// one list of the three joiners, in the order the groups read, paired with `group_texts` by position;
+    /// both arrays have the length `SENTENCE_JOINER_COUNT`).
+    pub(crate) fn groups(&self) -> Vec<(&'static str, &str)> {
+        SENTENCE_JOINERS
+            .iter()
+            .copied()
+            .zip(self.group_texts().iter().copied())
+            .filter(|(_, group)| !group.is_empty())
+            .collect()
+    }
+
+    /// What stands between the head and the first group of a refusals join: [`ALSO_MET`] when there are
+    /// condition refusals, else [`NESTED_ALSO_MET`] when there are nested ones, else [`BODY_ALSO_MET`].
+    pub(crate) fn joiner(&self) -> &'static str {
+        self.groups()
+            .first()
+            .map_or(BODY_ALSO_MET, |(joiner, _)| *joiner)
+    }
+
+    /// The text after the first joiner: the first group, then each later group behind its own joiner. The
+    /// console bounds this text once.
+    pub(crate) fn listed(&self) -> String {
+        let groups = self.groups();
+        let mut text = String::new();
+        for (index, (joiner, group)) in groups.iter().enumerate() {
+            if index > 0 {
+                text.push_str(joiner);
+            }
+            text.push_str(group);
+        }
+        text
+    }
+
+    pub(crate) fn head(&self) -> &str {
+        &self.head
+    }
+
+    /// For a refusals join: the refusals alone, all three groups and no joiner text (the condition's, the
+    /// nested conditions', then the marks'), always joined by `; ` (see `refusals_beside_groups`). For a clause record
+    /// (`PartsJoin::Clause`): the evaluator's message the sentence carries in its bracketed tail.
+    pub(crate) fn message(&self) -> &str {
+        &self.message
+    }
+
+    pub(crate) fn join(&self) -> PartsJoin {
+        self.join
+    }
+
+    /// The refusals the record's own failed condition met, joined by `; `; empty when there are none.
+    #[cfg(test)]
+    pub(crate) fn condition(&self) -> &str {
+        &self.condition
+    }
+
+    /// The refusals a failed condition nested beneath the record met, joined by `; `; empty when none.
+    #[cfg(test)]
+    pub(crate) fn nested(&self) -> &str {
+        &self.nested
+    }
+
+    /// The refusals of the body or the clauses that no entry names, joined by `; `; empty when none.
+    #[cfg(test)]
+    pub(crate) fn marks(&self) -> &str {
+        &self.marks
+    }
+
+    /// The sentence a refusals join makes, whole and raw: the head, then [`ALSO_MET`] and the condition
+    /// refusals when there are any, then [`NESTED_ALSO_MET`] and the nested conditions' refusals when there
+    /// are any, then [`BODY_ALSO_MET`] and the marks when there are any ([`SENTENCE_JOINERS`], in that
+    /// order).
+    pub(crate) fn refusals_text(&self) -> String {
+        format!("{}{}{}", self.head, self.joiner(), self.listed())
+    }
+
     /// The sentence these parts join into: the head, then the message wrapped in `opener` and a closing
     /// bracket, as the arm that built the record writes it (` Error = [` for the comparison arms,
     /// `Error = [` with no space for the unary arm).
@@ -31171,10 +31406,7 @@ pub(crate) fn joined_sentence(
     message: Option<&String>,
     opener: &str,
 ) -> (String, Option<SentenceParts>) {
-    let parts = message.map(|message| SentenceParts {
-        head: head.to_string(),
-        message: message.to_string(),
-    });
+    let parts = message.map(|message| SentenceParts::clause(head, message));
     let sentence = match &parts {
         Some(parts) => parts.joined(opener),
         None => head.to_string(),
@@ -31487,7 +31719,7 @@ pub(crate) struct RuleReport<'value> {
     /// Whose text the rule record's `messages.custom_message` holds (`NamedStatus::slot`, copied here
     /// where the report is built): the rule author's own `<< >>` body copied onto a called rule, the
     /// evaluator's sentence, or a refusal's. The console picks the escape set and the cut of the slot from
-    /// it (`reporters::validate::common::rule_line_texts`). `messages.refusal` says the kind of the
+    /// it (`reporters::validate::common::rule_line_parts`). `messages.refusal` says the kind of the
     /// EVALUATOR's text on the report, as it does on every other report: the custom message when the slot
     /// is the evaluator's or a refusal's, the error message when the slot is the author's and the call's
     /// body displaced the rule's own sentence (`NamedStatus::displaced`). Not part of the serialized report.
@@ -31684,25 +31916,50 @@ impl<'value> ClauseReport<'value> {
     /// rule says anything: a rule that failed on its own `when`, or a called rule whose call carries a
     /// `<< >>` body, has no clause finding to speak for it, and its record is the only account of the
     /// failure (`RuleReport::own_messages`). A rule with a check that carries a text keeps `get_message`'s
-    /// answer: the clauses speak for it. For the JUnit report, which reads these into the failure element;
-    /// `get_message` itself is unchanged for the readers that count clause findings (the SARIF results).
+    /// answer: the clauses speak for it. For the JUnit report, which reads these into the failure element,
+    /// and for the SARIF results, so a failing rule is never absent from either report and a refusal its
+    /// condition met reaches both (`sarif::SarifResults::from`); `get_message` itself is unchanged for the
+    /// readers that count clause findings, and no reporter reads it for a rule's results.
     pub(crate) fn get_message_with_rule_records(&self) -> Vec<Messages> {
+        self.get_message_with_rule_records_by_level()
+            .into_iter()
+            .map(|(messages, _)| messages)
+            .collect()
+    }
+
+    /// [`ClauseReport::get_message_with_rule_records`] with, beside each message, whether it is a RULE-LEVEL
+    /// one: the rule's own record, a result of its own where no check beneath speaks
+    /// (`RuleReport::own_messages`), as against the messages of the clauses and blocks beneath. The SARIF
+    /// reporter writes the two differently (`sarif::sarif_text`): a clause or block
+    /// result keeps its text byte for byte, and only a rule-level result takes the join without a trailing
+    /// separator. The level is decided HERE, where the result is built, and never from whether a field is
+    /// `None`.
+    pub(crate) fn get_message_with_rule_records_by_level(&self) -> Vec<(Messages, bool)> {
         match self {
             ClauseReport::Rule(rule) => {
                 // Walked once: the walk descends through every nested rule, which asks its own subtree
                 // the same question, so a second walk here would double the work at every level.
+                // The levels come with the messages from the walk below, so a NESTED rule's own record
+                // (a parameterized rule failing on its own `when`, a call with a body over a silent block)
+                // is rule-level at its depth too: a rule's own record is rule-level wherever the rule sits.
                 let from_checks = rule.messages_of_checks();
                 match (speaks_for_itself(&from_checks), rule.own_messages()) {
-                    (true, Some(own)) => vec![own],
+                    (true, Some(own)) => vec![(own, true)],
+                    // The checks speak: the rule's own record is not read beside them (the body is no
+                    // answer), and the body marks no entry names are an entry of `checks` themselves.
                     _ => from_checks,
                 }
             }
             ClauseReport::Disjunctions(disjunctions) => disjunctions
                 .checks
                 .iter()
-                .flat_map(ClauseReport::get_message_with_rule_records)
+                .flat_map(ClauseReport::get_message_with_rule_records_by_level)
                 .collect(),
-            ClauseReport::Block(_) | ClauseReport::Clause(_) => self.get_message(),
+            ClauseReport::Block(_) | ClauseReport::Clause(_) => self
+                .get_message()
+                .into_iter()
+                .map(|each| (each, false))
+                .collect(),
         }
     }
 }
@@ -31717,15 +31974,21 @@ thread_local! {
 /// Whether a rule is the only account of its failure, given the messages of the checks under it
 /// (`RuleReport::messages_of_checks`): none carries a text, so the rule's own record is what explains it.
 /// A rule with no check at all is the plain case (a rule that failed on its own `when`); a rule whose
-/// checks are all silent, blocks with empty messages, is the same. The one test for the readers that
+/// checks are all silent, blocks with empty messages, is the same. A rule that failed on its own `when`
+/// has no check at all only when it carries a message: the walker (`rule_checks`) leaves its failed
+/// condition unwalked then, and walks it for a message-less failed rule, whose checks are the condition's
+/// raise-carrying records (`condition_records`), so such a rule is recognized by what they say. A call's
+/// `<< >>` body over a silent failing block is the same plain case: the rule has a text of its own, the walker
+/// lists no generic entry for the silent child (`rule_checks`), and the body is the failure text. The one test for the readers that
 /// have no per-resource rendering of the checks beside the rule's own record: the JUnit failure text
 /// (`ClauseReport::get_message_with_rule_records`). The console's unattributed section asks the narrower
-/// question, whether the rule has no check at all (`validate::common::collect_unattributed_explanations`),
+/// question, whether no block or clause beneath the rule is rendered per resource, looking through
+/// disjunctions and called rules (`validate::common::collect_unattributed_explanations`),
 /// because its per-resource output renders the silent checks under a `Rule =` block that prints the
 /// rule's own message already. A blank text is no text (`rules::non_blank`). It takes the messages the
 /// caller already collected, so that the subtree is walked once for the answer and the messages together.
-fn speaks_for_itself(messages_of_checks: &[Messages]) -> bool {
-    messages_of_checks.iter().all(|each| {
+fn speaks_for_itself(messages_of_checks: &[(Messages, bool)]) -> bool {
+    messages_of_checks.iter().map(|(each, _)| each).all(|each| {
         super::non_blank(&each.custom_message).is_none()
             && super::non_blank(&each.error_message).is_none()
     })
@@ -31734,12 +31997,12 @@ fn speaks_for_itself(messages_of_checks: &[Messages]) -> bool {
 impl<'value> RuleReport<'value> {
     /// The messages of the checks under this rule, a nested rule contributing its own record where its
     /// checks say nothing (`ClauseReport::get_message_with_rule_records`).
-    fn messages_of_checks(&self) -> Vec<Messages> {
+    fn messages_of_checks(&self) -> Vec<(Messages, bool)> {
         #[cfg(test)]
         MESSAGE_WALKS.with(|walks| walks.set(walks.get() + 1));
         self.checks
             .iter()
-            .flat_map(ClauseReport::get_message_with_rule_records)
+            .flat_map(ClauseReport::get_message_with_rule_records_by_level)
             .collect()
     }
 
@@ -31937,25 +32200,47 @@ fn an_own_value_check_reports(record: &EventRecord<'_>) -> bool {
 pub(crate) fn report_all_failed_clauses_for_rules<'value>(
     checks: &[EventRecord<'value>],
 ) -> Vec<ClauseReport<'value>> {
-    report_failed_clauses(checks, true)
+    report_failed_clauses(checks, true, false)
 }
 
 /// [`report_all_failed_clauses_for_rules`] with the generic fallback sentence ("the block clause failed,
 /// and none of the checks recorded under it reports why") made optional: a failing block whose children
 /// report nothing and whose record has no message of its own is listed by that sentence only where
-/// `generic_fallback` holds. The rule level asks for it, so a rule that fails is never listed with empty
-/// checks. A parent that can carry a message of its own (a block, a disjunction, a `when` or type block)
+/// `generic_fallback` holds. The rule level asks for it unless the rule has a text of its own (a call's
+/// body, the evaluator's sentence), so a rule that fails is never listed with empty checks AND no text. A parent that can carry a message of its own (a block, a disjunction, a `when` or type block)
 /// walks its children in ONE pass with the fallback allowed only where it has no message
 /// (`generic_fallback && message.is_none()`): its own message beats a silent child's generic sentence, and
 /// with no message every silent failing child is listed. The parents that pass the caller's flag through
 /// whatever they hold are the access clause's block record (`GuardClauseBlockCheck`, which reports its own
 /// message after its children), a failed rule condition and a type block record with a bare status.
+///
+/// `marks_told_above` says a record above tells the gate marks beneath the records that write no sentence
+/// of their own, and that those records therefore defer them (write no marks-only entry). It has two
+/// sources: a rule with a text of its own (a call's `<< >>` body or the evaluator's sentence), which joins
+/// them to its sentence or lists them as one entry of its `checks` (`rule_refusals`), and an access clause
+/// that writes its own entry, which joins them to its message (`grouped_untold_refusals`). A record with a
+/// sentence of its own hands its children `false`: it tells nothing beneath it by deferral.
+///
+/// Which records this function recurses into with their original children (a failed block, disjunction,
+/// access clause, `when`, type block and `TypeBlock`; the arms below) is mirrored by `stoppable_beneath`,
+/// which the marks walk reads; which it still reaches through a condition's filtered copy (a failed rule or
+/// type condition, `condition_records`) is mirrored by `reached_beneath`. A failed `RuleCheck` is reported as
+/// its own run (the `RuleCheck` arm) and is in neither list: the walk enters it only where the reporter does
+/// not reach it (`marks_walk_descends`). A change to one list is a change to the other, and the cell
+/// `the_reporters_descent_and_the_walks_stoppable_flag_agree_on_every_failed_record_kind` fails if they differ.
 fn report_failed_clauses<'value>(
     checks: &[EventRecord<'value>],
     generic_fallback: bool,
+    marks_told_above: bool,
 ) -> Vec<ClauseReport<'value>> {
     let mut clauses = Vec::with_capacity(checks.len());
     for current in checks {
+        // A gate role's mark names its refusal for the sentence walk alone, and a block's entry carries
+        // the refusals of its marks (`marked_refusals_beneath`); the mark is never an entry of its own, so the
+        // clause inside the body that recorded the reason is not listed beside it twice.
+        if is_gate_mark(current) {
+            continue;
+        }
         match &current.container {
             Some(RecordType::RuleCheck(NamedStatus {
                 name,
@@ -31963,36 +32248,188 @@ fn report_failed_clauses<'value>(
                 message,
                 slot,
                 displaced,
+                frame_reads,
+                ended_by_error,
             })) => {
                 // A call with a body reports the body as the custom message and keeps the rule's own
                 // sentence, the one the body displaced, as the error message with its kind; a record
                 // with nothing displaced reports its one message as the custom message, as before. The
                 // flag on the messages is the error message's kind in the first case and the one
                 // message's in the second, so a generic reader of a `Messages` reads the right bound.
-                let (error_message, refusal) = match displaced {
-                    Some((kind, sentence)) => {
-                        (Some(sentence.clone()), *kind == super::CustomSlot::Refusal)
+                //
+                // The condition's other refusals join the EVALUATOR's sentence and never the author's body:
+                // the displaced sentence when there is one, else the message when its slot is not the
+                // author's.
+                //
+                // The kind of the sentence does not change when refusals are joined to it: the verdict
+                // was the plain error's, so the record stays the plain error's, and the appended
+                // refusals ride as the second of the two `Messages::parts` (the sentence whole, the
+                // refusals whole), each bounded by its own kind at the console alone.
+                //
+                // A rule with a text of its own also tells the refusals beneath it that no entry of its
+                // `checks` names (`rule_refusals`): it lists no entry for a silent child. Where the checks
+                // are all silent the sentence it writes is the only place for them (a nested condition's
+                // refusals behind the nested joiner, clause marks behind the body joiner, each once);
+                // where the checks speak, readers take the checks and not the sentence, so they are one
+                // entry of the checks (`refusals_alone_entry`) and the sentence joins only the rule's own
+                // condition's refusals.
+                let has_text = super::non_blank(message).is_some() || displaced.is_some();
+                let mut checks = rule_checks(&current.children, has_text);
+                let (own, nested, body) = rule_refusals(&current.children, &checks, has_text);
+                // Refusals beneath the rule that no entry of `checks` names (a nested condition's, and the
+                // marks of clauses). When the checks already say something of their own, every reader takes
+                // the checks and not the rule's record, so these are an entry of `checks` (the refusals
+                // alone, whole, flagged refusals) and the sentence joins only the rule's own condition's
+                // refusals: the body is no reader's answer (the readers return the checks) and each
+                // refusal is read once in every format. When the checks are all silent the rule's
+                // sentence is the only account: it joins
+                // the rule's own condition's refusals behind the condition joiner, a nested condition's
+                // behind the nested joiner and the clause marks behind the body joiner.
+                let checks_speak = !speaks_for_itself(
+                    &checks
+                        .iter()
+                        .flat_map(ClauseReport::get_message_with_rule_records_by_level)
+                        .collect::<Vec<_>>(),
+                );
+                let beneath_the_rule = !(nested.is_empty() && body.is_empty());
+                let (condition, nested, body, marks_entry) = match checks_speak && beneath_the_rule
+                {
+                    true => {
+                        let mut untold = nested;
+                        extend_refusals(&mut untold, body);
+                        // The entry's context is the record that carries one of the refusals the entry
+                        // lists (`context_of_untold`: a gate mark, or a failed `when` or type block whose
+                        // condition met it), never the rule's own name (a block a reader could not tell
+                        // from a real one): every untold refusal comes from such a record, so the name is
+                        // a fallback no input reaches, and a debug build says so when it is reached.
+                        let found = context_of_untold(&current.children, &untold);
+                        debug_assert!(
+                            found.is_some(),
+                            "the untold refusals {:?} beneath a rule come from a record that carries them",
+                            untold
+                        );
+                        let context = found.unwrap_or_else(|| current.context.clone());
+                        let entry = refusals_alone_entry(&context, &untold, &None);
+                        (own, Vec::new(), Vec::new(), Some(entry))
                     }
-                    None => (None, *slot == super::CustomSlot::Refusal),
+                    false => (own, nested, body, None),
                 };
-                // A rule's checks always allow the generic fallback, whatever the caller passed: a rule run
-                // recorded under a reference or a call inside a block or a `when` body is reached through
-                // a parent that has a message of its own and so walks its children without the fallback, and a failing
-                // rule listed with empty checks explains nothing.
+                checks.extend(marks_entry);
+                let (error_message, refusal, custom_message, custom_slot, joined_parts) =
+                    match (displaced, message) {
+                        (Some((kind, sentence)), _) => {
+                            let (text, parts) = join_rule_refusals(
+                                sentence,
+                                condition.clone(),
+                                nested.clone(),
+                                body.clone(),
+                                SentenceSlot::Error,
+                            );
+                            (
+                                Some(text),
+                                *kind == super::CustomSlot::Refusal,
+                                message.clone(),
+                                *slot,
+                                parts,
+                            )
+                        }
+                        (None, Some(text)) if *slot != super::CustomSlot::Author => {
+                            // The sentence is the message here, in the custom slot.
+                            let (joined_text, parts) = join_rule_refusals(
+                                text,
+                                condition.clone(),
+                                nested.clone(),
+                                body.clone(),
+                                SentenceSlot::Custom,
+                            );
+                            (
+                                None,
+                                *slot == super::CustomSlot::Refusal,
+                                Some(joined_text),
+                                *slot,
+                                parts,
+                            )
+                        }
+                        // A body with no evaluator sentence beside it (the rule failed with the body on its
+                        // call and no sentence of its own): the refusals its failed condition met and the
+                        // marks of its body are the report's error message, joined under a head the
+                        // record's own account chooses; the kind is a plain error's (the flag is false).
+                        (None, Some(_)) if *slot == super::CustomSlot::Author => {
+                            // The evaluator wrote no sentence here, so the rule did NOT fail on an
+                            // unevaluatable condition (that case displaces a sentence). Either an error
+                            // ended the run (the record was closed on the body's `Err`,
+                            // `NamedStatus::ended_by_error`) or the body decided a plain FAIL; the refusals
+                            // and marks are told beside that fact. The kind is a plain error's, so the flag
+                            // is false and the refusals are carried whole as the second part
+                            // (`Messages::parts`).
+                            //
+                            // The refusals of the rule's own failed condition follow "the condition also
+                            // met", those of a nested condition "a nested condition also met", and the
+                            // marks of the body "a body clause also met", since no condition met them
+                            // (`join_rule_refusals`).
+                            let texts = |named: &[NamedRefusal]| -> Vec<String> {
+                                named.iter().map(|(text, _)| text.clone()).collect()
+                            };
+                            //
+                            // The head that says an error ended the evaluation
+                            // (`RULE_FAILED_ON_AN_ERROR_HEAD`) is chosen by the record's own account of
+                            // that, whatever the refusal lists hold; a rule that failed without one claims
+                            // only that it failed.
+                            let head = match ended_by_error {
+                                true => RULE_FAILED_ON_AN_ERROR_HEAD,
+                                false => RULE_FAILED_HEAD,
+                            };
+                            match rule_sentence_with(
+                                head,
+                                texts(&condition),
+                                texts(&nested),
+                                texts(&body),
+                                SentenceSlot::Error,
+                            ) {
+                                (_, None) => (None, false, message.clone(), *slot, None),
+                                (text, parts) => (Some(text), false, message.clone(), *slot, parts),
+                            }
+                        }
+                        (None, _) => (
+                            None,
+                            *slot == super::CustomSlot::Refusal,
+                            message.clone(),
+                            *slot,
+                            None,
+                        ),
+                    };
+                // A rule's checks allow the generic fallback whatever the caller passed, unless the rule
+                // has a text of its own (`rule_checks`): a rule run recorded under a reference or a call
+                // inside a block or a `when` body is reached through a parent that has a message of its
+                // own and so walks its children without the fallback, and a failing rule with no text and
+                // empty checks explains nothing. A rule WITH a text (a call's body, the evaluator's
+                // sentence) is explained by it, and its silent child's generic sentence is not listed.
+                // The reads the rule's own `when` converted into its FAIL (`eval::convert_condition_raise`)
+                // are told by the texts this arm wrote or by an entry it lists: a read nobody tells would
+                // be written nowhere, as no refused-read line is written for it. The texts are the ones
+                // WRITTEN on the path taken (the joined sentence, with the refusals joined to it, and the
+                // body), not the walk of the condition: a path that joins nothing credits nothing.
+                assert_frame_reads_told(
+                    "a rule's own `when`",
+                    frame_reads,
+                    &[
+                        error_message.as_deref().unwrap_or(""),
+                        custom_message.as_deref().unwrap_or(""),
+                    ],
+                    None,
+                    &checks,
+                );
                 clauses.push(ClauseReport::Rule(RuleReport {
                     name,
-                    checks: rule_checks(
-                        &current.children,
-                        message.is_some() || displaced.is_some(),
-                    ),
+                    checks,
                     messages: Messages {
-                        custom_message: message.clone(),
+                        custom_message,
                         error_message,
                         location: None,
                         refusal,
-                        parts: None,
+                        parts: joined_parts,
                     },
-                    custom_slot: *slot,
+                    custom_slot,
                     ..Default::default()
                 }));
             }
@@ -32001,34 +32438,94 @@ fn report_failed_clauses<'value>(
                 status: Status::FAIL,
                 message,
                 refusal,
+                raised,
                 custom_message,
                 ..
             })) => {
-                if current.children.is_empty() {
-                    clauses.push(ClauseReport::Block(GuardBlockReport {
+                // The gate role's marks (one childless refused-body record per refused value, told by
+                // their `gate_mark` field, `is_gate_mark`) are never entries of their own: a block with N
+                // refused body values lists ONE entry, its own. Their refusals, the DEEP ones beneath it
+                // (through message-less child blocks), are told where the block is listed: joined to its
+                // message when it has one and does not already carry them, as its sentence when it has
+                // none. A block that is neither listed with a message nor allowed the generic fallback is
+                // a silent child of a PARENT THAT SPEAKS (a type block, an inline `when`, a disjunction, a
+                // block or a rule with a sentence of its own): it computes none, and that parent tells the
+                // deep marks beneath it, joined to its own message when that is its only entry and as an
+                // entry of their own beside the entries beneath otherwise (`marks_alone_entry`). The
+                // parent's sentence is never repeated for them. Either way each distinct refusal is told
+                // once and never silently.
+                //
+                // A message-less block under a record that tells the marks itself (`marks_told_above`: a rule
+                // with a text, or an access clause that writes its own entry) defers them as every other
+                // arm does, whatever the fallback says: it lists no marks-only entry, so each refusal is
+                // told once, by the record above.
+                let defers = marks_told_above && message.is_none();
+                // The refusals beneath the block in the two groups its sentence words apart
+                // (`marked_refusals_by_group`): those read under a failed condition nested beneath it (a
+                // nested `when`'s, or an unreached record's: a condition refusal wherever it is joined,
+                // behind the nested joiner) and the marks of its clauses (behind the body joiner).
+                let (marked_nested, marked_body) =
+                    match (generic_fallback || message.is_some()) && !defers {
+                        true => marked_refusals_by_group(&current.children),
+                        false => (Vec::new(), Vec::new()),
+                    };
+                let has_children = current.children.iter().any(|child| !is_gate_mark(child));
+                let entry_of = |message: Option<&String>,
+                                nested: &[NamedRefusal],
+                                marks: &[NamedRefusal],
+                                fallback: &str| {
+                    let (error_message, flag, parts) =
+                        block_sentence_with_marks(message, *refusal, nested, marks, fallback);
+                    ClauseReport::Block(GuardBlockReport {
                         context: current.context.clone(),
                         messages: Messages {
-                            // The record's own explanation when it carries one, with the generic
-                            // sentence below only as the fallback: ignoring `message` would report a
-                            // block that said precisely why it failed as though it had merely
-                            // selected nothing.
-                            error_message: Some(message.clone().unwrap_or_else(|| {
-                                String::from("query for block clause did not retrieve any value")
-                            })),
+                            error_message: Some(error_message),
                             custom_message: custom_message.clone(),
                             location: None,
-                            // The fallback sentence is no refusal's, whatever the record's own flag says.
-                            refusal: message.is_some() && *refusal,
-                            parts: None,
+                            refusal: flag,
+                            parts,
                         },
                         unresolved: None,
-                    }));
+                    })
+                };
+                if !has_children {
+                    // A raised record with no sentence of its own has only the generic sentence to
+                    // give, and that is listed only where the caller asked for it: under a parent
+                    // with a message of its own the parent speaks, as in the branch below (and the
+                    // marks beneath this block are that parent's to join, `marked` being empty here).
+                    //
+                    // A block that defers (`defers`) and has only gate marks beneath it is always a RAISED
+                    // record. The one writer of a `BlockGuardCheck` with `raised: false` and no message
+                    // that can hold marks, the tail of `eval_guard_block_clause` (the status folded over
+                    // the values), reaches FAIL only through a failing value that folded a basis (its
+                    // `debug_assert!` that a FAIL carries `fail_basis`), and that value's own record is a
+                    // child that is no mark; the other `raised: false` writer, the empty selection, has no
+                    // values and no marks. So a not-raised block here never defers with marks alone.
+                    if *raised && message.is_none() && (!generic_fallback || defers) {
+                        continue;
+                    }
+                    // The record's own explanation when it carries one, with a generic sentence below
+                    // only as the fallback: ignoring `message` would report a block that said precisely
+                    // why it failed as though it had merely selected nothing. A record written on a
+                    // RAISE that carries no sentence (its body or its marker raised, and the raise is
+                    // told elsewhere) never gets the retrieval sentence, which would be false: the query
+                    // retrieved values. It says what is true, as a silent block does.
+                    clauses.push(entry_of(
+                        message.as_ref(),
+                        &marked_nested,
+                        &marked_body,
+                        match raised {
+                            true => SILENT_BLOCK_SENTENCE,
+                            false => "query for block clause did not retrieve any value",
+                        },
+                    ));
                 } else {
                     let nested = report_failed_clauses(
                         &current.children,
                         generic_fallback && message.is_none(),
+                        marks_told_above && message.is_none(),
                     );
-                    if nested.is_empty() && (message.is_some() || generic_fallback) {
+                    if nested.is_empty() && (message.is_some() || (generic_fallback && !defers)) {
                         // A failing block whose children report nothing (every per-value record under
                         // it carries no message and no check of its own, as the record a refused
                         // selection settles before the block exits does) is reported by its own
@@ -32039,23 +32536,39 @@ fn report_failed_clauses<'value>(
                         // no refusal's, so it is flagged `refusal: false` whatever the record's
                         // own flag says; a refusal's sentence comes from the producer, which writes
                         // it on the record (the block's exit records), and keeps the flag with it.
-                        clauses.push(ClauseReport::Block(GuardBlockReport {
-                            context: current.context.clone(),
-                            messages: Messages {
-                                error_message: Some(
-                                    message
-                                        .clone()
-                                        .unwrap_or_else(|| String::from(SILENT_BLOCK_SENTENCE)),
-                                ),
-                                custom_message: custom_message.clone(),
-                                location: None,
-                                refusal: message.is_some() && *refusal,
-                                parts: None,
-                            },
-                            unresolved: None,
-                        }));
+                        clauses.push(entry_of(
+                            message.as_ref(),
+                            &marked_nested,
+                            &marked_body,
+                            SILENT_BLOCK_SENTENCE,
+                        ));
                     } else {
+                        // Entries beneath the block list their own reasons. The refusals of its marks
+                        // that none of those entries already carries (a body clause's clause-error
+                        // record names the same refusal its mark does) are the block's to tell, as an
+                        // entry of its own with no message of its own, when there are any; each once
+                        // across the two groups (`each_once`).
+                        //
+                        // The block's own sentence is told exactly once as well: written as its entry,
+                        // with the untold marks joined, unless an entry beneath already carries that text
+                        // (`sentence_told_by`). An entry that lists marks alone never tells it.
+                        let (untold_nested, untold_body) = each_once(
+                            &[],
+                            untold_by(&nested, marked_nested),
+                            untold_by(&nested, marked_body),
+                        );
+                        let own = message
+                            .as_ref()
+                            .filter(|sentence| !sentence_told_by(&nested, sentence));
                         clauses.extend(nested);
+                        if own.is_some() || !untold_nested.is_empty() || !untold_body.is_empty() {
+                            clauses.push(entry_of(
+                                own,
+                                &untold_nested,
+                                &untold_body,
+                                SILENT_BLOCK_SENTENCE,
+                            ));
+                        }
                     }
                 }
             }
@@ -32075,27 +32588,97 @@ fn report_failed_clauses<'value>(
                 refusal,
                 ..
             })) => {
-                let nested =
-                    report_failed_clauses(&current.children, generic_fallback && message.is_none());
+                // A record above that tells the marks (`marks_told_above`: a rule with a text, or an access
+                // clause that writes its own entry) takes the marks of records with no sentence of their own;
+                // a record that has a sentence tells the marks beneath it itself (`marked_refusals_beneath`
+                // stops at it), so what it hands its children is not deferred.
+                let nested = report_failed_clauses(
+                    &current.children,
+                    generic_fallback && message.is_none(),
+                    marks_told_above && message.is_none(),
+                );
                 if nested.is_empty() {
                     if let Some(explanation) = message {
+                        // The refusals beneath the disjunction join its own message (which names the one
+                        // error it held), as a rule's sentence takes them; the marks are no entries, and
+                        // the message is never replaced by theirs. The marks of the disjuncts' clauses,
+                        // which the sentence's held error did not meet, follow the body joiner; a refusal
+                        // read under a failed condition nested beneath (a nested `when`'s, an unreached
+                        // record's) is a condition refusal wherever it is joined and follows the nested
+                        // joiner (`marked_refusals_by_group`).
+                        let (under_conditions, clauses_marks) =
+                            marked_refusals_by_group(&current.children);
+                        let (error_message, parts) = join_rule_refusals(
+                            explanation,
+                            Vec::new(),
+                            under_conditions,
+                            clauses_marks,
+                            SentenceSlot::Error,
+                        );
                         clauses.push(ClauseReport::Block(GuardBlockReport {
                             context: current.context.clone(),
                             messages: Messages {
-                                error_message: Some(explanation.clone()),
+                                error_message: Some(error_message),
                                 custom_message: None,
                                 location: None,
                                 refusal: *refusal,
-                                parts: None,
+                                parts,
                             },
                             unresolved: None,
                         }));
                     }
                     continue;
                 }
+                // The deep marks none of its entries carries are an entry of their own, as for a type
+                // block (`marks_alone_entry`); the disjunction's sentence is never repeated for them. Under
+                // a record that tells them (`marks_told_above`, see the type block arm) that record does,
+                // and the entry is not written.
+                //
+                // The disjunction's own sentence (the error it held) is told once as well: written as an
+                // entry of its own, with the untold marks joined, unless an entry beneath already carries
+                // that text (`sentence_told_by`); a marks-only entry beneath never tells it.
+                let own = message
+                    .as_ref()
+                    .filter(|sentence| !sentence_told_by(&nested, sentence));
+                let entry = match (own, marks_told_above && message.is_none()) {
+                    (Some(sentence), _) => {
+                        // The untold refusals in the two groups the sentence words apart, each once across
+                        // them (`each_once`), as the nested-empty branch above joins them.
+                        let (under_conditions, clauses_marks) =
+                            marked_refusals_by_group(&current.children);
+                        let (untold_nested, untold_body) = each_once(
+                            &[],
+                            untold_by(&nested, under_conditions),
+                            untold_by(&nested, clauses_marks),
+                        );
+                        let (error_message, parts) = join_rule_refusals(
+                            sentence,
+                            Vec::new(),
+                            untold_nested,
+                            untold_body,
+                            SentenceSlot::Error,
+                        );
+                        Some(ClauseReport::Block(GuardBlockReport {
+                            context: current.context.clone(),
+                            messages: Messages {
+                                error_message: Some(error_message),
+                                custom_message: None,
+                                location: None,
+                                refusal: *refusal,
+                                parts,
+                            },
+                            unresolved: None,
+                        }))
+                    }
+                    (None, true) => None,
+                    (None, false) => {
+                        marks_alone_entry(&current.context, &None, &nested, &current.children)
+                    }
+                };
                 clauses.push(ClauseReport::Disjunctions(DisjunctionsReport {
                     checks: nested,
                 }));
+                clauses.extend(entry);
             }
 
             // These four recurse into their children for the per-value detail. Each can also carry
@@ -32141,17 +32724,44 @@ fn report_failed_clauses<'value>(
                 ..
             })) => {
                 let own_value_reports = an_own_value_check_reports(current);
-                clauses.extend(report_failed_clauses(&current.children, generic_fallback));
+                // The clause's own entry (its context and the author's `<< >>` text live on it) is always
+                // written when it has a message, and is never dropped to avoid repeating a refusal. Exactly
+                // once is kept the other way: the entry BENEATH is suppressed. When this arm writes the
+                // entry, the records beneath it defer their marks entries (`marks_told_above`) and the entry
+                // joins the refusals no entry beneath carries to its message, as a rule's sentence does,
+                // under a rule with a text as well: the walk of the marks stops at a clause that wrote its
+                // entry (`marks_walk_descends`), so no parent finds those refusals again.
+                let writes_entry = message.is_some() && !own_value_reports;
+                let beneath = report_failed_clauses(
+                    &current.children,
+                    generic_fallback,
+                    marks_told_above || writes_entry,
+                );
+                let (nested_marks, clause_marks) = match writes_entry {
+                    // Each refusal once across the two groups, as the rule's sentence keeps it
+                    // (`grouped_untold_refusals`): a clause mark a nested condition already names
+                    // stays in the nested group.
+                    true => grouped_untold_refusals(&current.children, &beneath, &[]),
+                    false => (Vec::new(), Vec::new()),
+                };
+                clauses.extend(beneath);
                 if let Some(explanation) = message {
-                    if !own_value_reports {
+                    if writes_entry {
+                        let (error_message, parts) = join_rule_refusals(
+                            explanation,
+                            Vec::new(),
+                            nested_marks,
+                            clause_marks,
+                            SentenceSlot::Error,
+                        );
                         clauses.push(ClauseReport::Block(GuardBlockReport {
                             context: current.context.clone(),
                             messages: Messages {
-                                error_message: Some(explanation.clone()),
+                                error_message: Some(error_message),
                                 custom_message: custom_message.clone(),
                                 location: None,
                                 refusal: *refusal,
-                                parts: None,
+                                parts,
                             },
                             unresolved: None,
                         }));
@@ -32166,6 +32776,7 @@ fn report_failed_clauses<'value>(
                         message,
                         refusal,
                         custom_message,
+                        frame_reads,
                         ..
                     },
                 ..
@@ -32175,29 +32786,168 @@ fn report_failed_clauses<'value>(
                 message,
                 refusal,
                 custom_message,
+                frame_reads,
                 ..
             })) => {
-                let nested =
-                    report_failed_clauses(&current.children, generic_fallback && message.is_none());
+                let nested = report_failed_clauses(
+                    &current.children,
+                    generic_fallback && message.is_none(),
+                    marks_told_above && message.is_none(),
+                );
+                // What this arm writes for the record, kept to compare the converted reads against
+                // (`assert_frame_reads_told`): the sentence it joins refusals to, the entries beneath, and the
+                // entry that carries the marks no sentence or entry does.
+                let start = clauses.len();
+                // The deep marks no entry beneath carries are listed as an entry of their own (the refusals
+                // alone), whether or not the caller allowed the generic fallback and whether or not the
+                // record has a sentence: the sentence of a record is listed by the rules below and never
+                // by the marks (it may quote the same error an entry beneath already tells, which would
+                // then be told twice). The one case the marks are not an entry of their own is the
+                // sentence that is the only entry, which joins them (nested empty, a message).
+                //
+                // Under a record that tells the marks (`marks_told_above`) a record with no sentence writes no
+                // entry for them here. A rule with a text tells them (the `RuleCheck` arm; `rule_refusals`
+                // over its children reaches this record's marks and its condition's refusals), joined to
+                // its sentence when its checks are all silent and as one entry of its `checks`
+                // (`refusals_alone_entry`) when they speak; an access clause that writes its own entry
+                // joins them to its message (`grouped_untold_refusals`), so a mark is read once in every
+                // format.
+                //
+                // A record WITH a sentence and entries beneath still tells its sentence once: written as
+                // an entry of its own after them (`own_beside_entries`, with the refusals no entry carries
+                // joined), unless an entry beneath already carries that text (`sentence_told_by`). An
+                // entry that lists marks alone never tells it, so a run-ending "bailing" sentence is not
+                // lost to a child's marks entry.
+                let deferred = marks_told_above && message.is_none();
+                let own_beside_entries = match message {
+                    Some(sentence)
+                        if !nested.is_empty() && !sentence_told_by(&nested, sentence) =>
+                    {
+                        Some(sentence)
+                    }
+                    _ => None,
+                };
+                let alone = match (nested.is_empty() && message.is_some())
+                    || deferred
+                    || own_beside_entries.is_some()
+                {
+                    true => None,
+                    false => marks_alone_entry(
+                        &current.context,
+                        custom_message,
+                        &nested,
+                        &current.children,
+                    ),
+                };
+                let nested_was_empty = nested.is_empty();
                 if nested.is_empty() {
                     if let Some(explanation) = message {
                         // A type block and a `when` carry no author's message (the grammar gives them
                         // none); the field is read all the same, so the one writer rule holds here too.
+                        // The explanation names ONE error the condition held; an inline `when` whose
+                        // condition met several refusals (`when A or B { .. }`, both refused) appends the
+                        // others its failed condition's records name, as a rule's sentence does.
+                        //
+                        // The marks beneath the record (a gate mark in a resource's body beneath a bailing
+                        // type block) follow the body joiner, as a disjunction's do: the sentence is the only
+                        // entry, so nothing else tells them, and the rule's walk stops at this record.
+                        let (condition, nested_conditions, marks) =
+                            condition_and_clause_refusals(&current.children);
+                        let (joined_text, parts) = join_rule_refusals(
+                            explanation,
+                            condition,
+                            nested_conditions,
+                            marks,
+                            SentenceSlot::Error,
+                        );
                         clauses.push(ClauseReport::Block(GuardBlockReport {
                             context: current.context.clone(),
                             messages: Messages {
-                                error_message: Some(explanation.clone()),
+                                error_message: Some(joined_text),
                                 custom_message: custom_message.clone(),
                                 location: None,
+                                // The kind is the head's, as a rule record's is: the refusals joined to
+                                // it ride as the second of the two `parts`, each bounded by its own kind
+                                // at the console.
                                 refusal: *refusal,
-                                parts: None,
+                                parts,
                             },
                             unresolved: None,
                         }));
                     }
                 } else {
+                    // Entries beneath list their own reasons; the marks none of them carries follow as
+                    // the entry of their own (`alone`), or are joined to the record's own sentence when
+                    // it is listed beside them.
+                    let sentence_entry = own_beside_entries.map(|explanation| {
+                        // The failed condition's refusals follow "the condition also met", those of a
+                        // condition nested in the body the nested joiner, and the marks of the body that
+                        // none of the entries carries the body joiner.
+                        let (condition, nested_conditions, marks) =
+                            condition_and_clause_refusals(&current.children);
+                        let condition = untold_by(&nested, condition);
+                        let nested_conditions = untold_by(&nested, nested_conditions);
+                        let marks = untold_by(&nested, marks);
+                        let (joined_text, parts) = join_rule_refusals(
+                            explanation,
+                            condition,
+                            nested_conditions,
+                            marks,
+                            SentenceSlot::Error,
+                        );
+                        ClauseReport::Block(GuardBlockReport {
+                            context: current.context.clone(),
+                            messages: Messages {
+                                error_message: Some(joined_text),
+                                custom_message: custom_message.clone(),
+                                location: None,
+                                refusal: *refusal,
+                                parts,
+                            },
+                            unresolved: None,
+                        })
+                    });
                     clauses.extend(nested);
+                    clauses.extend(sentence_entry);
                 }
+                clauses.extend(alone);
+                // The reads the condition of this type block or `when` converted into its FAIL
+                // (`eval::convert_condition_raise`) must be named by what THIS ARM WROTE for the record: its
+                // sentence with the refusals joined, or the entries it listed (the marks' entry included). A
+                // record with no sentence writes no joined sentence, so the walk of its condition is not
+                // credited with what the arm did not write.
+                //
+                // The sentence and the walk of the condition are credited only on the path that wrote the
+                // joined sentence: the sentence is the only entry (nested empty, a message), or is written
+                // beside the entries because none of them carries it (`own_beside_entries`). When an entry
+                // beneath already carries the sentence, it is not pushed and no condition refusal is joined,
+                // so only the entries (and the marks' entry) count. The marks a deferred record leaves to
+                // its rule (`deferred`) are credited as the text the rule writes for them.
+                let wrote_sentence =
+                    message.is_some() && (nested_was_empty || own_beside_entries.is_some());
+                let deferred_marks: Vec<String> = match cfg!(debug_assertions) && deferred {
+                    true => {
+                        // What the record above tells for this one (a rule's `rule_refusals`, an access
+                        // clause's `grouped_untold_refusals`): the marks beneath it, its own conditions'
+                        // refusals, and those of the message-less records beneath.
+                        let mut told = marked_refusals_beneath(&current.children);
+                        extend_refusals(&mut told, condition_refusals(&current.children));
+                        extend_refusals(&mut told, reached_deferred_refusals(&current.children));
+                        told.into_iter().map(|(text, _)| text).collect()
+                    }
+                    false => Vec::new(),
+                };
+                let mut written: Vec<&str> = deferred_marks.iter().map(String::as_str).collect();
+                if wrote_sentence {
+                    written.push(message.as_deref().unwrap_or(""));
+                }
+                assert_frame_reads_told(
+                    "a type block's or an inline `when`'s condition",
+                    frame_reads,
+                    &written,
+                    wrote_sentence.then_some(&current.children[..]),
+                    &clauses[start..],
+                );
             }
 
             // A failed `when` condition of a rule (`judged_rule_body`: the condition could not be
@@ -32206,17 +32956,39 @@ fn report_failed_clauses<'value>(
             // explanation as its own message (the `RuleCheck`'s `custom_message`), which beats a silent
             // child's generic sentence, so `rule_checks` does not walk this record for such a rule; the
             // arm is reached for a rule with NO message, where the children speak with the fallback
-            // allowed. A type block's `TypeCondition` has no message of its own (the type check closes
-            // with none for a FAIL), so its children speak with the caller's fallback. A passed or
-            // skipped condition is not a failure and stays with the catch-all.
+            // allowed. A message-less failed rule is a run-ending error; its tree is still reported
+            // before the run exits, so this arm renders what its condition met; a type block's failed
+            // condition reaches it in an ordinary run. A type block's `TypeCondition` has no message of its own (the type check closes
+            // with none for a FAIL, but for a non-unevaluatable condition error, which it writes as
+            // "Error .. during type condition evaluation, bailing" and propagates), so its children
+            // speak with the caller's fallback. A passed or
+            // skipped condition is not a failure and stays with the catch-all. The condition's records
+            // surface only where they carry the RAISE (`condition_records`): a decided answer in it
+            // (`Resources.X exists or gate(..)` with the first disjunct a decided no) is the rule's
+            // applicability test, not a violation. `RuleCondition(FAIL)` is also written for a condition
+            // decided FALSE, under a `RuleCheck(SKIP)`; that is safe only because this walker visits
+            // FAIL rules alone. The inline `when` block's `WhenCondition(FAIL)` is NOT walked as findings,
+            // on purpose: the `WhenCheck` beside it fails with a message whenever its condition failed
+            // closed (the condition's explanation), the same rule that keeps a rule's failed condition
+            // unwalked when the rule has a message. The condition filter is the same for all three kinds
+            // (`condition_records`): the other refusals the inline `when`'s condition met are appended to
+            // that explanation (`join_rule_refusals`), as a rule's are to its sentence.
             Some(RecordType::RuleCondition(Status::FAIL))
             | Some(RecordType::TypeCondition(Status::FAIL)) => {
-                clauses.extend(report_failed_clauses(&current.children, generic_fallback));
+                clauses.extend(report_failed_clauses(
+                    &condition_records(&current.children),
+                    generic_fallback,
+                    marks_told_above,
+                ));
             }
 
             // TypeBlock carries a bare Status with no message, so there is nothing to fall back to.
             Some(RecordType::TypeBlock(Status::FAIL)) => {
-                clauses.extend(report_failed_clauses(&current.children, generic_fallback));
+                clauses.extend(report_failed_clauses(
+                    &current.children,
+                    generic_fallback,
+                    marks_told_above,
+                ));
             }
 
             Some(RecordType::ClauseValueCheck(clause)) => match clause {
@@ -32260,18 +33032,34 @@ fn report_failed_clauses<'value>(
 
                 ClauseCheck::DependentRule(missing) => {
                     let message = missing.custom_message.as_ref().map_or("", String::as_str);
-                    let error_message = format!(
+                    // A reference that failed on an ERROR (`fail_reference_on_error`) stores that error once
+                    // (`failure`: its text, token and kind); one that merely did not pass stores none. The
+                    // account is read from that field, as every other reader of the record reads it, and
+                    // reported beside the sentence, so the raise is not rendered as a plain not-pass.
+                    let error_message = match &missing.failure {
+                        Some(failure) => format!(
+                            "Check was not compliant as dependent rule [{rule}] did not PASS. Context [{cxt}]; {raised}",
+                            rule = missing.rule,
+                            cxt = current.context,
+                            raised = failure.text,
+                        ),
+                        None => format!(
                             "Check was not compliant as dependent rule [{rule}] did not PASS. Context [{cxt}]",
-                            rule=missing.rule,
-                            cxt=current.context,
-                        );
+                            rule = missing.rule,
+                            cxt = current.context,
+                        ),
+                    };
                     clauses.push(ClauseReport::Clause(GuardClauseReport::Unary(
                         UnaryReport {
                             messages: Messages {
                                 custom_message: Some(message.to_string()),
                                 error_message: Some(error_message),
                                 location: None,
-                                refusal: false,
+                                // A reference that failed on a refusing error carries the refusal
+                                // in the account it reports, so the console keeps its remedy past the
+                                // bound a plain message gets (the console reads the flag; no
+                                // structured report serializes it).
+                                refusal: missing.failure.as_ref().is_some_and(|f| f.refusal),
                                 parts: None,
                             },
                             context: current.context.clone(),
@@ -32288,18 +33076,31 @@ fn report_failed_clauses<'value>(
                         _ => unreachable!(),
                     };
                     let message = missing.custom_message.as_ref().map_or("", String::as_str);
-                    let error_message = format!(
+                    // A value the evaluator REFUSED to read (`missing.refusal`) is reported by the
+                    // refusal's own sentence and flagged a refusal, not as a property the template lacks.
+                    // The record's own sentence, else the marker's reason, as the condition walk reads a
+                    // refused marker (`condition_refusal_sentences`): the one writer in `eval.rs` always
+                    // sets the message, and a record built without one is still reported as the refusal
+                    // it is rather than as a missing property with the flag dropped.
+                    let refused_sentence = match (missing.refusal, &missing.message, &ur.reason) {
+                        (true, Some(sentence), _) => Some(sentence.clone()),
+                        (true, None, Some(reason)) => Some(reason.clone()),
+                        _ => None,
+                    };
+                    let refusal = refused_sentence.is_some();
+                    let error_message = refused_sentence.unwrap_or_else(|| {
+                        format!(
                             "Check was not compliant as property [{}] is missing. Value traversed to [{}]",
-                            property,
-                            far
-                        );
+                            property, far
+                        )
+                    });
                     clauses.push(ClauseReport::Block(GuardBlockReport {
                         context: current.context.clone(),
                         messages: Messages {
                             custom_message: Some(message.to_string()),
                             error_message: Some(error_message),
                             location: None,
-                            refusal: false,
+                            refusal,
                             parts: None,
                         },
                         unresolved: Some(ur.clone()),
@@ -32744,9 +33545,143 @@ fn report_failed_clauses<'value>(
     clauses
 }
 
+/// Whether `record` is a gate (or filter-predicate) role's mark for one refused body
+/// (`eval::mark_refused_body`, `eval::refused_body_block_check`): a failed `GuardClauseBlockCheck`
+/// carrying the refusal's bare sentence, with the `gate_mark` field only the gate role's writer sets.
+/// Told by that field and never by the record's shape: the strict role writes records of the very same
+/// shape (the own-key refusal per value, the refused one-object selection beside siblings), and those are
+/// findings. A filter predicate's record is no mark (it carries no sentence), so this is the GATE role's
+/// alone. The failed condition's walk reads a mark (`condition_refusal_sentences`); no entry list does, and
+/// a block that is listed, or a parent that speaks, tells the refusals of the marks beneath it itself
+/// (`marked_refusals_beneath`).
+fn is_gate_mark(record: &EventRecord<'_>) -> bool {
+    matches!(
+        record.container,
+        Some(RecordType::GuardClauseBlockCheck(BlockCheck {
+            status: Status::FAIL,
+            message: Some(_),
+            gate_mark: true,
+            ..
+        }))
+    )
+}
+
 /// The sentence a failing block is listed by when nothing beneath it, and no message of its own, says why.
 const SILENT_BLOCK_SENTENCE: &str =
     "the block clause failed, and none of the checks recorded under it reports why";
+
+/// Whether a per-value check of a condition carries the RAISE, decided by the record's structure and never
+/// by its words: a refusal's flag, or a reference that failed on an error (`fail_reference_on_error` writes
+/// its `DependentRule` with a message; a reference that merely did not pass has none). Every other check is
+/// a decided answer.
+fn clause_check_carries_the_raise(check: &ClauseCheck<'_>) -> bool {
+    match check {
+        ClauseCheck::Comparison(check) => check.refusal,
+        ClauseCheck::InComparison(check) => check.refusal,
+        ClauseCheck::Unary(check) => check.value.refusal,
+        ClauseCheck::MissingBlockValue(check) => check.refusal,
+        ClauseCheck::DependentRule(check) => check.failure.is_some(),
+        ClauseCheck::NoValueForEmptyCheck(_) | ClauseCheck::Success => false,
+    }
+}
+
+/// What of a failed condition's records surfaces as a finding: those that carry the RAISE, decided on the
+/// RECORDS (structure, not wording) before any report is built from them. A per-value check is kept only
+/// where `clause_check_carries_the_raise`. A called rule (`RuleCheck`) is filtered beneath itself and kept
+/// when something is left or it has an account of its own: a displaced sentence (of either kind), or a message that is not the
+/// author's `<< >>` body (the body-only record is dropped, since the body is no account of the raise). A
+/// disjunction is kept when something is left or it has a message. The three block kinds
+/// (`GuardClauseBlockCheck`, `BlockGuardCheck`, `WhenCheck`) are filtered beneath themselves too: kept when
+/// a child survives, when they were written on a raise (`BlockCheck::raised`) or carry a refusal flag, or
+/// when they had no children to begin with, and dropped otherwise (all their children were decided
+/// answers). A decided record keeps its explanatory message and is still no finding: the message is not
+/// what keeps a record. Any other record (a type check,
+/// a mark) is kept whole, with whatever lies beneath it. A DECIDED answer in the condition (a missing
+/// property, a comparison that did not hold, a reference that did not pass) is the condition's own test of
+/// whether the rule applies, never a violation, and is dropped at every level this filter descends through:
+/// the top, a called rule, a disjunction and the three block kinds; one beneath a record kept whole is not
+/// reached and survives with it. A KNOWN LIMIT: a plain (non-refusal) raise whose only record is a
+/// per-value comparison, `in` comparison, unary check or missing-block-value check with its refusal flag
+/// clear reads as a decided answer and is dropped; the clause-error record that names such a raise (a
+/// message-bearing block-check record) is kept. A block record written on a raise that has no sentence
+/// and no child that carries the raise is kept too, and is listed by the silent-block sentence
+/// (`SILENT_BLOCK_SENTENCE`), never by the retrieval one: the query retrieved values, and the body or the
+/// marker raised.
+fn condition_records<'value>(children: &[EventRecord<'value>]) -> Vec<EventRecord<'value>> {
+    let mut kept = Vec::new();
+    for child in children {
+        match &child.container {
+            Some(RecordType::ClauseValueCheck(check)) => {
+                if clause_check_carries_the_raise(check) {
+                    kept.push(child.clone());
+                }
+            }
+            // A called rule: kept when something raise-carrying is left beneath it, or when its own
+            // message is the evaluator's sentence (`displaced`, or a message that is not the author's
+            // `<< >>` body, which a decided-no call writes onto the record).
+            Some(RecordType::RuleCheck(NamedStatus {
+                message,
+                displaced,
+                slot,
+                ..
+            })) => {
+                let record = EventRecord {
+                    context: child.context.clone(),
+                    container: child.container.clone(),
+                    children: condition_records(&child.children),
+                };
+                let own = displaced.is_some()
+                    || (message.is_some() && *slot != crate::rules::CustomSlot::Author);
+                if !record.children.is_empty() || own {
+                    kept.push(record);
+                }
+            }
+            Some(RecordType::Disjunction(BlockCheck { message, .. })) => {
+                let record = EventRecord {
+                    context: child.context.clone(),
+                    container: child.container.clone(),
+                    children: condition_records(&child.children),
+                };
+                if !record.children.is_empty() || message.is_some() {
+                    kept.push(record);
+                }
+            }
+            // A clause's own record (`GuardClauseBlockCheck`, whose per-value checks sit beneath it), a
+            // block and a `when`: filtered beneath themselves like the rest. A record whose children were
+            // ALL decided answers, and that does not account for a raise itself (not written on one, not
+            // flagged a refusal; a message alone does not count, since a decided record carries one too), is
+            // a decided answer too and is dropped; one with no children to begin with (a mark, a silent
+            // block's child) is kept, and a record written on a raise or flagged a refusal keeps its
+            // account of it, with its decided per-value children gone.
+            Some(RecordType::GuardClauseBlockCheck(BlockCheck {
+                raised, refusal, ..
+            }))
+            | Some(RecordType::BlockGuardCheck(BlockCheck {
+                raised, refusal, ..
+            }))
+            | Some(RecordType::WhenCheck(BlockCheck {
+                raised, refusal, ..
+            })) => {
+                let record = EventRecord {
+                    context: child.context.clone(),
+                    container: child.container.clone(),
+                    children: condition_records(&child.children),
+                };
+                let had_children = !child.children.is_empty();
+                // Whether the record itself accounts for a raise: written on one (`raised`) or flagged a
+                // refusal. Never the mere presence of a message, which a DECIDED record carries too (an
+                // empty selection explained, a skipped reference).
+                let own = *raised || *refusal;
+                if !record.children.is_empty() || own || !had_children {
+                    kept.push(record);
+                }
+            }
+            Some(_) => kept.push(child.clone()),
+            None => {}
+        }
+    }
+    kept
+}
 
 /// One generic entry per silent block: a block over N values that each hold a silent nested block (the
 /// same block clause, so the same context) would list the sentence N times, byte for byte. The first of
@@ -32763,12 +33698,1339 @@ fn drop_repeated_generic_entries(clauses: &mut Vec<ClauseReport<'_>>) {
     });
 }
 
+/// The refusal sentences a failed condition's records name, in the order met and each once: a block-check
+/// record flagged a refusal (a clause-error record is read back to the error's own text,
+/// `eval::clause_error_sentence`), a refused per-value check's message, and a refused marker's reason.
+/// The records that WRAP an error rather than name a refusal are skipped by kind, never by their words: a
+/// disjunction's own message ("Disjunction could not be decided: ... <the refusal>"), a `when` block's
+/// ("The condition could not be evaluated, so the block it guards is not checked: <e>", or "Error <e>
+/// during type condition evaluation, bailing") and a type check's. Each QUOTES the held error, which the
+/// rule's own sentence carries, and the refusals beneath them are read from their own records. A wrapper
+/// whose children yield no sentence (a disjunction nested under a conjunction, whose per-value records carry
+/// no message) is the only account of the refusal it held, so it is read once, stripped of its head to the
+/// quoted error (`eval::DISJUNCTION_UNDECIDED_HEAD`, `eval::WHEN_UNEVALUATED_HEAD`, the constants the
+/// writers format with).
+///
+/// One refusal, one sentence, by IDENTITY: a refusal's token where the record or the registry holds one, else
+/// the exact sentence, never one text contained in another (`push_refusal`).
+fn condition_refusal_sentences(records: &[EventRecord<'_>], out: &mut Vec<NamedRefusal>) {
+    for record in records {
+        match &record.container {
+            Some(RecordType::BlockGuardCheck(check))
+            | Some(RecordType::GuardClauseBlockCheck(check)) => {
+                if let (true, Some(message)) = (check.refusal, &check.message) {
+                    push_refusal(out, super::eval::clause_error_sentence(message), None);
+                }
+                condition_refusal_sentences(&record.children, out);
+            }
+            Some(RecordType::Disjunction(check)) => {
+                wrapper_refusal(record, check, super::eval::DISJUNCTION_UNDECIDED_HEAD, out)
+            }
+            Some(RecordType::WhenCheck(check)) => {
+                wrapper_refusal(record, check, super::eval::WHEN_UNEVALUATED_HEAD, out)
+            }
+            Some(RecordType::ClauseValueCheck(check)) => match check {
+                ClauseCheck::Comparison(check) if check.refusal => {
+                    if let Some(message) = &check.message {
+                        push_refusal(
+                            out,
+                            message,
+                            marker_token(&check.from)
+                                .or_else(|| first_marker_token(check.to.iter())),
+                        );
+                    }
+                }
+                ClauseCheck::InComparison(check) if check.refusal => {
+                    if let Some(message) = &check.message {
+                        push_refusal(
+                            out,
+                            message,
+                            marker_token(&check.from)
+                                .or_else(|| first_marker_token(check.to.iter())),
+                        );
+                    }
+                }
+                ClauseCheck::Unary(check) if check.value.refusal => {
+                    if let Some(message) = &check.value.message {
+                        push_refusal(out, message, marker_token(&check.value.from));
+                    }
+                }
+                ClauseCheck::MissingBlockValue(check) if check.refusal => {
+                    if let QueryResult::UnResolved(unresolved) = &check.from {
+                        if let Some(reason) = &unresolved.reason {
+                            push_refusal(out, reason, unresolved.kind.refusal());
+                        }
+                    }
+                }
+                // A reference that failed on a refusing error: the error and its token are stored on the
+                // record, so the walk reads them and recovers nothing from the words of the message.
+                ClauseCheck::DependentRule(check) => {
+                    if let Some(failure) = check.failure.as_ref().filter(|f| f.refusal) {
+                        push_refusal(out, &failure.text, failure.token);
+                    }
+                }
+                _ => {}
+            },
+            // A called rule: the refusals its children name first (the records of the failed condition it
+            // ran, which `condition_records` keeps), and its OWN sentence as well, stripped of its head.
+            // The sentence quotes the error its condition held, which the records beneath it usually name
+            // already; the duplicate is removed by identity (`push_refusal`, which reads every spelling
+            // through the one normalization), never by skipping the sentence, because the one held refusal
+            // may have left no flagged record while a sibling's did. A refusal-slot message, or the
+            // refusal-kind sentence a call's body displaced, is the only account of the refusal when the
+            // children say nothing.
+            Some(RecordType::RuleCheck(NamedStatus {
+                message,
+                slot,
+                displaced,
+                ..
+            })) => {
+                // The children's refusals AND the rule's own sentence, both pushed: the one held refusal
+                // may have left no flagged record while a sibling disjunct's did, and reading the rule's
+                // sentence only when the children are silent dropped the held one from the outer
+                // sentence. The duplicate a quoting sentence would make is removed by identity
+                // (`push_refusal` reduces "HEAD: <refusal>" to the refusal by its token or exact text),
+                // never by a skip.
+                extend_refusals(out, refusals_below(&record.children));
+                if let Some(quoted) = called_rule_refusal_sentence(slot, message, displaced) {
+                    push_refusal(out, quoted, None);
+                }
+            }
+            _ => condition_refusal_sentences(&record.children, out),
+        }
+    }
+}
+
+/// A called rule's own refusal sentence, stripped of the head its own `when` writes before the error it held
+/// (`eval::RULE_CONDITION_UNEVALUATED_HEAD`): a refusal-slot message, or the refusal-kind sentence a call's
+/// body displaced. `None` for a rule whose own sentence is no refusal's. Read by the walk of a failed
+/// condition (`condition_refusal_sentences`) and for a called rule the reporter never reaches
+/// (`deferred_record_refusals`).
+fn called_rule_refusal_sentence<'a>(
+    slot: &super::CustomSlot,
+    message: &'a Option<String>,
+    displaced: &'a Option<(super::CustomSlot, String)>,
+) -> Option<&'a str> {
+    let own = match (slot, message, displaced) {
+        (super::CustomSlot::Refusal, Some(text), _) => Some(text.as_str()),
+        (_, _, Some((super::CustomSlot::Refusal, sentence))) => Some(sentence.as_str()),
+        _ => None,
+    };
+    own.map(|text| {
+        text.strip_prefix(super::eval::RULE_CONDITION_UNEVALUATED_HEAD)
+            .unwrap_or(text)
+    })
+}
+
+/// A refusal sentence a failed condition's records name, with the refusal token the record or the registry
+/// holds for it where one exists: the identity two reports of one refusal share.
+type NamedRefusal = (String, Option<RefusalToken>);
+
+/// The token a refused marker carries, `None` for a value that is no marker.
+fn marker_token(from: &QueryResult) -> Option<RefusalToken> {
+    match from {
+        QueryResult::UnResolved(unresolved) => unresolved.kind.refusal(),
+        _ => None,
+    }
+}
+
+/// The token of the first refused marker among the operands given (a comparison refused on its RIGHT-hand
+/// side carries its token on `to`, not on `from`).
+fn first_marker_token<'a>(operands: impl Iterator<Item = &'a QueryResult>) -> Option<RefusalToken> {
+    operands.into_iter().find_map(marker_token)
+}
+
+/// Adds `sentence` to `out` unless the same refusal is there: the same TOKEN (the record's own, else the one
+/// the registry holds for the text), or the same exact text. A numbered raise `(1) R2 (2) R1` is its
+/// parts, each deduped on its own, so a part already collected never hides the part beside it. Containment
+/// is never the test: a comparison's raise numbers every refused read it met, and a text that quotes one
+/// refusal is not that refusal.
+fn push_refusal(out: &mut Vec<NamedRefusal>, sentence: &str, token: Option<RefusalToken>) {
+    // The bare spelling of the refusal (`bare_refusal_sentence`), for the whole sentence and for each of its
+    // numbered parts: a record that wrote the error's display wrapper and a record that wrote the refusal
+    // bare name one refusal.
+    let sentence = super::eval::bare_refusal_sentence(sentence);
+    let parts = numbered_refusal_parts(sentence).unwrap_or_else(|| vec![sentence]);
+    let whole = parts.len() == 1;
+    for part in parts {
+        let part = super::eval::bare_refusal_sentence(part);
+        if part.is_empty() {
+            continue;
+        }
+        let own = if whole { token } else { None };
+        let token =
+            own.or_else(|| token_of_registered(part, &crate::rules::eval::no_frame_ranking));
+        // A record's message that is no refusal whole but ends with one the registry holds (its own
+        // lead, then the refusal) is that refusal: identity by the registered part, never by a
+        // substring test.
+        let mut remainder = None;
+        let (part, token) = match (token, whole) {
+            (None, true) => match registered_tail(part) {
+                Some((tail, tail_token, rest)) => {
+                    remainder = rest;
+                    (tail, Some(tail_token))
+                }
+                None => (part, None),
+            },
+            _ => (part, token),
+        };
+        let seen = out
+            .iter()
+            .any(|(text, held)| text == part || (token.is_some() && *held == token));
+        if !seen {
+            out.push((part.to_string(), token));
+        }
+        // What followed the refusal in the sentence (`R1; R2`, `R; cause`) is its own part when it IS a
+        // refusal (registered, or numbered of registered parts, or ending with a registered one), pushed
+        // by the same identity rule. A remainder that names no refusal (`cause`) is the sentence's own
+        // account of the failure, which the sentence carries already; it is never appended as a refusal
+        // the condition met.
+        if let Some(rest) = remainder.filter(|rest| names_a_refusal(rest)) {
+            push_refusal(out, rest, None);
+        }
+    }
+}
+
+/// Whether `text` names a refusal the registry holds: a registered sentence, a numbered raise with a
+/// registered part, or a lead ending with a registered sentence (`registered_tail`), each in the bare
+/// spelling. The test for a remainder of a sentence (`R; cause`) before it is read as a refusal of its own.
+fn names_a_refusal(text: &str) -> bool {
+    let text = super::eval::bare_refusal_sentence(text);
+    numbered_refusal_parts(text)
+        .unwrap_or_else(|| vec![text])
+        .into_iter()
+        .map(super::eval::bare_refusal_sentence)
+        .any(|part| {
+            token_of_registered(part, &crate::rules::eval::no_frame_ranking).is_some()
+                || registered_tail(part).is_some()
+        })
+}
+
+/// A record that wraps the error its condition held: its children first, and its own message, stripped of
+/// `head`, only when they yielded nothing (the wrapper is then the only account of the refusal).
+fn wrapper_refusal(
+    record: &EventRecord<'_>,
+    check: &BlockCheck,
+    head: &str,
+    out: &mut Vec<NamedRefusal>,
+) {
+    // Whether the children yielded anything is read from what THEY found, apart from what `out` already
+    // held: children that only re-found refusals an earlier sibling collected still yielded, and the
+    // wrapper's own message, which quotes one of those, is not read as a second account.
+    let found = refusals_below(&record.children);
+    if !found.is_empty() {
+        extend_refusals(out, found);
+        return;
+    }
+    if check.refusal {
+        if let Some(quoted) = check
+            .message
+            .as_deref()
+            .and_then(|message| message.strip_prefix(head))
+        {
+            push_refusal(out, quoted, None);
+        }
+    }
+}
+
+/// The refusals the given records name, collected on their own (not into a caller's list).
+fn refusals_below(records: &[EventRecord<'_>]) -> Vec<NamedRefusal> {
+    let mut found = Vec::new();
+    condition_refusal_sentences(records, &mut found);
+    found
+}
+
+/// Adds refusals found by [`refusals_below`] to `out`, each by identity (`push_refusal`).
+fn extend_refusals(out: &mut Vec<NamedRefusal>, found: Vec<NamedRefusal>) {
+    for (text, token) in found {
+        push_refusal(out, &text, token);
+    }
+}
+
+/// The refusals a failed condition's records name, deduped by identity (`condition_refusal_sentences`): the
+/// condition of a rule, of an inline `when` and of a type block alike. The evaluator writes a type block's
+/// condition one level down: `TypeCheck` > `TypeBlock` (one per resource) > `TypeCondition`, so the walk
+/// descends through each `TypeBlock` to find it.
+fn condition_refusals(children: &[EventRecord<'_>]) -> Vec<NamedRefusal> {
+    let mut named = Vec::new();
+    for child in children {
+        match child.container {
+            Some(RecordType::RuleCondition(Status::FAIL))
+            | Some(RecordType::WhenCondition(Status::FAIL))
+            | Some(RecordType::TypeCondition(Status::FAIL)) => {
+                condition_refusal_sentences(&condition_records(&child.children), &mut named);
+            }
+            Some(RecordType::TypeBlock(_)) => {
+                extend_refusals(&mut named, condition_refusals(&child.children));
+            }
+            _ => {}
+        }
+    }
+    named
+}
+
+/// How many `; ` boundaries after a start the parse of a sentence's refusals (`refusals_carried_by`,
+/// `registered_tail`) tries as the end of a span. A refusal's remedy sentence holds a few; a text that quotes a
+/// template value full of `; ` would otherwise cost a lookup per pair of boundaries (bounded work per start).
+/// Past the cap a start still tests its tail whole, and every boundary is a start of its own, so a refusal
+/// with more inner boundaries than this is found by its suffix forms (the last refusal of a joined text), as
+/// it was before spans were read: a text with many boundaries is never recognized less than it was.
+const MAX_INNER_BOUNDARIES: usize = 16;
+
+/// The refusals a sentence already carries, read by identity: the sentence's tail after each `: ` boundary
+/// the writers put between a head and the held error (`head: <error>`), split into its numbered parts, with
+/// the tokens the registry holds for them. A refusal in `condition_refusals` that is one of these is carried.
+fn refusals_carried_by(message: &str) -> Vec<NamedRefusal> {
+    let mut carried: Vec<NamedRefusal> = Vec::new();
+    let mut held: std::collections::HashSet<&str> = std::collections::HashSet::new();
+    // Every position a refusal can start at: the beginning, after each `: ` head boundary, and after each `; `
+    // join, so that in `R1; R2` and in `HEAD: R3; the condition also met: R1; R2` every one of the refusals is
+    // recognized and not only the first segment of a tail. (`registered_tail` reads the same positions.)
+    let mut starts = vec![0];
+    starts.extend(
+        message
+            .match_indices(": ")
+            .chain(message.match_indices("; "))
+            .map(|(at, _)| at + 2),
+    );
+    starts.sort_unstable();
+    starts.dedup();
+    for start in starts {
+        // Unwrapped BEFORE it is split, as `push_refusal` reads a sentence: the display wrapper's closing
+        // backtick sits at the end of the whole tail, so a tail split first leaves its first segment
+        // (`wrapper` + `R`) with no backtick to strip, and only `R; cause` would be carried, never `R`.
+        let tail = super::eval::bare_refusal_sentence(&message[start..]);
+        // The tail whole, and every SPAN from its start to a later `; ` boundary (the first
+        // `; `-delimited segment among them): a refusal whose writer appended a cause after it
+        // (`S: R; cause`) is carried as `R` as well as by the longer tail, and a refusal whose own text holds
+        // a `; ` (a remedy sentence) is a span of its own, found whole before or after other refusals in a
+        // joined text, where the suffixes alone would see it only as the last. The registry decides which
+        // span IS a refusal. Every candidate is kept, none dropped for sharing a token with an earlier one:
+        // a refusal of a different mint that reads the same text is the same refusal by its text.
+        let mut candidates = vec![tail];
+        candidates.extend(
+            tail.match_indices("; ")
+                .take(MAX_INNER_BOUNDARIES)
+                .map(|(at, _)| &tail[..at]),
+        );
+        for (index, candidate) in candidates.into_iter().enumerate() {
+            // Each candidate and each numbered part in the bare spelling, as `push_refusal` collects them.
+            let candidate = super::eval::bare_refusal_sentence(candidate);
+            // The tail whole and its first `; `-segment keep their text as a candidate whatever the registry
+            // holds (as before spans were read); a longer span is kept only when the registry holds it as
+            // a refusal, since the registry decides which span IS one and a span that is none adds nothing.
+            // A numbered raise (`(1) R1 (2) R2`) is registered as its parts and never as a whole, so a
+            // span whose numbered parts include a registered refusal is kept too.
+            if index >= 2
+                && token_of_registered(candidate, &crate::rules::eval::no_frame_ranking).is_none()
+                && !numbered_refusal_parts(candidate).is_some_and(|parts| {
+                    parts.into_iter().any(|part| {
+                        token_of_registered(
+                            super::eval::bare_refusal_sentence(part),
+                            &crate::rules::eval::no_frame_ranking,
+                        )
+                        .is_some()
+                    })
+                })
+            {
+                continue;
+            }
+            let parts = numbered_refusal_parts(candidate).unwrap_or_else(|| vec![candidate]);
+            for part in parts {
+                let part = super::eval::bare_refusal_sentence(part);
+                // A part already held is skipped before it is copied or looked up: its token is a function
+                // of its text, so the pair would be the same. The set only avoids repeated pairs; the
+                // readers (`is_carried`) match a pair by its text OR its token, so a second spelling of
+                // one token pushed here is still found by it, and no refusal is told twice or dropped
+                // whichever way this test compares.
+                if part.is_empty() || !held.insert(part) {
+                    continue;
+                }
+                carried.push((
+                    part.to_string(),
+                    token_of_registered(part, &crate::rules::eval::no_frame_ranking),
+                ));
+            }
+        }
+    }
+    carried
+}
+
+/// A registered refusal sentence that stands as a part of `text` after a `: ` or `; ` boundary (a record's
+/// message that leads with its own words and ends with the refusal: `lead: R`, `lead; R; cause`), with its
+/// token: the registry, not a substring test, decides that a part IS a refusal, so a text that merely
+/// quotes some other text is never read as containing it.
+///
+/// The candidate positions are the ones `refusals_carried_by` reads: position 0 (whose first
+/// `; `-segment can be the refusal: `R; cause`) and the position after each boundary, each as the tail whole
+/// and as its first `; `-segment. The third element is what followed a first-segment candidate (`cause`, or
+/// `R2` after `lead: R1; R2`), which the caller pushes as a part of its own, never discards.
+fn registered_tail(text: &str) -> Option<(&str, RefusalToken, Option<&str>)> {
+    let mut at: Vec<usize> = vec![0];
+    at.extend(
+        text.match_indices(": ")
+            .chain(text.match_indices("; "))
+            .map(|(position, _)| position + 2),
+    );
+    at.sort_unstable();
+    at.dedup();
+    for start in at {
+        let tail = &text[start..];
+        let mut candidates = vec![(tail, None)];
+        // Every span to a later `; ` boundary, as `refusals_carried_by` reads them, each with what follows it.
+        candidates.extend(
+            tail.match_indices("; ")
+                .take(MAX_INNER_BOUNDARIES)
+                .map(|(at, _)| (&tail[..at], Some(&tail[at + 2..]))),
+        );
+        for (candidate, rest) in candidates {
+            // The whole text at position 0 is not a candidate: the caller has already found it
+            // unregistered.
+            if start == 0 && rest.is_none() {
+                continue;
+            }
+            if let Some(token) =
+                token_of_registered(candidate, &crate::rules::eval::no_frame_ranking)
+            {
+                return Some((candidate, token, rest));
+            }
+        }
+    }
+    None
+}
+
+/// `message`, the evaluator's sentence for a failed record, with the refusals that `message` does not already
+/// carry joined to it in three groups, each refusal once, so a refusal is neither dropped nor repeated:
+/// - `condition`: the refusals the record's OWN failed condition met (a condition of several disjuncts that
+///   each refuse met several, and the sentence names ONE error), behind [`ALSO_MET`];
+/// - `nested`: the refusals a failed condition NESTED beneath the record (a type block's or an inline
+///   `when`'s) met, joined at the record that tells them (a rule with a text or an access clause with an
+///   entry, to which a nested record with no sentence defers them; a type block or an inline `when` with a
+///   sentence, for a nested record the reporter does not reach), behind [`NESTED_ALSO_MET`];
+/// - `body`: the marks of clauses that ran and that no condition met (the called rule's body clauses, a
+///   block's clauses, a disjunction's disjuncts), behind [`BODY_ALSO_MET`].
+///
+/// The groups read in that order; a group that is empty adds nothing, and a sentence that gained only one
+/// group joins it behind that group's joiner.
+///
+/// A refusal is carried when the message holds it in its own spelling or in the spelling of a clause-error
+/// message it wraps (`eval::clause_error_sentence`: a block record's "Error R when handling clause .."
+/// carries R). Only the evaluator's own sentence is passed here: a rule author's `<< >>` body is reported as
+/// written. The joined sentence is held in `slot` of the record it is written into (required: the parts say
+/// which slot, so a reader never looks in the wrong one).
+///
+/// Returned with the joined sentence and, when refusals were added, its parts ([`SentenceParts`]: `head` the
+/// sentence whole, the groups whole), whatever the head's kind, so every reader that asks whether a
+/// sentence joined refusals (the `test` reporters' reason, the console's per-part bound) gets the same
+/// answer for a plain head and for a refusal's. Nothing is cut here: every structured output carries the
+/// whole text of every part. The sentence's kind does not change when refusals are joined to it: the head's
+/// kind is the record's (`messages.refusal`, which the callers copy), so a plain error's sentence stays
+/// plain (the refusals beside it did not decide the verdict) and a refusal's sentence stays a refusal's. The
+/// console bounds the line by that kind
+/// (`commands::reporters::validate::common::joined_console_text`): on the rule line and in the unattributed
+/// section a plain head is cut at the recorded-message bound and the refusals follow, bounded once; the
+/// per-resource block line keeps a plain head whole while the joined line fits the refusal backstop and
+/// otherwise cuts the head to the room the backstop leaves after the join and the refusals (never to less
+/// than the head floor, `HEAD_FLOOR`, under which the end of the line is cut and the refusals lose
+/// min(head, floor) - room, plus up to 16 characters to a word boundary, plus whatever the join and
+/// refusals already exceed the backstop by, plus up to one split escape); a refusal-headed sentence is held to the refusal bound as one line,
+/// cut once.
+fn join_rule_refusals(
+    message: &str,
+    condition: Vec<NamedRefusal>,
+    nested: Vec<NamedRefusal>,
+    body: Vec<NamedRefusal>,
+    slot: SentenceSlot,
+) -> (String, Option<SentenceParts>) {
+    if condition.is_empty() && nested.is_empty() && body.is_empty() {
+        return (message.to_string(), None);
+    }
+    let carried = refusals_carried_in(message);
+    let untold = |named: Vec<NamedRefusal>| -> Vec<String> {
+        named
+            .into_iter()
+            .filter(|refusal| !is_carried(&carried, refusal))
+            .map(|(text, _)| text)
+            .collect()
+    };
+    rule_sentence_with(
+        message,
+        untold(condition),
+        untold(nested),
+        untold(body),
+        slot,
+    )
+}
+
+/// `head` and the refusals joined to it as a rule's sentence is joined (`join_rule_refusals`), with no test
+/// for what the head carries: the caller has made it. `None` parts when there are none to join.
+fn rule_sentence_with(
+    head: &str,
+    condition: Vec<String>,
+    nested: Vec<String>,
+    body: Vec<String>,
+    slot: SentenceSlot,
+) -> (String, Option<SentenceParts>) {
+    if condition.is_empty() && nested.is_empty() && body.is_empty() {
+        return (head.to_string(), None);
+    }
+    let parts = SentenceParts::refusals_beside_groups(
+        head,
+        &condition.join("; "),
+        &nested.join("; "),
+        &body.join("; "),
+        slot,
+    );
+    (parts.refusals_text(), Some(parts))
+}
+
+/// Whether `refusal` is among the `carried` ones, by identity: a token, else the exact text.
+fn is_carried(carried: &[NamedRefusal], refusal: &NamedRefusal) -> bool {
+    let (text, token) = refusal;
+    carried
+        .iter()
+        .any(|(seen, held)| seen == text || (token.is_some() && held == token))
+}
+
+/// The refusals the texts carry, in either spelling, computed ONCE for a set of texts: the registry is read
+/// per text and not per (refusal, text) pair, so a gate over N resources costs N reads and not N squared.
+fn carried_set(texts: &[String]) -> Vec<NamedRefusal> {
+    texts
+        .iter()
+        .flat_map(|text| refusals_carried_in(text))
+        .collect()
+}
+
+/// The `marked` refusals none of the entries `nested` already carries (a body clause's clause-error record
+/// names the same refusal its mark does). Nothing is computed when there are no marks.
+fn untold_by(nested: &[ClauseReport<'_>], marked: Vec<NamedRefusal>) -> Vec<NamedRefusal> {
+    if marked.is_empty() {
+        return marked;
+    }
+    let carried = carried_set(&entry_texts_of(nested));
+    marked
+        .into_iter()
+        .filter(|refusal| !is_carried(&carried, refusal))
+        .collect()
+}
+
+/// The error a record's sentence quotes, in its bare spelling: what comes after the head a disjunction, an
+/// inline `when` or a rule's own `when` writes before the error it held (`DISJUNCTION_UNDECIDED_HEAD`,
+/// `WHEN_UNEVALUATED_HEAD`, `RULE_CONDITION_UNEVALUATED_HEAD`, the constants the writers format with, as
+/// `wrapper_refusal` reads them), what stands between `Error ` and a "bailing" tail (`Error {e}` and
+/// `TYPE_CONDITION_BAILING_TAIL` and its siblings), and the error inside a clause-error message
+/// (`eval::clause_error_sentence`); the message itself when it quotes none.
+fn quoted_error(message: &str) -> &str {
+    use super::eval::{
+        bare_refusal_sentence, clause_error_sentence, PARENT_SENTENCE_HEADS, PARENT_SENTENCE_TAILS,
+    };
+    // The two lists are the writers' (`eval.rs`): one place to add a new head or tail.
+    for head in PARENT_SENTENCE_HEADS {
+        if let Some(held) = message.strip_prefix(head) {
+            return bare_refusal_sentence(held);
+        }
+    }
+    if let Some(rest) = message.strip_prefix("Error ") {
+        for (_, tail) in PARENT_SENTENCE_TAILS {
+            if let Some(held) = rest.strip_suffix(tail) {
+                return bare_refusal_sentence(held);
+            }
+        }
+    }
+    clause_error_sentence(message)
+}
+
+/// Whether an entry among `nested` already carries the sentence `message` of the parent that lists them, so
+/// that the parent need not write it again: by the same identity the marks use. A sentence that names
+/// refusals the registry holds is told when every one of them is carried by an entry (a token, else the
+/// exact text, in either spelling), and a sentence that names none (a plain error, the run-ending
+/// "bailing" sentence) is told only by an entry whose text IS the sentence, bare or wrapped. An entry that
+/// lists marks alone carries the refusals it names and nothing else, so it never tells a plain sentence.
+/// The rule is by FIELD, never by whether the wording is recognized: a record's `message` is always the
+/// evaluator's own sentence (the author's `<< >>` text sits in `custom_message`, which this is never asked
+/// about), so a sentence is told once unless an entry beneath carries ITS error, compared through
+/// `quoted_error` on both sides, so an entry that is itself a bailing or head sentence for the same error
+/// counts. A sentence under a head `quoted_error` does not know is therefore written beside its entries.
+fn sentence_told_by(nested: &[ClauseReport<'_>], message: &str) -> bool {
+    let texts = entry_texts_of(nested);
+    let quoted = quoted_error(message);
+    let mut named: Vec<NamedRefusal> = refusals_carried_in(message);
+    extend_refusals(&mut named, refusals_carried_in(quoted));
+    named.retain(|(_, token)| token.is_some());
+    if named.is_empty() {
+        // A sentence under a head `quoted_error` does not list is written beside its entries (it fails toward
+        // duplication, never toward silence). The heads and tails in the two lists are the ones the
+        // enumeration cell shows are read back, and its source scan shows no listed wording is written
+        // inline; a writer that never reaches the lists is not caught. No assertion trips on an unlisted
+        // one: the plain texts of the clause records themselves (a negation's failure text, a clause's own
+        // message) are unlisted by design. The clause arm no longer asks this about its own message (it
+        // always writes its entry), but a record beneath it with a plain sentence reaches this test.
+        return texts
+            .iter()
+            .any(|text| text == message || quoted_error(text) == quoted);
+    }
+    let carried = carried_set(&texts);
+    named.iter().all(|refusal| is_carried(&carried, refusal))
+}
+
+/// The refusals a failed rule's own sentence joins: those its failed condition met (`condition_refusals`)
+/// and, when the rule has a text of its own (`has_text`: a call's `<< >>` body or the evaluator's sentence),
+/// the marks of the gate roles beneath it that no entry of its `checks` names (`untold_by`). A rule with a
+/// text walks its children without the generic fallback and lists no entry for a silent child, and the
+/// records beneath it that write no sentence of their own leave their marks to it
+/// (`report_failed_clauses`, `marks_told_above`), so a mark under a silent block in a called rule's body, or under a
+/// type block in it, is told here and nowhere else. A rule with no text lists its silent children with the
+/// fallback, and those entries (or the marks' entry) tell the marks. Each refusal once, by identity.
+///
+/// Returned as three groups: `own`, the refusals the rule's OWN failed condition met; `nested`, the refusals a
+/// failed condition beneath it met (a nested type block's or `when`'s: still condition refusals, which no
+/// entry of a rule with a text writes) with the marks read under such a condition; and `body`, the marks of
+/// clauses (a block's clauses, a disjunction's disjuncts, the called rule's body clauses) that no condition
+/// met. The sentence joins `own` behind [`ALSO_MET`], `nested` behind [`NESTED_ALSO_MET`] and `body` behind
+/// [`BODY_ALSO_MET`]
+/// (`join_rule_refusals`); when the checks speak, `nested` and `body` become an entry of the checks instead.
+fn rule_refusals(
+    children: &[EventRecord<'_>],
+    checks: &[ClauseReport<'_>],
+    has_text: bool,
+) -> (Vec<NamedRefusal>, Vec<NamedRefusal>, Vec<NamedRefusal>) {
+    let own = condition_refusals(children);
+    let (nested, body) = match has_text {
+        true => grouped_untold_refusals(children, checks, &own),
+        false => (Vec::new(), Vec::new()),
+    };
+    (own, nested, body)
+}
+
+/// The entry a record lists for the refusals beneath it that none of the entries `nested` carries: the deep
+/// marks (`marked_refusals_beneath`) and the refusals its failed conditions name (`condition_refusals`,
+/// which reaches a sentence-bearing block or a called rule under a `when` condition, a record
+/// `report_failed_clauses` never visits), the refusals alone, whole, flagged refusals, as a block with marks
+/// and no message lists them. Written for a record with no sentence of its own (a type block's or an inline
+/// `when`'s closing FAIL on the conversion path writes none), and for a record whose sentence an entry
+/// beneath it already carries. A record whose sentence is not carried writes that sentence as an entry of its
+/// own, with these refusals joined to it, instead. A parent with no sentence has none to join them to, and a
+/// caller that forbids the generic fallback (its own parent speaks) would otherwise list nothing for them.
+/// `None` when there are none, or every one is told. No entry it writes counts as carrying a sentence of the
+/// record's own (`sentence_told_by`).
+fn marks_alone_entry<'value>(
+    context: &str,
+    custom_message: &Option<String>,
+    nested: &[ClauseReport<'value>],
+    children: &[EventRecord<'_>],
+) -> Option<ClauseReport<'value>> {
+    let mut named = marked_refusals_beneath(children);
+    extend_refusals(&mut named, condition_refusals(children));
+    let untold = untold_by(nested, named);
+    if untold.is_empty() {
+        return None;
+    }
+    Some(refusals_alone_entry(context, &untold, custom_message))
+}
+
+/// The refusals a message carries, in its own spelling and in the spelling of a clause-error message it
+/// wraps (`eval::clause_error_sentence`: a block record's "Error R when handling clause .." carries R).
+fn refusals_carried_in(message: &str) -> Vec<NamedRefusal> {
+    let mut carried = refusals_carried_by(message);
+    let unwrapped = super::eval::clause_error_sentence(message);
+    if unwrapped != message {
+        carried.extend(refusals_carried_by(unwrapped));
+    }
+    carried
+}
+
+/// The texts the entries `clauses` list carry, at every depth: each entry's error message, and, for an entry
+/// built from parts, the part the refusals are read from. A clause entry's rendered sentence ends in its
+/// message inside brackets (`{head} Error = [R]`), which no `: ` boundary opens, so the bare evaluator message
+/// of its parts (`PartsJoin::Clause`, the text `condition_refusal_sentences` dedupes on) is read instead of
+/// the rendered tail.
+fn entry_texts_of(clauses: &[ClauseReport<'_>]) -> Vec<String> {
+    let mut texts = Vec::new();
+    for clause in clauses {
+        match clause {
+            ClauseReport::Block(block) => texts.extend(block.messages.error_message.clone()),
+            ClauseReport::Clause(clause) => {
+                let messages = clause.get_message();
+                texts.extend(messages.error_message);
+                if let Some(parts) = messages
+                    .parts
+                    .filter(|parts| parts.join() == PartsJoin::Clause)
+                {
+                    texts.push(parts.message().to_string());
+                }
+            }
+            ClauseReport::Rule(rule) => {
+                texts.extend(rule.messages.error_message.clone());
+                texts.extend(rule.messages.custom_message.clone());
+                texts.extend(entry_texts_of(&rule.checks));
+            }
+            ClauseReport::Disjunctions(ors) => texts.extend(entry_texts_of(&ors.checks)),
+        }
+    }
+    texts
+}
+
+/// Whether any of the entry `texts` carries `refusal`, by identity (a token or the exact text, in either
+/// spelling of the refusal).
+fn refusal_carried_by_any(texts: &[String], refusal: &NamedRefusal) -> bool {
+    is_carried(&carried_set(texts), refusal)
+}
+
+/// The tripwire for a frame the evaluator converted (`eval::convert_condition_raise`), in debug builds only:
+/// every refused read the frame carried (`frame_reads`, the closing record's copy of
+/// `AbsorbedRaise::reads`) must be named by the report, since no refused-read line is written for it any
+/// more. A read is told when the closing record's sentences carry it, when the walk of the failed condition
+/// collected it (`condition_refusals`, with the gate marks beneath), or when an entry listed beneath names
+/// it, each by identity (a token, else the exact text in either spelling). Only a read the registry holds as
+/// a refusal is asked for: a frame's reads can name a marker's reason that is no refusal's, which the
+/// condition's records need not carry. A miss is the loss this guards against: a refusal the conversion
+/// swallowed and nothing reports. `what` names the frame source in the failure.
+fn assert_frame_reads_told(
+    what: &str,
+    frame_reads: &[String],
+    sentences: &[&str],
+    walked: Option<&[EventRecord<'_>]>,
+    listed: &[ClauseReport<'_>],
+) {
+    if !cfg!(debug_assertions) || frame_reads.is_empty() {
+        return;
+    }
+    // The walk of the failed condition (`condition_refusals`, the marks beneath) counts as told ONLY when
+    // the arm writes a sentence it joins the refusals to (`walked`): the tripwire compares against the texts
+    // the arm writes, not against texts it could have used.
+    let mut told = Vec::new();
+    if let Some(children) = walked {
+        told = condition_refusals(children);
+        extend_refusals(&mut told, marked_refusals_beneath(children));
+    }
+    let mut texts: Vec<String> = sentences.iter().map(|each| each.to_string()).collect();
+    texts.extend(entry_texts_of(listed));
+    let missing: Vec<&String> = frame_reads
+        .iter()
+        .filter(|read| {
+            let bare = super::eval::bare_refusal_sentence(read);
+            let token = token_of_registered(bare, &crate::rules::eval::no_frame_ranking);
+            token.is_some()
+                && !told
+                    .iter()
+                    .any(|(text, held)| text == bare || (*held == token))
+                // ONE rule for the tripwire and the readers, with no fallback of its own: the boundary parse
+                // reads every span of a joined text (`refusals_carried_by`: a span up to sixteen `; ` boundaries
+                // from a start, and numbered raises by their parts), so a refusal whose own text holds a `; `
+                // or a `: ` is found whole wherever it stands. A refusal with MORE inner `; ` than that cap that
+                // is not the last of its sentence is recognized by neither: the readers would write it again,
+                // and the tripwire says so in a debug build, which is the defect it exists to show.
+                && !refusal_carried_by_any(&texts, &(bare.to_string(), token))
+        })
+        .collect();
+    debug_assert!(
+        missing.is_empty(),
+        "{} converted a refusal that no record or sentence of its report names: {:?}",
+        what,
+        missing
+    );
+}
+
+/// The refusals the gate marks beneath `children` name, by identity.
+///
+/// A decided answer is never a finding, so the descent goes only through records that FAILED and that do not
+/// tell their own marks: a message-less failing block, a failed type block or condition. It stops at a record
+/// that did not fail (a `when` that decided NO past a refused read writes its marks under a SKIP `WhenCheck`,
+/// and `condition_decided_past` reports that read as decided past), at a record that carries a sentence of
+/// its own where the reporter writes that sentence (it joins the marks beneath it itself, the block arm and
+/// the nested-empty arms), and at a called rule the reporter reaches (it reports its own). A sentence the
+/// reporter never writes and a run it never reports tell nothing, so the walk goes on beneath them
+/// (`marks_walk_descends`), and a failed `when`, type block or called rule it meets there, which the
+/// reporter never reaches, counts whole: every refusal its failed condition met, a mark or any other refused
+/// record (`refusals_by_depth`, the one source), since its own entry or run is never written. Each mark is
+/// resolved once.
+fn marked_refusals_beneath(children: &[EventRecord<'_>]) -> Vec<NamedRefusal> {
+    let (mut under_conditions, clauses) = marked_refusals_by_group(children);
+    extend_refusals(&mut under_conditions, clauses);
+    under_conditions
+}
+
+/// An entry that names `refusals` and nothing else: the refusals alone, whole, joined by `; ` and flagged as
+/// refusals. The one writer of the entry for the marks of a record with no sentence (`marks_alone_entry`) and
+/// of a rule's own marks entry when its checks speak (the `RuleCheck` arm); `custom_message` is the
+/// record's, if any.
+fn refusals_alone_entry<'value>(
+    context: &str,
+    refusals: &[NamedRefusal],
+    custom_message: &Option<String>,
+) -> ClauseReport<'value> {
+    let text: Vec<&str> = refusals.iter().map(|(text, _)| text.as_str()).collect();
+    ClauseReport::Block(GuardBlockReport {
+        context: context.to_string(),
+        messages: Messages {
+            error_message: Some(text.join("; ")),
+            custom_message: custom_message.clone(),
+            location: None,
+            refusal: true,
+            parts: None,
+        },
+        unresolved: None,
+    })
+}
+
+/// The three groups a type block's or an inline `when`'s own sentence joins, each refusal once, a gate mark
+/// read the same under every record: `condition`, the refusals the record's OWN failed condition met
+/// (`condition_refusals`, with the refusals the walk read under that condition), `nested`, the refusals read
+/// under the failed condition of a record nested in its body (a `when` in a type block's body: a condition
+/// refusal, but not this record's own; a nested `when`, type block or called rule the reporter never reaches
+/// counts whole, `refusals_by_depth`), and `marks`, the marks of the clauses in its body that no condition
+/// met. A refusal an earlier group already carries is left out of the later ones.
+fn condition_and_clause_refusals(
+    children: &[EventRecord<'_>],
+) -> (Vec<NamedRefusal>, Vec<NamedRefusal>, Vec<NamedRefusal>) {
+    let [own, under_nested_conditions, clauses] = refusals_by_depth(children);
+    let mut condition = condition_refusals(children);
+    extend_refusals(&mut condition, own);
+    let (nested, marks) = each_once(&condition, under_nested_conditions, clauses);
+    (condition, nested, marks)
+}
+
+/// The refusals the ONE walk of the marks finds beneath `children`, in the three groups of
+/// [`condition_and_clause_refusals`], each refusal once within its group and in walk order: `[0]` under the
+/// record's own condition (no check record between the condition and the mark, outside the condition), `[1]`
+/// under the condition of a check nested in its body, `[2]` the marks of clauses. Two kinds of record yield
+/// refusals. A gate mark yields its own (`refusals_below` of the mark), grouped by where the walk stands. A
+/// deferred record the reporter never reaches (`is_deferred_condition_record` with `reached` false: a failed
+/// `when`, type block or called rule beneath a record kind the reporter ignores, whose entry or run is never
+/// written) yields every refusal its failed condition met (`deferred_record_refusals`: marks and other
+/// refused records alike), grouped as a mark at the same place is: as the record's OWN condition's where the
+/// walk stands inside this record's condition and below no check between (`[0]`), and as a nested
+/// condition's otherwise (`[1]`: inside the condition of a check the walk entered outside any
+/// condition, such as an unreached called rule's or a nested `when`'s, or outside any condition).
+/// This is the single source every arm reads the refusals
+/// beneath a record from (`marked_refusals_beneath`, `marked_refusals_by_group`, this function's caller), so
+/// no host is special: a message-less `when` or type block, a block or a disjunction with a sentence, a type
+/// block or `when` with a sentence, a rule with a text and an access clause with an entry all tell an
+/// unreached record's refusals where they tell the marks.
+fn refusals_by_depth(children: &[EventRecord<'_>]) -> [Vec<NamedRefusal>; 3] {
+    let mut groups: [Vec<NamedRefusal>; 3] = [Vec::new(), Vec::new(), Vec::new()];
+    walk_marks(children, MarkWalk::START, &mut |record, state| {
+        if is_gate_mark(record) {
+            let group = match (state.in_condition, state.below_a_check) {
+                (true, false) => 0,
+                (true, true) => 1,
+                (false, _) => 2,
+            };
+            extend_refusals(
+                &mut groups[group],
+                refusals_below(std::slice::from_ref(record)),
+            );
+        } else if !state.reached && is_deferred_condition_record(record, state.reached) {
+            // The same reading as a mark's: this record's own condition only where the walk stands inside
+            // it with no check between. A check the walk entered outside any condition (an
+            // unreached called rule, a nested `when`), whose own condition the walk then stands in,
+            // is a check between: what lies under that condition is a nested condition's. Outside
+            // any condition a deferred record's condition is nested too.
+            let group = match (state.in_condition, state.below_a_check) {
+                (true, false) => 0,
+                (true, true) | (false, _) => 1,
+            };
+            extend_refusals(&mut groups[group], deferred_record_refusals(record));
+        }
+    });
+    groups
+}
+
+/// Where the one walk of the marks stands at a record: inside a failed condition, below a check record that
+/// is not part of that condition, whether the reporter still reaches the records here with the arm that
+/// writes their entry and their original children (`stoppable`, `stoppable_beneath`), and whether the
+/// reporter still reaches them at all (`reached`, `reached_beneath`: also through a condition's filtered
+/// copy, where it reports a failed called rule's run but writes no clause's entry). `stoppable` implies
+/// `reached`; beneath a condition the walk is reached and not stoppable.
+#[derive(Clone, Copy)]
+struct MarkWalk {
+    in_condition: bool,
+    below_a_check: bool,
+    stoppable: bool,
+    reached: bool,
+}
+
+impl MarkWalk {
+    const START: MarkWalk = MarkWalk {
+        in_condition: false,
+        below_a_check: false,
+        stoppable: true,
+        reached: true,
+    };
+}
+
+/// THE walk of the gate marks: every record the marks' descent visits, in order (a record before the
+/// records beneath it, siblings in order), handed to `visit` with the state it is visited in. The descent
+/// is `marks_walk_descends`: it never enters a gate mark, and goes on beneath a record only where the marks
+/// are not told at it. The groups of refusals (`refusals_by_depth`), the records that defer a condition
+/// (`deferred_condition_records`) and the context of the first record that carries a refusal
+/// (`context_of_untold`) are all read off this one walk, so they cannot visit different records or in a
+/// different order.
+///
+/// A check record counts as "a check between" only OUTSIDE a condition: the checks the evaluator writes
+/// inside the record's own condition (`TypeCheck > TypeBlock > TypeCondition > BlockGuardCheck > mark`) are
+/// that condition's own. So the flag a mark is grouped by is the one in force when its condition was
+/// entered: nothing inside a condition changes it, and `WhenCondition > BlockGuardCheck > mark` is the
+/// record's own with no filter downstream to repair it. A called rule the walk enters (one the reporter
+/// does not reach) is a check between as well: a mark under that rule's own condition is a nested
+/// condition's, not the condition of the record whose walk this is, so it reads behind [`NESTED_ALSO_MET`]
+/// as it would under a nested `when`.
+fn walk_marks<'a, 'v>(
+    records: &'a [EventRecord<'v>],
+    state: MarkWalk,
+    visit: &mut dyn FnMut(&'a EventRecord<'v>, &MarkWalk),
+) {
+    for record in records {
+        visit(record, &state);
+        if is_gate_mark(record) || !marks_walk_descends(record, state.stoppable, state.reached) {
+            continue;
+        }
+        let is_condition = matches!(
+            record.container,
+            Some(RecordType::TypeCondition(_))
+                | Some(RecordType::WhenCondition(_))
+                | Some(RecordType::RuleCondition(_))
+        );
+        let is_check = !state.in_condition
+            && matches!(
+                record.container,
+                Some(RecordType::BlockGuardCheck(_))
+                    | Some(RecordType::Disjunction(_))
+                    | Some(RecordType::WhenCheck(_))
+                    | Some(RecordType::TypeCheck(_))
+                    | Some(RecordType::GuardClauseBlockCheck(_))
+                    | Some(RecordType::RuleCheck(_))
+            );
+        let next = MarkWalk {
+            in_condition: state.in_condition || is_condition,
+            below_a_check: state.below_a_check || is_check,
+            stoppable: stoppable_beneath(record, state.stoppable),
+            reached: reached_beneath(record, state.reached),
+        };
+        walk_marks(&record.children, next, visit);
+    }
+}
+
+/// [`marked_refusals_beneath`] in the two groups a sentence words differently, in walk order within each:
+/// the refusals read under a failed CONDITION (a type block's, an inline `when`'s or a rule's, and those of a
+/// nested record the reporter never reaches: condition refusals, joined behind [`ALSO_MET`] on the record
+/// that owns the condition and behind [`NESTED_ALSO_MET`] where a rule, an access clause, a type block or an
+/// inline `when` joins them for a record nested beneath) and the marks of clauses (a block's clauses, a
+/// disjunction's disjuncts, a called rule's body clauses: joined behind [`BODY_ALSO_MET`]). The three groups
+/// of [`refusals_by_depth`], the one walk, with the own and the nested conditions as one group, and each
+/// refusal once ACROSS the two groups (`each_once`): a mark a condition also names stays in the condition's
+/// group, so a caller that joins both groups to one sentence, or lists them as one entry, tells it once by
+/// construction (a caller that runs `each_once` again on the result changes nothing).
+fn marked_refusals_by_group(
+    children: &[EventRecord<'_>],
+) -> (Vec<NamedRefusal>, Vec<NamedRefusal>) {
+    let [own, nested, clauses] = refusals_by_depth(children);
+    let mut conditions = own;
+    extend_refusals(&mut conditions, nested);
+    each_once(&[], conditions, clauses)
+}
+
+/// The refusals beneath `children` that no entry of `told_by` carries, in the two groups a sentence words
+/// apart and each refusal once (`each_once`): `nested` (the refusals read under a failed condition, those of
+/// the records the reporter never reaches among them, and the conditions of the message-less `when` and type
+/// blocks the reporter reaches, which defer to this host, `reached_deferred_refusals`) and `body` (the marks
+/// of clauses), both without what `own` (the record's own condition's refusals) already names. The one place
+/// the rule's sentence and an access clause's entry take their untold refusals from.
+fn grouped_untold_refusals(
+    children: &[EventRecord<'_>],
+    told_by: &[ClauseReport<'_>],
+    own: &[NamedRefusal],
+) -> (Vec<NamedRefusal>, Vec<NamedRefusal>) {
+    let (mut under_conditions, clauses) = marked_refusals_by_group(children);
+    extend_refusals(&mut under_conditions, reached_deferred_refusals(children));
+    each_once(
+        own,
+        untold_by(told_by, under_conditions),
+        untold_by(told_by, clauses),
+    )
+}
+
+/// `nested` and `body` with every refusal once across the record's three groups: `nested` without what `own`
+/// names, `body` without what `own` or `nested` names (a clause mark a condition already names stays in the
+/// condition's group).
+fn each_once(
+    own: &[NamedRefusal],
+    nested: Vec<NamedRefusal>,
+    body: Vec<NamedRefusal>,
+) -> (Vec<NamedRefusal>, Vec<NamedRefusal>) {
+    let mut nested_once = Vec::new();
+    extend_refusals(
+        &mut nested_once,
+        nested
+            .into_iter()
+            .filter(|refusal| !is_carried(own, refusal))
+            .collect(),
+    );
+    let mut body_once = Vec::new();
+    extend_refusals(
+        &mut body_once,
+        body.into_iter()
+            .filter(|refusal| !is_carried(own, refusal) && !is_carried(&nested_once, refusal))
+            .collect(),
+    );
+    (nested_once, body_once)
+}
+
+/// The context of the record that carries the entry's FIRST refusal, `untold[0]` (the entry's text is
+/// `untold` in order, so its first refusal is the one a reader meets first): the first gate mark in walk
+/// order whose refusal is `untold[0]`, else, where no mark carries it, the first deferred record
+/// (`is_deferred_condition_record`: a message-less `when` or type block, or a `when`, type block or called
+/// rule the reporter never reaches) in walk order whose condition met it. A mark wins over the deferred
+/// record
+/// above it although the walk visits that record first (its condition's refusals include the marks beneath
+/// the condition): the entry names the record that carried the mark, as the README says. One pass of the
+/// walk of the marks (`walk_marks`), the walk the refusals themselves are read off; `None` when `untold` is
+/// empty or no record carries `untold[0]`, which no refusal found by that walk can leave.
+fn context_of_untold(children: &[EventRecord<'_>], untold: &[NamedRefusal]) -> Option<String> {
+    let first = untold.first()?;
+    let carries = |refusals: Vec<NamedRefusal>| {
+        refusals
+            .iter()
+            .any(|each| is_carried(std::slice::from_ref(first), each))
+    };
+    let (mut mark, mut deferred): (Option<String>, Option<String>) = (None, None);
+    walk_marks(
+        children,
+        MarkWalk::START,
+        &mut |record, state| match is_gate_mark(record) {
+            true if mark.is_none() && carries(refusals_below(std::slice::from_ref(record))) => {
+                mark = Some(record.context.clone());
+            }
+            false
+                if deferred.is_none()
+                    && is_deferred_condition_record(record, state.reached)
+                    && carries(deferred_record_refusals(record)) =>
+            {
+                deferred = Some(record.context.clone());
+            }
+            _ => {}
+        },
+    );
+    mark.or(deferred)
+}
+
+/// Whether the walk of the marks (`marked_refusals_beneath`) goes on beneath `record`: through the records
+/// that FAILED and tell no sentence of their own, the conditions, and the unknown kinds; through a failed
+/// record that carries a sentence only where the reporter does not reach it with the arm that writes that
+/// sentence (`!stoppable`: the sentence is then never written, so it tells nothing); and into a failed
+/// called rule only where the reporter does not reach it at all (`!reached`: nobody reports that run).
+///
+/// `stoppable` says the reporter really reaches `record` with the arm that writes its entry and the
+/// original children (`stoppable_beneath`): only then is a record that would write an entry or a sentence
+/// (an access clause with a message, a block, a disjunction, a `when` or a type block with one) taken to
+/// have written it, and the walk stops there. Where the reporter does not reach it that way (a record kind
+/// `report_failed_clauses` ignores sits between, or the records come through a condition's filtered copy)
+/// that entry may not exist, and the walk goes on, so a refusal beneath it is told by an ancestor, never by
+/// nobody.
+///
+/// `reached` says the reporter still visits `record` at all (`reached_beneath`): with the entry-writing arm
+/// where `stoppable`, and through a condition's filtered copy beneath a rule's or a type block's condition,
+/// where it reports a failed called rule as its own run but writes no entry for a clause. A failed
+/// `RuleCheck` the reporter reaches reports its own run, which tells the marks beneath it once, so the walk
+/// does not enter it; one the reporter does not reach (beneath a filter's predicate records, or beneath a
+/// `when` condition, which the reporter ignores) is entered, so a mark beneath it is told by an ancestor.
+/// `stoppable` implies `reached`, so the four sentence arms and the clause arm read `stoppable` alone.
+fn marks_walk_descends(record: &EventRecord<'_>, stoppable: bool, reached: bool) -> bool {
+    match &record.container {
+        // A failed block, disjunction, `when` or type block with a message tells the marks beneath it in
+        // that sentence's join, where the reporter writes the sentence (`stoppable`): the walk stops there,
+        // so no parent finds those refusals a second time. One with no message, or one the reporter does
+        // not reach with the arm that writes its sentence, tells nothing of them, and the walk goes on.
+        Some(RecordType::BlockGuardCheck(check))
+        | Some(RecordType::Disjunction(check))
+        | Some(RecordType::WhenCheck(check))
+        | Some(RecordType::TypeCheck(TypeBlockCheck { block: check, .. })) => {
+            check.status == Status::FAIL && (!stoppable || check.message.is_none())
+        }
+        // An access clause that writes its own entry (a message and no per-value check of its own that
+        // reports) tells the marks beneath it itself, in that entry's join: the walk stops there, so no
+        // parent finds those refusals a second time. A clause with no message, or whose per-value checks
+        // report, tells nothing of its marks and the walk goes on beneath it, and so does a clause the
+        // reporter may not reach (`stoppable` false).
+        Some(RecordType::GuardClauseBlockCheck(check)) => {
+            check.status == Status::FAIL
+                && (!stoppable || check.message.is_none() || an_own_value_check_reports(record))
+        }
+        Some(RecordType::TypeBlock(status))
+        | Some(RecordType::TypeCondition(status))
+        | Some(RecordType::WhenCondition(status))
+        | Some(RecordType::RuleCondition(status)) => *status == Status::FAIL,
+        // A failed called rule reports its own run, but only where the reporter reaches it (`reached`: with
+        // the entry-writing arm, or through a condition's filtered copy, `condition_records`, which keeps a
+        // failed rule with a refusal beneath it or an account of its own): the walk does not enter it then,
+        // and its run tells the marks once. Where the reporter does not reach it (the rule sits beneath a
+        // record kind the reporter ignores, such as a filter's predicate records or a `when` condition)
+        // nobody reports that run, and the walk goes in so a mark beneath it is told by an ancestor and not
+        // by nobody. Any other `RuleCheck` is not entered.
+        Some(RecordType::RuleCheck(NamedStatus {
+            status: Status::FAIL,
+            ..
+        })) => !reached,
+        Some(RecordType::RuleCheck(_)) => false,
+        _ => true,
+    }
+}
+
+/// Whether a walk that is `stoppable` at `record` still is beneath it: the reporter (`report_failed_clauses`)
+/// descends into the children of exactly the failed block, disjunction, access clause, `when`, type block
+/// and `TypeBlock` records with their original children, reports a failed `RuleCheck` as its own run, and
+/// hands a condition's children a filtered copy (`condition_records`); every other kind (a `WhenCondition`,
+/// a filter's predicate records) it ignores. The walk starts stoppable at the children the arm itself
+/// reported, and loses it beneath a record the reporter does not descend into with the original children.
+/// A `RuleCheck` is not in the list: the walk does not enter a called rule the reporter reaches
+/// (`marks_walk_descends` reads `reached`, which `stoppable` implies; the run reports its own marks), and
+/// beneath one it enters the reporter reaches nothing. A rule's or a type block's condition is not in the
+/// list either: the reporter reaches its records (`reached_beneath`), but through a filtered copy, so an
+/// entry beneath it may not exist. The reporter's arms are match arms, so the two lists cannot share one
+/// function; the cell `the_reporters_descent_and_the_walks_stoppable_flag_agree_on_every_failed_record_kind`
+/// pins that they agree for every kind.
+fn stoppable_beneath(record: &EventRecord<'_>, stoppable: bool) -> bool {
+    stoppable
+        && matches!(
+            &record.container,
+            Some(RecordType::BlockGuardCheck(BlockCheck {
+                status: Status::FAIL,
+                ..
+            })) | Some(RecordType::Disjunction(BlockCheck {
+                status: Status::FAIL,
+                ..
+            })) | Some(RecordType::WhenCheck(BlockCheck {
+                status: Status::FAIL,
+                ..
+            })) | Some(RecordType::TypeCheck(TypeBlockCheck {
+                block: BlockCheck {
+                    status: Status::FAIL,
+                    ..
+                },
+                ..
+            })) | Some(RecordType::GuardClauseBlockCheck(BlockCheck {
+                status: Status::FAIL,
+                ..
+            })) | Some(RecordType::TypeBlock(Status::FAIL))
+        )
+}
+
+/// Whether a walk the reporter still `reached` at `record` is reached beneath it: beneath every record
+/// `stoppable_beneath` lists, and beneath a failed rule or type condition, whose children the reporter
+/// reports through a filtered copy (`condition_records`: a failed called rule with a refusal beneath it or an
+/// account of its own is kept and reported as its own run). Not beneath a `when` condition, a filter's
+/// predicate records or any other kind the reporter ignores, and not beneath a called rule the walk enters
+/// (the walk enters one only where the reporter does not reach it, so nothing beneath is reached). Beneath a
+/// rule with a text of its own the reporter skips the rule's condition (`rule_checks`), but the rule's
+/// sentence reads that condition's refusals whole (`condition_refusals`, which reads a called rule's
+/// refusals and sentence), so the flag need not tell that case apart: what the walk would find there the
+/// sentence names already.
+fn reached_beneath(record: &EventRecord<'_>, reached: bool) -> bool {
+    reached
+        && (stoppable_beneath(record, true)
+            || matches!(
+                &record.container,
+                Some(RecordType::RuleCondition(Status::FAIL))
+                    | Some(RecordType::TypeCondition(Status::FAIL))
+            ))
+}
+
+/// The refusals the failed CONDITIONS of the message-less `when` and type blocks beneath `children` that the
+/// reporter REACHES name (`deferred_record_refusals` of each: the gate marks and every other refused record
+/// the condition's filtered copy keeps), along the same descent as the marks. Such a record writes no entry
+/// under a rule with a text of its own or an access clause that writes its own entry (`marks_told_above`: its
+/// condition's refusals are deferred to that host), so this is the one host-specific collector, read by
+/// those two hosts alone (`grouped_untold_refusals`). The records the reporter never reaches are no host's
+/// business in particular: every arm reads them with the marks (`refusals_by_depth`).
+fn reached_deferred_refusals(children: &[EventRecord<'_>]) -> Vec<NamedRefusal> {
+    let mut found = Vec::new();
+    for (record, reached) in deferred_condition_records(children) {
+        if reached {
+            extend_refusals(&mut found, deferred_record_refusals(record));
+        }
+    }
+    found
+}
+
+/// The refusals a deferred record's failed CONDITION met, as `condition_refusals` reads them for a reached
+/// record (its direct condition children through the condition's filtered copy, a type block's through its
+/// `TypeBlock` records): marks and every other refused record alike. For a called rule, its own refusal
+/// sentence as well (`called_rule_refusal_sentence`), as the walk of a failed condition reads a called rule
+/// it meets: where nobody reports the rule's run, that sentence is the one account of the refusal its own
+/// `when` held when its condition's records name none. The duplicate a quoting sentence makes is removed by
+/// identity (`extend_refusals`).
+fn deferred_record_refusals(record: &EventRecord<'_>) -> Vec<NamedRefusal> {
+    let mut found = condition_refusals(&record.children);
+    if let Some(RecordType::RuleCheck(NamedStatus {
+        slot,
+        message,
+        displaced,
+        ..
+    })) = &record.container
+    {
+        if let Some(quoted) = called_rule_refusal_sentence(slot, message, displaced) {
+            push_refusal(&mut found, quoted, None);
+        }
+    }
+    found
+}
+
+/// The deferred records beneath `children` (`is_deferred_condition_record`; their conditions' refusals are
+/// `deferred_record_refusals`), each with whether the reporter reaches it (`MarkWalk::reached` at the
+/// visit), along the same descent as the marks, in walk order. The reached ones are
+/// [`reached_deferred_refusals`]' (the two deferring hosts); the unreached ones are read by every arm with
+/// the marks (`refusals_by_depth`).
+fn deferred_condition_records<'a, 'v>(
+    children: &'a [EventRecord<'v>],
+) -> Vec<(&'a EventRecord<'v>, bool)> {
+    let mut found = Vec::new();
+    walk_marks(children, MarkWalk::START, &mut |record, state| {
+        if is_deferred_condition_record(record, state.reached) {
+            found.push((record, state.reached));
+        }
+    });
+    found
+}
+
+/// A failed record whose own entry tells nothing of its condition's refusals, so that the record that tells
+/// the marks tells them (its condition's refusals are `deferred_record_refusals`): a `when` or type block
+/// with no message (it writes no entry under a record that tells the marks); a `when` or type block the
+/// reporter never reaches (`reached` false: its entry, message or none, is never written); and a failed
+/// called rule the reporter never reaches (the walk enters it, `marks_walk_descends`, and nobody reports its
+/// run, so its condition's refusals and its own sentence would otherwise be told by nothing). A reached
+/// record with a message writes its own entry, with those refusals joined, and a reached called rule
+/// reports its own run: neither is deferred.
+fn is_deferred_condition_record(record: &EventRecord<'_>, reached: bool) -> bool {
+    match &record.container {
+        Some(RecordType::WhenCheck(check))
+        | Some(RecordType::TypeCheck(TypeBlockCheck { block: check, .. })) => {
+            check.status == Status::FAIL && (check.message.is_none() || !reached)
+        }
+        Some(RecordType::RuleCheck(NamedStatus {
+            status: Status::FAIL,
+            ..
+        })) => !reached,
+        _ => false,
+    }
+}
+
+/// The sentence, refusal flag and parts of a block's own entry: its `message` with the refusals it does not
+/// already carry joined (the flag stays the message's kind, as a rule's sentence keeps its own), in the two
+/// groups a block's sentence words apart (`nested`, the refusals read under a failed condition nested beneath
+/// the block, behind [`NESTED_ALSO_MET`]; `marks`, the marks of its clauses, behind [`BODY_ALSO_MET`]); the
+/// refusals alone, whole, flagged refusals, when it has no message of its own; and `fallback`, no refusal's,
+/// when it has neither.
+fn block_sentence_with_marks(
+    message: Option<&String>,
+    message_is_a_refusal: bool,
+    nested: &[NamedRefusal],
+    marks: &[NamedRefusal],
+    fallback: &str,
+) -> (String, bool, Option<SentenceParts>) {
+    match (message, nested.is_empty() && marks.is_empty()) {
+        (Some(message), true) => (message.clone(), message_is_a_refusal, None),
+        (Some(message), false) => {
+            // The block's sentence has no condition of its own, so nothing follows "the condition also
+            // met": a refusal read under a condition nested beneath the block follows the nested joiner,
+            // and a mark of the block's clauses, which no condition met, the body joiner
+            // (`join_rule_refusals`).
+            let (text, parts) = join_rule_refusals(
+                message,
+                Vec::new(),
+                nested.to_vec(),
+                marks.to_vec(),
+                SentenceSlot::Error,
+            );
+            (text, message_is_a_refusal, parts)
+        }
+        (None, false) => (
+            nested
+                .iter()
+                .chain(marks)
+                .map(|(text, _)| text.as_str())
+                .collect::<Vec<_>>()
+                .join("; "),
+            true,
+            None,
+        ),
+        (None, true) => (fallback.to_string(), false, None),
+    }
+}
+
+/// What a failed rule's sentence says between its own text and the refusals its failed CONDITION also met.
+/// The joined text is the head of its [`SentenceParts`], this joiner and the condition refusals, then
+/// [`NESTED_ALSO_MET`] and the nested conditions' refusals, then [`BODY_ALSO_MET`] and the marks when there
+/// are any (`SentenceParts::refusals_text`). The record's OWN condition's refusals only: a nested
+/// condition's follow [`NESTED_ALSO_MET`], and a refusal of a body or of a block's clauses follows
+/// [`BODY_ALSO_MET`].
+pub(crate) const ALSO_MET: &str = "; the condition also met: ";
+
+/// What stands before the marks of the CALLED RULE'S BODY CLAUSES (not the author's `<< >>` text) in a
+/// sentence, and before the marks of a block's clauses or a disjunction's disjuncts: they are refusals of
+/// clauses that ran, which no failed condition met ([`ALSO_MET`]). The sentence of a rule that met both reads
+/// `head; the condition also met: C1; a body clause also met: B1`; one that gained only such marks joins
+/// them under this joiner alone. Both end in `: `, the boundary the dedupe reads a refusal after
+/// (`refusals_carried_by`), so a refusal either one introduces is carried like any other.
+pub(crate) const BODY_ALSO_MET: &str = "; a body clause also met: ";
+
+/// What stands before the refusals a failed condition NESTED beneath a record (a type block's or an inline
+/// `when`'s in the body of a rule, an access clause that writes its own entry, a type block, an inline
+/// `when`, a block or a disjunction) met, when they are joined at that record's sentence. Which nested
+/// records leave their condition's refusals to the host depends on the host. A rule with a text of its own
+/// and an access clause that writes its own entry hand their children a deferral (`marks_told_above`): a
+/// nested `when` or type block with no sentence writes no entry beneath them, reached or not, and its
+/// refusals stand behind this joiner on the host's sentence. A type block or an inline `when` with a
+/// sentence, a block and a disjunction hand their children no deferral: a nested `when` or type block the
+/// reporter reaches writes its own entry instead, and the joiner is not written for it; on such a host's
+/// sentence the joiner appears only for a nested record the reporter does not reach (one beneath a record
+/// kind it does not descend into, such as a filter's predicate records), whose own entry never exists, and a
+/// block's or a disjunction's sentence words those refusals behind this joiner as every other host does,
+/// apart from the marks of its own clauses ([`BODY_ALSO_MET`]). They are condition refusals, but not of the
+/// record's own condition
+/// ([`ALSO_MET`]), and not marks of clauses ([`BODY_ALSO_MET`]). The sentence of a rule that met all three reads
+/// `head; the condition also met: C1; a nested condition also met: N1; a body clause also met: B1`. Ends in
+/// `: `, the boundary the dedupe reads a refusal after (`refusals_carried_by`).
+pub(crate) const NESTED_ALSO_MET: &str = "; a nested condition also met: ";
+
+/// How many joiners a sentence has, the one length the joiner list ([`SENTENCE_JOINERS`]) and the groups a
+/// sentence's parts hold (`SentenceParts::group_texts`) are both typed by: a joiner added to the list
+/// without its group, or a group without its joiner, is a type error, not a silent mismatch.
+pub(crate) const SENTENCE_JOINER_COUNT: usize = 3;
+
+/// The three joiners in the order a sentence reads them ([`ALSO_MET`], [`NESTED_ALSO_MET`],
+/// [`BODY_ALSO_MET`]): the one list the sentence's parts (`SentenceParts::groups`, paired by position with
+/// the groups' texts under the same length) and the console's floor rule for a refusal line (`floor_ends`,
+/// which takes the end of each joiner text a line holds as a floor the cut does not back up past) both read,
+/// so a joiner added here reaches both.
+pub(crate) const SENTENCE_JOINERS: [&str; SENTENCE_JOINER_COUNT] =
+    [ALSO_MET, NESTED_ALSO_MET, BODY_ALSO_MET];
+
+/// The head of a call-with-a-body rule's sentence when the evaluator wrote none of its own and an error
+/// ended the evaluation of the rule (`NamedStatus::ended_by_error`, set where the rule's body or its own
+/// `when` closed on an error): it says what is true of the rule and claims nothing about which error decided
+/// it. Chosen by that record's account alone, whatever refusals the sentence gained.
+pub(crate) const RULE_FAILED_ON_AN_ERROR_HEAD: &str =
+    "The rule failed on an error that ended its evaluation";
+
+/// The head of a call-with-a-body rule's sentence when the evaluator wrote none of its own and no error ended
+/// the evaluation of the rule (the record says so, `NamedStatus::ended_by_error` unset): whatever refusals
+/// the sentence gained, it claims only that the rule failed.
+pub(crate) const RULE_FAILED_HEAD: &str = "The rule failed";
+
 /// The checks of a failed rule. A rule whose `when` condition failed closed carries the condition's
 /// explanation as its own message (`has_message`), which beats a silent child's generic sentence and
 /// keeps `checks` empty for the console, which names such a rule by its message when its checks are
-/// empty (`collect_unattributed_explanations`): its failed condition record is not walked. Every other
-/// child is walked with the generic fallback allowed, so a rule that fails is never listed with empty
-/// checks where something beneath it failed.
+/// empty (`collect_unattributed_explanations`): its failed condition record is not walked. The same holds
+/// for a call's `<< >>` body: a rule with a message of any kind (`has_message`) lists no generic "none of
+/// the checks recorded under it reports why" entry for a silent child, since that sentence would fill
+/// `checks` and take the console's and the JUnit report's place for the message, which is the rule's one
+/// explanation. For the same reason a record beneath it that writes no sentence of its own (a type block, a
+/// `when` or a disjunction with no message) writes no entry for the marks beneath it (`marks_told_above`): the
+/// rule tells them, joined to its sentence (`rule_refusals`; an access clause that writes its own entry
+/// does the same for its own children), so its `checks` stay empty and its text
+/// reaches the structured reports. A child that reports is listed as ever. A rule WITHOUT a message walks
+/// every child with the generic fallback allowed, so a rule that fails is never listed with empty checks
+/// where something beneath it failed.
 fn rule_checks<'value>(
     children: &[EventRecord<'value>],
     has_message: bool,
@@ -32783,7 +35045,11 @@ fn rule_checks<'value>(
         {
             continue;
         }
-        checks.extend(report_failed_clauses(std::slice::from_ref(child), true));
+        checks.extend(report_failed_clauses(
+            std::slice::from_ref(child),
+            !has_message,
+            has_message,
+        ));
     }
     drop_repeated_generic_entries(&mut checks);
     checks

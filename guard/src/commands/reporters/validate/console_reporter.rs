@@ -431,7 +431,7 @@ mod tests {
 
     /// An author's message on an empty selection's line is written with the ESC as its escape.
     ///
-    /// Expected, not yet run. Red: the line carries the ESC byte.
+    /// Fails when the line carries the ESC byte.
     #[test]
     fn an_empty_selections_message_is_written_escaped() -> crate::rules::Result<()> {
         let printed = failed_tree(
@@ -448,7 +448,7 @@ mod tests {
 
     /// An author's message on a unary check's line is written with the ESC as its escape.
     ///
-    /// Expected, not yet run. Red: the line carries the ESC byte.
+    /// Fails when the line carries the ESC byte.
     #[test]
     fn a_unary_checks_message_is_written_escaped_on_one_line() -> crate::rules::Result<()> {
         let printed = failed_tree(
@@ -462,7 +462,7 @@ mod tests {
 
     /// An author's message on a comparison's line is written with the ESC as its escape.
     ///
-    /// Expected, not yet run. Red: the line carries the ESC byte.
+    /// Fails when the line carries the ESC byte.
     #[test]
     fn a_comparisons_message_is_written_escaped() -> crate::rules::Result<()> {
         let printed = failed_tree(
@@ -481,8 +481,8 @@ mod tests {
     /// traversed to, a comparison whose operand is missing (the shared sentence), and a resolved
     /// comparison's value.
     ///
-    /// Expected, not yet run. Red: a line the tree writes holds the joiner raw, or an arm's line is not
-    /// the shape the row looks for.
+    /// Fails when a line the tree writes holds the joiner raw, or when an arm's line is not the
+    /// shape the row looks for.
     #[test]
     fn a_joiner_in_a_field_of_each_message_bearing_arm_is_written_escaped(
     ) -> crate::rules::Result<()> {
@@ -546,8 +546,8 @@ mod tests {
     /// field is written as the two characters `\n`, so a multi-line template string in a quoted value
     /// prints on one line, which is the fail-closed shape.
     ///
-    /// Expected, not yet run. Red: a line gains or loses a byte against the record's display, or the
-    /// output holds an ESC.
+    /// Fails when a line gains or loses a byte against the record's display, or when the output
+    /// holds an ESC.
     #[test]
     fn an_ordinary_failing_tree_is_written_as_its_records_display() -> crate::rules::Result<()> {
         let data =
@@ -578,7 +578,7 @@ mod tests {
     /// A value from the data on a comparison's line is written with the ESC as its escape, since the
     /// body of the line is escaped strictly as a whole.
     ///
-    /// Expected, not yet run. Red: a line the tree writes carries a raw ESC from a data value.
+    /// Fails when a line the tree writes carries a raw ESC from a data value.
     #[test]
     fn a_data_value_on_a_comparisons_line_is_written_escaped() -> crate::rules::Result<()> {
         let printed = failed_tree(
@@ -593,7 +593,7 @@ mod tests {
     /// The value a missing property's line says the walk traversed to is written with the ESC as its
     /// escape, a data key included.
     ///
-    /// Expected, not yet run. Red: a line the tree writes carries a raw ESC from a data key.
+    /// Fails when a line the tree writes carries a raw ESC from a data key.
     #[test]
     fn the_value_traversed_to_on_a_missing_propertys_line_is_written_escaped(
     ) -> crate::rules::Result<()> {
@@ -610,8 +610,8 @@ mod tests {
     /// set, as the per-resource output writes it) while the ESC beside it, and a joiner in the data value
     /// on the same line, are written as their escapes (the strict set).
     ///
-    /// Expected, not yet run. Red: the message's joiner is written as `\u{200d}`, the joiner in the value
-    /// is written raw, or the ESC is raw.
+    /// Fails when the message's joiner is written as `\u{200d}`, when the joiner in the value is
+    /// written raw, or when the ESC is raw.
     #[test]
     fn a_message_keeps_a_joiner_while_the_fields_beside_it_are_escaped_strictly(
     ) -> crate::rules::Result<()> {
@@ -638,7 +638,7 @@ mod tests {
     /// The error appended to a unary or comparison line is written through the strict set, once: the
     /// relaxed set is for the author's message beside it.
     ///
-    /// Expected, not yet run. Red: the suffix carries the ESC byte, or an escaped text is escaped again.
+    /// Fails when the suffix carries the ESC byte, or when an escaped text is escaped again.
     #[test]
     fn an_errors_suffix_is_written_escaped() {
         assert_eq!(

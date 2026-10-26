@@ -4,6 +4,23 @@ use crate::rules::path_value::*;
 use pretty_assertions::assert_eq;
 use std::convert::TryFrom;
 
+/// The sentence a record's failed condition alone joins, through the join every arm ships
+/// (`join_rule_refusals` over `condition_refusals`): the cells that read the condition's join go through
+/// production code and not a copy of it.
+fn sentence_and_whether_refusals_joined(
+    message: &str,
+    children: &[EventRecord<'_>],
+    slot: SentenceSlot,
+) -> (String, Option<SentenceParts>) {
+    join_rule_refusals(
+        message,
+        condition_refusals(children),
+        Vec::new(),
+        Vec::new(),
+        slot,
+    )
+}
+
 #[test]
 fn extraction_test() -> Result<()> {
     let rules_files = r#"
@@ -2895,17 +2912,37 @@ fn a_referenced_rules_condition_capture_is_not_read_by_the_referencing_rule() ->
 
 /// The status a top-level rule's own `RuleCheck` record holds in an extracted record tree: the run's
 /// verdict, read where the run wrote it, never a second evaluation. The one reader of its kind;
-/// `eval_tests.rs` imports it.
+/// `eval_tests.rs` imports it. Rules may share a name (a rules file admits it), so every match is collected:
+/// exactly one is required, a miss panics naming the rules the tree holds, and a second record of the name
+/// panics naming how many there are, so the answer is never the first of several.
 pub(crate) fn recorded_rule_status(top: &EventRecord<'_>, rule_name: &str) -> Status {
-    top.children
+    let held: Vec<(&str, Status)> = top
+        .children
         .iter()
-        .find_map(|child| match &child.container {
-            Some(RecordType::RuleCheck(NamedStatus { name, status, .. })) if *name == rule_name => {
-                Some(*status)
-            }
+        .filter_map(|child| match &child.container {
+            Some(RecordType::RuleCheck(NamedStatus { name, status, .. })) => Some((*name, *status)),
             _ => None,
         })
-        .unwrap_or_else(|| panic!("no rule named {} in the record tree", rule_name))
+        .collect();
+    let matches: Vec<Status> = held
+        .iter()
+        .filter(|(name, _)| *name == rule_name)
+        .map(|(_, status)| *status)
+        .collect();
+    match matches.as_slice() {
+        [status] => *status,
+        [] => panic!(
+            "no rule named {} in the record tree; it holds {:?}",
+            rule_name,
+            held.iter().map(|(name, _)| *name).collect::<Vec<_>>()
+        ),
+        several => panic!(
+            "{} records of the rule named {} in the record tree: {:?}",
+            several.len(),
+            rule_name,
+            several
+        ),
+    }
 }
 
 /// A capture on a filter over a list binds the element the predicate selected, in every spelling that
@@ -8377,9 +8414,12 @@ fn a_block_checks_authors_message_reaches_the_structured_report_for_every_record
     let block = |custom_message: Option<&str>| BlockCheck {
         status: Status::FAIL,
         at_least_one_matches: false,
+        raised: false,
         message: Some(SENTENCE.to_string()),
         refusal: true,
         custom_message: custom_message.map(str::to_string),
+        gate_mark: false,
+        frame_reads: Vec::new(),
     };
     let record = |container: RecordType<'static>| EventRecord {
         context: String::from("rule/clause"),
@@ -8451,9 +8491,12 @@ fn an_access_clauses_block_report_is_suppressed_only_by_an_own_value_check_that_
     let block = BlockCheck {
         status: Status::FAIL,
         at_least_one_matches: false,
+        raised: false,
         message: Some(SENTENCE.to_string()),
         refusal: true,
         custom_message: Some(AUTHORS.to_string()),
+        gate_mark: false,
+        frame_reads: Vec::new(),
     };
     let child = |context: &str, container: RecordType<'static>| EventRecord {
         context: context.to_string(),
@@ -8468,6 +8511,7 @@ fn an_access_clauses_block_report_is_suppressed_only_by_an_own_value_check_that_
                 status: Status::FAIL,
                 message: None,
                 custom_message: None,
+                failure: None,
             })),
         )
     };
@@ -8483,6 +8527,8 @@ fn an_access_clauses_block_report_is_suppressed_only_by_an_own_value_check_that_
             message: None,
             slot: crate::rules::CustomSlot::Evaluator,
             displaced: None,
+            frame_reads: Vec::new(),
+            ended_by_error: false,
         }),
     );
     /// The kinds of the reports, in order: `B` a block carrying the author's message, `C` a clause
@@ -8872,9 +8918,8 @@ fn the_held_scalar_filter_notice_is_written_only_where_its_reader_moved_the_verd
     // the refused-read line written for one hold's read drops THAT hold's reader alone, so the other
     // hold's FAIL is still written when the rule fails on it, whichever hold the line names (the same
     // document in both orders). The two holds are pended at sites of their own, so each FAIL that is
-    // written is a notice of its own: expected, not yet run after that change, red before the narrowing is
-    // no notice in both orders (the line having dropped both readers), and red when a line drops no
-    // reader is two notices.
+    // written is a notice of its own. Before the narrowing there is no notice in both orders
+    // (the line having dropped both readers), and a line that drops no reader gives two notices.
     let rests_on_both: Vec<crate::rules::RefusedRead> =
         vec![("R1".to_string(), None), ("R2".to_string(), None)];
     for (decided_past, written_tag) in [("R2", "h1)"), ("R1", "h2)")] {
@@ -8972,9 +9017,9 @@ fn the_held_scalar_filter_notice_is_written_only_where_its_reader_moved_the_verd
     // then reads the text's registered token), and with the readers RAISED rather than FAILED, ended by
     // the fail-closed write of the raise's site rather than by the rule's judgment. Each row drops the
     // named hold's reader alone, so the other hold's notice is the one written. The holds are pended at
-    // sites of their own, as in (6c), so a notice is written per hold left standing: expected, not yet run
-    // after that change, red before the token path is two notices (neither hold named, so neither reader
-    // dropped) on the by-token rows, and red before the narrowing is no notice on every row.
+    // sites of their own, as in (6c), so a notice is written per hold left standing. Before the
+    // token path the by-token rows give two notices (neither hold named, so neither reader
+    // dropped), and before the narrowing every row gives no notice.
     const WRAPS: [&str; 2] = [
         "the wrap around the first refused read",
         "the wrap around the second refused read",
@@ -9294,11 +9339,18 @@ fn the_held_scalar_filter_notice_is_written_only_where_its_reader_moved_the_verd
 
     // (14) the FAIL count advances once, on the first FAIL a call actually marks: a Failed decision at a
     // site where no hold has a `Read` entry marks nothing and leaves the count alone, while a store that
-    // holds a reader elsewhere is walked.
+    // holds a reader elsewhere is walked. A count that moves on the call that marks nothing, or
+    // by the number of FAILs a call marks instead of by one, fails here.
+    // TWO holds are read at `clause_a`, so one Failed call marks two FAILs: the count advances once for
+    // the call (`+1 per call that marks`), not once per FAIL marked (`+2`), which a single hold cannot
+    // tell apart.
     let mut root = scope();
     pend(&mut root, t1, "fourteen");
     confirm(&mut root, t1);
     read(&mut root, t1, &clause_a);
+    pend(&mut root, t2, "fourteen, a second hold");
+    confirm(&mut root, t2);
+    read(&mut root, t2, &clause_a);
     let before = root.held_fails_mark();
     root.undecided_reads_decided(&clause_b, UndecidedReadsDecision::Failed);
     assert_eq!(
@@ -9310,7 +9362,7 @@ fn the_held_scalar_filter_notice_is_written_only_where_its_reader_moved_the_verd
     assert_eq!(
         before + 1,
         root.held_fails_mark(),
-        "(14) the first marked FAIL advances the count once"
+        "(14) one call that marks two FAILs advances the count once"
     );
 }
 
@@ -9793,10 +9845,11 @@ fn a_refusal_text_holding_a_line_feed_and_an_escape_is_one_prefixed_line() -> Re
 }
 
 /// The announced-capture set holds a reason only where its warning was recorded. `refuse_unbound_capture`
-/// keys the reason it refuses with into the root's set (`EvalContext::announced_capture_refusals`, read by
-/// the refused-read line `RootScope::record_unraised_refusal` writes for a comparison, `eval::judged_binary_operation`) only when `announce_unbound_capture` reached a scope
-/// that wrote the line (`record_capture_warning` says so), so the line leaves a refusal off exactly where
-/// the warning channel names it. Over `Rules[0][ r | Action == 'allow' ]` at a scalar: a root evaluating
+/// keys the reason it refuses with into the root's set (`EvalContext::announced_capture_refusals`). That
+/// set is read by the refused-read line `RootScope::record_unraised_refusal` writes for a comparison
+/// (`eval::judged_binary_operation`). A reason is keyed only when `announce_unbound_capture` reached a
+/// scope that wrote the warning (`record_capture_warning` says so), so the line leaves a refusal off
+/// exactly where the warning channel names it. Over `Rules[0][ r | Action == 'allow' ]` at a scalar: a root evaluating
 /// (measurement off) records one warning and the set holds the reason; the same shape under a `Quiet`
 /// measurement records nothing and the set stays empty; a `QuietScope` over a root, whose
 /// `record_capture_warning` drops the line, leaves the set empty too. Before, the set was filled whatever
@@ -10709,8 +10762,8 @@ fn settling_a_non_empty_frame_of_an_answered_predicate_trips_the_assertion() {
 /// record, the author's text in `custom_message` and the evaluator's sentence and a refusal's in
 /// `error_message` (flagged for the refusal), and `get_message` is unchanged in every row.
 ///
-/// Red: the rule's own text is added beside a clause's, a silent rule answers
-/// nothing, a text lands in the other slot, or `get_message` starts to carry the rule's text.
+/// Fails when the rule's own text is added beside a clause's, when a silent rule answers nothing,
+/// when a text lands in the other slot, or when `get_message` starts to carry the rule's text.
 #[test]
 fn a_rule_reports_its_own_message_only_where_its_checks_say_nothing() {
     fn block(custom: Option<&str>, error: Option<&str>) -> ClauseReport<'static> {
@@ -10813,11 +10866,9 @@ fn a_rule_reports_its_own_message_only_where_its_checks_say_nothing() {
 /// Reading the messages of a call chain walks each rule's subtree once: a rule asks whether its checks say
 /// anything of the messages it just collected, not of a second walk, so a chain of four rules, each calling
 /// the one before and each holding a record text, runs `messages_of_checks` four times (the depth plus
-/// one) and the answer is the innermost rule's own record.
-///
-/// Expected, not yet run. Red: the count reads more than four (a walk to ask whether the rule speaks for
-/// itself and a second to collect, which doubles at every level and reads 22 for this chain), or the
-/// answer is not the innermost rule's own text.
+/// one) and the answer is the innermost rule's own record. Fails when the count reads more than four (a
+/// walk to ask whether the rule speaks for itself and a second to collect, which doubles at every level and
+/// reads 22 for this chain), or when the answer is not the innermost rule's own text.
 #[test]
 fn reading_the_messages_of_a_call_chain_walks_each_level_once() {
     fn rule_over(name: &'static str, checks: Vec<ClauseReport<'static>>) -> ClauseReport<'static> {
@@ -10860,8 +10911,8 @@ fn reading_the_messages_of_a_call_chain_walks_each_level_once() {
 /// The record tree writes the sentence a call body displaced under `displaced_message` and nothing for its
 /// kind, and writes no key at all for a record that displaced nothing.
 ///
-/// Red: the key is missing for a record that displaced a sentence, the kind is
-/// written, or the key is written as `null` for a record that displaced nothing.
+/// Fails when the key is missing for a record that displaced a sentence, when the kind is
+/// written, or when the key is written as `null` for a record that displaced nothing.
 #[test]
 fn the_record_tree_writes_a_displaced_sentence_and_not_its_kind() {
     use crate::rules::{CustomSlot, NamedStatus};
@@ -10871,6 +10922,8 @@ fn the_record_tree_writes_a_displaced_sentence_and_not_its_kind() {
         message: Some("the body".to_string()),
         slot: CustomSlot::Author,
         displaced: Some((CustomSlot::Refusal, "the rule's own sentence".to_string())),
+        frame_reads: Vec::new(),
+        ended_by_error: false,
     };
     let written = serde_json::to_value(&displaced).expect("the record serializes");
     assert_eq!(
@@ -10881,9 +10934,21 @@ fn the_record_tree_writes_a_displaced_sentence_and_not_its_kind() {
         "the sentence is written beside the body: {}",
         written
     );
-    assert!(
-        !written.to_string().contains("Refusal"),
-        "the kind is not written: {}",
+    // The exact key set, so a kind written under any other key reads red, not only one spelled "Refusal".
+    let keys = |value: &serde_json::Value| -> Vec<String> {
+        let mut keys: Vec<String> = value
+            .as_object()
+            .expect("the record serializes as an object")
+            .keys()
+            .cloned()
+            .collect();
+        keys.sort();
+        keys
+    };
+    assert_eq!(
+        vec!["displaced_message", "message", "name", "status"],
+        keys(&written),
+        "the sentence is written and its kind is not: {}",
         written
     );
     let nothing = NamedStatus {
@@ -10891,8 +10956,9 @@ fn the_record_tree_writes_a_displaced_sentence_and_not_its_kind() {
         ..displaced
     };
     let written = serde_json::to_value(nothing).expect("the record serializes");
-    assert!(
-        written.get("displaced_message").is_none(),
+    assert_eq!(
+        vec!["message", "name", "status"],
+        keys(&written),
         "no key for a record that displaced nothing: {}",
         written
     );
@@ -10902,8 +10968,8 @@ fn the_record_tree_writes_a_displaced_sentence_and_not_its_kind() {
 /// so the newest overall and the newest the run owns are the same token and twenty registrations leave
 /// exactly it.
 ///
-/// Expected, not yet run. Red: the list grows with the number of registrations, or the token kept is not
-/// the newest minted (a cut that keeps the oldest token the run owns).
+/// Fails when the list grows with the number of registrations, or when the token kept is not the
+/// newest minted (a cut that keeps the oldest token the run owns).
 #[test]
 fn a_sentence_registered_many_times_under_one_run_lists_a_bounded_number_of_tokens() {
     let rules_file = RulesFile::try_from("rule r { Resources exists }").expect("parses");
@@ -10942,10 +11008,11 @@ fn a_sentence_registered_many_times_under_one_run_lists_a_bounded_number_of_toke
 /// the inner run (`ended_with_its_token`, which the predicate's wrapper calls while the run is live)
 /// answers the inner run's token. With both runs closed, a write of the sentence leaves one token listed.
 ///
-/// Expected, not yet run. Red: the registry answers the outer run's token to the inner run (the write was
-/// skipped, or the read took the first token listed), answers the inner run's to the outer run, drops one of
-/// the two tokens while a live run owns it, an `ensure_` writer returns a token other than the marker's, a
-/// writer hands back a token the outer run owns, or the list keeps both tokens after both runs closed.
+/// Fails when the registry answers the outer run's token to the inner run (the write was
+/// skipped, or the read took the first token listed), answers the inner run's to the outer
+/// run, drops one of the two tokens while a live run owns it, when an `ensure_` writer returns
+/// a token other than the marker's, when a writer hands back a token the outer run owns, or
+/// when the list keeps both tokens after both runs closed.
 #[test]
 fn a_run_opened_inside_a_binding_reads_its_own_token_beside_the_enclosing_runs_for_every_writer() {
     let rules_file = RulesFile::try_from("rule r { Resources exists }").expect("parses");
@@ -11085,8 +11152,8 @@ fn a_run_opened_inside_a_binding_reads_its_own_token_beside_the_enclosing_runs_f
 /// oldest owned token would list two tokens as well and answer the outer run a token older than its
 /// newest, which the folds that rank by minting (`later_token`) would read differently.
 ///
-/// Red: the list holds a token other than the outer run's newest and the inner
-/// run's newest, holds more or fewer than two, or the outer run is answered an older token of its own.
+/// Fails when the list holds a token other than the outer run's newest and the inner run's newest,
+/// holds more or fewer than two, or when the outer run is answered an older token of its own.
 #[test]
 fn an_outer_and_a_binding_nested_run_each_keep_the_newest_token_they_registered() {
     let rules_file = RulesFile::try_from("rule r { Resources exists }").expect("parses");
@@ -11150,9 +11217,9 @@ fn an_outer_and_a_binding_nested_run_each_keep_the_newest_token_they_registered(
 /// frames form; the live runs' form answers the inner run's; a stack planted with both runs answers the
 /// inner run's; a stack planted with none answers the later by minting, the one fallback ordering.
 ///
-/// Red: the frames form answers by the live runs (the outer-only stack answers the
-/// inner run's token), a planted stack owns neither token and answers the later one, or the empty stack
-/// answers an earlier token.
+/// Fails when the frames form answers by the live runs (the outer-only stack answers the inner
+/// run's token), when a planted stack owns neither token and answers the later one, or when
+/// the empty stack answers an earlier token.
 #[test]
 fn a_planted_stack_is_asked_for_its_own_token_beside_the_live_runs() {
     let rules_file = RulesFile::try_from("rule r { Resources exists }").expect("parses");
@@ -11210,9 +11277,9 @@ fn a_planted_stack_is_asked_for_its_own_token_beside_the_live_runs() {
 /// registry's answer under the run's ranking, so the run's own token wins. A read whose text no registry
 /// holds keeps the token it carries, and a read carrying none takes the registry's.
 ///
-/// Expected, not yet run. Red: the carried nested token wins outright (the raise then carries a token the
-/// run reads as minted before its own, and its entry reads PLAIN where it read REFUSED), the token-only
-/// read loses its carried token, or the token-less read answers none.
+/// Fails when the carried nested token wins outright (the raise then carries a token the run
+/// reads as minted before its own, and its entry reads PLAIN where it read REFUSED), when the
+/// token-only read loses its carried token, or when the token-less read answers none.
 #[test]
 fn a_carried_token_never_displaces_the_token_the_live_run_owns() {
     let rules_file = RulesFile::try_from("rule r { Resources exists }").expect("parses");
@@ -11266,7 +11333,7 @@ fn a_carried_token_never_displaces_the_token_the_live_run_owns() {
 /// that ranking with no live run to own either token, and answers the newest; a fallback by the ranking
 /// answered the older, so a reader by the token and a reader by the text could differ.
 ///
-/// Expected, not yet run. Red: the answer is the older token.
+/// Fails when the answer is the older token.
 #[test]
 fn a_text_no_live_run_owns_answers_its_newest_whatever_ranking_it_is_handed() {
     let rules_file = RulesFile::try_from("rule r { Resources exists }").expect("parses");
@@ -11311,16 +11378,17 @@ fn a_text_no_live_run_owns_answers_its_newest_whatever_ranking_it_is_handed() {
 }
 
 /// The token a comparison raise carries, in the strict role and the plain one alike
-/// (`eval::raised_token_of`), is the pair rule over the
-/// marker's own token and the one recovered from the registry, under the run's ranking: the run owns the
-/// older token and the newest was minted inside an open binding resolution (excluded), the planted stack
-/// ranks the older above the newest, and the raise carries the run's whichever way the two arrive (the
-/// recovered one run-owned and the marker's excluded, and the reverse). Taken as `token.or(recovered)` the
+/// (`eval::raised_token_of`), is the pair rule over the marker's own token and the one recovered from the
+/// registry, under the run's ranking, built INSIDE the run (the shape the raise sites see, where the
+/// registry and the ranking name the same run): the run owns the older token and the newest was minted
+/// inside an open binding resolution (excluded), the registry asked inside the run recovers the run's token,
+/// and the raise carries it where the marker carried the excluded one. The pair rule alone agrees with the
+/// registry: handed both tokens in either order it answers the run's. Taken as `token.or(recovered)` the
 /// marker's excluded token beat the run-owned recovered one.
 ///
-/// Expected, not yet run. Red: `raised_token_of` answers the excluded (newest) token in either row, that
-/// is, the marker's or the recovered one wins by argument position and not by the pair rule under the
-/// ranking.
+/// Fails when the registry asked inside the run does not recover the run's token, or when
+/// `raised_token_of` answers the excluded (newest) token (the marker's wins by argument
+/// position and not by the pair rule under the ranking).
 #[test]
 fn a_raise_carries_the_token_the_run_owns_whether_it_was_recovered_or_carried() {
     let rules_file = RulesFile::try_from("rule r { Resources exists }").expect("parses");
@@ -11331,31 +11399,35 @@ fn a_raise_carries_the_token_the_run_owns_whether_it_was_recovered_or_carried() 
     let owner_built = next_scope_event();
     let text = "the read of `S` is refused (the raise's own token against the recovered one)";
     let run = RefusalFrame::open();
-    let (owned, excluded) = with_refusal_frame(&mut root, run, |_| {
+    with_refusal_frame(&mut root, run, |ctx| {
         let owned = register_refusal(text);
         let excluded = {
             let _resolving = BindingResolution::open(owner_built);
             register_refusal(text)
         };
-        (owned, excluded)
+        assert!(
+            owns_token(&run, owned) && !owns_token(&run, excluded) && excluded.later_than(owned),
+            "premise: the run owns the first token and excludes the later one"
+        );
+        let ranking = crate::rules::eval::ranking_under(ctx.refusal_frames());
+        let recovered = token_of_registered_under(text, &ctx.refusal_frames());
+        assert_eq!(
+            Some(owned),
+            recovered,
+            "premise: the registry, asked inside the run, recovers the run's token"
+        );
+        assert_eq!(
+            (Some(owned), Some(owned), Some(owned)),
+            (
+                crate::rules::eval::raised_token_of(Some(excluded), recovered, &ranking),
+                crate::rules::eval::raised_token_of(Some(excluded), Some(owned), &ranking),
+                crate::rules::eval::raised_token_of(Some(owned), Some(excluded), &ranking),
+            ),
+            "the run's token is raised whether it was recovered or carried, in either argument order"
+        );
     });
-    let mut planted = RefusalFrames::default();
-    planted.push(run);
-    assert!(
-        run.eligible(owned) && !run.eligible(excluded),
-        "premise: the planted stack ranks the owned token above the excluded one"
-    );
-    let ranking = planted.ranking();
-    assert_eq!(
-        (Some(owned), Some(owned)),
-        (
-            crate::rules::eval::raised_token_of(Some(excluded), Some(owned), &ranking),
-            crate::rules::eval::raised_token_of(Some(owned), Some(excluded), &ranking),
-        ),
-        "the run's token is raised whether it was the recovered one or the marker's"
-    );
     // The four raise sites take their token from this function; the rules-file cell
-    // `a_gate_path_comparison_in_a_run_reads_its_entry_as_refused` runs the gate path through a real
+    // `a_predicate_with_a_gate_path_disjunct_keeps_its_entry_refused_through_a_real_evaluation` runs the gate path through a real
     // evaluation.
 }
 
@@ -11368,7 +11440,7 @@ fn a_raise_carries_the_token_the_run_owns_whether_it_was_recovered_or_carried() 
 /// the basis keeps the run's token in both orders, built over both reads and joined with `or`. A rule that
 /// kept the later-minted, or the first met, answers the excluded token in one of the four.
 ///
-/// Expected, not yet run. Red: a basis answers the excluded token.
+/// Fails when a basis answers the excluded token.
 #[test]
 fn a_basis_with_no_frames_in_hand_keeps_the_token_the_live_run_owns_whatever_was_minted_last() {
     use crate::rules::FailBasis;
@@ -11425,7 +11497,7 @@ fn a_basis_with_no_frames_in_hand_keeps_the_token_the_live_run_owns_whatever_was
 /// is never listed with empty checks, where a block arm that only extended the children would list EMPTY
 /// checks there (a message-less per-value record pushes nothing).
 ///
-/// Expected, not yet run. Red: the `RuleReport` under the block or under the condition has empty `checks`.
+/// Fails when the `RuleReport` under the block or under the condition has empty `checks`.
 #[test]
 fn a_rule_run_under_a_block_or_a_when_body_with_a_silent_failing_block_lists_the_generic_sentence()
 {
@@ -11436,18 +11508,24 @@ fn a_rule_run_under_a_block_or_a_when_body_with_a_silent_failing_block_lists_the
         container: Some(RecordType::BlockGuardCheck(BlockCheck {
             status: Status::FAIL,
             at_least_one_matches: false,
+            raised: false,
             message: None,
             refusal: true,
             custom_message: None,
+            gate_mark: false,
+            frame_reads: Vec::new(),
         })),
         children: vec![EventRecord {
             context: String::from("GuardBlockAccessClause#2"),
             container: Some(RecordType::GuardClauseBlockCheck(BlockCheck {
                 status: Status::FAIL,
                 at_least_one_matches: false,
+                raised: false,
                 message: None,
                 refusal: true,
                 custom_message: None,
+                gate_mark: false,
+                frame_reads: Vec::new(),
             })),
             children: vec![],
         }],
@@ -11460,6 +11538,8 @@ fn a_rule_run_under_a_block_or_a_when_body_with_a_silent_failing_block_lists_the
             message: None,
             slot: Default::default(),
             displaced: None,
+            frame_reads: Vec::new(),
+            ended_by_error: false,
         })),
         children: vec![silent_block()],
     };
@@ -11468,9 +11548,12 @@ fn a_rule_run_under_a_block_or_a_when_body_with_a_silent_failing_block_lists_the
         container: Some(RecordType::BlockGuardCheck(BlockCheck {
             status: Status::FAIL,
             at_least_one_matches: false,
+            raised: false,
             message: None,
             refusal: false,
             custom_message: None,
+            gate_mark: false,
+            frame_reads: Vec::new(),
         })),
         children: vec![called_rule()],
     };
@@ -11479,9 +11562,12 @@ fn a_rule_run_under_a_block_or_a_when_body_with_a_silent_failing_block_lists_the
         container: Some(RecordType::WhenCheck(BlockCheck {
             status: Status::FAIL,
             at_least_one_matches: false,
+            raised: false,
             message: None,
             refusal: false,
             custom_message: None,
+            gate_mark: false,
+            frame_reads: Vec::new(),
         })),
         children: vec![called_rule()],
     };
@@ -11511,7 +11597,17 @@ fn a_rule_run_under_a_block_or_a_when_body_with_a_silent_failing_block_lists_the
     // Parents WITH a message of their own walk their children without the fallback, so only the rule
     // arm's own `true` lists the generic sentence for the rule beneath them: these rows pin that reset.
     let with_message = |record: &EventRecord<'_>| -> EventRecord<'static> {
-        let message = Some(String::from("the parent's own message"));
+        // A record's `message` is always the evaluator's own sentence (the author's text is the
+        // `custom_message`), and it is dropped beside entries only when one of them carries ITS error:
+        // here the error the entry beneath the called rule lists, behind a head the reader knows. This is a
+        // text the evaluator never writes on a record with such a child, chosen on purpose: the row pins
+        // that a parent WITH a message of its own walks its children without the fallback (the rule arm
+        // asks for the fallback itself), and the generic entry must tell the sentence so that no entry of
+        // the parent's own is added. The cell depends on that pairing, not on the wording.
+        let message = Some(format!(
+            "{}{GENERIC}",
+            crate::rules::eval::WHEN_UNEVALUATED_HEAD
+        ));
         let container = match &record.container {
             Some(RecordType::BlockGuardCheck(check)) => RecordType::BlockGuardCheck(BlockCheck {
                 message,
@@ -11548,8 +11644,8 @@ fn a_rule_run_under_a_block_or_a_when_body_with_a_silent_failing_block_lists_the
 /// reports "A failed", one a silent block), list both, in order; the same `when` with a message of its own
 /// lists the sibling that reports (the message is for the case no child reports).
 ///
-/// Expected, not yet run. Red: the silent block is missing from the listing (the sibling that reports
-/// made the parent drop it), or its sentence is not the generic one.
+/// Fails when the silent block is missing from the listing (the sibling that reports made the
+/// parent drop it), or when its sentence is not the generic one.
 #[test]
 fn a_parent_without_a_message_lists_a_silent_child_beside_a_reporting_sibling() {
     const GENERIC: &str =
@@ -11559,9 +11655,12 @@ fn a_parent_without_a_message_lists_a_silent_child_beside_a_reporting_sibling() 
         container: Some(RecordType::GuardClauseBlockCheck(BlockCheck {
             status: Status::FAIL,
             at_least_one_matches: false,
+            raised: true,
             message: Some(String::from("A failed")),
             refusal: false,
             custom_message: None,
+            gate_mark: false,
+            frame_reads: Vec::new(),
         })),
         children: vec![],
     };
@@ -11570,18 +11669,24 @@ fn a_parent_without_a_message_lists_a_silent_child_beside_a_reporting_sibling() 
         container: Some(RecordType::BlockGuardCheck(BlockCheck {
             status: Status::FAIL,
             at_least_one_matches: false,
+            raised: false,
             message: None,
             refusal: false,
             custom_message: None,
+            gate_mark: false,
+            frame_reads: Vec::new(),
         })),
         children: vec![EventRecord {
             context: String::from("GuardBlockAccessClause#2"),
             container: Some(RecordType::GuardClauseBlockCheck(BlockCheck {
                 status: Status::FAIL,
                 at_least_one_matches: false,
+                raised: false,
                 message: None,
                 refusal: false,
                 custom_message: None,
+                gate_mark: false,
+                frame_reads: Vec::new(),
             })),
             children: vec![],
         }],
@@ -11589,9 +11694,12 @@ fn a_parent_without_a_message_lists_a_silent_child_beside_a_reporting_sibling() 
     let check = || BlockCheck {
         status: Status::FAIL,
         at_least_one_matches: false,
+        raised: false,
         message: None,
         refusal: false,
         custom_message: None,
+        gate_mark: false,
+        frame_reads: Vec::new(),
     };
     let disjunction = EventRecord {
         context: String::from("Disjunction#1"),
@@ -11602,6 +11710,7 @@ fn a_parent_without_a_message_lists_a_silent_child_beside_a_reporting_sibling() 
         context: String::from("WhenCondition#1"),
         container: Some(RecordType::WhenCheck(BlockCheck {
             message: message.map(String::from),
+            raised: message.is_some(), // the fixture's records with a sentence model a raise's record
             ..check()
         })),
         children: vec![reporting(), silent()],
@@ -11625,8 +11734,9 @@ fn a_parent_without_a_message_lists_a_silent_child_beside_a_reporting_sibling() 
         (
             in_a_disjunction,
             messages_of(&report_all_failed_clauses_for_rules(&[when(None)])),
+            // The `when`'s sentence quotes the error the reporting sibling lists, so the sibling tells it.
             messages_of(&report_all_failed_clauses_for_rules(&[when(Some(
-                "the condition could not be evaluated"
+                &format!("{}A failed", crate::rules::eval::WHEN_UNEVALUATED_HEAD)
             ))])),
         ),
         "no message: both children listed; a message of its own: the reporting sibling alone"
@@ -11640,9 +11750,9 @@ fn a_parent_without_a_message_lists_a_silent_child_beside_a_reporting_sibling() 
 /// of its own, so its silent block is listed. A message-less block over three values that each hold the
 /// same silent nested block lists the generic sentence once, not three times.
 ///
-/// Expected, not yet run. Red: the rule with a message lists the generic sentence (or any check); the rule
-/// without one lists nothing or twice; the type block's silent block is dropped; the block lists three
-/// identical entries.
+/// Fails when the rule with a message lists the generic sentence (or any check), when the rule
+/// without one lists nothing or twice, when the type block's silent block is dropped, or when the
+/// block lists three identical entries.
 #[test]
 fn a_failed_condition_is_walked_only_for_a_rule_without_a_message_and_generic_entries_are_not_repeated(
 ) {
@@ -11653,18 +11763,24 @@ fn a_failed_condition_is_walked_only_for_a_rule_without_a_message_and_generic_en
         container: Some(RecordType::BlockGuardCheck(BlockCheck {
             status: Status::FAIL,
             at_least_one_matches: false,
+            raised: false,
             message: None,
             refusal: false,
             custom_message: None,
+            gate_mark: false,
+            frame_reads: Vec::new(),
         })),
         children: vec![EventRecord {
             context: String::from("GuardBlockAccessClause#2"),
             container: Some(RecordType::GuardClauseBlockCheck(BlockCheck {
                 status: Status::FAIL,
                 at_least_one_matches: false,
+                raised: false,
                 message: None,
                 refusal: false,
                 custom_message: None,
+                gate_mark: false,
+                frame_reads: Vec::new(),
             })),
             children: vec![],
         }],
@@ -11677,6 +11793,8 @@ fn a_failed_condition_is_walked_only_for_a_rule_without_a_message_and_generic_en
             message: message.map(String::from),
             slot: Default::default(),
             displaced: None,
+            frame_reads: Vec::new(),
+            ended_by_error: false,
         })),
         children: vec![EventRecord {
             context: String::from("Rule#gated/When"),
@@ -11697,13 +11815,32 @@ fn a_failed_condition_is_walked_only_for_a_rule_without_a_message_and_generic_en
             other => panic!("one rule report, got {:?}", other),
         }
     };
+    // The real tree: TypeCheck(FAIL, message None) > TypeBlock(FAIL) > TypeCondition(FAIL) > the silent
+    // block, so the row exercises the flag the TypeCheck arm computes (`generic_fallback && message
+    // .is_none()`).
     let type_block = EventRecord {
-        context: String::from("TypeBlock"),
-        container: Some(RecordType::TypeBlock(Status::FAIL)),
+        context: String::from("AWS::X::Y"),
+        container: Some(RecordType::TypeCheck(TypeBlockCheck {
+            type_name: "AWS::X::Y",
+            block: BlockCheck {
+                status: Status::FAIL,
+                at_least_one_matches: false,
+                raised: false,
+                message: None,
+                refusal: false,
+                custom_message: None,
+                gate_mark: false,
+                frame_reads: Vec::new(),
+            },
+        })),
         children: vec![EventRecord {
-            context: String::from("TypeBlock/When"),
-            container: Some(RecordType::TypeCondition(Status::FAIL)),
-            children: vec![silent()],
+            context: String::from("TypeBlock"),
+            container: Some(RecordType::TypeBlock(Status::FAIL)),
+            children: vec![EventRecord {
+                context: String::from("TypeBlock/When"),
+                container: Some(RecordType::TypeCondition(Status::FAIL)),
+                children: vec![silent()],
+            }],
         }],
     };
     let three_values = EventRecord {
@@ -11711,11 +11848,37 @@ fn a_failed_condition_is_walked_only_for_a_rule_without_a_message_and_generic_en
         container: Some(RecordType::BlockGuardCheck(BlockCheck {
             status: Status::FAIL,
             at_least_one_matches: false,
+            raised: false,
             message: None,
             refusal: false,
             custom_message: None,
+            gate_mark: false,
+            frame_reads: Vec::new(),
         })),
         children: vec![silent(), silent(), silent()],
+    };
+    // The entry is kept once per CONTEXT: two silent blocks that are different clauses (different
+    // contexts) are two findings, not one.
+    let silent_at = |context: &str| EventRecord {
+        context: String::from(context),
+        ..silent()
+    };
+    let two_contexts = EventRecord {
+        context: String::from("BlockGuardClause#1"),
+        container: Some(RecordType::BlockGuardCheck(BlockCheck {
+            status: Status::FAIL,
+            at_least_one_matches: false,
+            raised: false,
+            message: None,
+            refusal: false,
+            custom_message: None,
+            gate_mark: false,
+            frame_reads: Vec::new(),
+        })),
+        children: vec![
+            silent_at("BlockGuardClause#2"),
+            silent_at("BlockGuardClause#3"),
+        ],
     };
     let listed = |record: &EventRecord<'_>| -> Vec<Option<String>> {
         report_all_failed_clauses_for_rules(std::slice::from_ref(record))
@@ -11732,15 +11895,6666 @@ fn a_failed_condition_is_walked_only_for_a_rule_without_a_message_and_generic_en
             vec![Some(String::from(GENERIC))],
             vec![Some(String::from(GENERIC))],
             vec![Some(String::from(GENERIC))],
+            vec![Some(String::from(GENERIC)); 2],
         ),
         (
             rule_messages(&gated_rule(Some("the rule's condition could not be evaluated"))),
             rule_messages(&gated_rule(None)),
             listed(&type_block),
             listed(&three_values),
+            listed(&two_contexts),
         ),
-        "a rule with a message: empty checks; without: the silent block once; a type condition: listed; three values: one entry"
+        "a rule with a message: empty checks; without: the silent block once; a type condition: listed; three values of one context: one entry; two contexts: two entries"
     );
+}
+
+/// A failed condition's records surface only where they carry the raise. A message-less failed rule whose
+/// condition holds a DECIDED answer (a dependent rule that did not pass: the condition's own test of
+/// whether the rule applies) beside a silent block lists the block's generic sentence alone, never the
+/// decided answer as a finding.
+///
+/// Fails when the decided answer is listed as a clause report beside the block.
+#[test]
+fn a_failed_conditions_decided_answers_are_not_findings() {
+    const GENERIC: &str =
+        "the block clause failed, and none of the checks recorded under it reports why";
+    let decided_no = EventRecord {
+        context: String::from("gate"),
+        container: Some(RecordType::ClauseValueCheck(ClauseCheck::DependentRule(
+            crate::rules::MissingValueCheck {
+                rule: "gate",
+                message: None,
+                custom_message: None,
+                status: Status::FAIL,
+                failure: None,
+            },
+        ))),
+        children: vec![],
+    };
+    let silent = EventRecord {
+        context: String::from("BlockGuardClause#2"),
+        container: Some(RecordType::BlockGuardCheck(BlockCheck {
+            status: Status::FAIL,
+            at_least_one_matches: false,
+            raised: false,
+            message: None,
+            refusal: false,
+            custom_message: None,
+            gate_mark: false,
+            frame_reads: Vec::new(),
+        })),
+        children: vec![EventRecord {
+            context: String::from("GuardBlockAccessClause#2"),
+            container: Some(RecordType::GuardClauseBlockCheck(BlockCheck {
+                status: Status::FAIL,
+                at_least_one_matches: false,
+                raised: false,
+                message: None,
+                refusal: false,
+                custom_message: None,
+                gate_mark: false,
+                frame_reads: Vec::new(),
+            })),
+            children: vec![],
+        }],
+    };
+    let rule = EventRecord {
+        context: String::from("gated"),
+        container: Some(RecordType::RuleCheck(NamedStatus {
+            name: "gated",
+            status: Status::FAIL,
+            message: None,
+            slot: Default::default(),
+            displaced: None,
+            frame_reads: Vec::new(),
+            ended_by_error: false,
+        })),
+        children: vec![EventRecord {
+            context: String::from("Rule#gated/When"),
+            container: Some(RecordType::RuleCondition(Status::FAIL)),
+            children: vec![decided_no, silent],
+        }],
+    };
+    let kinds: Vec<Option<String>> =
+        match report_all_failed_clauses_for_rules(std::slice::from_ref(&rule)).as_slice() {
+            [ClauseReport::Rule(rule)] => rule
+                .checks
+                .iter()
+                .map(|check| match check {
+                    ClauseReport::Block(block) => block.messages.error_message.clone(),
+                    ClauseReport::Clause(_) => Some(String::from("a clause finding")),
+                    other => panic!("a block or clause report, got {:?}", other),
+                })
+                .collect(),
+            other => panic!("one rule report, got {:?}", other),
+        };
+    assert_eq!(
+        vec![Some(String::from(GENERIC))],
+        kinds,
+        "the silent block is listed once and the decided answer is not a finding"
+    );
+}
+
+/// A rule that failed closed on its condition names EVERY refusal the condition met, once, in its own
+/// message, and lists no checks. The condition's explanation carries the ONE error the conjunction held;
+/// a condition of two disjuncts that each refuse also met the other's refusal, which the clause-error
+/// records beneath the failed condition name. Rows: the second refusal is added to the message after
+/// the held one's (`; the condition also met: ..`); the held refusal, which the message already carries,
+/// is not repeated; `checks` stays empty for the console, which names such a rule by its message.
+///
+/// Fails when the message lacks the second sentence (the refusal is dropped), carries the first
+/// twice, or when `checks` is not empty.
+#[test]
+fn a_rule_that_failed_on_its_condition_names_every_refusal_the_condition_met_once() {
+    const FIRST: &str = "the read of `A` was refused";
+    const SECOND: &str = "the read of `B` was refused";
+    let clause_error = |sentence: &str| EventRecord {
+        context: String::from("GuardAccessClause#blockA"),
+        container: Some(RecordType::GuardClauseBlockCheck(BlockCheck {
+            status: Status::FAIL,
+            at_least_one_matches: false,
+            raised: true,
+            // Built by the writer's own function, so a change to the wrapper's wording is caught here and
+            // not hidden by a hand-copied string.
+            message: Some(crate::rules::eval::clause_error_message(
+                &crate::rules::errors::Error::undecidable(sentence.to_string()),
+            )),
+            refusal: true,
+            custom_message: None,
+            gate_mark: false,
+            frame_reads: Vec::new(),
+        })),
+        children: vec![],
+    };
+    let rule = EventRecord {
+        context: String::from("gated"),
+        container: Some(RecordType::RuleCheck(NamedStatus {
+            name: "gated",
+            status: Status::FAIL,
+            message: Some(format!(
+                "The rule's condition could not be evaluated, so the rule fails rather than being treated as not applicable: {FIRST}"
+            )),
+            slot: crate::rules::CustomSlot::Refusal,
+            displaced: None,
+            frame_reads: Vec::new(),
+            ended_by_error: false,
+        })),
+        children: vec![EventRecord {
+            context: String::from("Rule#gated/When"),
+            container: Some(RecordType::RuleCondition(Status::FAIL)),
+            children: vec![clause_error(FIRST), clause_error(SECOND)],
+        }],
+    };
+    let (message, checks) = match report_all_failed_clauses_for_rules(&[rule]).as_slice() {
+        [ClauseReport::Rule(rule)] => (rule.messages.custom_message.clone(), rule.checks.len()),
+        other => panic!("one rule report, got {:?}", other),
+    };
+    assert_eq!(
+        (
+            Some(format!(
+                "The rule's condition could not be evaluated, so the rule fails rather than being treated as not applicable: {FIRST}; the condition also met: {SECOND}"
+            )),
+            0
+        ),
+        (message, checks),
+        "the second refusal is added once and the first is not repeated; checks stay empty"
+    );
+}
+
+/// A gate block over N refused body values is listed ONCE, by its own record: the gate role's marks (one
+/// childless refused-body record per value, carrying the refusal's bare sentence) feed the failed
+/// condition's sentence walk and are never entries. Under a message-less failed rule's condition the block's
+/// record is the only check, and the console and `-o json` list it once, not once per refused value.
+///
+/// Fails when the rule lists three checks (a mark became an entry), or none (the block's own record
+/// was replaced by nothing).
+#[test]
+fn a_gate_block_over_three_refused_values_is_listed_once_and_its_marks_are_never_entries() {
+    let mark = |sentence: &str| EventRecord {
+        context: "GuardBlockAccessClause#2".to_string(),
+        container: Some(RecordType::GuardClauseBlockCheck(BlockCheck {
+            status: Status::FAIL,
+            at_least_one_matches: false,
+            raised: true,
+            message: Some(sentence.to_string()),
+            refusal: true,
+            custom_message: None,
+            gate_mark: true,
+            frame_reads: Vec::new(),
+        })),
+        children: vec![],
+    };
+    let block = EventRecord {
+        context: String::from("BlockGuardClause#2"),
+        container: Some(RecordType::BlockGuardCheck(BlockCheck {
+            status: Status::FAIL,
+            at_least_one_matches: false,
+            raised: true,
+            message: None,
+            refusal: false,
+            custom_message: None,
+            gate_mark: false,
+            frame_reads: Vec::new(),
+        })),
+        children: vec![
+            mark("the read of `A` was refused"),
+            mark("the read of `B` was refused"),
+            mark("the read of `C` was refused"),
+        ],
+    };
+    let rule = EventRecord {
+        context: String::from("gated"),
+        container: Some(RecordType::RuleCheck(NamedStatus {
+            name: "gated",
+            status: Status::FAIL,
+            message: None,
+            slot: Default::default(),
+            displaced: None,
+            frame_reads: Vec::new(),
+            ended_by_error: false,
+        })),
+        children: vec![EventRecord {
+            context: String::from("Rule#gated/When"),
+            container: Some(RecordType::RuleCondition(Status::FAIL)),
+            children: vec![block],
+        }],
+    };
+    let listed = match report_all_failed_clauses_for_rules(&[rule]).as_slice() {
+        [ClauseReport::Rule(rule)] => rule
+            .checks
+            .iter()
+            .map(|check| match check {
+                ClauseReport::Block(block) => format!(
+                    "block {} :: {} refusal={}",
+                    block.context,
+                    block.messages.error_message.clone().unwrap_or_default(),
+                    block.messages.refusal
+                ),
+                other => format!("other {other:?}"),
+            })
+            .collect::<Vec<_>>(),
+        other => panic!("one rule report, got {:?}", other),
+    };
+    assert_eq!(
+        vec![String::from(
+            "block BlockGuardClause#2 :: the read of `A` was refused; the read of `B` was refused; the read of `C` was refused refusal=true"
+        )],
+        listed,
+        "the block is listed once by its own record, which tells the three refusals once each; the marks are not entries"
+    );
+}
+
+/// A STRICT-role refusal record is never taken for a gate's mark: the own-key refusal per value, and the
+/// refused one-object selection beside siblings, are childless failed raised refusals with a sentence in the
+/// block's own `GuardBlockAccessClause#` context, exactly the shape a mark had, and they are findings. Under
+/// a block that holds one of them and nothing else, the block is listed with the refusal's sentence and the
+/// refusal flag, never by "query for block clause did not retrieve any value" and never dropped.
+///
+/// Fails when the entry reads the retrieval sentence or the silent-block sentence, when the flag is
+/// false, or when the record is not listed.
+#[test]
+fn a_strict_role_refusal_record_under_a_block_is_listed_with_its_sentence_and_flag() {
+    const REFUSAL: &str = "the read of `Cfg` was refused, at path /Resources/R/Cfg";
+    let strict_record = EventRecord {
+        context: String::from("GuardBlockAccessClause#2"),
+        container: Some(RecordType::GuardClauseBlockCheck(BlockCheck {
+            status: Status::FAIL,
+            at_least_one_matches: false,
+            raised: true,
+            message: Some(REFUSAL.to_string()),
+            refusal: true,
+            custom_message: None,
+            gate_mark: false,
+            frame_reads: Vec::new(),
+        })),
+        children: vec![],
+    };
+    let block = EventRecord {
+        context: String::from("BlockGuardClause#2"),
+        container: Some(RecordType::BlockGuardCheck(BlockCheck {
+            status: Status::FAIL,
+            at_least_one_matches: false,
+            raised: false,
+            message: None,
+            refusal: false,
+            custom_message: None,
+            gate_mark: false,
+            frame_reads: Vec::new(),
+        })),
+        children: vec![strict_record],
+    };
+    let listed: Vec<(String, bool)> = report_all_failed_clauses_for_rules(&[block])
+        .iter()
+        .map(|clause| match clause {
+            ClauseReport::Block(block) => (
+                block.messages.error_message.clone().unwrap_or_default(),
+                block.messages.refusal,
+            ),
+            other => panic!("a block entry, got {:?}", other),
+        })
+        .collect();
+    assert_eq!(
+        vec![(REFUSAL.to_string(), true)],
+        listed,
+        "the strict role's refusal record is an entry with its sentence and its flag"
+    );
+}
+
+/// Builds a root scope and registers the given refusal sentences, as a run does, so a cell that dedupes
+/// refusals reads the registry's tokens (the path a real run takes) and not only the text match. The scope
+/// lives until the end of the calling block.
+macro_rules! registered_as_in_a_run {
+    ($($text:expr),+ $(,)?) => {
+        let rules_file = RulesFile::try_from("rule r { Resources exists }").expect("parses");
+        let _root = root_scope(
+            &rules_file,
+            Rc::new(PathAwareValue::try_from("{ Resources: {} }").expect("parses")),
+        );
+        $( let _ = register_refusal($text); )+
+    };
+}
+
+/// A refused body value beside a LATER value's run-ending error: the block's own record is raised with no
+/// message (the error that ended the run is told elsewhere), and the earlier value's refusal is carried by
+/// a gate mark. The mark is no entry. Where no parent speaks (the generic fallback is allowed) the block's
+/// own entry tells the refusal, once, flagged a refusal, instead of the silent-block sentence. Where a
+/// parent SPEAKS (a type block whose record carries the "bailing" sentence of the error that ended the run)
+/// a marked block never displaces that sentence and lists no entry of its own: the parent's sentence stays
+/// first and whole, the refusal is joined to it once, and the flag stays the plain error's.
+///
+/// Fails when the block is skipped or listed by the silent-block sentence under no parent, when the
+/// refusal is named twice, when under the speaking parent the "bailing" sentence is missing or
+/// replaced by the refusal alone, or when a child entry is listed beside it.
+#[test]
+fn a_refusal_a_mark_carries_beside_a_run_ending_error_is_told_once_by_the_block() {
+    const REFUSAL: &str = "the read of `A` was refused, at path /Resources/A/Tags";
+    const BAILING: &str = "Error a plain error during type condition evaluation, bailing";
+    registered_as_in_a_run!(REFUSAL);
+    let mark = || EventRecord {
+        context: "GuardBlockAccessClause#2".to_string(),
+        container: Some(RecordType::GuardClauseBlockCheck(BlockCheck {
+            status: Status::FAIL,
+            at_least_one_matches: false,
+            raised: true,
+            message: Some(REFUSAL.to_string()),
+            refusal: true,
+            custom_message: None,
+            gate_mark: true,
+            frame_reads: Vec::new(),
+        })),
+        children: vec![],
+    };
+    let block = || EventRecord {
+        context: String::from("BlockGuardClause#2"),
+        container: Some(RecordType::BlockGuardCheck(BlockCheck {
+            status: Status::FAIL,
+            at_least_one_matches: false,
+            raised: true,
+            message: None,
+            refusal: false,
+            custom_message: None,
+            gate_mark: false,
+            frame_reads: Vec::new(),
+        })),
+        children: vec![mark(), mark()],
+    };
+    let listed = |records: &[EventRecord<'_>], fallback: bool| -> Vec<(String, bool)> {
+        report_failed_clauses(records, fallback, false)
+            .iter()
+            .map(|clause| match clause {
+                ClauseReport::Block(block) => (
+                    block.messages.error_message.clone().unwrap_or_default(),
+                    block.messages.refusal,
+                ),
+                other => panic!("a block entry, got {:?}", other),
+            })
+            .collect()
+    };
+    // No parent speaks: the generic fallback is allowed, the block tells the refusal itself.
+    assert_eq!(
+        vec![(REFUSAL.to_string(), true)],
+        listed(&[block()], true),
+        "the refusal is told once by the block's own entry, and the same refusal marked twice is one"
+    );
+    // A type block that speaks: TypeCheck > TypeBlock > TypeCondition > the marked block.
+    let type_check = EventRecord {
+        context: String::from("TypeBlock#S3"),
+        container: Some(RecordType::TypeCheck(crate::rules::TypeBlockCheck {
+            type_name: "AWS::S3::Bucket",
+            block: BlockCheck {
+                status: Status::FAIL,
+                at_least_one_matches: false,
+                raised: true,
+                message: Some(BAILING.to_string()),
+                refusal: false,
+                custom_message: None,
+                gate_mark: false,
+                frame_reads: Vec::new(),
+            },
+        })),
+        children: vec![EventRecord {
+            context: String::from("Type#block"),
+            container: Some(RecordType::TypeBlock(Status::FAIL)),
+            children: vec![EventRecord {
+                context: String::from("Type#condition"),
+                container: Some(RecordType::TypeCondition(Status::FAIL)),
+                children: vec![block()],
+            }],
+        }],
+    };
+    assert_eq!(
+        vec![(format!("{BAILING}{ALSO_MET}{REFUSAL}"), false)],
+        listed(&[type_check], true),
+        "the parent's sentence is first and whole, the refusal is joined once, the flag is the plain error's, and the block lists no entry"
+    );
+}
+
+/// A refusal in a type block's failed condition is told once whichever way the block is listed: the type
+/// block's `when` fails closed over two refused values, each carried by a mark beneath a block that gives
+/// no entry of its own, so the type block's sentence joins both refusals (the condition of a type block is
+/// read like a rule's and an inline `when`'s). Read on the REAL record tree the evaluator writes
+/// (`TypeCheck` > `TypeBlock` > `TypeCondition` > the block > its marks) through
+/// `report_all_failed_clauses_for_rules` under a failed rule with no sentence of its own, and through
+/// `sentence_and_whether_refusals_joined` over the condition alone.
+///
+/// Fails when the sentence names neither refusal, one of them, or one twice; or when the walk
+/// of the real tree does not descend through `TypeBlock` to the condition (the refusals are
+/// lost there).
+#[test]
+fn a_type_blocks_failed_condition_joins_the_refusals_its_marks_carry() {
+    const FIRST: &str = "the read of `A` was refused, at path /Resources/A/Tags";
+    const SECOND: &str = "the read of `B` was refused, at path /Resources/B/Tags";
+    let mark = |refusal: &str| EventRecord {
+        context: "GuardBlockAccessClause#2".to_string(),
+        container: Some(RecordType::GuardClauseBlockCheck(BlockCheck {
+            status: Status::FAIL,
+            at_least_one_matches: false,
+            raised: true,
+            message: Some(refusal.to_string()),
+            refusal: true,
+            custom_message: None,
+            gate_mark: true,
+            frame_reads: Vec::new(),
+        })),
+        children: vec![],
+    };
+    let silent_block = EventRecord {
+        context: String::from("BlockGuardClause#2"),
+        container: Some(RecordType::BlockGuardCheck(BlockCheck {
+            status: Status::FAIL,
+            at_least_one_matches: false,
+            raised: true,
+            message: None,
+            refusal: false,
+            custom_message: None,
+            gate_mark: false,
+            frame_reads: Vec::new(),
+        })),
+        children: vec![mark(FIRST), mark(SECOND), mark(FIRST)],
+    };
+    // The shape the evaluator writes: the type block's children are one `TypeBlock` per resource, the
+    // condition one level down.
+    let per_resource = vec![EventRecord {
+        context: String::from("Type#block"),
+        container: Some(RecordType::TypeBlock(Status::FAIL)),
+        children: vec![EventRecord {
+            context: String::from("Type#condition"),
+            container: Some(RecordType::TypeCondition(Status::FAIL)),
+            children: vec![silent_block],
+        }],
+    }];
+    let head = "Error a plain error during type condition evaluation, bailing";
+    let (text, parts) =
+        sentence_and_whether_refusals_joined(head, &per_resource, SentenceSlot::Error);
+    assert_eq!(
+        (
+            format!("{head}{ALSO_MET}{FIRST}; {SECOND}"),
+            Some(format!("{FIRST}; {SECOND}"))
+        ),
+        (text, parts.map(|parts| parts.message().to_string())),
+        "both refusals, once each, after the type block's own sentence"
+    );
+    // The same tree through the report walk, under a failed rule with no sentence of its own: one check,
+    // the type block's joined sentence, and no entry for the block or its marks.
+    let type_check = EventRecord {
+        context: String::from("TypeBlock#S3"),
+        container: Some(RecordType::TypeCheck(crate::rules::TypeBlockCheck {
+            type_name: "AWS::S3::Bucket",
+            block: BlockCheck {
+                status: Status::FAIL,
+                at_least_one_matches: false,
+                raised: true,
+                message: Some(head.to_string()),
+                refusal: false,
+                custom_message: None,
+                gate_mark: false,
+                frame_reads: Vec::new(),
+            },
+        })),
+        children: per_resource,
+    };
+    let gate = EventRecord {
+        context: String::from("gate"),
+        container: Some(RecordType::RuleCheck(NamedStatus {
+            name: "gate",
+            status: Status::FAIL,
+            message: None,
+            slot: crate::rules::CustomSlot::Evaluator,
+            displaced: None,
+            frame_reads: Vec::new(),
+            ended_by_error: false,
+        })),
+        children: vec![type_check],
+    };
+    let reports = report_all_failed_clauses_for_rules(&[gate]);
+    let checks: Vec<String> = match reports.as_slice() {
+        [ClauseReport::Rule(rule)] => rule
+            .checks
+            .iter()
+            .map(|check| match check {
+                ClauseReport::Block(block) => {
+                    block.messages.error_message.clone().unwrap_or_default()
+                }
+                other => panic!("a block entry, got {:?}", other),
+            })
+            .collect(),
+        other => panic!("one rule report, got {:?}", other),
+    };
+    assert_eq!(
+        vec![format!("{head}{ALSO_MET}{FIRST}; {SECOND}")],
+        checks,
+        "the real tree lists the type block once, with both refusals joined"
+    );
+}
+
+/// A gate mark beside a body clause that reports the SAME refusal lists it once: the clause's own entry
+/// carries it (its clause-error record wraps the same sentence the mark carries bare), so the block adds no
+/// entry of its own for the mark. A mark naming a DIFFERENT refusal is the block's to tell: one extra entry.
+///
+/// Fails when the first row lists the refusal twice (the mark's entry beside the clause's), or when
+/// the second row lists no entry for the other refusal.
+#[test]
+fn a_mark_beside_a_body_clause_reporting_the_same_refusal_lists_it_once() {
+    const SAME: &str = "the read of `A` was refused, at path /Resources/A/Tags";
+    const OTHER: &str = "the read of `B` was refused, at path /Resources/B/Tags";
+    registered_as_in_a_run!(SAME, OTHER);
+    let mark = |refusal: &str| EventRecord {
+        context: "GuardBlockAccessClause#2".to_string(),
+        container: Some(RecordType::GuardClauseBlockCheck(BlockCheck {
+            status: Status::FAIL,
+            at_least_one_matches: false,
+            raised: true,
+            message: Some(refusal.to_string()),
+            refusal: true,
+            custom_message: None,
+            gate_mark: true,
+            frame_reads: Vec::new(),
+        })),
+        children: vec![],
+    };
+    let body_clause = EventRecord {
+        context: String::from("GuardAccessClause#blockA"),
+        container: Some(RecordType::GuardClauseBlockCheck(BlockCheck {
+            status: Status::FAIL,
+            at_least_one_matches: false,
+            raised: true,
+            message: Some(crate::rules::eval::clause_error_message(
+                &crate::rules::errors::Error::undecidable(SAME.to_string()),
+            )),
+            refusal: true,
+            custom_message: None,
+            gate_mark: false,
+            frame_reads: Vec::new(),
+        })),
+        children: vec![],
+    };
+    let block = |marks: Vec<EventRecord<'static>>| {
+        let mut children = vec![body_clause.clone()];
+        children.extend(marks);
+        EventRecord {
+            context: String::from("BlockGuardClause#2"),
+            container: Some(RecordType::BlockGuardCheck(BlockCheck {
+                status: Status::FAIL,
+                at_least_one_matches: false,
+                raised: true,
+                message: None,
+                refusal: false,
+                custom_message: None,
+                gate_mark: false,
+                frame_reads: Vec::new(),
+            })),
+            children,
+        }
+    };
+    let texts = |marks: Vec<EventRecord<'static>>| -> Vec<String> {
+        report_failed_clauses(&[block(marks)], true, false)
+            .iter()
+            .map(|clause| match clause {
+                ClauseReport::Block(block) => {
+                    block.messages.error_message.clone().unwrap_or_default()
+                }
+                other => panic!("a block entry, got {:?}", other),
+            })
+            .collect()
+    };
+    let same = texts(vec![mark(SAME), mark(SAME)]);
+    let other = texts(vec![mark(SAME), mark(OTHER)]);
+    assert_eq!(
+        (1, 2, 1),
+        (
+            same.iter().filter(|text| text.contains(SAME)).count(),
+            other.len(),
+            other.iter().filter(|text| text.as_str() == OTHER).count(),
+        ),
+        "the same refusal is one entry; the other refusal is one entry more, alone: {same:?} / {other:?}"
+    );
+}
+
+/// Every mark's refusal is told exactly once and never silently, by a parent that speaks. Two shapes in
+/// which a reporter that left the marks to a parent's unwritten sentence would lose them:
+/// - a type block's `when` whose condition holds a clause-error sibling entry (of the very error that stopped
+///   the block, which the block's "bailing" sentence wraps too) AND a message-less child block with marks:
+///   the error is told once, by the sibling (the parent's sentence is not written beside it, since an entry
+///   carries its error), and the marks' refusal once, as an entry of its own after the entries beneath;
+/// - a block with a message of its own over a message-less child block with marks and no entry beneath: the
+///   marks are the deep ones beneath it, and its sentence joins them once.
+#[test]
+fn a_speaking_parent_tells_each_deep_mark_once_as_an_entry_beside_its_entries_or_joined_when_it_has_none(
+) {
+    use frame_sources::{block_check, mark, HELD, OTHER};
+    // The sentence of a bailing type block quotes the error that stopped it, the one the clause-error
+    // sibling below tells.
+    let bailing = format!("Error {OTHER} during type condition evaluation, bailing");
+    registered_as_in_a_run!(HELD, OTHER);
+    let silent_block_over_marks = |marks: Vec<EventRecord<'static>>| EventRecord {
+        context: String::from("BlockGuardClause#2"),
+        container: Some(RecordType::BlockGuardCheck(block_check(None, false, false))),
+        children: vec![EventRecord {
+            context: String::from("BlockGuardClause#3"),
+            container: Some(RecordType::BlockGuardCheck(block_check(None, false, false))),
+            children: marks,
+        }],
+    };
+    let texts = |records: &[EventRecord<'static>]| -> Vec<String> {
+        report_failed_clauses(records, true, false)
+            .iter()
+            .map(|clause| match clause {
+                ClauseReport::Block(block) => {
+                    block.messages.error_message.clone().unwrap_or_default()
+                }
+                other => panic!("a block entry, got {:?}", other),
+            })
+            .collect()
+    };
+    // Shape one: TypeCheck{bailing} > TypeBlock > TypeCondition > [clause-error sibling, silent block over marks].
+    let clause_error_sibling = EventRecord {
+        context: String::from("GuardAccessClause#blockA"),
+        container: Some(RecordType::GuardClauseBlockCheck(block_check(
+            Some(crate::rules::eval::clause_error_message(
+                &crate::rules::errors::Error::undecidable(OTHER.to_string()),
+            )),
+            true,
+            false,
+        ))),
+        children: vec![],
+    };
+    let type_check = EventRecord {
+        context: String::from("TypeBlock#S3"),
+        container: Some(RecordType::TypeCheck(crate::rules::TypeBlockCheck {
+            type_name: "AWS::S3::Bucket",
+            block: block_check(Some(bailing), false, false),
+        })),
+        children: vec![EventRecord {
+            context: String::from("TypeBlock#S3/0"),
+            container: Some(RecordType::TypeBlock(Status::FAIL)),
+            children: vec![EventRecord {
+                context: String::from("Type#condition"),
+                container: Some(RecordType::TypeCondition(Status::FAIL)),
+                children: vec![
+                    clause_error_sibling,
+                    silent_block_over_marks(vec![mark(HELD), mark(HELD)]),
+                ],
+            }],
+        }],
+    };
+    let listed = texts(&[type_check]);
+    // The type block's sentence wraps the SAME error the clause-error sibling already tells (`OTHER`), as a
+    // bailing type block's does: it is not listed beside the sibling, so no error text is told twice, and
+    // the marks' refusal follows as an entry of its own, once.
+    assert_eq!(
+        (2, 1, Some(HELD.to_string()), 1, 0),
+        (
+            listed.len(),
+            listed.iter().filter(|text| text.contains(HELD)).count(),
+            listed.last().cloned(),
+            listed.iter().filter(|text| text.contains(OTHER)).count(),
+            listed
+                .iter()
+                .filter(|text| text.contains("bailing"))
+                .count(),
+        ),
+        "the sibling entry (the error once), then the marks' refusal alone, once: {:?}",
+        listed
+    );
+    // Shape two: BlockGuardCheck{message} > silent block > marks.
+    let speaking_block = EventRecord {
+        context: String::from("BlockGuardClause#1"),
+        container: Some(RecordType::BlockGuardCheck(block_check(
+            Some(String::from("the block says")),
+            false,
+            false,
+        ))),
+        children: vec![silent_block_over_marks(vec![mark(HELD)])],
+    };
+    assert_eq!(
+        vec![format!(
+            "the block says{}{HELD}",
+            crate::rules::eval_context::BODY_ALSO_MET
+        )],
+        texts(&[speaking_block]),
+        "the block's own sentence joins the deep marks of its silent child block, once"
+    );
+}
+
+/// A body clause whose own per-value record reports the refusal, beside a mark for the same refusal: the
+/// refusal is told once. The clause's clause-error block entry is suppressed when its own per-value record
+/// reports (`an_own_value_check_reports`). The per-value record of a missing block value is listed as a
+/// BLOCK entry in the clause's own context (`Y`), carrying the bare refusal, so this cell asserts one block
+/// entry, in that context, and no entry for the mark. The `PartsJoin::Clause` branch of `entry_texts_of`
+/// (an entry built from parts, whose rendered text ends `Error = [R]` with no `: ` boundary before R) is
+/// the cell `a_refusal_a_real_clause_entry_reports_is_carried_through_its_parts`.
+///
+/// Fails when R is listed twice (the block's own entry beside the clause's).
+#[test]
+fn a_refusal_a_clause_entry_reports_beside_a_mark_for_it_is_listed_once() {
+    use frame_sources::{block_check, mark, HELD};
+    registered_as_in_a_run!(HELD);
+    let body_clause = EventRecord {
+        context: String::from("GuardAccessClause#blockY"),
+        container: Some(RecordType::GuardClauseBlockCheck(block_check(
+            Some(crate::rules::eval::clause_error_message(
+                &crate::rules::errors::Error::undecidable(HELD.to_string()),
+            )),
+            true,
+            false,
+        ))),
+        children: vec![EventRecord {
+            context: String::from("Y"),
+            container: Some(RecordType::ClauseValueCheck(
+                ClauseCheck::MissingBlockValue(ValueCheck {
+                    from: QueryResult::UnResolved(UnResolved {
+                        traversed_to: Rc::new(
+                            PathAwareValue::try_from("{ A: 1 }").expect("parses"),
+                        ),
+                        remaining_query: String::new(),
+                        reason: Some(HELD.to_string()),
+                        kind: UnResolvedKind::Undecidable {
+                            refusal: Some(crate::rules::errors::RefusalToken::minted(7)),
+                            carried: None,
+                        },
+                    }),
+                    message: Some(HELD.to_string()),
+                    custom_message: None,
+                    status: Status::FAIL,
+                    refusal: true,
+                }),
+            )),
+            children: vec![],
+        }],
+    };
+    let block = EventRecord {
+        context: String::from("BlockGuardClause#2"),
+        container: Some(RecordType::BlockGuardCheck(block_check(None, false, false))),
+        children: vec![body_clause, mark(HELD)],
+    };
+    let entries = report_failed_clauses(&[block], true, false);
+    // The per-value record of a missing block value is reported as a BLOCK entry in the clause's own context
+    // (`Y`), not as a clause entry: the first form of this assertion asked for the variant and read red on a
+    // report that listed the refusal once. The property is the count and the context: one entry, the
+    // clause's own, naming the refusal; the block adds none.
+    let listed: Vec<(String, String)> = entries
+        .iter()
+        .map(|entry| match entry {
+            ClauseReport::Block(block) => (
+                block.context.clone(),
+                block.messages.error_message.clone().unwrap_or_default(),
+            ),
+            other => panic!("a block entry, got {:?}", other),
+        })
+        .collect();
+    assert_eq!(
+        vec![("Y".to_string(), HELD.to_string())],
+        listed,
+        "one entry, the clause's own per-value entry, carries the refusal, and the block adds none"
+    );
+}
+
+/// A parent's own sentence is told exactly once, whatever the entries beneath it are. A child `when` with no
+/// sentence lists a marks-only entry; that entry carries the marks' refusals and nothing else, so it never
+/// tells the parent's sentence, which is written as the parent's own entry beside the entries:
+/// - a bailing type block (a plain error that ended the run) whose only entry is a child `when`'s marks-only
+///   entry: the bailing sentence once, the marks' refusal once;
+/// - a block with its own refusal as its sentence over a message-less child `when` with marks: both
+///   refusals once;
+/// - a block with a plain error as its sentence (the evaluator's `Error {e}` wording) beside an entry that
+///   names a DIFFERENT error: the sentence stays.
+///
+/// A parent whose text is none of the evaluator's sentences (the author's `<< >>` text) keeps the base rule
+/// instead: beside entries that report it is not written
+/// (`a_parent_with_a_message_drops_a_silent_child_beside_a_reporting_sibling`).
+#[test]
+fn a_parents_own_sentence_is_told_once_beside_a_childs_marks_only_entry() {
+    use frame_sources::{block_check, mark, refused_clause, type_block, when_block, HELD, OTHER};
+    registered_as_in_a_run!(HELD, OTHER);
+    use crate::rules::eval::{BLOCK_CLAUSE_BAILING_TAIL, TYPE_CONDITION_BAILING_TAIL};
+    const PLAIN: &str = "a plain error that ended the run";
+    const PLAIN_SENTENCE: &str = "a different plain error";
+    let silent_block_over_a_mark = || EventRecord {
+        context: String::from("BlockGuardClause#2"),
+        container: Some(RecordType::BlockGuardCheck(block_check(None, false, false))),
+        children: vec![mark(HELD)],
+    };
+    let texts = |record: EventRecord<'static>| -> Vec<String> {
+        report_failed_clauses(&[record], true, false)
+            .iter()
+            .map(|clause| match clause {
+                ClauseReport::Block(block) => {
+                    block.messages.error_message.clone().unwrap_or_default()
+                }
+                other => panic!("a block entry, got {:?}", other),
+            })
+            .collect()
+    };
+    let count = |listed: &[String], needle: &str| {
+        listed.iter().filter(|text| text.contains(needle)).count()
+    };
+
+    let bailing = format!("Error {PLAIN}{TYPE_CONDITION_BAILING_TAIL}");
+    let listed = texts(type_block(
+        Some(bailing),
+        &[],
+        vec![when_block(None, &[], vec![silent_block_over_a_mark()])],
+    ));
+    assert_eq!(
+        (2, 1, 1),
+        (listed.len(), count(&listed, PLAIN), count(&listed, HELD)),
+        "the bailing sentence once and the marks' refusal once: {:?}",
+        listed
+    );
+
+    let block_with_a_refusal = EventRecord {
+        context: String::from("BlockGuardClause#1"),
+        container: Some(RecordType::BlockGuardCheck(block_check(
+            Some(OTHER.to_string()),
+            true,
+            false,
+        ))),
+        children: vec![when_block(None, &[], vec![silent_block_over_a_mark()])],
+    };
+    let listed = texts(block_with_a_refusal);
+    assert_eq!(
+        (2, 1, 1),
+        (listed.len(), count(&listed, OTHER), count(&listed, HELD)),
+        "the block's own refusal once and the child's marks once: {:?}",
+        listed
+    );
+
+    let block_beside_another_error = EventRecord {
+        context: String::from("BlockGuardClause#1"),
+        container: Some(RecordType::BlockGuardCheck(block_check(
+            Some(format!("Error {PLAIN_SENTENCE}{BLOCK_CLAUSE_BAILING_TAIL}")),
+            false,
+            false,
+        ))),
+        children: vec![refused_clause(HELD)],
+    };
+    let listed = texts(block_beside_another_error);
+    assert_eq!(
+        (1, 1),
+        (count(&listed, PLAIN_SENTENCE), count(&listed, HELD)),
+        "the sentence stays beside an entry that names a different error: {:?}",
+        listed
+    );
+}
+
+/// A sentence-bearing block under a `when` condition is a record the report never visits (nothing under
+/// `WhenCondition(FAIL)` is reported on its own), and the walk of the marks stops at a block with a sentence
+/// of its own: the refusal its mark names is told by the entry the `when` lists for the refusals beneath it
+/// (`marks_alone_entry`, which reads the condition's refusals too), once, and the converted read it names is
+/// told, so the debug tripwire holds. The same shape under a `TypeCondition`, which IS walked, is the cell
+/// `a_type_block_with_no_sentence_over_a_silent_block_of_two_marks_lists_each_once`.
+#[test]
+fn a_sentence_bearing_block_under_a_when_condition_has_its_mark_told_once() {
+    use crate::rules::{RecordType, Status};
+    use frame_sources::{block_check, mark, under_a_condition, when_block, HELD};
+    registered_as_in_a_run!(HELD);
+    let block_with_a_sentence = EventRecord {
+        context: String::from("BlockGuardClause#2"),
+        container: Some(RecordType::BlockGuardCheck(block_check(
+            Some(String::from("m")),
+            false,
+            false,
+        ))),
+        children: vec![mark(HELD)],
+    };
+    let record = when_block(
+        None,
+        &[HELD],
+        vec![under_a_condition(
+            RecordType::WhenCondition(Status::FAIL),
+            vec![block_with_a_sentence],
+        )],
+    );
+    let listed: Vec<String> = report_all_failed_clauses_for_rules(&[record])
+        .iter()
+        .map(|clause| match clause {
+            ClauseReport::Block(block) => block.messages.error_message.clone().unwrap_or_default(),
+            other => panic!("a block entry, got {:?}", other),
+        })
+        .collect();
+    assert_eq!(
+        1,
+        listed.iter().filter(|text| text.contains(HELD)).count(),
+        "the refusal once: {:?}",
+        listed
+    );
+}
+
+/// The same shape inside a rule that has a text of its own (a call's `<< >>` body): the message-less `when`
+/// writes no entry there, and the rule's sentence tells the refusal the block under the `when`'s condition
+/// names, once; the debug tripwire for the `when`'s converted read holds. Nothing under a `when` condition is
+/// reported on its own, and the walk of the marks stops at the block with a sentence, so only the rule's
+/// sentence can tell it (`reached_deferred_refusals`).
+#[test]
+fn a_sentence_bearing_block_under_a_when_condition_in_a_bodied_rule_has_its_mark_told_once() {
+    use crate::rules::{CustomSlot, RecordType, Status};
+    use frame_sources::{block_check, mark, rule, under_a_condition, when_block, HELD};
+    registered_as_in_a_run!(HELD);
+    let block_with_a_sentence = EventRecord {
+        context: String::from("BlockGuardClause#2"),
+        container: Some(RecordType::BlockGuardCheck(block_check(
+            Some(String::from("m")),
+            false,
+            false,
+        ))),
+        children: vec![mark(HELD)],
+    };
+    let record = rule(
+        Some(String::from("the author's body")),
+        None,
+        CustomSlot::Author,
+        &[],
+        vec![when_block(
+            None,
+            &[HELD],
+            vec![under_a_condition(
+                RecordType::WhenCondition(Status::FAIL),
+                vec![block_with_a_sentence],
+            )],
+        )],
+    );
+    let reports = report_all_failed_clauses_for_rules(&[record]);
+    let (recorded, read) = texts_and_reader_messages(&reports[0]);
+    let count = |texts: &[String]| {
+        texts
+            .iter()
+            .map(|text| text.matches(HELD).count())
+            .sum::<usize>()
+    };
+    assert_eq!(
+        (1, 1),
+        (count(&recorded), count(&read)),
+        "the refusal once in the report and once for the readers: recorded {:?}, read {:?}",
+        recorded,
+        read
+    );
+}
+
+/// A disjunction whose held error is a plain error (a spent regex budget: no registered refusal) beside
+/// disjunct entries that already name it in their clause-error wrapper writes no sentence of its own: the
+/// error is told once, by the entries. The disjunction's sentence is its head and the error it held
+/// (`DISJUNCTION_UNDECIDED_HEAD`), which is stripped to read the error, as the `when` head and the rule
+/// head are.
+#[test]
+fn a_disjunction_whose_held_error_its_entries_name_does_not_write_its_sentence_beside_them() {
+    use crate::rules::eval::{DISJUNCTION_UNDECIDED_HEAD, WHEN_UNEVALUATED_HEAD};
+    use frame_sources::block_check;
+    const HELD_ERROR: &str = "the regex engine spent its budget";
+    let entry = || EventRecord {
+        context: String::from("GuardAccessClause#blockA"),
+        container: Some(RecordType::GuardClauseBlockCheck(block_check(
+            Some(format!("Error {HELD_ERROR} when handling clause, bailing")),
+            false,
+            false,
+        ))),
+        children: vec![],
+    };
+    for head in [DISJUNCTION_UNDECIDED_HEAD, WHEN_UNEVALUATED_HEAD] {
+        let disjunction = EventRecord {
+            context: String::from("Disjunction#1"),
+            container: Some(RecordType::Disjunction(block_check(
+                Some(format!("{head}{HELD_ERROR}")),
+                false,
+                false,
+            ))),
+            children: vec![entry()],
+        };
+        let reports = report_failed_clauses(&[disjunction], true, false);
+        let texts: Vec<String> = match reports.as_slice() {
+            [ClauseReport::Disjunctions(report)] => report
+                .checks
+                .iter()
+                .map(|check| match check {
+                    ClauseReport::Block(block) => {
+                        block.messages.error_message.clone().unwrap_or_default()
+                    }
+                    other => panic!("a block entry, got {:?}", other),
+                })
+                .collect(),
+            other => panic!("one disjunction report, got {:?}", other),
+        };
+        assert_eq!(
+            (1, 0),
+            (
+                texts
+                    .iter()
+                    .map(|text| text.matches(HELD_ERROR).count())
+                    .sum::<usize>(),
+                texts.iter().filter(|text| text.starts_with(head)).count()
+            ),
+            "the held error once, by the entry, and no sentence of the disjunction's own behind {:?}: {:?}",
+            head,
+            texts
+        );
+    }
+}
+
+/// The "bailing" tails are the writers' constants (`eval::TYPE_CONDITION_BAILING_TAIL` and its siblings): a
+/// sentence built with them reads back to the error it quotes, and an entry that carries that error tells
+/// the sentence, so a change of wording in the writers moves the reader with it.
+#[test]
+fn a_bailing_sentence_built_from_the_writers_tails_reads_back_to_its_quoted_error() {
+    use crate::rules::eval::{
+        BLOCK_CLAUSE_BAILING_TAIL, TYPE_BLOCK_BAILING_TAIL, TYPE_CONDITION_BAILING_TAIL,
+    };
+    const QUOTED: &str = "a plain error the sentence quotes";
+    let entry = ClauseReport::Block(GuardBlockReport {
+        context: String::from("GuardAccessClause#blockA"),
+        messages: Messages {
+            error_message: Some(format!("Error {QUOTED} when handling clause, bailing")),
+            custom_message: None,
+            location: None,
+            refusal: false,
+            parts: None,
+        },
+        unresolved: None,
+    });
+    let entries = [entry];
+    for tail in [
+        TYPE_CONDITION_BAILING_TAIL,
+        TYPE_BLOCK_BAILING_TAIL,
+        BLOCK_CLAUSE_BAILING_TAIL,
+    ] {
+        let sentence = format!("Error {QUOTED}{tail}");
+        assert_eq!(
+            QUOTED,
+            quoted_error(&sentence),
+            "the quoted error of {:?}",
+            tail
+        );
+        assert!(
+            sentence_told_by(&entries, &sentence),
+            "an entry carrying the quoted error tells the sentence with the tail {:?}",
+            tail
+        );
+        assert!(
+            !sentence_told_by(&[], &sentence),
+            "no entry, no telling: {:?}",
+            tail
+        );
+    }
+}
+
+/// A sentence that gained all three groups of refusals keeps them apart: the record's own condition's refusal
+/// C1 behind "the condition also met", a nested condition's N1 behind "a nested condition also met" and the
+/// body's mark B1 behind "a body clause also met". The parts hold the three groups as three fields,
+/// `message()` is the refusals alone with no joiner text inside, the rebuilt sentence is the stored one, and
+/// the dedupe parse finds all three refusals in it.
+#[test]
+fn a_sentence_with_three_groups_of_refusals_keeps_them_apart() {
+    use crate::rules::eval_context::{
+        BODY_ALSO_MET, NESTED_ALSO_MET, RULE_FAILED_ON_AN_ERROR_HEAD,
+    };
+    const C1: &str = "the read of `C` was refused, at path /Resources/C/Tags";
+    const N1: &str = "the read of `N` was refused, at path /Resources/N/Tags";
+    const B1: &str = "the read of `B` was refused, at path /Resources/B/Tags";
+    registered_as_in_a_run!(C1, N1, B1);
+    let (text, parts) = rule_sentence_with(
+        RULE_FAILED_ON_AN_ERROR_HEAD,
+        vec![C1.to_string()],
+        vec![N1.to_string()],
+        vec![B1.to_string()],
+        SentenceSlot::Error,
+    );
+    let parts = parts.expect("three refusals joined");
+    assert_eq!(
+        (
+            format!(
+                "{RULE_FAILED_ON_AN_ERROR_HEAD}{ALSO_MET}{C1}{NESTED_ALSO_MET}{N1}{BODY_ALSO_MET}{B1}"
+            ),
+            parts.refusals_text(),
+            C1,
+            N1,
+            B1,
+            format!("{C1}; {N1}; {B1}"),
+        ),
+        (
+            text.clone(),
+            text,
+            parts.condition(),
+            parts.nested(),
+            parts.marks(),
+            parts.message().to_string(),
+        ),
+        "the text, the rebuilt text, the three groups, and the refusals alone with no joiner inside"
+    );
+    let carried = refusals_carried_by(&parts.refusals_text());
+    let (c1, n1, b1) = (
+        carried.iter().any(|(text, _)| text == C1),
+        carried.iter().any(|(text, _)| text == N1),
+        carried.iter().any(|(text, _)| text == B1),
+    );
+    assert!(
+        c1 && n1 && b1,
+        "the parse finds all three refusals: C1 {}, N1 {}, B1 {}",
+        c1,
+        n1,
+        b1
+    );
+}
+
+/// A refusal whose own text holds a `; ` (a remedy sentence) is carried as a whole wherever it stands in a
+/// joined text: first, in the middle and last, with other refusals before and after it. Fails when the parse
+/// of a joined sentence reads only the suffixes after a boundary, which finds such a refusal only as the
+/// last one and lets a second entry name it again.
+#[test]
+fn a_refusal_whose_text_holds_a_semicolon_is_carried_whole_before_and_after_others() {
+    const SEMI: &str = "the object holds `Env`; write the predicate over a key it holds";
+    const R2: &str = "the read of `B` was refused, at path /Resources/B/Tags";
+    const R3: &str = "the read of `C` was refused, at path /Resources/C/Tags";
+    registered_as_in_a_run!(SEMI, R2, R3);
+    let held = |carried: &[(String, Option<crate::rules::eval_context::RefusalToken>)],
+                text: &str| { carried.iter().any(|(seen, _)| seen == text) };
+    for (label, joined) in [
+        ("first", format!("HEAD: {SEMI}; {R2}; {R3}")),
+        ("middle", format!("HEAD: {R2}; {SEMI}; {R3}")),
+        ("last", format!("HEAD: {R2}; {R3}; {SEMI}")),
+    ] {
+        let carried = refusals_carried_by(&joined);
+        assert!(
+            held(&carried, SEMI) && held(&carried, R2) && held(&carried, R3),
+            "{} position: all three are carried whole, SEMI {}, R2 {}, R3 {}",
+            label,
+            held(&carried, SEMI),
+            held(&carried, R2),
+            held(&carried, R3)
+        );
+    }
+}
+
+/// A numbered raise `(1) R1 (2) R2` is registered as its parts and never as a whole. With a `; ` inside R1 and
+/// a joiner after R2, every one of R1, R2 and the refusal R3 behind the joiner is carried: the span
+/// `(1) R1 (2) R2` is kept because its numbered parts are registered refusals. Fails when the span is
+/// skipped for having no token of its own, which carries R1 only as a fragment and leaves R2 unrecognized
+/// (told twice by the join, or dropped by the test of whether a sentence is told).
+#[test]
+fn a_numbered_raise_of_refusals_with_semicolons_is_carried_part_by_part() {
+    const R1: &str = "the object holds `Env`; write the predicate over a key it holds";
+    const R2: &str = "the read of `B` was refused, at path /Resources/B/Tags";
+    const R3: &str = "the read of `C` was refused, at path /Resources/C/Tags";
+    registered_as_in_a_run!(R1, R2, R3);
+    let sentence = format!("HEAD: (1) {R1} (2) {R2}{ALSO_MET}{R3}");
+    let carried = refusals_carried_by(&sentence);
+    let held = |text: &str| carried.iter().filter(|(seen, _)| seen == text).count();
+    assert_eq!(
+        (1, 1, 1),
+        (held(R1), held(R2), held(R3)),
+        "each part of the numbered raise and the refusal behind the joiner, carried once"
+    );
+}
+
+/// The dedupe side: a mark for a refusal whose text holds a `; ` is told by an entry whose text carries it
+/// before another refusal, so no second entry names it. Fails when `untold_by` keeps the mark because the
+/// entry's text parses the refusal only as a fragment.
+#[test]
+fn a_refusal_with_a_semicolon_in_an_entry_text_is_not_named_again_by_a_mark() {
+    const SEMI: &str = "the object holds `Env`; write the predicate over a key it holds";
+    const R2: &str = "the read of `B` was refused, at path /Resources/B/Tags";
+    registered_as_in_a_run!(SEMI, R2);
+    let entry = ClauseReport::Block(GuardBlockReport {
+        context: String::from("Resources.*"),
+        messages: Messages {
+            error_message: Some(format!("HEAD: {SEMI}; {R2}")),
+            custom_message: None,
+            location: None,
+            refusal: true,
+            parts: None,
+        },
+        unresolved: None,
+    });
+    let named = |text: &str| {
+        (
+            text.to_string(),
+            token_of_registered(text, &crate::rules::eval::no_frame_ranking),
+        )
+    };
+    let left = untold_by(&[entry], vec![named(SEMI), named(R2)]);
+    assert!(
+        left.is_empty(),
+        "both refusals are told by the entry, none is named again: {:?}",
+        left
+    );
+}
+
+/// Past the cap on inner boundaries the parse still finds the LAST refusal of a joined text by its suffix:
+/// a text with more than `MAX_INNER_BOUNDARIES` inner `; ` boundaries is never recognized less than it was
+/// before spans were read. Fails when the suffix candidate is dropped past the cap.
+#[test]
+fn a_text_with_more_inner_boundaries_than_the_cap_still_finds_its_last_refusal() {
+    const LAST: &str = "the read of `Z` was refused, at path /Resources/Z/Tags";
+    registered_as_in_a_run!(LAST);
+    let many = (0..20)
+        .map(|n| format!("filler {n}"))
+        .collect::<Vec<_>>()
+        .join("; ");
+    let joined = format!("HEAD: {many}; {LAST}");
+    let carried = refusals_carried_by(&joined);
+    assert!(
+        carried.iter().any(|(seen, _)| seen == LAST),
+        "the last refusal after 20 inner boundaries is carried: {:?}",
+        carried
+            .iter()
+            .map(|(text, _)| text.as_str())
+            .collect::<Vec<_>>()
+    );
+}
+
+/// A refusal a REAL clause entry reports (a unary check whose value check holds the refusal's sentence) is
+/// carried through the entry's parts (`entry_texts_of` reads the bare evaluator message of an entry built
+/// from parts, `PartsJoin::Clause`): a mark for the same refusal beside it adds no entry, and the bare
+/// sentence is among the texts the entries carry.
+#[test]
+fn a_refusal_a_real_clause_entry_reports_is_carried_through_its_parts() {
+    use frame_sources::{block_check, mark, HELD};
+    registered_as_in_a_run!(HELD);
+    let unary = EventRecord {
+        context: String::from("Properties.Tags"),
+        container: Some(RecordType::ClauseValueCheck(ClauseCheck::Unary(
+            UnaryValueCheck {
+                comparison: (CmpOperator::Exists, false),
+                value: ValueCheck {
+                    from: QueryResult::UnResolved(UnResolved {
+                        traversed_to: Rc::new(
+                            PathAwareValue::try_from("{ A: 1 }").expect("parses"),
+                        ),
+                        remaining_query: String::from("Tags"),
+                        reason: Some(HELD.to_string()),
+                        kind: UnResolvedKind::Undecidable {
+                            refusal: Some(crate::rules::errors::RefusalToken::minted(7)),
+                            carried: None,
+                        },
+                    }),
+                    message: Some(HELD.to_string()),
+                    custom_message: None,
+                    status: Status::FAIL,
+                    refusal: true,
+                },
+            },
+        ))),
+        children: vec![],
+    };
+    let block = EventRecord {
+        context: String::from("BlockGuardClause#2"),
+        container: Some(RecordType::BlockGuardCheck(block_check(None, false, false))),
+        children: vec![unary, mark(HELD)],
+    };
+    let entries = report_failed_clauses(&[block], true, false);
+    assert_eq!(
+        (1, true),
+        (
+            entries
+                .iter()
+                .filter(|entry| matches!(entry, ClauseReport::Clause(_)))
+                .count(),
+            entry_texts_of(&entries).iter().any(|text| text == HELD)
+        ),
+        "one Clause entry, no entry for the mark, and the bare sentence among the carried texts: {:?}",
+        entries
+    );
+    assert_eq!(1, entries.len(), "the mark adds no entry beside it");
+}
+
+/// A decided answer is never a finding. A `when` inside a block body whose gate condition decided NO past a
+/// refused read writes its marks under a SKIP `WhenCheck` (`WhenCondition(FAIL)` beneath it); when the
+/// enclosing block then fails on a sibling clause, that decided-past read is no refusal entry of the block's.
+/// A message-less FAIL child block's marks still reach the block.
+///
+/// Fails when an entry names the decided-past read (the descent went through the SKIP record), or
+/// when the FAIL child's marks are missing.
+#[test]
+fn a_when_that_decided_no_past_a_refused_read_adds_no_refusal_entry_to_its_block() {
+    use frame_sources::{block_check, mark, HELD, OTHER};
+    registered_as_in_a_run!(HELD, OTHER);
+    let mut skipped = block_check(None, false, false);
+    skipped.status = Status::SKIP;
+    skipped.raised = false;
+    let decided_no = EventRecord {
+        context: String::from("WhenBlock#2"),
+        container: Some(RecordType::WhenCheck(skipped)),
+        children: vec![EventRecord {
+            context: String::from("WhenBlock#2/When"),
+            container: Some(RecordType::WhenCondition(Status::FAIL)),
+            children: vec![mark(HELD)],
+        }],
+    };
+    let sibling = EventRecord {
+        context: String::from("GuardAccessClause#blockB"),
+        container: Some(RecordType::GuardClauseBlockCheck(block_check(
+            Some(String::from(
+                "Check was not compliant as the sibling failed",
+            )),
+            false,
+            false,
+        ))),
+        children: vec![],
+    };
+    let failing_child = EventRecord {
+        context: String::from("BlockGuardClause#3"),
+        container: Some(RecordType::BlockGuardCheck(block_check(None, false, false))),
+        children: vec![mark(OTHER)],
+    };
+    let block = EventRecord {
+        context: String::from("BlockGuardClause#2"),
+        container: Some(RecordType::BlockGuardCheck(block_check(None, false, false))),
+        children: vec![sibling, decided_no, failing_child],
+    };
+    let texts: Vec<String> = report_failed_clauses(&[block], true, false)
+        .iter()
+        .map(|entry| match entry {
+            ClauseReport::Block(block) => block.messages.error_message.clone().unwrap_or_default(),
+            other => panic!("a block entry, got {:?}", other),
+        })
+        .collect();
+    assert_eq!(
+        (0, 1),
+        (
+            texts.iter().filter(|text| text.contains(HELD)).count(),
+            texts.iter().filter(|text| text.contains(OTHER)).count(),
+        ),
+        "no entry for the decided-past read, one for the failing child's mark: {:?}",
+        texts
+    );
+}
+
+/// The second refusal of an entry that joins two is told too: a type block over a block with a sentence of
+/// its own ("m") over two marks lists the block's entry "m; a body clause also met: R1; R2" (the marks are
+/// refusals of the block's clauses, which no condition met) and NO second entry naming R2 (a reporter that
+/// joined the marks to a parent sentence as well would list R2 again). The type block's own sentence is a
+/// bailing wrapper of a plain error
+/// that no entry carries, so it is written once, after the entries beneath it.
+///
+/// Fails when a second entry names R2, or when the block's entry misses it.
+#[test]
+fn a_type_blocks_condition_over_a_block_with_a_sentence_and_two_marks_tells_each_once() {
+    use frame_sources::{block_check, mark, type_block, HELD, OTHER};
+    registered_as_in_a_run!(HELD, OTHER);
+    let block = EventRecord {
+        context: String::from("BlockGuardClause#2"),
+        container: Some(RecordType::BlockGuardCheck(block_check(
+            Some(String::from("m")),
+            false,
+            false,
+        ))),
+        children: vec![mark(HELD), mark(OTHER)],
+    };
+    let record = type_block(
+        Some(String::from(
+            "Error a plain error during type condition evaluation, bailing",
+        )),
+        &[],
+        vec![block],
+    );
+    let texts: Vec<String> = report_failed_clauses(&[record], true, false)
+        .iter()
+        .map(|entry| match entry {
+            ClauseReport::Block(block) => block.messages.error_message.clone().unwrap_or_default(),
+            other => panic!("a block entry, got {:?}", other),
+        })
+        .collect();
+    assert_eq!(
+        vec![
+            format!(
+                "m{}{HELD}; {OTHER}",
+                crate::rules::eval_context::BODY_ALSO_MET
+            ),
+            String::from("Error a plain error during type condition evaluation, bailing"),
+        ],
+        texts,
+        "the block's entry names both refusals once, then the bailing sentence of the type block, once"
+    );
+}
+
+/// Every refusal a nested entry's text carries is recognized as told, in any position of a `; `-joined list:
+/// two nested message-less blocks, the inner over two marks. The inner block lists "R1; R2" as one entry; the
+/// outer block's marks are the same two, and a text parse that read only the first segment would push a
+/// second entry naming R2.
+///
+/// Fails when two entries are listed (the second names the second refusal), or when an entry names
+/// either refusal twice.
+#[test]
+fn a_nested_message_less_block_over_two_marks_lists_both_refusals_once() {
+    use frame_sources::{block_check, mark, HELD, OTHER};
+    registered_as_in_a_run!(HELD, OTHER);
+    let inner = EventRecord {
+        context: String::from("BlockGuardClause#3"),
+        container: Some(RecordType::BlockGuardCheck(block_check(None, false, false))),
+        children: vec![mark(HELD), mark(OTHER)],
+    };
+    let outer = EventRecord {
+        context: String::from("BlockGuardClause#2"),
+        container: Some(RecordType::BlockGuardCheck(block_check(None, false, false))),
+        children: vec![inner],
+    };
+    let texts: Vec<String> = report_failed_clauses(&[outer], true, false)
+        .iter()
+        .map(|entry| match entry {
+            ClauseReport::Block(block) => block.messages.error_message.clone().unwrap_or_default(),
+            other => panic!("a block entry, got {:?}", other),
+        })
+        .collect();
+    assert_eq!(
+        (1, 1, 1),
+        (
+            texts.len(),
+            texts.iter().filter(|text| text.contains(HELD)).count(),
+            texts.iter().filter(|text| text.contains(OTHER)).count(),
+        ),
+        "one entry names both refusals once: {:?}",
+        texts
+    );
+}
+
+/// The records of one frame source for the tripwire cells (`assert_frame_reads_told`): a failed record that
+/// converted a frame whose reads are `[HELD]`, with `children`, and the sentence the record carries.
+///
+/// The sources are the closing records of the three `convert_condition_raise` callers: a rule's own `when`
+/// (`RuleCheck`), an inline `when` (`WhenCheck`) and a type block (`TypeCheck`).
+mod frame_sources {
+    use crate::rules::eval_context::EventRecord;
+    use crate::rules::{BlockCheck, CustomSlot, NamedStatus, RecordType, Status, TypeBlockCheck};
+
+    pub(super) const HELD: &str = "the read of `A` was refused, at path /Resources/A/Tags";
+    pub(super) const OTHER: &str = "the read of `B` was refused, at path /Resources/B/Tags";
+
+    pub(super) fn block_check(
+        message: Option<String>,
+        refusal: bool,
+        gate_mark: bool,
+    ) -> BlockCheck {
+        BlockCheck {
+            status: Status::FAIL,
+            at_least_one_matches: false,
+            raised: true,
+            message,
+            refusal,
+            custom_message: None,
+            gate_mark,
+            frame_reads: Vec::new(),
+        }
+    }
+
+    /// A refused per-clause record naming `refusal` bare, flagged a refusal.
+    pub(super) fn refused_clause(refusal: &str) -> EventRecord<'static> {
+        EventRecord {
+            context: String::from("GuardAccessClause#blockA"),
+            container: Some(RecordType::GuardClauseBlockCheck(block_check(
+                Some(refusal.to_string()),
+                true,
+                false,
+            ))),
+            children: vec![],
+        }
+    }
+
+    pub(super) fn mark(refusal: &str) -> EventRecord<'static> {
+        EventRecord {
+            context: String::from("GuardBlockAccessClause#2"),
+            container: Some(RecordType::GuardClauseBlockCheck(block_check(
+                Some(refusal.to_string()),
+                true,
+                true,
+            ))),
+            children: vec![],
+        }
+    }
+
+    pub(super) fn under_a_condition(
+        condition: RecordType<'static>,
+        records: Vec<EventRecord<'static>>,
+    ) -> EventRecord<'static> {
+        EventRecord {
+            context: String::from("condition"),
+            container: Some(condition),
+            children: records,
+        }
+    }
+
+    /// A rule whose own `when` converted `reads`, closing with `message`, a displaced sentence if given.
+    pub(super) fn rule(
+        message: Option<String>,
+        displaced: Option<(CustomSlot, String)>,
+        slot: CustomSlot,
+        reads: &[&str],
+        children: Vec<EventRecord<'static>>,
+    ) -> EventRecord<'static> {
+        EventRecord {
+            context: String::from("gated"),
+            container: Some(RecordType::RuleCheck(NamedStatus {
+                name: "gated",
+                status: Status::FAIL,
+                message,
+                slot,
+                displaced,
+                frame_reads: reads.iter().map(|read| read.to_string()).collect(),
+                // A rule whose own `when` failed ended on an error (the evaluator closes it so,
+                // `judged_rule_body`): a fixture with a failed rule condition never pairs it with `false`.
+                ended_by_error: children.iter().any(|child| {
+                    matches!(
+                        child.container,
+                        Some(RecordType::RuleCondition(Status::FAIL))
+                    )
+                }),
+            })),
+            children,
+        }
+    }
+
+    /// An inline `when` that converted `reads`.
+    pub(super) fn when_block(
+        message: Option<String>,
+        reads: &[&str],
+        children: Vec<EventRecord<'static>>,
+    ) -> EventRecord<'static> {
+        let mut check = block_check(message, false, false);
+        check.frame_reads = reads.iter().map(|read| read.to_string()).collect();
+        EventRecord {
+            context: String::from("WhenBlock#2"),
+            container: Some(RecordType::WhenCheck(check)),
+            children,
+        }
+    }
+
+    /// A type block that converted `reads`, closing with `message`, its children as the evaluator writes them:
+    /// one `TypeBlock` per resource holding the condition.
+    pub(super) fn type_block(
+        message: Option<String>,
+        reads: &[&str],
+        condition_records: Vec<EventRecord<'static>>,
+    ) -> EventRecord<'static> {
+        let mut block = block_check(message, false, false);
+        block.frame_reads = reads.iter().map(|read| read.to_string()).collect();
+        EventRecord {
+            context: String::from("TypeBlock#S3"),
+            container: Some(RecordType::TypeCheck(TypeBlockCheck {
+                type_name: "AWS::S3::Bucket",
+                block,
+            })),
+            children: vec![EventRecord {
+                context: String::from("TypeBlock#S3/0"),
+                container: Some(RecordType::TypeBlock(Status::FAIL)),
+                children: vec![under_a_condition(
+                    RecordType::TypeCondition(Status::FAIL),
+                    condition_records,
+                )],
+            }],
+        }
+    }
+}
+
+/// The report of a failed record, walked as the reporters walk it (`report_all_failed_clauses_for_rules`
+/// under a failed rule with no sentence of its own for the block sources, the record itself for a rule), with
+/// the refusal sentences registered as a run registers them. Built on a root scope so the registry holds the
+/// sentences.
+fn walk_a_converted_frame(record: EventRecord<'static>) {
+    let rules_file = RulesFile::try_from("rule r { Resources exists }").expect("parses");
+    let _root = root_scope(
+        &rules_file,
+        Rc::new(PathAwareValue::try_from("{ Resources: {} }").expect("parses")),
+    );
+    for text in [frame_sources::HELD, frame_sources::OTHER] {
+        let _ = register_refusal(text);
+    }
+    let _ = report_all_failed_clauses_for_rules(&[record]);
+}
+
+/// A frame the evaluator converted into a FAIL is told by the report: the walk of the closing record finds
+/// every refused read the frame held (`assert_frame_reads_told`). Five sources, each of whose reads is named
+/// a different way and none of which may trip the assertion: a rule's own `when` (the read is in the rule's
+/// sentence), an inline `when` (a flagged record under its condition), a type block (a gate mark under its
+/// condition, through the per-resource `TypeBlock`), a nested block's entry (an entry listed beneath the
+/// record carries the read), and an entry absorbed under a call with a body (the sentence the body displaced
+/// carries it).
+///
+/// Fails when the assertion fires on a source whose read the report does name (the walk of that
+/// source does not reach where the read is named).
+#[test]
+fn a_converted_frame_whose_reads_the_report_names_trips_nothing() {
+    use crate::rules::eval::{RULE_CONDITION_UNEVALUATED_HEAD, WHEN_UNEVALUATED_HEAD};
+    use crate::rules::{CustomSlot, RecordType, Status};
+    use frame_sources::*;
+    let sources: Vec<(&str, EventRecord<'static>)> = vec![
+        (
+            "a rule's own `when`: the sentence carries the read",
+            rule(
+                Some(format!("{RULE_CONDITION_UNEVALUATED_HEAD}{HELD}")),
+                None,
+                CustomSlot::Refusal,
+                &[HELD],
+                vec![],
+            ),
+        ),
+        (
+            "an inline `when`: a flagged record under its condition names the read",
+            when_block(
+                Some(format!("{WHEN_UNEVALUATED_HEAD}{OTHER}")),
+                &[HELD],
+                vec![under_a_condition(
+                    RecordType::WhenCondition(Status::FAIL),
+                    vec![refused_clause(HELD)],
+                )],
+            ),
+        ),
+        (
+            "a type block: a gate mark under its per-resource condition names the read",
+            type_block(
+                Some(format!(
+                    "Error {OTHER} during type condition evaluation, bailing"
+                )),
+                &[HELD],
+                vec![mark(HELD)],
+            ),
+        ),
+        (
+            "a nested block's entry: an entry listed beneath the record carries the read",
+            when_block(None, &[HELD], vec![refused_clause(HELD)]),
+        ),
+        (
+            "a bailing type block with entries beneath: an entry names the read",
+            type_block(
+                Some(format!(
+                    "Error {HELD} during type condition evaluation, bailing"
+                )),
+                &[HELD],
+                vec![refused_clause(HELD)],
+            ),
+        ),
+        (
+            "a call's body over a silent block: the rule's sentence joins the mark's refusal",
+            rule(
+                Some(String::from("the author's body")),
+                None,
+                CustomSlot::Author,
+                &[HELD],
+                vec![EventRecord {
+                    context: String::from("BlockGuardClause#2"),
+                    container: Some(RecordType::BlockGuardCheck(block_check(None, false, false))),
+                    children: vec![mark(HELD)],
+                }],
+            ),
+        ),
+        (
+            "an absorbed entry: the sentence a call's body displaced carries the read",
+            rule(
+                Some(String::from("the author's body")),
+                Some((
+                    CustomSlot::Refusal,
+                    format!("{RULE_CONDITION_UNEVALUATED_HEAD}{HELD}"),
+                )),
+                CustomSlot::Author,
+                &[HELD],
+                vec![],
+            ),
+        ),
+    ];
+    for (label, record) in sources {
+        // A panic here names the source that tripped.
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            walk_a_converted_frame(record)
+        }));
+        assert!(result.is_ok(), "the tripwire fired on {}", label);
+    }
+}
+
+/// A type block's closing record on the conversion path has no sentence (`message` None), and the caller may
+/// forbid the generic fallback (its own parent speaks). The deep marks beneath it are still told: the arm
+/// lists them as an entry of their own, the refusals alone, flagged refusals, and the tripwire counts them
+/// told because the arm WROTE them (it compares against what the arm writes, never against what the walk
+/// of the condition could have supplied).
+///
+/// Fails when nothing is listed for the mark (the refusal is lost), or when the tripwire fires on a
+/// record whose reads the arm does write.
+#[test]
+fn a_type_block_with_no_sentence_lists_the_marks_beneath_it_even_when_its_parent_speaks() {
+    use frame_sources::{block_check, mark, type_block, HELD};
+    registered_as_in_a_run!(HELD);
+    let silent_block = EventRecord {
+        context: String::from("BlockGuardClause#2"),
+        container: Some(RecordType::BlockGuardCheck(block_check(None, false, false))),
+        children: vec![mark(HELD)],
+    };
+    let record = type_block(None, &[HELD], vec![silent_block]);
+    let entries = report_failed_clauses(&[record], false, false);
+    let texts: Vec<(String, bool)> = entries
+        .iter()
+        .map(|entry| match entry {
+            ClauseReport::Block(block) => (
+                block.messages.error_message.clone().unwrap_or_default(),
+                block.messages.refusal,
+            ),
+            other => panic!("a block entry, got {:?}", other),
+        })
+        .collect();
+    assert_eq!(
+        vec![(HELD.to_string(), true)],
+        texts,
+        "the refusal alone, flagged, once"
+    );
+}
+
+/// A type block with no sentence, in a rule with no text of its own (the generic fallback is on), whose
+/// condition holds a silent block over two marks R1 and R2: the block's own entry is `R1; R2`, and the
+/// entry the type block would write for marks no entry carries adds nothing, since both are told.
+#[test]
+fn a_type_block_with_no_sentence_over_a_silent_block_of_two_marks_lists_each_once() {
+    use frame_sources::{block_check, mark, type_block, HELD, OTHER};
+    registered_as_in_a_run!(HELD, OTHER);
+    let silent_block = EventRecord {
+        context: String::from("BlockGuardClause#2"),
+        container: Some(RecordType::BlockGuardCheck(block_check(None, false, false))),
+        children: vec![mark(HELD), mark(OTHER)],
+    };
+    let record = type_block(None, &[], vec![silent_block]);
+    let texts: Vec<String> = report_failed_clauses(&[record], true, false)
+        .iter()
+        .map(|entry| match entry {
+            ClauseReport::Block(block) => block.messages.error_message.clone().unwrap_or_default(),
+            other => panic!("a block entry, got {:?}", other),
+        })
+        .collect();
+    assert_eq!(
+        vec![format!("{}; {}", HELD, OTHER)],
+        texts,
+        "one entry, both refusals once"
+    );
+}
+
+/// A rule with a text of its own (a call's `<< >>` body, or the sentence the body displaced) over a type
+/// block with no sentence whose condition holds a mark: the rule's text reaches the structured readers
+/// (`get_message_with_rule_records_by_level`, which the `sarif` results and the `junit` failure element
+/// read), the refusal is told once beside it, and the type block writes no entry for it, since an entry in
+/// the rule's `checks` would make the clauses speak for the rule and drop its text.
+#[test]
+fn a_rules_own_text_reaches_the_structured_readers_beside_the_marks_beneath_it() {
+    use crate::rules::CustomSlot;
+    use frame_sources::{mark, rule, type_block, HELD};
+    registered_as_in_a_run!(HELD);
+    const BODY: &str = "the author's body";
+    const SENTENCE: &str = "the rule's own sentence";
+    let sources = vec![
+        (
+            "a body",
+            rule(
+                Some(BODY.to_string()),
+                None,
+                CustomSlot::Author,
+                &[],
+                vec![type_block(None, &[], vec![mark(HELD)])],
+            ),
+        ),
+        (
+            "a displaced sentence",
+            rule(
+                Some(BODY.to_string()),
+                Some((CustomSlot::Evaluator, SENTENCE.to_string())),
+                CustomSlot::Author,
+                &[],
+                vec![type_block(None, &[], vec![mark(HELD)])],
+            ),
+        ),
+    ];
+    for (label, record) in sources {
+        let reports = report_all_failed_clauses_for_rules(&[record]);
+        assert_eq!(1, reports.len(), "({}) one rule report", label);
+        match &reports[0] {
+            ClauseReport::Rule(rule) => assert!(
+                rule.checks.is_empty(),
+                "({}) the type block writes no entry under a rule with a text: {:?}",
+                label,
+                rule.checks
+            ),
+            other => panic!("({}) a rule report, got {:?}", label, other),
+        }
+        let by_level = reports[0].get_message_with_rule_records_by_level();
+        assert_eq!(1, by_level.len(), "({}) one result: {:?}", label, by_level);
+        let (messages, rule_level) = &by_level[0];
+        let error = messages.error_message.clone().unwrap_or_default();
+        assert!(
+            *rule_level
+                && messages.custom_message.as_deref() == Some(BODY)
+                && error.matches(HELD).count() == 1,
+            "({}) the rule's own record, the body present, the refusal once: {:?}",
+            label,
+            messages
+        );
+        // The mark sits under a nested type block's failed CONDITION, so it is a condition refusal joined at
+        // the rule: it follows the nested-condition joiner (the rule's own condition has ALSO_MET, clause
+        // marks the body joiner); nothing ended the evaluation: the sentence's head is the displaced
+        // sentence, or the neutral one when there is none.
+        let head = match label {
+            "a displaced sentence" => SENTENCE,
+            _ => crate::rules::eval_context::RULE_FAILED_HEAD,
+        };
+        assert!(
+            error.starts_with(head)
+                && error.contains(crate::rules::eval_context::NESTED_ALSO_MET)
+                && !error.contains(ALSO_MET)
+                && !error.contains(crate::rules::eval_context::BODY_ALSO_MET)
+                && !error.contains(crate::rules::eval_context::RULE_FAILED_ON_AN_ERROR_HEAD),
+            "({}) the head {:?} and the nested-condition joiner alone: {}",
+            label,
+            head,
+            error
+        );
+    }
+}
+
+/// Every text a rule report lists, at every depth, and what the structured readers return for it
+/// (`get_message_with_rule_records_by_level`): the texts of the records, entries and nested rules, and the
+/// messages the `sarif` results and the `junit` element read.
+fn texts_and_reader_messages(report: &ClauseReport<'_>) -> (Vec<String>, Vec<String>) {
+    fn texts(report: &ClauseReport<'_>, out: &mut Vec<String>) {
+        match report {
+            ClauseReport::Rule(rule) => {
+                out.extend(rule.messages.error_message.clone());
+                out.extend(rule.messages.custom_message.clone());
+                rule.checks.iter().for_each(|each| texts(each, out));
+            }
+            ClauseReport::Block(block) => {
+                out.extend(block.messages.error_message.clone());
+                out.extend(block.messages.custom_message.clone());
+            }
+            ClauseReport::Clause(_) => {
+                for messages in report.get_message() {
+                    out.extend(messages.error_message);
+                    out.extend(messages.custom_message);
+                }
+            }
+            ClauseReport::Disjunctions(ors) => ors.checks.iter().for_each(|each| texts(each, out)),
+        }
+    }
+    let mut recorded = Vec::new();
+    texts(report, &mut recorded);
+    let mut read = Vec::new();
+    for (messages, _) in report.get_message_with_rule_records_by_level() {
+        read.extend(messages.error_message);
+        read.extend(messages.custom_message);
+    }
+    (recorded, read)
+}
+
+/// A call with a `<< >>` body whose clause reports beside a type block that failed closed on a mark, and
+/// beside a disjunction with an entry of its own and a mark: the rule's checks SAY something, so the rule's
+/// own record is not the reader's answer, and the body is no answer: the readers return the
+/// checks and not the author's body. The marks no entry names are an entry of the checks themselves (the
+/// refusals alone), so every format reads each mark once and the body not at all, whether or not a mark
+/// exists. Fails when the body appears because a mark does, or a mark is read twice or not at all.
+#[test]
+fn a_bodied_calls_marks_reach_the_readers_once_through_the_checks_when_another_check_speaks() {
+    use crate::rules::CustomSlot;
+    use frame_sources::{mark, refused_clause, rule, type_block, HELD, OTHER};
+    registered_as_in_a_run!(HELD, OTHER);
+    const BODY: &str = "the author's body";
+    let disjunction_with_a_mark = EventRecord {
+        context: String::from("Disjunction#2"),
+        container: Some(RecordType::Disjunction(frame_sources::block_check(
+            None, false, false,
+        ))),
+        children: vec![refused_clause(OTHER), mark(HELD)],
+    };
+    let shapes = vec![
+        (
+            "a type block that failed closed on a mark, beside a clause that reports",
+            vec![
+                refused_clause(OTHER),
+                type_block(None, &[], vec![mark(HELD)]),
+            ],
+        ),
+        (
+            "a disjunction with an entry and a mark",
+            vec![disjunction_with_a_mark],
+        ),
+    ];
+    for (label, children) in shapes {
+        let record = rule(
+            Some(BODY.to_string()),
+            None,
+            CustomSlot::Author,
+            &[],
+            children,
+        );
+        let reports = report_all_failed_clauses_for_rules(&[record]);
+        assert_eq!(1, reports.len(), "({}) one rule report", label);
+        let (recorded, read) = texts_and_reader_messages(&reports[0]);
+        let count = |texts: &[String], needle: &str| {
+            texts
+                .iter()
+                .map(|text| text.matches(needle).count())
+                .sum::<usize>()
+        };
+        assert_eq!(
+            (0, 1, 1),
+            (
+                count(&read, BODY),
+                count(&read, HELD),
+                count(&recorded, HELD)
+            ),
+            "({}) the readers return the checks alone (no body) with the mark once, and the report records the mark once: read {:?}, recorded {:?}",
+            label,
+            read,
+            recorded
+        );
+    }
+}
+
+/// A call with a body over a bailing type block (a sentence of its own) whose one resource's body holds a
+/// converted inline `when` with no sentence: the `when`'s marks are told by the type block's entries, once,
+/// and the debug tripwire holds. A record with a sentence tells the marks beneath it itself, so it hands
+/// its children nothing to defer to the rule above, which would not see them (`marked_refusals_beneath`
+/// stops at a record with a sentence).
+#[test]
+fn a_when_under_a_type_block_with_a_sentence_has_its_marks_told_once_under_a_bodied_call() {
+    use crate::rules::CustomSlot;
+    use frame_sources::{block_check, mark, rule, type_block, when_block, HELD};
+    registered_as_in_a_run!(HELD);
+    const BODY: &str = "the author's body";
+    let silent_block = EventRecord {
+        context: String::from("BlockGuardClause#2"),
+        container: Some(RecordType::BlockGuardCheck(block_check(None, false, false))),
+        children: vec![mark(HELD)],
+    };
+    // The `when` sits BESIDE the type condition, in the resource's body (the `TypeBlock`'s children), as the
+    // evaluator writes a body; under the condition itself the condition's walk would already reach it.
+    let mut bailing = type_block(
+        Some(String::from(
+            "Error a plain error that ended the run during type condition evaluation, bailing",
+        )),
+        &[],
+        vec![],
+    );
+    bailing.children[0]
+        .children
+        .push(when_block(None, &[HELD], vec![silent_block]));
+    let record = rule(
+        Some(BODY.to_string()),
+        None,
+        CustomSlot::Author,
+        &[],
+        vec![bailing],
+    );
+    let reports = report_all_failed_clauses_for_rules(&[record]);
+    let (recorded, read) = texts_and_reader_messages(&reports[0]);
+    let count = |texts: &[String]| {
+        texts
+            .iter()
+            .map(|text| text.matches(HELD).count())
+            .sum::<usize>()
+    };
+    assert_eq!(
+        (1, 1),
+        (count(&recorded), count(&read)),
+        "the mark once in the report and once for the readers: recorded {:?}, read {:?}",
+        recorded,
+        read
+    );
+}
+
+/// The head of a called rule's sentence states what the record carries. A body that ended on an error
+/// (`NamedStatus::ended_by_error`) reads the run-ending head whatever the refusal lists hold: over a clause
+/// mark behind the body joiner, and over a refusal the rule's own condition met behind the condition joiner;
+/// the same record that did not end on an error reads the plain head over the same clause mark. Fails when
+/// the head is chosen from the refusal lists instead of the record's own account of the error.
+#[test]
+fn the_head_of_a_called_rules_sentence_follows_the_error_that_ended_the_run() {
+    use crate::rules::eval_context::{
+        BODY_ALSO_MET, RULE_FAILED_HEAD, RULE_FAILED_ON_AN_ERROR_HEAD,
+    };
+    use crate::rules::CustomSlot;
+    use frame_sources::{mark, rule, under_a_condition, HELD, OTHER};
+    registered_as_in_a_run!(HELD, OTHER);
+    const BODY: &str = "the author's body";
+    let sentence_of = |ended: bool, children: Vec<EventRecord<'static>>| -> String {
+        let mut record = rule(
+            Some(BODY.to_string()),
+            None,
+            CustomSlot::Author,
+            &[],
+            children,
+        );
+        if let Some(RecordType::RuleCheck(status)) = record.container.as_mut() {
+            status.ended_by_error = ended;
+        }
+        let reports = report_all_failed_clauses_for_rules(&[record]);
+        match &reports[0] {
+            ClauseReport::Rule(rule) => rule
+                .messages
+                .error_message
+                .clone()
+                .expect("the rule's sentence is written"),
+            other => panic!("a rule report is expected, got {:?}", other),
+        }
+    };
+    // A mark of a clause in the body: a silent failed block holding the gate mark (no condition met it).
+    let clause_mark = || EventRecord {
+        context: String::from("BlockGuardClause#2"),
+        container: Some(RecordType::BlockGuardCheck(frame_sources::block_check(
+            None, false, false,
+        ))),
+        children: vec![mark(HELD)],
+    };
+    let ended = sentence_of(true, vec![clause_mark()]);
+    assert_eq!(
+        (true, true, 1),
+        (
+            ended.starts_with(RULE_FAILED_ON_AN_ERROR_HEAD),
+            ended.contains(BODY_ALSO_MET),
+            ended.matches(HELD).count()
+        ),
+        "an error ended the run: the run-ending head, the clause mark behind the body joiner, once: {:?}",
+        ended
+    );
+    let with_a_condition = sentence_of(
+        true,
+        vec![under_a_condition(
+            RecordType::RuleCondition(Status::FAIL),
+            vec![mark(OTHER)],
+        )],
+    );
+    assert_eq!(
+        (true, true, 1),
+        (
+            with_a_condition.starts_with(RULE_FAILED_ON_AN_ERROR_HEAD),
+            with_a_condition.contains(ALSO_MET),
+            with_a_condition.matches(OTHER).count()
+        ),
+        "an error ended the run in the rule's own condition: the run-ending head, the refusal behind the condition joiner: {:?}",
+        with_a_condition
+    );
+    let decided = sentence_of(false, vec![clause_mark()]);
+    assert_eq!(
+        (true, true, 1),
+        (
+            decided.starts_with(RULE_FAILED_HEAD)
+                && !decided.starts_with(RULE_FAILED_ON_AN_ERROR_HEAD),
+            decided.contains(BODY_ALSO_MET),
+            decided.matches(HELD).count()
+        ),
+        "no error ended the run: the plain head and the clause mark behind the body joiner: {:?}",
+        decided
+    );
+    // A nested type block's failed condition met a refusal and the rule's own `when` did not fail: the plain
+    // head, the refusal behind the nested-condition joiner.
+    let nested = sentence_of(
+        false,
+        vec![frame_sources::type_block(None, &[], vec![mark(HELD)])],
+    );
+    assert_eq!(
+        (true, true, false, 1),
+        (
+            nested.starts_with(RULE_FAILED_HEAD)
+                && !nested.starts_with(RULE_FAILED_ON_AN_ERROR_HEAD),
+            nested.contains(crate::rules::eval_context::NESTED_ALSO_MET),
+            nested.contains(ALSO_MET),
+            nested.matches(HELD).count()
+        ),
+        "a nested condition's refusal: the plain head, the nested-condition joiner: {:?}",
+        nested
+    );
+}
+
+/// A clause block whose message names a refusal R, over an inline `when` with no sentence and a mark for R,
+/// under a called rule with a body: R is told once. The clause arm hands its children the rule's deferral
+/// (`marks_told_above`, kept when the clause writes its own entry too), so the `when` writes no marks entry of its
+/// own and the rule drops the mark the clause's message carries. Fails when the `when`'s marks entry and the
+/// clause's message appear together.
+#[test]
+fn a_clause_block_whose_message_names_a_refusal_does_not_tell_it_again_through_a_when() {
+    use crate::rules::CustomSlot;
+    use frame_sources::{block_check, mark, rule, when_block, OTHER};
+    registered_as_in_a_run!(OTHER);
+    const BODY: &str = "the author's body";
+    let clause = EventRecord {
+        context: String::from("GuardBlockAccessClause#4"),
+        container: Some(RecordType::GuardClauseBlockCheck(block_check(
+            Some(OTHER.to_string()),
+            true,
+            false,
+        ))),
+        children: vec![when_block(None, &[], vec![mark(OTHER)])],
+    };
+    let record = rule(
+        Some(BODY.to_string()),
+        None,
+        CustomSlot::Author,
+        &[],
+        vec![clause],
+    );
+    let reports = report_all_failed_clauses_for_rules(&[record]);
+    let (recorded, read) = texts_and_reader_messages(&reports[0]);
+    let count = |texts: &[String]| {
+        texts
+            .iter()
+            .map(|text| text.matches(OTHER).count())
+            .sum::<usize>()
+    };
+    assert_eq!(
+        (1, 1),
+        (count(&recorded), count(&read)),
+        "the refusal once in the report and once for the readers: recorded {:?}, read {:?}",
+        recorded,
+        read
+    );
+    // Under a rule with NO text the clause writes its own entry (its message names R) and the `when`
+    // beneath it defers its marks entry: R is told once, by the clause's entry.
+    let no_text = rule(
+        None,
+        None,
+        CustomSlot::Evaluator,
+        &[],
+        vec![EventRecord {
+            context: String::from("GuardBlockAccessClause#4"),
+            container: Some(RecordType::GuardClauseBlockCheck(block_check(
+                Some(OTHER.to_string()),
+                true,
+                false,
+            ))),
+            children: vec![when_block(None, &[], vec![mark(OTHER)])],
+        }],
+    );
+    let reports = report_all_failed_clauses_for_rules(&[no_text]);
+    let (recorded, _) = texts_and_reader_messages(&reports[0]);
+    assert_eq!(
+        1,
+        count(&recorded),
+        "a rule with no text: the refusal once, not by the marks entry and the clause's message both: {:?}",
+        recorded
+    );
+    // The same shape with an author's `<< msg >>` on the clause: the clause's own entry is never dropped
+    // (its context and its text live on it); the entry beneath is the one suppressed. One entry, the
+    // clause's context, the author's text present, the refusal once.
+    let mut with_msg_check = block_check(Some(OTHER.to_string()), true, false);
+    with_msg_check.custom_message = Some(String::from("the clause's own text"));
+    let with_msg = rule(
+        None,
+        None,
+        CustomSlot::Evaluator,
+        &[],
+        vec![EventRecord {
+            context: String::from("GuardBlockAccessClause#4"),
+            container: Some(RecordType::GuardClauseBlockCheck(with_msg_check)),
+            children: vec![when_block(None, &[], vec![mark(OTHER)])],
+        }],
+    );
+    let reports = report_all_failed_clauses_for_rules(&[with_msg]);
+    let entries: Vec<(String, Option<String>, Option<String>)> = match &reports[0] {
+        ClauseReport::Rule(rule) => rule
+            .checks
+            .iter()
+            .map(|entry| match entry {
+                ClauseReport::Block(block) => (
+                    block.context.clone(),
+                    block.messages.custom_message.clone(),
+                    block.messages.error_message.clone(),
+                ),
+                other => panic!("a block entry, got {:?}", other),
+            })
+            .collect(),
+        other => panic!("a rule report, got {:?}", other),
+    };
+    assert_eq!(
+        vec![(
+            String::from("GuardBlockAccessClause#4"),
+            Some(String::from("the clause's own text")),
+            Some(OTHER.to_string())
+        )],
+        entries,
+        "one entry: the clause's context, its author's text, the refusal once"
+    );
+}
+
+/// `rule main { not check << msg >> }` that fails closed on a refusal: the called rule's run is a child of the
+/// negation's clause record, its refused clause carries the same refusal the negation's sentence names, and
+/// the negation's own entry (its context, the sentence and the author's `<< msg >>`) is still written after
+/// the run, never dropped for repeating a refusal. Fails when the entry after the run is missing or has lost
+/// the author's text.
+#[test]
+fn a_negation_over_a_called_rule_keeps_its_own_entry_and_its_author_text() {
+    use crate::rules::CustomSlot;
+    use frame_sources::{block_check, refused_clause, rule, HELD};
+    registered_as_in_a_run!(HELD);
+    let run = EventRecord {
+        context: String::from("check"),
+        container: Some(RecordType::RuleCheck(NamedStatus {
+            name: "check",
+            status: Status::FAIL,
+            message: None,
+            slot: CustomSlot::Evaluator,
+            displaced: None,
+            frame_reads: Vec::new(),
+            ended_by_error: false,
+        })),
+        children: vec![refused_clause(HELD)],
+    };
+    let mut negation_check = block_check(
+        Some(format!(
+            "`not` failed only on reads it could not decide: {HELD}"
+        )),
+        true,
+        false,
+    );
+    negation_check.custom_message = Some(String::from("the negation's msg"));
+    let negation = EventRecord {
+        context: String::from("GuardBlockAccessClause#7"),
+        container: Some(RecordType::GuardClauseBlockCheck(negation_check)),
+        children: vec![run],
+    };
+    let record = rule(None, None, CustomSlot::Evaluator, &[], vec![negation]);
+    let reports = report_all_failed_clauses_for_rules(&[record]);
+    let shape: Vec<String> = match &reports[0] {
+        ClauseReport::Rule(main) => main
+            .checks
+            .iter()
+            .map(|entry| match entry {
+                ClauseReport::Rule(_) => String::from("R"),
+                ClauseReport::Clause(_) => String::from("C"),
+                ClauseReport::Disjunctions(_) => String::from("D"),
+                ClauseReport::Block(block) => {
+                    format!("B:{}:{:?}", block.context, block.messages.custom_message)
+                }
+            })
+            .collect(),
+        other => panic!("a rule report, got {:?}", other),
+    };
+    assert_eq!(
+        vec![
+            String::from("R"),
+            String::from("B:GuardBlockAccessClause#7:Some(\"the negation's msg\")")
+        ],
+        shape,
+        "the called rule's run, then the negation's own entry with its context and author text"
+    );
+}
+
+/// An access clause whose explanation names a refusal R, over a message-less block that holds a gate mark
+/// for R, under a rule with no text: R is told once, by the clause's own entry. The block's marks-only entry
+/// defers (`marks_told_above` with no message of its own), as the `when`, type block and disjunction arms do, and
+/// the clause's join drops what its message already carries. Fails when R appears in both the block's entry
+/// and the clause's.
+#[test]
+fn a_message_less_block_under_a_clause_that_names_its_refusal_does_not_tell_it_again() {
+    use crate::rules::CustomSlot;
+    use frame_sources::{block_check, mark, rule, HELD};
+    registered_as_in_a_run!(HELD);
+    let block = EventRecord {
+        context: String::from("BlockGuardCheck#1"),
+        container: Some(RecordType::BlockGuardCheck(block_check(None, false, false))),
+        children: vec![mark(HELD)],
+    };
+    let clause = EventRecord {
+        context: String::from("GuardBlockAccessClause#7"),
+        container: Some(RecordType::GuardClauseBlockCheck(block_check(
+            Some(format!("the clause failed on a refused read: {HELD}")),
+            true,
+            false,
+        ))),
+        children: vec![block],
+    };
+    let record = rule(None, None, CustomSlot::Evaluator, &[], vec![clause]);
+    let reports = report_all_failed_clauses_for_rules(&[record]);
+    let (recorded, _) = texts_and_reader_messages(&reports[0]);
+    let told: usize = recorded.iter().map(|text| text.matches(HELD).count()).sum();
+    assert_eq!(
+        1, told,
+        "the refusal once, by the clause's entry and not by the block's entry as well: {:?}",
+        recorded
+    );
+}
+
+/// An access clause with a plain explanation, over a type block whose failed condition carries a mark for R
+/// (a nested condition's refusal) and a message-less block that holds a gate mark for the same R (a clause
+/// mark), under a rule with no text: the clause's join keeps R in the nested group only, so the sentence
+/// reads `<explanation>; a nested condition also met: R` and never adds `; a body clause also met: R`.
+/// Fails when the sentence names R twice.
+#[test]
+fn an_access_clause_joins_a_refusal_once_across_its_nested_and_clause_groups() {
+    use crate::rules::CustomSlot;
+    use frame_sources::{block_check, mark, rule, type_block, HELD};
+    registered_as_in_a_run!(HELD);
+    const EXPLANATION: &str = "the clause failed";
+    let block = EventRecord {
+        context: String::from("BlockGuardCheck#1"),
+        container: Some(RecordType::BlockGuardCheck(block_check(None, false, false))),
+        children: vec![mark(HELD)],
+    };
+    let clause = EventRecord {
+        context: String::from("GuardBlockAccessClause#7"),
+        container: Some(RecordType::GuardClauseBlockCheck(block_check(
+            Some(EXPLANATION.to_string()),
+            false,
+            false,
+        ))),
+        children: vec![type_block(None, &[], vec![mark(HELD)]), block],
+    };
+    let record = rule(None, None, CustomSlot::Evaluator, &[], vec![clause]);
+    let reports = report_all_failed_clauses_for_rules(&[record]);
+    let (recorded, _) = texts_and_reader_messages(&reports[0]);
+    assert_eq!(
+        (vec![format!("{EXPLANATION}{NESTED_ALSO_MET}{HELD}")], 0),
+        (
+            recorded.clone(),
+            recorded
+                .iter()
+                .filter(|text| text.contains(BODY_ALSO_MET))
+                .count()
+        ),
+        "the refusal once, in the nested group: {:?}",
+        recorded
+    );
+}
+
+/// One gate mark reads the same under every record: under a type block's own failed condition it is a
+/// condition refusal of THAT record (behind the condition joiner), under the failed condition of a `when`
+/// nested in its body it is a NESTED condition refusal (behind the nested joiner), and in a clause of the
+/// body it is a body mark. Fails when a mark under a nested `when`'s condition is grouped as the type
+/// block's own, or the joined sentence words it behind the condition joiner.
+#[test]
+fn a_mark_under_a_nested_when_is_a_nested_condition_refusal_of_the_type_block() {
+    use frame_sources::{mark, under_a_condition, when_block, HELD, OTHER};
+    registered_as_in_a_run!(HELD, OTHER);
+    let body = vec![
+        under_a_condition(RecordType::TypeCondition(Status::FAIL), vec![mark(OTHER)]),
+        when_block(
+            None,
+            &[],
+            vec![under_a_condition(
+                RecordType::WhenCondition(Status::FAIL),
+                vec![mark(HELD)],
+            )],
+        ),
+    ];
+    let children = vec![EventRecord {
+        context: String::from("TypeBlock#S3/0"),
+        container: Some(RecordType::TypeBlock(Status::FAIL)),
+        children: body,
+    }];
+    let texts = |found: Vec<NamedRefusal>| -> Vec<String> {
+        found.into_iter().map(|(text, _)| text).collect()
+    };
+    let (own, nested, marks) = condition_and_clause_refusals(&children);
+    let (joined, _) = join_rule_refusals(
+        "head",
+        own.clone(),
+        nested.clone(),
+        marks.clone(),
+        SentenceSlot::Error,
+    );
+    assert_eq!(
+        (
+            (
+                vec![OTHER.to_string()],
+                vec![HELD.to_string()],
+                Vec::<String>::new()
+            ),
+            format!("head{ALSO_MET}{OTHER}{NESTED_ALSO_MET}{HELD}")
+        ),
+        ((texts(own), texts(nested), texts(marks)), joined),
+        "the type block's own condition mark, then the nested when's mark behind the nested joiner"
+    );
+}
+
+/// A walk of the marks stops at an access clause that wrote its own entry, which told them: under a rule
+/// with a text, the clause's entry carries the nested refusal and the rule's sentence does not repeat it,
+/// and the walk descends through a clause with no message (which tells nothing). Fails when the rule's
+/// sentence names the refusal as well, or the walk's decision is the other way round.
+#[test]
+fn the_marks_walk_stops_at_a_clause_that_wrote_its_own_entry() {
+    use crate::rules::CustomSlot;
+    use frame_sources::{block_check, mark, rule, type_block, HELD};
+    registered_as_in_a_run!(HELD);
+    let clause = |message: Option<&str>| EventRecord {
+        context: String::from("GuardBlockAccessClause#7"),
+        container: Some(RecordType::GuardClauseBlockCheck(block_check(
+            message.map(String::from),
+            false,
+            false,
+        ))),
+        children: vec![type_block(None, &[], vec![mark(HELD)])],
+    };
+    // A clause whose own per-value check reports (the context carries the `GuardAccessClause#block`
+    // prefix `an_own_value_check_reports` strips, and a child in the clause's own context `Y` that prints):
+    // the clause writes no entry of its own, so the walk goes on beneath it.
+    let reporting = EventRecord {
+        context: String::from("GuardAccessClause#blockY"),
+        container: Some(RecordType::GuardClauseBlockCheck(block_check(
+            Some(crate::rules::eval::clause_error_message(
+                &crate::rules::errors::Error::undecidable(HELD.to_string()),
+            )),
+            true,
+            false,
+        ))),
+        children: vec![
+            EventRecord {
+                context: String::from("Y"),
+                container: Some(RecordType::ClauseValueCheck(
+                    ClauseCheck::MissingBlockValue(ValueCheck {
+                        from: QueryResult::UnResolved(UnResolved {
+                            traversed_to: Rc::new(
+                                PathAwareValue::try_from("{ A: 1 }").expect("parses"),
+                            ),
+                            remaining_query: String::new(),
+                            reason: Some(HELD.to_string()),
+                            kind: UnResolvedKind::Undecidable {
+                                refusal: Some(crate::rules::errors::RefusalToken::minted(7)),
+                                carried: None,
+                            },
+                        }),
+                        message: Some(HELD.to_string()),
+                        custom_message: None,
+                        status: Status::FAIL,
+                        refusal: true,
+                    }),
+                )),
+                children: vec![],
+            },
+            mark(HELD),
+        ],
+    };
+    assert_eq!(
+        (false, true, true, true),
+        (
+            marks_walk_descends(&clause(Some("the clause failed")), true, true),
+            marks_walk_descends(&clause(Some("the clause failed")), false, false),
+            marks_walk_descends(&clause(None), true, true),
+            marks_walk_descends(&reporting, true, true)
+        ),
+        "no descent past a clause the reporter reached that wrote its entry; descent where the reporter \
+         was not reached, through a clause with no message, and through one whose own check reports"
+    );
+    let record = rule(
+        Some(String::from("The rule failed")),
+        None,
+        CustomSlot::Evaluator,
+        &[],
+        vec![clause(Some("the clause failed"))],
+    );
+    let reports = report_all_failed_clauses_for_rules(&[record]);
+    let (recorded, _) = texts_and_reader_messages(&reports[0]);
+    let told: Vec<&String> = recorded.iter().filter(|text| text.contains(HELD)).collect();
+    assert_eq!(
+        (1, true),
+        (
+            told.len(),
+            told.iter()
+                .all(|text| text.starts_with("the clause failed"))
+        ),
+        "the refusal once, in the clause's entry and not in the rule's sentence: {:?}",
+        recorded
+    );
+}
+
+/// The walk of the marks stops at a clause only where the reporter reached it and wrote its entry.
+/// Shape (b): a clause C2 with a message, over a record kind the reporter ignores (a filter's predicate
+/// records), over a clause C3 with a message that holds a gate mark for R. The reporter never reaches C3, so
+/// C3 writes no entry, and the walk, which must not stop at C3, finds R for C2's join: R is told once, by C2.
+/// Shape (a): the same C3 inside a type block's failed condition, whose clauses come through the
+/// condition's filtered copy: R is told once, by C3's entry or the type block's, never twice. Fails when R
+/// is told by nobody (a walk that stopped at C3 whether or not the reporter reached it) or twice.
+#[test]
+fn a_refusal_under_a_clause_the_reporter_does_not_reach_is_told_once_by_an_ancestor() {
+    use crate::rules::CustomSlot;
+    use frame_sources::{block_check, mark, rule, type_block, HELD};
+    registered_as_in_a_run!(HELD);
+    let clause = |context: &str, message: &str, children: Vec<EventRecord<'static>>| EventRecord {
+        context: String::from(context),
+        container: Some(RecordType::GuardClauseBlockCheck(block_check(
+            Some(message.to_string()),
+            false,
+            false,
+        ))),
+        children,
+    };
+    let told_of = |record: EventRecord<'static>| -> Vec<String> {
+        let reports = report_all_failed_clauses_for_rules(&[record]);
+        let (recorded, _) = texts_and_reader_messages(&reports[0]);
+        recorded
+            .into_iter()
+            .filter(|text| text.contains(HELD))
+            .collect()
+    };
+    // Shape (b).
+    let c3 = clause("GuardBlockAccessClause#3", "c3 failed", vec![mark(HELD)]);
+    // The ignored record is the real kind the reporter ignores, a filter's predicate records
+    // (`RecordType::Filter`), not an absent container: `condition_records` treats the two differently.
+    let ignored = EventRecord {
+        context: String::from("a filter's predicate record"),
+        container: Some(RecordType::Filter(Status::FAIL)),
+        children: vec![c3],
+    };
+    let c2 = clause("GuardBlockAccessClause#2", "c2 failed", vec![ignored]);
+    let told = told_of(rule(None, None, CustomSlot::Evaluator, &[], vec![c2]));
+    assert_eq!(
+        (1, true),
+        (
+            told.len(),
+            told.iter().all(|text| text.starts_with("c2 failed"))
+        ),
+        "shape (b): the refusal once, in the entry of the first clause the reporter reached: {:?}",
+        told
+    );
+    // Shape (b) with a failed called rule in place of the messaged clause: C2 > Filter > RuleCheck(FAIL) >
+    // block > mark. The reporter never reaches the rule's run, so the walk goes into it (the walk is no
+    // longer reached beneath the filter's record) and C2 tells R once.
+    let called_run = |status: Status| EventRecord {
+        context: String::from("called"),
+        container: Some(RecordType::RuleCheck(NamedStatus {
+            name: "called",
+            status,
+            message: None,
+            slot: CustomSlot::Evaluator,
+            displaced: None,
+            frame_reads: Vec::new(),
+            ended_by_error: false,
+        })),
+        children: vec![EventRecord {
+            context: String::from("BlockGuardCheck#9"),
+            container: Some(RecordType::BlockGuardCheck(block_check(None, false, false))),
+            children: vec![mark(HELD)],
+        }],
+    };
+    let ignored = EventRecord {
+        context: String::from("a filter's predicate record"),
+        container: Some(RecordType::Filter(Status::FAIL)),
+        children: vec![called_run(Status::FAIL)],
+    };
+    let c2 = clause("GuardBlockAccessClause#2", "c2 failed", vec![ignored]);
+    let told = told_of(rule(None, None, CustomSlot::Evaluator, &[], vec![c2]));
+    assert_eq!(
+        (1, true),
+        (
+            told.len(),
+            told.iter().all(|text| text.starts_with("c2 failed"))
+        ),
+        "a failed rule beneath an ignored kind: the refusal once, at the clause above it: {:?}",
+        told
+    );
+    // A failed called rule beneath a record the reporter REACHES is not entered by the walk: its own run
+    // reports the mark, once, and the clause's sentence does not repeat it.
+    let c2 = clause(
+        "GuardBlockAccessClause#2",
+        "c2 failed",
+        vec![called_run(Status::FAIL)],
+    );
+    let told = told_of(rule(None, None, CustomSlot::Evaluator, &[], vec![c2]));
+    assert_eq!(
+        (1, false),
+        (
+            told.len(),
+            told.iter().any(|text| text.starts_with("c2 failed"))
+        ),
+        "a failed rule beneath a reached clause: the refusal once, by the rule's own run: {:?}",
+        told
+    );
+    // Shape (a).
+    let c3 = clause("GuardBlockAccessClause#3", "c3 failed", vec![mark(HELD)]);
+    let in_a_condition = type_block(None, &[], vec![c3]);
+    let told = told_of(rule(
+        None,
+        None,
+        CustomSlot::Evaluator,
+        &[],
+        vec![in_a_condition],
+    ));
+    assert_eq!(
+        1,
+        told.len(),
+        "shape (a): the refusal once under a failed type block's condition: {:?}",
+        told
+    );
+}
+
+/// The lists cannot drift: for every failed record kind the marks walk could cross, the reporter
+/// (`report_failed_clauses`) writes the entry of a messaged clause placed directly beneath it exactly when
+/// `stoppable_beneath` keeps the walk stoppable there, and `reached_beneath` agrees with `stoppable_beneath`
+/// for every kind but the documented exceptions. A probe clause with a message and no children is put under
+/// a record of EVERY kind; its entry shows up in the report only if the reporter descends into that record
+/// with the original children. The kinds and their samples are ONE list of rows (`record_kinds!`): the match
+/// over `RecordType` with no `_` arm, the names and the samples are all built from the same rows, so a new
+/// kind does not compile until a row is added, and a row cannot be added without its sample. The kinds the
+/// reporter ignores (`FileCheck`, `Filter`, `WhenCondition` and the leaf `ClauseValueCheck`) are real
+/// samples, not an absent container (`condition_records` treats the two differently); an absent container
+/// is a row of its own beside them, the one shape that is no kind (the reporter ignores it, the walk goes
+/// through it, and both flags fall beneath it). Three kinds are documented exceptions, and the cell asserts
+/// each one's reason: beneath a failed `RuleCheck` the walk is neither stoppable nor reached, and the walk
+/// does not enter a failed called rule the reporter reaches (the run tells its own marks); beneath a rule
+/// or type condition the walk is not stoppable but IS reached, because the reporter descends there through
+/// a filtered copy and writes the probe's entry. Fails when a kind is added to or removed from one list and
+/// not the other, or an exception's reason stops holding.
+#[test]
+fn the_reporters_descent_and_the_walks_stoppable_flag_agree_on_every_failed_record_kind() {
+    use frame_sources::block_check;
+    const PROBE: &str = "the probe clause failed";
+    let probe = || EventRecord {
+        context: String::from("GuardBlockAccessClause#probe"),
+        container: Some(RecordType::GuardClauseBlockCheck(block_check(
+            Some(PROBE.to_string()),
+            false,
+            false,
+        ))),
+        children: vec![],
+    };
+    let under = |container: Option<RecordType<'static>>| EventRecord {
+        context: String::from("parent"),
+        container,
+        children: vec![probe()],
+    };
+    let named = |name: &'static str| NamedStatus {
+        name,
+        status: Status::FAIL,
+        message: None,
+        slot: crate::rules::CustomSlot::Evaluator,
+        displaced: None,
+        frame_reads: Vec::new(),
+        ended_by_error: false,
+    };
+    // One row per record kind, `Variant => sample`. The rows build `variant_name` (a match over `RecordType`
+    // with no `_` arm: a new kind is a compile error here until its row is added), `kind_names` and `kinds`,
+    // so the three cannot differ by a kind, and a row with no sample does not parse. The two bindings are
+    // named by the caller: a `let` the macro named itself would be hygienic and unreachable from here.
+    macro_rules! record_kinds {
+        ($names:ident, $samples:ident; $($variant:ident => $sample:expr),+ $(,)?) => {
+            fn variant_name(kind: &RecordType<'_>) -> &'static str {
+                match kind {
+                    $(RecordType::$variant(_) => stringify!($variant),)+
+                }
+            }
+            let $names: Vec<&str> = vec![$(stringify!($variant)),+];
+            let $samples: Vec<RecordType<'static>> = vec![$(RecordType::$variant($sample)),+];
+        };
+    }
+    record_kinds! {
+        kind_names, kinds;
+        FileCheck => named("file"),
+        RuleCheck => named("rule"),
+        RuleCondition => Status::FAIL,
+        TypeCheck => TypeBlockCheck {
+            type_name: "AWS::S3::Bucket",
+            block: block_check(None, false, false),
+        },
+        TypeCondition => Status::FAIL,
+        TypeBlock => Status::FAIL,
+        Filter => Status::FAIL,
+        WhenCheck => block_check(None, false, false),
+        WhenCondition => Status::FAIL,
+        Disjunction => block_check(None, false, false),
+        BlockGuardCheck => block_check(None, false, false),
+        GuardClauseBlockCheck => block_check(None, false, false),
+        ClauseValueCheck => ClauseCheck::MissingBlockValue(ValueCheck {
+            from: QueryResult::UnResolved(UnResolved {
+                traversed_to: Rc::new(PathAwareValue::try_from("{ A: 1 }").expect("parses")),
+                remaining_query: String::new(),
+                reason: None,
+                kind: UnResolvedKind::Undecidable {
+                    refusal: None,
+                    carried: None,
+                },
+            }),
+            message: None,
+            custom_message: None,
+            status: Status::FAIL,
+            refusal: false,
+        }),
+    }
+    // The samples are the rows' kinds, one each: a row written twice for one kind shows up here.
+    let mut names: Vec<&str> = kinds.iter().map(variant_name).collect();
+    names.sort_unstable();
+    names.dedup();
+    let mut expected = kind_names.clone();
+    expected.sort_unstable();
+    assert_eq!(
+        expected, names,
+        "one sample per record kind, the kinds the rows name: {:?}",
+        names
+    );
+    // `RuleCheck`: the walk does not enter a failed called rule the reporter reaches (`marks_walk_descends`
+    // reads `reached`), and beneath one it enters the reporter reaches nothing, so the walk is neither
+    // stoppable nor reached beneath it whatever the reporter does; `RuleCondition` and `TypeCondition`: the
+    // reporter descends through a filtered copy, so the walk is reached but deliberately not stoppable there.
+    // Every other kind must agree with the reporter on both flags.
+    let exceptions = ["RuleCheck", "RuleCondition", "TypeCondition"];
+    // The rows' kinds, and beside them the one shape that is no kind: an absent container, which the
+    // reporter ignores and the walk goes through (`marks_walk_descends`), with neither flag kept beneath it.
+    let mut parents: Vec<(&str, Option<RecordType<'static>>)> = kinds
+        .into_iter()
+        .map(|kind| (variant_name(&kind), Some(kind)))
+        .collect();
+    parents.push(("an absent kind", None));
+    assert_eq!(
+        kind_names.len() + 1,
+        parents.len(),
+        "one row per kind and the absent-container row"
+    );
+    assert!(
+        marks_walk_descends(&under(None), true, true),
+        "the walk goes through an absent container; the flags beneath it are the agreement's business"
+    );
+    let reporter_reaches = |container: Option<RecordType<'static>>| -> bool {
+        let reports = report_all_failed_clauses_for_rules(&[under(container)]);
+        reports.iter().any(|report| {
+            let (recorded, _) = texts_and_reader_messages(report);
+            recorded.iter().any(|text| text == PROBE)
+        })
+    };
+    let disagreements: Vec<&str> = parents
+        .iter()
+        .filter(|(name, _)| !exceptions.contains(name))
+        .filter(|(_, container)| {
+            let record = under(container.clone());
+            let reaches = reporter_reaches(container.clone());
+            reaches != stoppable_beneath(&record, true) || reaches != reached_beneath(&record, true)
+        })
+        .map(|(name, _)| *name)
+        .collect();
+    assert_eq!(
+        Vec::<&str>::new(),
+        disagreements,
+        "kinds where the reporter's descent and `stoppable_beneath` or `reached_beneath` differ"
+    );
+    // The documented exceptions: the walk is not stoppable beneath any of them, and each one's reason holds.
+    let stoppable_under_an_exception: Vec<&str> = parents
+        .iter()
+        .filter(|(name, _)| exceptions.contains(name))
+        .filter(|(_, container)| stoppable_beneath(&under(container.clone()), true))
+        .map(|(name, _)| *name)
+        .collect();
+    assert_eq!(
+        Vec::<&str>::new(),
+        stoppable_under_an_exception,
+        "the walk is not stoppable beneath a called rule or a filtered condition"
+    );
+    let failed_rule = under(Some(RecordType::RuleCheck(named("rule"))));
+    assert_eq!(
+        (false, false),
+        (
+            marks_walk_descends(&failed_rule, true, true),
+            reached_beneath(&failed_rule, true)
+        ),
+        "a failed called rule the reporter reaches is not entered, and nothing beneath it is reached"
+    );
+    for condition in [
+        RecordType::RuleCondition(Status::FAIL),
+        RecordType::TypeCondition(Status::FAIL),
+    ] {
+        let record = under(Some(condition.clone()));
+        assert_eq!(
+            (true, true),
+            (reporter_reaches(Some(condition)), reached_beneath(&record, true)),
+            "the reporter reaches the probe through a condition's filtered copy, and the walk stays reached \
+             there: {:?}",
+            record.container
+        );
+    }
+}
+
+/// The arm of `marks_walk_descends` for a called rule, asserted directly so a rewrite to `=> true` cannot
+/// survive on the reporter's dedupe alone: a failed `RuleCheck` is entered only where the reporter does not
+/// reach it (`reached` false), never where it does (its own run tells the marks), and a `RuleCheck` that did
+/// not fail is never entered. Fails when any of the three answers moves.
+#[test]
+fn the_walk_enters_a_failed_called_rule_only_where_the_reporter_does_not_reach_it() {
+    use crate::rules::CustomSlot;
+    let called = |status: Status| EventRecord {
+        context: String::from("called"),
+        container: Some(RecordType::RuleCheck(NamedStatus {
+            name: "called",
+            status,
+            message: None,
+            slot: CustomSlot::Evaluator,
+            displaced: None,
+            frame_reads: Vec::new(),
+            ended_by_error: false,
+        })),
+        children: vec![],
+    };
+    assert_eq!(
+        (false, false, true, false, false),
+        (
+            marks_walk_descends(&called(Status::FAIL), true, true),
+            marks_walk_descends(&called(Status::FAIL), false, true),
+            marks_walk_descends(&called(Status::FAIL), false, false),
+            marks_walk_descends(&called(Status::PASS), false, false),
+            marks_walk_descends(&called(Status::SKIP), false, false),
+        ),
+        "entered only when failed and not reached: not where reached (stoppable or through a condition's \
+         filtered copy), never when it passed or was skipped"
+    );
+}
+
+/// A mark under the evaluator's real own-condition shape, `TypeCheck > TypeBlock > TypeCondition >
+/// BlockGuardCheck > mark`, is in the OWN group of the three (`refusals_by_depth`), not the nested one: a
+/// check inside the record's own condition is that condition's own. A mark under a nested `when`'s condition
+/// in the body is nested. Fails when the own-condition mark lands in the nested group.
+#[test]
+fn a_mark_under_the_real_own_condition_shape_is_in_the_own_group() {
+    use frame_sources::{block_check, mark, under_a_condition, when_block, HELD};
+    registered_as_in_a_run!(HELD);
+    let own_condition = under_a_condition(
+        RecordType::TypeCondition(Status::FAIL),
+        vec![EventRecord {
+            context: String::from("BlockGuardCheck#1"),
+            container: Some(RecordType::BlockGuardCheck(block_check(None, false, false))),
+            children: vec![mark(HELD)],
+        }],
+    );
+    let nested_when = when_block(
+        None,
+        &[],
+        vec![under_a_condition(
+            RecordType::WhenCondition(Status::FAIL),
+            vec![mark(HELD)],
+        )],
+    );
+    let children = vec![EventRecord {
+        context: String::from("TypeBlock#S3/0"),
+        container: Some(RecordType::TypeBlock(Status::FAIL)),
+        children: vec![own_condition, nested_when],
+    }];
+    let groups = refusals_by_depth(&children);
+    assert_eq!(
+        [1, 1, 0],
+        [groups[0].len(), groups[1].len(), groups[2].len()],
+        "one refusal under the record's own condition, one under the nested when's, none in a clause"
+    );
+}
+
+/// A type block WITH a sentence over a message-less nested `when` whose condition holds a mark for R,
+/// through the reporter: the `when` writes its own refusals-only entry (a record with a sentence hands its
+/// children no deferral), the type block's sentence stands alone beside it, and R is told once. On a type
+/// block's or a `when`'s sentence the nested joiner (`NESTED_ALSO_MET`) is therefore written only for a
+/// nested record the reporter does not reach (the next cells), never for one it reaches; a rule's sentence
+/// and an access clause's entry take a reached nested record's refusals too, by deferral. Fails when R is
+/// told twice, or the nested joiner reaches the type block's sentence.
+#[test]
+fn a_type_block_over_a_nested_when_tells_the_refusal_in_the_whens_entry_not_in_its_sentence() {
+    use crate::rules::{CustomSlot, TypeBlockCheck};
+    use frame_sources::{block_check, mark, rule, under_a_condition, when_block, HELD};
+    registered_as_in_a_run!(HELD);
+    let nested_when = when_block(
+        None,
+        &[],
+        vec![under_a_condition(
+            RecordType::WhenCondition(Status::FAIL),
+            vec![mark(HELD)],
+        )],
+    );
+    let type_block = EventRecord {
+        context: String::from("TypeBlock#S3"),
+        container: Some(RecordType::TypeCheck(TypeBlockCheck {
+            type_name: "AWS::S3::Bucket",
+            block: block_check(Some(String::from("the type block failed")), false, false),
+        })),
+        children: vec![EventRecord {
+            context: String::from("TypeBlock#S3/0"),
+            container: Some(RecordType::TypeBlock(Status::FAIL)),
+            children: vec![nested_when],
+        }],
+    };
+    let reports = report_all_failed_clauses_for_rules(&[rule(
+        None,
+        None,
+        CustomSlot::Evaluator,
+        &[],
+        vec![type_block],
+    )]);
+    let (recorded, _) = texts_and_reader_messages(&reports[0]);
+    let told: usize = recorded.iter().map(|text| text.matches(HELD).count()).sum();
+    assert_eq!(
+        (1, 0, 1),
+        (
+            told,
+            recorded
+                .iter()
+                .filter(|text| text.contains(NESTED_ALSO_MET))
+                .count(),
+            recorded
+                .iter()
+                .filter(|text| text.as_str() == "the type block failed")
+                .count()
+        ),
+        "R once (the when's entry), no nested joiner anywhere, the type block's sentence alone: {:?}",
+        recorded
+    );
+}
+
+/// The nested joiner on a type block's own sentence, through the reporter: `TypeCheck` (with a sentence) >
+/// `TypeBlock` > `Filter` (a record kind the reporter ignores) > `WhenCheck` (no sentence, failed) >
+/// `WhenCondition` > a mark for R. The `when` is never reached, so it writes no entry; the type block's walk
+/// finds R in the nested group; the sentence reads `<sentence>; a nested condition also met: R`: R is told
+/// once, and no entry names the `when`. The same refusal under a `when` the reporter DOES reach is told in
+/// that `when`'s entry instead (`a_type_block_over_a_nested_when_tells_the_refusal_in_the_whens_entry_not_in_its_sentence`).
+/// The record is an invented one, built from the record kinds the evaluator writes: no rules file was run
+/// to produce this tree (the filter-predicate shape under a clause is written by the evaluator, but this
+/// cell was written without a way to run the evaluator and read the tree back), so it pins the reporter,
+/// not the evaluator. Fails when R is told twice or nowhere, or the sentence words it other than behind
+/// the nested joiner.
+#[test]
+fn a_nested_when_beneath_a_kind_the_reporter_ignores_is_joined_on_the_type_blocks_sentence() {
+    use crate::rules::{CustomSlot, TypeBlockCheck};
+    use frame_sources::{block_check, mark, rule, under_a_condition, when_block, HELD};
+    registered_as_in_a_run!(HELD);
+    let nested_when = when_block(
+        None,
+        &[],
+        vec![under_a_condition(
+            RecordType::WhenCondition(Status::FAIL),
+            vec![mark(HELD)],
+        )],
+    );
+    let ignored = EventRecord {
+        context: String::from("Filter#1"),
+        container: Some(RecordType::Filter(Status::FAIL)),
+        children: vec![nested_when],
+    };
+    let type_block = EventRecord {
+        context: String::from("TypeBlock#S3"),
+        container: Some(RecordType::TypeCheck(TypeBlockCheck {
+            type_name: "AWS::S3::Bucket",
+            block: block_check(Some(String::from("the type block failed")), false, false),
+        })),
+        children: vec![EventRecord {
+            context: String::from("TypeBlock#S3/0"),
+            container: Some(RecordType::TypeBlock(Status::FAIL)),
+            children: vec![ignored],
+        }],
+    };
+    let reports = report_all_failed_clauses_for_rules(&[rule(
+        None,
+        None,
+        CustomSlot::Evaluator,
+        &[],
+        vec![type_block],
+    )]);
+    let (recorded, _) = texts_and_reader_messages(&reports[0]);
+    let told: Vec<&String> = recorded.iter().filter(|text| text.contains(HELD)).collect();
+    assert_eq!(
+        vec![format!("the type block failed{NESTED_ALSO_MET}{HELD}")],
+        told.into_iter().cloned().collect::<Vec<String>>(),
+        "R once, on the type block's sentence behind the nested joiner, no entry for the when: {:?}",
+        recorded
+    );
+}
+
+/// The same shape with the nested `when` carrying a MESSAGE, the usual case for an inline `when` whose
+/// condition failed closed: `TypeCheck` (with a sentence) > `TypeBlock` > `Filter` > `WhenCheck` (with a
+/// sentence, failed) > `WhenCondition` > a mark for R. The reporter never reaches the `when`, so its sentence
+/// is never written and tells nothing; the walk of the marks goes on beneath it (a sentence stops the walk
+/// only where the reporter writes it) and finds R in the nested group; the type block's sentence reads
+/// `<sentence>; a nested condition also met: R`. Fails when R is told nowhere (the walk stopped at the
+/// messaged `when`), twice, or behind another joiner.
+#[test]
+fn a_messaged_when_beneath_a_kind_the_reporter_ignores_is_joined_on_the_type_blocks_sentence() {
+    use crate::rules::{CustomSlot, TypeBlockCheck};
+    use frame_sources::{block_check, mark, rule, under_a_condition, when_block, HELD};
+    registered_as_in_a_run!(HELD);
+    let nested_when = when_block(
+        Some(String::from("the when failed")),
+        &[],
+        vec![under_a_condition(
+            RecordType::WhenCondition(Status::FAIL),
+            vec![mark(HELD)],
+        )],
+    );
+    let ignored = EventRecord {
+        context: String::from("Filter#1"),
+        container: Some(RecordType::Filter(Status::FAIL)),
+        children: vec![nested_when],
+    };
+    let type_block = EventRecord {
+        context: String::from("TypeBlock#S3"),
+        container: Some(RecordType::TypeCheck(TypeBlockCheck {
+            type_name: "AWS::S3::Bucket",
+            block: block_check(Some(String::from("the type block failed")), false, false),
+        })),
+        children: vec![EventRecord {
+            context: String::from("TypeBlock#S3/0"),
+            container: Some(RecordType::TypeBlock(Status::FAIL)),
+            children: vec![ignored],
+        }],
+    };
+    let reports = report_all_failed_clauses_for_rules(&[rule(
+        None,
+        None,
+        CustomSlot::Evaluator,
+        &[],
+        vec![type_block],
+    )]);
+    let (recorded, _) = texts_and_reader_messages(&reports[0]);
+    let told: Vec<&String> = recorded.iter().filter(|text| text.contains(HELD)).collect();
+    assert_eq!(
+        vec![format!("the type block failed{NESTED_ALSO_MET}{HELD}")],
+        told.into_iter().cloned().collect::<Vec<String>>(),
+        "R once, on the type block's sentence behind the nested joiner, though the when has a sentence: {:?}",
+        recorded
+    );
+}
+
+/// The refusal under the unreached, messaged `when` is NOT a gate mark: `TypeCheck` (with a sentence) >
+/// `TypeBlock` > `Filter` > `WhenCheck` (with a sentence, failed) > `WhenCondition` > a refused comparison
+/// record carrying R (`refusal: true`, a per-value check, no mark). The walk of the marks collects gate marks
+/// only, the type block's own-condition walk (`condition_refusals`) reads its direct condition and
+/// `TypeBlock` children only, and the `when`'s entry, which would join R, is never written: R is read by the
+/// walk's deferred-record arm alone, which takes a `when` or type block the reporter never reaches as
+/// deferred whatever its message (`is_deferred_condition_record` with `reached` false, read with the marks by
+/// `refusals_by_depth`), and the sentence reads `<sentence>; a nested condition also met: R`.
+/// The collector reaches the record because the condition's filtered copy keeps it:
+/// `clause_check_carries_the_raise` answers `check.refusal` for a `Comparison`, so a refused comparison
+/// record (refusal set, no gate mark) survives `condition_records` and `condition_refusals` reads its
+/// message. Fails when R is told nowhere (the collector asked for a message-less record) or twice.
+#[test]
+fn a_refused_record_under_an_unreached_messaged_when_is_joined_on_the_type_blocks_sentence() {
+    use crate::rules::{CustomSlot, TypeBlockCheck};
+    use frame_sources::{block_check, rule, under_a_condition, when_block, HELD};
+    registered_as_in_a_run!(HELD);
+    let refused_comparison = EventRecord {
+        context: String::from("Resources.A.Tags EXISTS"),
+        container: Some(RecordType::ClauseValueCheck(ClauseCheck::Comparison(
+            ComparisonClauseCheck {
+                comparison: (CmpOperator::Exists, false),
+                from: QueryResult::Resolved(Rc::new(PathAwareValue::Int((
+                    Path::new(String::from("/Resources/A/Tags"), 1, 1),
+                    1,
+                )))),
+                to: None,
+                message: Some(HELD.to_string()),
+                custom_message: None,
+                status: Status::FAIL,
+                refusal: true,
+            },
+        ))),
+        children: vec![],
+    };
+    let nested_when = when_block(
+        Some(String::from("the when failed")),
+        &[],
+        vec![under_a_condition(
+            RecordType::WhenCondition(Status::FAIL),
+            vec![refused_comparison],
+        )],
+    );
+    let ignored = EventRecord {
+        context: String::from("Filter#1"),
+        container: Some(RecordType::Filter(Status::FAIL)),
+        children: vec![nested_when],
+    };
+    let type_block = EventRecord {
+        context: String::from("TypeBlock#S3"),
+        container: Some(RecordType::TypeCheck(TypeBlockCheck {
+            type_name: "AWS::S3::Bucket",
+            block: block_check(Some(String::from("the type block failed")), false, false),
+        })),
+        children: vec![EventRecord {
+            context: String::from("TypeBlock#S3/0"),
+            container: Some(RecordType::TypeBlock(Status::FAIL)),
+            children: vec![ignored],
+        }],
+    };
+    let reports = report_all_failed_clauses_for_rules(&[rule(
+        None,
+        None,
+        CustomSlot::Evaluator,
+        &[],
+        vec![type_block],
+    )]);
+    let (recorded, _) = texts_and_reader_messages(&reports[0]);
+    let told: Vec<&String> = recorded.iter().filter(|text| text.contains(HELD)).collect();
+    assert_eq!(
+        vec![format!("the type block failed{NESTED_ALSO_MET}{HELD}")],
+        told.into_iter().cloned().collect::<Vec<String>>(),
+        "a refused record that is no mark, under an unreached messaged when: R once, on the type block's \
+         sentence behind the nested joiner: {:?}",
+        recorded
+    );
+}
+
+/// The unreached record's refusals reach EVERY host, since every arm reads them with the marks
+/// (`refusals_by_depth`, the one source): three hosts over the same `Filter > WhenCheck (with a sentence,
+/// failed) > WhenCondition > refused comparison record carrying R`, each telling R exactly once. (a) A
+/// MESSAGE-LESS type block under a rule with no text: no sentence to join R to, so the type block's
+/// refusals-alone entry (`marks_alone_entry`) carries it. (b) A block WITH a sentence: its sentence joins R
+/// behind the nested joiner, since R was read under a failed condition nested beneath the block and a
+/// condition refusal reads the same wherever it is joined (a mark of the block's own clauses would follow
+/// the body joiner). (c) A disjunction with a sentence: the same, on the disjunction's sentence. Fails when
+/// any host tells R nowhere (a collector wired at some hosts only), twice, or behind the body joiner.
+#[test]
+fn an_unreached_whens_refusal_reaches_a_message_less_type_block_a_block_and_a_disjunction() {
+    use crate::rules::CustomSlot;
+    use frame_sources::{block_check, rule, type_block, under_a_condition, when_block, HELD};
+    registered_as_in_a_run!(HELD);
+    let unreached_when = || EventRecord {
+        context: String::from("Filter#1"),
+        container: Some(RecordType::Filter(Status::FAIL)),
+        children: vec![when_block(
+            Some(String::from("the when failed")),
+            &[],
+            vec![under_a_condition(
+                RecordType::WhenCondition(Status::FAIL),
+                vec![EventRecord {
+                    context: String::from("Resources.A.Tags EXISTS"),
+                    container: Some(RecordType::ClauseValueCheck(ClauseCheck::Comparison(
+                        ComparisonClauseCheck {
+                            comparison: (CmpOperator::Exists, false),
+                            from: QueryResult::Resolved(Rc::new(PathAwareValue::Int((
+                                Path::new(String::from("/Resources/A/Tags"), 1, 1),
+                                1,
+                            )))),
+                            to: None,
+                            message: Some(HELD.to_string()),
+                            custom_message: None,
+                            status: Status::FAIL,
+                            refusal: true,
+                        },
+                    ))),
+                    children: vec![],
+                }],
+            )],
+        )],
+    };
+    let told_of = |host: EventRecord<'static>| -> Vec<String> {
+        let reports = report_all_failed_clauses_for_rules(&[rule(
+            None,
+            None,
+            CustomSlot::Evaluator,
+            &[],
+            vec![host],
+        )]);
+        let (recorded, _) = texts_and_reader_messages(&reports[0]);
+        recorded
+            .into_iter()
+            .filter(|text| text.contains(HELD))
+            .collect()
+    };
+    // (a) A message-less type block: `type_block` wraps the records in the per-resource condition shape,
+    // so the filter is put under the `TypeBlock` record by hand instead, in the body position.
+    let message_less_type_block = {
+        let mut host = type_block(None, &[], vec![]);
+        host.children = vec![EventRecord {
+            context: String::from("TypeBlock#S3/0"),
+            container: Some(RecordType::TypeBlock(Status::FAIL)),
+            children: vec![unreached_when()],
+        }];
+        host
+    };
+    let block = EventRecord {
+        context: String::from("BlockGuardCheck#1"),
+        container: Some(RecordType::BlockGuardCheck(block_check(
+            Some(String::from("the block failed")),
+            false,
+            false,
+        ))),
+        children: vec![unreached_when()],
+    };
+    let disjunction = EventRecord {
+        context: String::from("Disjunction#1"),
+        container: Some(RecordType::Disjunction(block_check(
+            Some(String::from("the disjunction failed")),
+            false,
+            false,
+        ))),
+        children: vec![unreached_when()],
+    };
+    assert_eq!(
+        (
+            vec![HELD.to_string()],
+            vec![format!("the block failed{NESTED_ALSO_MET}{HELD}")],
+            vec![format!("the disjunction failed{NESTED_ALSO_MET}{HELD}")],
+        ),
+        (
+            told_of(message_less_type_block),
+            told_of(block),
+            told_of(disjunction),
+        ),
+        "R once at each host: the type block's refusals-alone entry, the block's sentence and the \
+         disjunction's sentence behind the nested joiner"
+    );
+}
+
+/// A deferred record BELOW A CHECK inside a condition is a nested condition's, as a mark there is: the walk
+/// counts a called rule or a `when` it enters OUTSIDE any condition as a check between, and what
+/// lies under THAT check's condition is not this record's own condition's; the controls put the
+/// same chains directly inside this record's own condition and read the own joiner. Two triggers
+/// under a type block with a sentence, each with an
+/// unreached messaged `when` (beneath a filter's predicate records) whose condition holds a mark for R: (a)
+/// `TypeBlock > Filter > RuleCheck (failed, unreached) > RuleCondition > Filter > WhenCheck > WhenCondition >
+/// R`, (b) `TypeBlock > Filter > WhenCheck (unreached) > WhenCondition > Filter > WhenCheck (unreached) >
+/// WhenCondition > R`. Each reads R exactly once behind the nested joiner and never behind the own-condition
+/// joiner. The control for each: the same deferred chain directly under the type block's OWN condition
+/// (`TypeCondition > Filter > ...`), which reads R behind the own-condition joiner. Fails when a deferred
+/// record is grouped by the condition flag alone (R behind the own-condition joiner on a trigger), or told
+/// twice or nowhere.
+#[test]
+fn a_deferred_record_below_a_check_inside_a_condition_is_a_nested_conditions() {
+    use crate::rules::{CustomSlot, TypeBlockCheck};
+    use frame_sources::{block_check, mark, rule, under_a_condition, when_block, HELD};
+    registered_as_in_a_run!(HELD);
+    let behind_a_filter = |children: Vec<EventRecord<'static>>| EventRecord {
+        context: String::from("Filter#1"),
+        container: Some(RecordType::Filter(Status::FAIL)),
+        children,
+    };
+    let unreached_when = |children: Vec<EventRecord<'static>>| {
+        behind_a_filter(vec![when_block(
+            Some(String::from("the when failed")),
+            &[],
+            vec![under_a_condition(
+                RecordType::WhenCondition(Status::FAIL),
+                children,
+            )],
+        )])
+    };
+    let unreached_called_rule = |children: Vec<EventRecord<'static>>| {
+        behind_a_filter(vec![EventRecord {
+            context: String::from("called"),
+            container: Some(RecordType::RuleCheck(NamedStatus {
+                name: "called",
+                status: Status::FAIL,
+                message: None,
+                slot: CustomSlot::Evaluator,
+                displaced: None,
+                frame_reads: Vec::new(),
+                ended_by_error: true,
+            })),
+            children: vec![under_a_condition(
+                RecordType::RuleCondition(Status::FAIL),
+                children,
+            )],
+        }])
+    };
+    let told_of = |type_block_children: Vec<EventRecord<'static>>| -> Vec<String> {
+        let type_block = EventRecord {
+            context: String::from("TypeBlock#S3"),
+            container: Some(RecordType::TypeCheck(TypeBlockCheck {
+                type_name: "AWS::S3::Bucket",
+                block: block_check(Some(String::from("the type block failed")), false, false),
+            })),
+            children: vec![EventRecord {
+                context: String::from("TypeBlock#S3/0"),
+                container: Some(RecordType::TypeBlock(Status::FAIL)),
+                children: type_block_children,
+            }],
+        };
+        let reports = report_all_failed_clauses_for_rules(&[rule(
+            None,
+            None,
+            CustomSlot::Evaluator,
+            &[],
+            vec![type_block],
+        )]);
+        let (recorded, _) = texts_and_reader_messages(&reports[0]);
+        recorded
+            .into_iter()
+            .filter(|text| text.contains(HELD))
+            .collect()
+    };
+    let own_condition = |children: Vec<EventRecord<'static>>| {
+        under_a_condition(RecordType::TypeCondition(Status::FAIL), children)
+    };
+    let nested = format!("the type block failed{NESTED_ALSO_MET}{HELD}");
+    let own = format!("the type block failed{ALSO_MET}{HELD}");
+    assert_eq!(
+        (
+            vec![nested.clone()],
+            vec![nested],
+            vec![own.clone()],
+            vec![own]
+        ),
+        (
+            // (a) under an entered called rule's condition.
+            told_of(vec![unreached_called_rule(vec![unreached_when(vec![
+                mark(HELD),
+            ])])]),
+            // (b) under a nested unreached when's condition.
+            told_of(vec![unreached_when(vec![unreached_when(vec![mark(
+                HELD
+            )])])]),
+            // Controls: the same deferred chains directly under the type block's own condition.
+            told_of(vec![own_condition(vec![unreached_called_rule(vec![
+                unreached_when(vec![mark(HELD)]),
+            ])])]),
+            told_of(vec![own_condition(vec![unreached_when(vec![
+                unreached_when(vec![mark(HELD)]),
+            ])])]),
+        ),
+        "R once: behind the nested joiner under a check inside the condition, behind the own-condition joiner \
+         directly under the type block's own condition"
+    );
+}
+
+/// One refusal that is BOTH a nested condition's and a body clause's mark beneath a block or a disjunction is
+/// told once: a block or disjunction with nothing reported beneath it joins the two groups of its refusals
+/// to its sentence (or lists them alone when it has none), and a refusal in both groups stays in the
+/// condition's group only (`marked_refusals_by_group`, each refusal once across the groups). The shape: a
+/// filter's predicate records over an unreached messaged `when` whose condition holds a mark for R, beside a
+/// body mark for R and a body mark for R2 that no condition met. Three hosts: a block with a sentence (R
+/// behind the nested joiner, R2 behind the body joiner), a block without one (the refusals alone, R then R2),
+/// a disjunction with a sentence (as the block with one). Fails when R is told twice (once per group), or R2
+/// leaves the body joiner.
+#[test]
+fn a_refusal_in_both_groups_beneath_a_block_or_disjunction_is_told_once() {
+    use crate::rules::CustomSlot;
+    use frame_sources::{block_check, mark, rule, under_a_condition, when_block, HELD, OTHER};
+    registered_as_in_a_run!(HELD, OTHER);
+    let children = || {
+        vec![
+            EventRecord {
+                context: String::from("Filter#1"),
+                container: Some(RecordType::Filter(Status::FAIL)),
+                children: vec![when_block(
+                    Some(String::from("the when failed")),
+                    &[],
+                    vec![under_a_condition(
+                        RecordType::WhenCondition(Status::FAIL),
+                        vec![mark(HELD)],
+                    )],
+                )],
+            },
+            mark(HELD),
+            mark(OTHER),
+        ]
+    };
+    let told_of = |host: EventRecord<'static>| -> (Vec<String>, usize) {
+        let reports = report_all_failed_clauses_for_rules(&[rule(
+            None,
+            None,
+            CustomSlot::Evaluator,
+            &[],
+            vec![host],
+        )]);
+        let (recorded, _) = texts_and_reader_messages(&reports[0]);
+        let r_count = recorded.iter().map(|text| text.matches(HELD).count()).sum();
+        (
+            recorded
+                .into_iter()
+                .filter(|text| text.contains(HELD))
+                .collect(),
+            r_count,
+        )
+    };
+    let block = |message: Option<&str>| EventRecord {
+        context: String::from("BlockGuardCheck#1"),
+        container: Some(RecordType::BlockGuardCheck(block_check(
+            message.map(String::from),
+            false,
+            false,
+        ))),
+        children: children(),
+    };
+    let disjunction = EventRecord {
+        context: String::from("Disjunction#1"),
+        container: Some(RecordType::Disjunction(block_check(
+            Some(String::from("the disjunction failed")),
+            false,
+            false,
+        ))),
+        children: children(),
+    };
+    assert_eq!(
+        (
+            (
+                vec![format!(
+                    "the block failed{NESTED_ALSO_MET}{HELD}{BODY_ALSO_MET}{OTHER}"
+                )],
+                1
+            ),
+            (vec![format!("{HELD}; {OTHER}")], 1),
+            (
+                vec![format!(
+                    "the disjunction failed{NESTED_ALSO_MET}{HELD}{BODY_ALSO_MET}{OTHER}"
+                )],
+                1
+            ),
+        ),
+        (
+            told_of(block(Some("the block failed"))),
+            told_of(block(None)),
+            told_of(disjunction),
+        ),
+        "R once in the condition's group, R2 behind the body joiner, at each of the three hosts"
+    );
+}
+
+/// A type block WITH a sentence whose sentence an entry beneath already carries, over an unreached messaged
+/// `when` with a refused comparison record carrying R: `TypeCheck` (sentence E) > `TypeBlock` > [a block with
+/// the sentence E and no children, `Filter` > `WhenCheck` (with a sentence, failed) > `WhenCondition` > R].
+/// The block's entry tells E, so the type block writes no sentence of its own beside the entries
+/// (`sentence_told_by`), and the refusals no entry carries become the type block's refusals-alone entry
+/// (`marks_alone_entry`, the `alone` value of the type block arm), which reads R through the one source
+/// (`marked_refusals_beneath`): R once, E once. Fails when R is told nowhere (the sentence path is the only
+/// one that reads unreached records) or twice, or E twice.
+#[test]
+fn an_unreached_whens_refusal_under_a_type_block_whose_sentence_an_entry_carries_is_told_once() {
+    use crate::rules::{CustomSlot, TypeBlockCheck};
+    use frame_sources::{block_check, rule, under_a_condition, when_block, HELD};
+    registered_as_in_a_run!(HELD);
+    const E: &str = "the type block failed";
+    let carrying_block = EventRecord {
+        context: String::from("BlockGuardCheck#1"),
+        container: Some(RecordType::BlockGuardCheck(block_check(
+            Some(E.to_string()),
+            false,
+            false,
+        ))),
+        children: vec![],
+    };
+    let unreached_when = EventRecord {
+        context: String::from("Filter#1"),
+        container: Some(RecordType::Filter(Status::FAIL)),
+        children: vec![when_block(
+            Some(String::from("the when failed")),
+            &[],
+            vec![under_a_condition(
+                RecordType::WhenCondition(Status::FAIL),
+                vec![EventRecord {
+                    context: String::from("Resources.A.Tags EXISTS"),
+                    container: Some(RecordType::ClauseValueCheck(ClauseCheck::Comparison(
+                        ComparisonClauseCheck {
+                            comparison: (CmpOperator::Exists, false),
+                            from: QueryResult::Resolved(Rc::new(PathAwareValue::Int((
+                                Path::new(String::from("/Resources/A/Tags"), 1, 1),
+                                1,
+                            )))),
+                            to: None,
+                            message: Some(HELD.to_string()),
+                            custom_message: None,
+                            status: Status::FAIL,
+                            refusal: true,
+                        },
+                    ))),
+                    children: vec![],
+                }],
+            )],
+        )],
+    };
+    let type_block = EventRecord {
+        context: String::from("TypeBlock#S3"),
+        container: Some(RecordType::TypeCheck(TypeBlockCheck {
+            type_name: "AWS::S3::Bucket",
+            block: block_check(Some(E.to_string()), false, false),
+        })),
+        children: vec![EventRecord {
+            context: String::from("TypeBlock#S3/0"),
+            container: Some(RecordType::TypeBlock(Status::FAIL)),
+            children: vec![carrying_block, unreached_when],
+        }],
+    };
+    let reports = report_all_failed_clauses_for_rules(&[rule(
+        None,
+        None,
+        CustomSlot::Evaluator,
+        &[],
+        vec![type_block],
+    )]);
+    let (recorded, _) = texts_and_reader_messages(&reports[0]);
+    let told: Vec<String> = recorded
+        .iter()
+        .filter(|text| text.contains(HELD))
+        .cloned()
+        .collect();
+    assert_eq!(
+        (vec![HELD.to_string()], 1),
+        (
+            told,
+            recorded.iter().filter(|text| text.as_str() == E).count()
+        ),
+        "R once, as the type block's refusals-alone entry beside the entry that carries its sentence; E \
+         once: {:?}",
+        recorded
+    );
+}
+
+/// A REACHED, messaged `when` under a type block WITH a sentence: `TypeCheck` (with a sentence) > `TypeBlock`
+/// > `WhenCheck` (with a sentence, failed) > `WhenCondition` > a mark for R. The reporter reaches the `when`
+/// and writes its entry, which joins R behind the own-condition joiner (`ALSO_MET`: R is the `when`'s own
+/// condition's); the `when` is not deferred (`is_deferred_condition_record` with `reached` true and a
+/// message), so the type block's sentence stands alone, with no nested joiner, and R is told once. Fails
+/// when R is told twice (the type block's sentence repeats it), nowhere, or the nested joiner appears.
+#[test]
+fn a_reached_messaged_when_under_a_type_block_with_a_sentence_tells_its_refusal_in_its_own_entry() {
+    use crate::rules::{CustomSlot, TypeBlockCheck};
+    use frame_sources::{block_check, mark, rule, under_a_condition, when_block, HELD};
+    registered_as_in_a_run!(HELD);
+    let nested_when = when_block(
+        Some(String::from("the when failed")),
+        &[],
+        vec![under_a_condition(
+            RecordType::WhenCondition(Status::FAIL),
+            vec![mark(HELD)],
+        )],
+    );
+    let type_block = EventRecord {
+        context: String::from("TypeBlock#S3"),
+        container: Some(RecordType::TypeCheck(TypeBlockCheck {
+            type_name: "AWS::S3::Bucket",
+            block: block_check(Some(String::from("the type block failed")), false, false),
+        })),
+        children: vec![EventRecord {
+            context: String::from("TypeBlock#S3/0"),
+            container: Some(RecordType::TypeBlock(Status::FAIL)),
+            children: vec![nested_when],
+        }],
+    };
+    let reports = report_all_failed_clauses_for_rules(&[rule(
+        None,
+        None,
+        CustomSlot::Evaluator,
+        &[],
+        vec![type_block],
+    )]);
+    let (recorded, _) = texts_and_reader_messages(&reports[0]);
+    let told: Vec<String> = recorded
+        .iter()
+        .filter(|text| text.contains(HELD))
+        .cloned()
+        .collect();
+    assert_eq!(
+        (vec![format!("the when failed{ALSO_MET}{HELD}")], 0, 1),
+        (
+            told,
+            recorded
+                .iter()
+                .filter(|text| text.contains(NESTED_ALSO_MET))
+                .count(),
+            recorded
+                .iter()
+                .filter(|text| text.as_str() == "the type block failed")
+                .count()
+        ),
+        "R once, in the reached when's own entry behind its own-condition joiner; the type block's sentence \
+         alone, no nested joiner: {:?}",
+        recorded
+    );
+}
+
+/// The unreached-record shape of the cell above with a TYPE BLOCK in place of the `when`: `TypeCheck` (with
+/// a sentence) > `TypeBlock` >
+/// `Filter` > `TypeCheck` (with a sentence, failed) > `TypeBlock` > `TypeCondition` > a refused comparison
+/// record carrying R (no gate mark). The nested type block is never reached, so it is a deferred record
+/// whatever its message, its condition's refusals are read through its `TypeBlock` records, and the outer
+/// sentence reads `<sentence>; a nested condition also met: R`, once. The cell also reads the deferral test
+/// directly: a messaged failed `TypeCheck` and a messaged failed `WhenCheck` are deferred with `reached`
+/// false and not deferred with `reached` true. Fails when R is told nowhere or twice, or either direct read
+/// moves.
+#[test]
+fn a_deferred_type_block_beneath_a_kind_the_reporter_ignores_is_joined_on_the_outer_sentence() {
+    use crate::rules::{CustomSlot, TypeBlockCheck};
+    use frame_sources::{block_check, rule, type_block, when_block, HELD};
+    registered_as_in_a_run!(HELD);
+    let refused_comparison = EventRecord {
+        context: String::from("Resources.A.Tags EXISTS"),
+        container: Some(RecordType::ClauseValueCheck(ClauseCheck::Comparison(
+            ComparisonClauseCheck {
+                comparison: (CmpOperator::Exists, false),
+                from: QueryResult::Resolved(Rc::new(PathAwareValue::Int((
+                    Path::new(String::from("/Resources/A/Tags"), 1, 1),
+                    1,
+                )))),
+                to: None,
+                message: Some(HELD.to_string()),
+                custom_message: None,
+                status: Status::FAIL,
+                refusal: true,
+            },
+        ))),
+        children: vec![],
+    };
+    let nested_type_block = type_block(
+        Some(String::from("the nested type block failed")),
+        &[],
+        vec![refused_comparison],
+    );
+    let messaged_when = when_block(Some(String::from("the when failed")), &[], vec![]);
+    assert_eq!(
+        (true, true, false, false),
+        (
+            is_deferred_condition_record(&nested_type_block, false),
+            is_deferred_condition_record(&messaged_when, false),
+            is_deferred_condition_record(&nested_type_block, true),
+            is_deferred_condition_record(&messaged_when, true),
+        ),
+        "a messaged failed type block or when is deferred where the reporter does not reach it, and not \
+         where it does"
+    );
+    let ignored = EventRecord {
+        context: String::from("Filter#1"),
+        container: Some(RecordType::Filter(Status::FAIL)),
+        children: vec![nested_type_block],
+    };
+    let outer = EventRecord {
+        context: String::from("TypeBlock#Outer"),
+        container: Some(RecordType::TypeCheck(TypeBlockCheck {
+            type_name: "AWS::S3::Bucket",
+            block: block_check(Some(String::from("the type block failed")), false, false),
+        })),
+        children: vec![EventRecord {
+            context: String::from("TypeBlock#Outer/0"),
+            container: Some(RecordType::TypeBlock(Status::FAIL)),
+            children: vec![ignored],
+        }],
+    };
+    let reports = report_all_failed_clauses_for_rules(&[rule(
+        None,
+        None,
+        CustomSlot::Evaluator,
+        &[],
+        vec![outer],
+    )]);
+    let (recorded, _) = texts_and_reader_messages(&reports[0]);
+    let told: Vec<&String> = recorded.iter().filter(|text| text.contains(HELD)).collect();
+    assert_eq!(
+        vec![format!("the type block failed{NESTED_ALSO_MET}{HELD}")],
+        told.into_iter().cloned().collect::<Vec<String>>(),
+        "a deferred type block beneath a filter: R once, on the outer sentence behind the nested joiner: {:?}",
+        recorded
+    );
+}
+
+/// A failed CALLED RULE the reporter never reaches, with a refused record that is no gate mark under its own
+/// condition and a displaced refusal sentence of its own: `<host> > Filter > RuleCheck (failed, a displaced
+/// refusal sentence quoting R) > RuleCondition > a refused comparison record carrying R`. Nobody reports the
+/// rule's run, the walk of the marks enters it and collects gate marks only, and the host's own-condition
+/// walk reads its direct condition children only, so R and the rule's sentence would be read by nothing:
+/// the entered rule is a deferred record (`is_deferred_condition_record` with `reached` false), its
+/// condition's refusals and its sentence are read (`deferred_record_refusals`) and joined at the host behind
+/// the nested joiner, once. Two hosts, a rule with a text and a type block with a sentence, both reading the
+/// one source (`refusals_by_depth`, through `grouped_untold_refusals` and `condition_and_clause_refusals`)
+/// into their sentences. Fails when R is told
+/// nowhere, twice (the comparison and the quoting sentence as two), or behind another joiner.
+#[test]
+fn a_refused_record_under_an_unreached_called_rules_condition_is_joined_at_the_host() {
+    use crate::rules::eval::RULE_CONDITION_UNEVALUATED_HEAD;
+    use crate::rules::{CustomSlot, TypeBlockCheck};
+    use frame_sources::{block_check, rule, under_a_condition, HELD};
+    registered_as_in_a_run!(HELD);
+    let unreached_called_rule = || EventRecord {
+        context: String::from("Filter#1"),
+        container: Some(RecordType::Filter(Status::FAIL)),
+        children: vec![EventRecord {
+            context: String::from("called"),
+            container: Some(RecordType::RuleCheck(NamedStatus {
+                name: "called",
+                status: Status::FAIL,
+                message: Some(String::from("the author's body")),
+                slot: CustomSlot::Author,
+                displaced: Some((
+                    CustomSlot::Refusal,
+                    format!("{RULE_CONDITION_UNEVALUATED_HEAD}{HELD}"),
+                )),
+                frame_reads: Vec::new(),
+                ended_by_error: true,
+            })),
+            children: vec![under_a_condition(
+                RecordType::RuleCondition(Status::FAIL),
+                vec![EventRecord {
+                    context: String::from("Resources.A.Tags EXISTS"),
+                    container: Some(RecordType::ClauseValueCheck(ClauseCheck::Comparison(
+                        ComparisonClauseCheck {
+                            comparison: (CmpOperator::Exists, false),
+                            from: QueryResult::Resolved(Rc::new(PathAwareValue::Int((
+                                Path::new(String::from("/Resources/A/Tags"), 1, 1),
+                                1,
+                            )))),
+                            to: None,
+                            message: Some(HELD.to_string()),
+                            custom_message: None,
+                            status: Status::FAIL,
+                            refusal: true,
+                        },
+                    ))),
+                    children: vec![],
+                }],
+            )],
+        }],
+    };
+    let told_of = |record: EventRecord<'static>| -> Vec<String> {
+        let reports = report_all_failed_clauses_for_rules(&[record]);
+        let (recorded, _) = texts_and_reader_messages(&reports[0]);
+        recorded
+            .into_iter()
+            .filter(|text| text.contains(HELD))
+            .collect()
+    };
+    // The host is a rule with a text: the entered rule's condition refusals reach the rule's sentence.
+    let told = told_of(rule(
+        Some(String::from("The rule failed")),
+        None,
+        CustomSlot::Evaluator,
+        &[],
+        vec![unreached_called_rule()],
+    ));
+    assert_eq!(
+        vec![format!("The rule failed{NESTED_ALSO_MET}{HELD}")],
+        told,
+        "under a rule with a text: R once, on the rule's sentence behind the nested joiner"
+    );
+    // The host is a type block with a sentence: the same refusals reach the type block's sentence.
+    let type_block = EventRecord {
+        context: String::from("TypeBlock#S3"),
+        container: Some(RecordType::TypeCheck(TypeBlockCheck {
+            type_name: "AWS::S3::Bucket",
+            block: block_check(Some(String::from("the type block failed")), false, false),
+        })),
+        children: vec![EventRecord {
+            context: String::from("TypeBlock#S3/0"),
+            container: Some(RecordType::TypeBlock(Status::FAIL)),
+            children: vec![unreached_called_rule()],
+        }],
+    };
+    let told = told_of(rule(
+        None,
+        None,
+        CustomSlot::Evaluator,
+        &[],
+        vec![type_block],
+    ));
+    assert_eq!(
+        vec![format!("the type block failed{NESTED_ALSO_MET}{HELD}")],
+        told,
+        "under a type block with a sentence: R once, on the type block's sentence behind the nested joiner"
+    );
+}
+
+/// A mark under the condition of a called rule the walk enters reads behind the nested joiner, as a mark
+/// under a nested `when`'s condition does: `TypeCheck` (with a sentence) > `TypeBlock` > `Filter` >
+/// `RuleCheck` (failed) > `RuleCondition` > a mark for R. The reporter never reaches the called rule's run,
+/// so the walk enters it; the rule's condition is NOT the type block's own condition, and the entered rule
+/// counts as a check between, so R lands in the nested group and the sentence reads `<sentence>; a nested
+/// condition also met: R`. Fails when R reads behind the own-condition joiner (`ALSO_MET`), is told nowhere,
+/// or twice.
+#[test]
+fn a_mark_under_an_entered_called_rules_condition_is_joined_as_a_nested_condition() {
+    use crate::rules::{CustomSlot, TypeBlockCheck};
+    use frame_sources::{block_check, mark, rule, under_a_condition, HELD};
+    registered_as_in_a_run!(HELD);
+    let called_rule = EventRecord {
+        context: String::from("called"),
+        container: Some(RecordType::RuleCheck(NamedStatus {
+            name: "called",
+            status: Status::FAIL,
+            message: None,
+            slot: CustomSlot::Evaluator,
+            displaced: None,
+            frame_reads: Vec::new(),
+            ended_by_error: true,
+        })),
+        children: vec![under_a_condition(
+            RecordType::RuleCondition(Status::FAIL),
+            vec![mark(HELD)],
+        )],
+    };
+    let ignored = EventRecord {
+        context: String::from("Filter#1"),
+        container: Some(RecordType::Filter(Status::FAIL)),
+        children: vec![called_rule],
+    };
+    let type_block = EventRecord {
+        context: String::from("TypeBlock#S3"),
+        container: Some(RecordType::TypeCheck(TypeBlockCheck {
+            type_name: "AWS::S3::Bucket",
+            block: block_check(Some(String::from("the type block failed")), false, false),
+        })),
+        children: vec![EventRecord {
+            context: String::from("TypeBlock#S3/0"),
+            container: Some(RecordType::TypeBlock(Status::FAIL)),
+            children: vec![ignored],
+        }],
+    };
+    let reports = report_all_failed_clauses_for_rules(&[rule(
+        None,
+        None,
+        CustomSlot::Evaluator,
+        &[],
+        vec![type_block],
+    )]);
+    let (recorded, _) = texts_and_reader_messages(&reports[0]);
+    let told: Vec<&String> = recorded.iter().filter(|text| text.contains(HELD)).collect();
+    assert_eq!(
+        vec![format!("the type block failed{NESTED_ALSO_MET}{HELD}")],
+        told.into_iter().cloned().collect::<Vec<String>>(),
+        "R once, behind the nested joiner and not the own-condition one: {:?}",
+        recorded
+    );
+}
+
+/// A failed called rule inside a type block's CONDITION is reached by the reporter (through the condition's
+/// filtered copy, `condition_records`) and reports its own run, so the walk of the marks does not enter it:
+/// `TypeCheck` (with a sentence) > `TypeBlock` > `TypeCondition` > `RuleCheck` (failed) > a message-less
+/// block > a mark for R. R is told once, by the called run's own entry (the refusals alone); the type block's
+/// sentence stands alone beside it, since the condition refusal it would join is carried by that entry.
+/// This cell pins the OUTPUT, not the arm: a walk that entered the reached rule would find R a second time
+/// in the type block's own-condition group, but `condition_refusals` names R there already (it reads a
+/// called rule's refusals through the filtered copy) and `untold_by` strips what the run's entry carries,
+/// so the output reads the same either way; the arm itself is pinned by the direct `marks_walk_descends`
+/// assertion in this cell and in `the_walk_enters_a_failed_called_rule_only_where_the_reporter_does_not_reach_it`.
+/// Fails when R is told twice or nowhere, or the sentence does not stand alone.
+#[test]
+fn a_failed_called_rule_inside_a_condition_tells_its_own_marks_and_the_walk_does_not_enter_it() {
+    use crate::rules::{CustomSlot, TypeBlockCheck};
+    use frame_sources::{block_check, mark, rule, under_a_condition, HELD};
+    registered_as_in_a_run!(HELD);
+    let called_rule = EventRecord {
+        context: String::from("called"),
+        container: Some(RecordType::RuleCheck(NamedStatus {
+            name: "called",
+            status: Status::FAIL,
+            message: None,
+            slot: CustomSlot::Evaluator,
+            displaced: None,
+            frame_reads: Vec::new(),
+            ended_by_error: false,
+        })),
+        children: vec![EventRecord {
+            context: String::from("BlockGuardCheck#9"),
+            container: Some(RecordType::BlockGuardCheck(block_check(None, false, false))),
+            children: vec![mark(HELD)],
+        }],
+    };
+    // The walk at the rule, as the type block's walk arrives there: reached (the condition's filtered copy
+    // is reported) and not stoppable (no entry beneath the copy is certain to exist).
+    assert!(
+        !marks_walk_descends(&called_rule, false, true),
+        "a failed called rule reached through a condition's filtered copy is not entered"
+    );
+    let type_block = EventRecord {
+        context: String::from("TypeBlock#S3"),
+        container: Some(RecordType::TypeCheck(TypeBlockCheck {
+            type_name: "AWS::S3::Bucket",
+            block: block_check(Some(String::from("the type block failed")), false, false),
+        })),
+        children: vec![EventRecord {
+            context: String::from("TypeBlock#S3/0"),
+            container: Some(RecordType::TypeBlock(Status::FAIL)),
+            children: vec![under_a_condition(
+                RecordType::TypeCondition(Status::FAIL),
+                vec![called_rule],
+            )],
+        }],
+    };
+    let reports = report_all_failed_clauses_for_rules(&[rule(
+        None,
+        None,
+        CustomSlot::Evaluator,
+        &[],
+        vec![type_block],
+    )]);
+    let (recorded, _) = texts_and_reader_messages(&reports[0]);
+    let told: Vec<&String> = recorded.iter().filter(|text| text.contains(HELD)).collect();
+    assert_eq!(
+        (vec![HELD.to_string()], 1),
+        (
+            told.into_iter().cloned().collect::<Vec<String>>(),
+            recorded
+                .iter()
+                .filter(|text| text.as_str() == "the type block failed")
+                .count()
+        ),
+        "R once, as the called run's own entry, and the type block's sentence alone: {:?}",
+        recorded
+    );
+}
+
+/// The entry a rule writes for the refusals beneath it that no entry of its checks names is attributed to
+/// the record that carries one of THOSE refusals: a mark whose refusal an entry already tells is passed over
+/// (here a top-level mark for R1, told by the clause's entry), and the rule's own name is never the context.
+/// The context is a lookup over the collections the refusals are read from (`context_of_untold`): the mark
+/// for R2 under the type block's condition, `NestedMark`. Fails when the entry carries any other context.
+#[test]
+fn the_rules_untold_refusals_entry_carries_the_context_of_a_record_that_names_them() {
+    use crate::rules::CustomSlot;
+    use frame_sources::{mark, refused_clause, rule, type_block, HELD, OTHER};
+    registered_as_in_a_run!(HELD, OTHER);
+    let mut told_mark = mark(HELD);
+    told_mark.context = String::from("ToldMark");
+    let mut nested_mark = mark(OTHER);
+    nested_mark.context = String::from("NestedMark");
+    let record = rule(
+        Some(String::from("The rule failed")),
+        None,
+        CustomSlot::Evaluator,
+        &[],
+        vec![
+            told_mark,
+            refused_clause(HELD),
+            type_block(None, &[], vec![nested_mark]),
+        ],
+    );
+    let reports = report_all_failed_clauses_for_rules(&[record]);
+    let entries: Vec<(String, Option<String>)> = match &reports[0] {
+        ClauseReport::Rule(main) => main
+            .checks
+            .iter()
+            .filter_map(|entry| match entry {
+                ClauseReport::Block(block) => {
+                    Some((block.context.clone(), block.messages.error_message.clone()))
+                }
+                _ => None,
+            })
+            .collect(),
+        other => panic!("a rule report, got {:?}", other),
+    };
+    let carrying: Vec<&(String, Option<String>)> = entries
+        .iter()
+        .filter(|(_, text)| text.as_deref() == Some(OTHER))
+        .collect();
+    assert_eq!(
+        vec![String::from("NestedMark")],
+        carrying
+            .iter()
+            .map(|(context, _)| context.clone())
+            .collect::<Vec<_>>(),
+        "one refusals-alone entry for R2, in the context of the mark that carries it (`NestedMark`, \
+         under the type block's condition), not the rule's name and not the told mark's: {:?}",
+        entries
+    );
+}
+
+/// The context of the entry a rule writes for untold refusals is the record that carried the entry's FIRST
+/// refusal (`untold[0]`; the entry's text lists the condition's refusals before the clauses'), NOT the first
+/// carrier in walk order: among the records that carry that one refusal, the first gate mark in walk order
+/// wins, over a deferred `when` or type block above it that the walk visits first. Three rows: a clause mark
+/// BEFORE a condition mark in walk order (the first carrier in walk order holds the entry's SECOND refusal;
+/// the entry names the condition mark, which carries the first); the same entry with the type block first
+/// (the two readings coincide); and a clause mark alone. Fails when the entry names the first carrier in
+/// walk order where that is the second refusal's, or the rule.
+#[test]
+fn the_untold_refusals_entry_takes_the_context_of_the_carrier_of_its_first_refusal() {
+    use crate::rules::CustomSlot;
+    use frame_sources::{block_check, mark, refused_clause, rule, type_block, HELD, OTHER};
+    registered_as_in_a_run!(HELD, OTHER);
+    let first_mark = || {
+        let mut first = mark(HELD);
+        first.context = String::from("FirstMark");
+        EventRecord {
+            context: String::from("BlockGuardCheck#1"),
+            container: Some(RecordType::BlockGuardCheck(block_check(None, false, false))),
+            children: vec![first],
+        }
+    };
+    let second_mark = || {
+        let mut second = mark(OTHER);
+        second.context = String::from("SecondMark");
+        type_block(None, &[], vec![second])
+    };
+    let contexts_of = |children: Vec<EventRecord<'static>>| -> Vec<String> {
+        let record = rule(
+            Some(String::from("The rule failed")),
+            None,
+            CustomSlot::Evaluator,
+            &[],
+            children,
+        );
+        let reports = report_all_failed_clauses_for_rules(&[record]);
+        match &reports[0] {
+            ClauseReport::Rule(main) => main
+                .checks
+                .iter()
+                .filter_map(|entry| match entry {
+                    ClauseReport::Block(block)
+                        if block
+                            .messages
+                            .error_message
+                            .as_deref()
+                            .map_or(false, |text| text.contains(HELD)) =>
+                    {
+                        Some(block.context.clone())
+                    }
+                    _ => None,
+                })
+                .collect(),
+            other => panic!("a rule report, got {:?}", other),
+        }
+    };
+    let speaks = || refused_clause("a check that speaks");
+    assert_eq!(
+        (
+            vec![String::from("SecondMark")],
+            vec![String::from("SecondMark")],
+            vec![String::from("FirstMark")]
+        ),
+        (
+            // The entry's text is `OTHER; HELD` (the condition's refusal, then the clause's mark): its first
+            // refusal is OTHER, carried by the mark under the type block's condition, which comes SECOND in
+            // walk order here, so the two carriers differ and the entry names OTHER's.
+            contexts_of(vec![speaks(), first_mark(), second_mark()]),
+            // The same entry with the type block first in walk order: the carriers coincide.
+            contexts_of(vec![speaks(), second_mark(), first_mark()]),
+            // Only HELD untold: its carrier.
+            contexts_of(vec![speaks(), first_mark()]),
+        ),
+        "the entry's context is the record that carried the entry's first refusal, whatever its place in walk \
+         order, a mark before the deferred type block above it"
+    );
+}
+
+/// The same negation, `rule main { not check << msg >> }`, where the refusal its sentence names is carried
+/// beneath it by the refused clause's own entry (`frame_sources::refused_clause` is a clause block with a
+/// message, context `GuardAccessClause#blockA`, and no children, so it has no reporting own-value check and
+/// writes its entry itself: a Block entry in the report), or by a Disjunctions entry, and not by a called rule's run (there is no
+/// "told beneath" filter by entry kind any more: the clause's own entry is always written and what is
+/// beneath it is reported as it is). Each shape reports the entry that carries the refusal once, then the
+/// negation's own entry with its context and the author's text, once. Fails when the carrying entry is
+/// dropped or repeated, or the negation's entry is missing or has lost the author's text.
+#[test]
+fn a_negation_over_a_clause_or_a_disjunction_reports_the_carrying_entry_and_its_own_once() {
+    use crate::rules::CustomSlot;
+    use frame_sources::{block_check, refused_clause, rule, HELD};
+    registered_as_in_a_run!(HELD);
+    let negation_over = |child: EventRecord<'static>| {
+        let mut negation_check = block_check(
+            Some(format!(
+                "`not` failed only on reads it could not decide: {HELD}"
+            )),
+            true,
+            false,
+        );
+        negation_check.custom_message = Some(String::from("the negation's msg"));
+        let negation = EventRecord {
+            context: String::from("GuardBlockAccessClause#7"),
+            container: Some(RecordType::GuardClauseBlockCheck(negation_check)),
+            children: vec![child],
+        };
+        let record = rule(None, None, CustomSlot::Evaluator, &[], vec![negation]);
+        let reports = report_all_failed_clauses_for_rules(&[record]);
+        match &reports[0] {
+            ClauseReport::Rule(main) => main
+                .checks
+                .iter()
+                .map(|entry| match entry {
+                    ClauseReport::Rule(_) => String::from("R"),
+                    ClauseReport::Clause(_) => String::from("C"),
+                    ClauseReport::Disjunctions(_) => String::from("D"),
+                    ClauseReport::Block(block) => {
+                        format!("B:{}:{:?}", block.context, block.messages.custom_message)
+                    }
+                })
+                .collect::<Vec<String>>(),
+            other => panic!("a rule report, got {:?}", other),
+        }
+    };
+    let disjunction = EventRecord {
+        context: String::from("Disjunction#1"),
+        container: Some(RecordType::Disjunction(block_check(None, false, false))),
+        children: vec![refused_clause(HELD)],
+    };
+    let own = String::from("B:GuardBlockAccessClause#7:Some(\"the negation's msg\")");
+    assert_eq!(
+        (
+            vec![
+                String::from("B:GuardAccessClause#blockA:None"),
+                own.clone()
+            ],
+            vec![String::from("D"), own]
+        ),
+        (
+            negation_over(refused_clause(HELD)),
+            negation_over(disjunction)
+        ),
+        "the refused clause's own block entry (the fixture's refused clause is a clause block with a message, \
+         so it is reported as a Block entry), or a Disjunctions entry, then the negation's own entry"
+    );
+}
+
+/// The comment spans of `source` replaced by spaces, line breaks kept, for the source scan of
+/// `every_sentence_the_evaluator_writes_on_a_parent_record_is_read_back_by_the_reader`, by a scan that
+/// tracks where it stands character by character: in code, in a string literal (`"` to the next unescaped
+/// `"`; a `\` skips the character after it), in a line comment (`//`, `///` or `//!` to the end of the line)
+/// or in a block comment (`/*` to `*/`). A `//` or `/*` inside a string is text, not a comment; a `"` inside
+/// a comment opens no string; a character literal (`'"'`, `'\''`, `'x'`) is skipped as code, so the quote it
+/// holds opens no string, while a lifetime (`'a`) is left to the ordinary scan. Limits, by design: a raw
+/// string (`r"..."`, `r#"..."#`) is read as an ordinary string, so a `\"` inside one, or a `"` inside a
+/// `r#"..."#`, misplaces the string's end for the rest of that literal; nested block comments are not tracked
+/// (the first `*/` closes). The module's sources hold neither shape today, and a misread would show up as a
+/// wording count other than one, which the scan's cell asserts.
+fn blank_comments(source: &str) -> String {
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    enum Where {
+        Code,
+        Str,
+        LineComment,
+        BlockComment,
+    }
+    let chars: Vec<char> = source.chars().collect();
+    let mut out = String::with_capacity(source.len());
+    let mut state = Where::Code;
+    let mut i = 0;
+    let blank = |c: char| if c == '\n' { '\n' } else { ' ' };
+    while i < chars.len() {
+        let c = chars[i];
+        let next = chars.get(i + 1).copied();
+        match state {
+            Where::Code => match (c, next) {
+                ('/', Some('/')) => {
+                    state = Where::LineComment;
+                    out.push_str("  ");
+                    i += 2;
+                }
+                ('/', Some('*')) => {
+                    state = Where::BlockComment;
+                    out.push_str("  ");
+                    i += 2;
+                }
+                ('"', _) => {
+                    state = Where::Str;
+                    out.push(c);
+                    i += 1;
+                }
+                ('\'', _) => {
+                    // A character literal: `'x'`, or `'\..'` up to its closing quote. Anything else after
+                    // the quote is a lifetime or a label, scanned on as code.
+                    let literal_end = match next {
+                        // The escaped character sits at `i + 2` (`'\''` holds a quote there), so the
+                        // closing quote is searched from `i + 3`.
+                        Some('\\') => chars
+                            .get(i + 3..)
+                            .and_then(|rest| rest.iter().position(|each| *each == '\''))
+                            .map(|rel| i + 3 + rel),
+                        Some(_) if chars.get(i + 2) == Some(&'\'') => Some(i + 2),
+                        _ => None,
+                    };
+                    match literal_end {
+                        Some(end) => {
+                            out.extend(&chars[i..=end]);
+                            i = end + 1;
+                        }
+                        None => {
+                            out.push(c);
+                            i += 1;
+                        }
+                    }
+                }
+                _ => {
+                    out.push(c);
+                    i += 1;
+                }
+            },
+            Where::Str => {
+                out.push(c);
+                i += 1;
+                match c {
+                    '\\' => {
+                        if let Some(escaped) = next {
+                            out.push(escaped);
+                            i += 1;
+                        }
+                    }
+                    '"' => state = Where::Code,
+                    _ => {}
+                }
+            }
+            Where::LineComment => {
+                out.push(blank(c));
+                if c == '\n' {
+                    state = Where::Code;
+                }
+                i += 1;
+            }
+            Where::BlockComment => {
+                if c == '*' && next == Some('/') {
+                    out.push_str("  ");
+                    state = Where::Code;
+                    i += 2;
+                } else {
+                    out.push(blank(c));
+                    i += 1;
+                }
+            }
+        }
+    }
+    out
+}
+
+/// The comment blanker reads a character literal as code, its closing quote included, whatever the literal
+/// holds: `'\''`, `'\\'`, `'\n'` and `'"'` each come through as written, the text after each is read as
+/// code (a `/* .. */` right after the literal is blanked, a `"..."` right after it is kept), a `//` and a
+/// `/*` inside a string stay text, a block comment opened after code and a second block on one line are
+/// blanked, and the output keeps the character count and every line break. Fails when a literal's closing
+/// quote is read as a lifetime or a string opener, so that what follows is misread.
+#[test]
+fn the_comment_blanker_reads_character_literals_and_strings_as_code() {
+    // Every comment holds a word of its own (`cmt..`) that no code or string of the fixture holds, so a
+    // needle found in the output can only be an unblanked comment, never kept code.
+    let source = concat!(
+        "let q = '\\''; /* cmtA */ let s = \"x // y /* z */\";\n",
+        "let b = '\\\\'; /* cmtB */ \"k\" // cmtTail\n",
+        "let n = '\\n'; /* cmtC */ let d = '\"'; /* cmtD */ \"m\"\n",
+        "code /* cmtOpens\n",
+        "cmtStill */ after /* cmtE */ more /* cmtF\n",
+        "*/ end\n",
+    );
+    let blanked = blank_comments(source);
+    let kept_literals = ["'\\''", "'\\\\'", "'\\n'", "'\"'"];
+    assert_eq!(
+        (
+            source.chars().count(),
+            source.lines().count(),
+            kept_literals.iter().all(|literal| blanked.contains(literal)),
+            blanked.contains("cmt"),
+        ),
+        (
+            blanked.chars().count(),
+            blanked.lines().count(),
+            true,
+            false
+        ),
+        "the literals and the strings stay, every comment span is blanked, the shape is kept: {blanked:?}"
+    );
+    assert!(
+        blanked.contains("\"x // y /* z */\"")
+            && blanked.contains("\"k\"")
+            && blanked.contains("\"m\"")
+            && blanked.contains(" after ")
+            && blanked.contains(" more ")
+            && blanked.contains(" end"),
+        "the strings and the code between the comments are read as written: {:?}",
+        blanked
+    );
+}
+
+/// A bailing type block with a sentence and no entries beneath, over a resource's body whose silent block
+/// holds a gate mark: the sentence joins the mark behind the body joiner, once. The rule's walk stops at a
+/// record with a sentence, so a sentence that left the mark out would leave it told nowhere. Fails when the
+/// nested-empty branch of a type block or `when` joins only the failed condition's refusals.
+#[test]
+fn a_bailing_type_block_with_no_entries_joins_the_marks_of_a_resource_body() {
+    use crate::rules::eval_context::BODY_ALSO_MET;
+    use crate::rules::TypeBlockCheck;
+    use frame_sources::{block_check, mark, HELD};
+    registered_as_in_a_run!(HELD);
+    const BAILING: &str =
+        "Error a plain error that ended the run during type condition evaluation, bailing";
+    let silent_block = EventRecord {
+        context: String::from("BlockGuardClause#2"),
+        container: Some(RecordType::BlockGuardCheck(block_check(None, false, false))),
+        children: vec![mark(HELD)],
+    };
+    let type_check = EventRecord {
+        context: String::from("TypeBlock#S3"),
+        container: Some(RecordType::TypeCheck(TypeBlockCheck {
+            type_name: "AWS::S3::Bucket",
+            block: block_check(Some(BAILING.to_string()), false, false),
+        })),
+        children: vec![EventRecord {
+            context: String::from("TypeBlock#S3/0"),
+            container: Some(RecordType::TypeBlock(Status::FAIL)),
+            children: vec![silent_block],
+        }],
+    };
+    let reports = report_all_failed_clauses_for_rules(&[frame_sources::rule(
+        None,
+        None,
+        crate::rules::CustomSlot::Evaluator,
+        &[],
+        vec![type_check],
+    )]);
+    let (recorded, _) = texts_and_reader_messages(&reports[0]);
+    let joined: Vec<&String> = recorded
+        .iter()
+        .filter(|text| text.contains(BAILING) && text.contains(BODY_ALSO_MET))
+        .collect();
+    assert_eq!(
+        (1, 1),
+        (
+            joined.len(),
+            recorded
+                .iter()
+                .map(|text| text.matches(HELD).count())
+                .sum::<usize>()
+        ),
+        "one sentence joins the mark behind the body joiner and the mark is told once: {:?}",
+        recorded
+    );
+}
+
+/// A block record's `message` is the evaluator's sentence and is written once beside entries that do not
+/// carry its error, whatever its wording: under a head the readers do not know it is listed after the
+/// entries, once; under a head they know, quoting the error an entry lists, the entry tells it and it is not
+/// written again. Fails when an unrecognized sentence is dropped because it quotes nothing the reader knows.
+#[test]
+fn a_blocks_sentence_is_written_once_by_what_it_is_and_not_by_its_wording() {
+    use frame_sources::block_check;
+    let reporting = || EventRecord {
+        context: String::from("GuardBlockAccessClause#1"),
+        container: Some(RecordType::GuardClauseBlockCheck(block_check(
+            Some(String::from("A failed")),
+            false,
+            false,
+        ))),
+        children: vec![],
+    };
+    let parent = |sentence: String| EventRecord {
+        context: String::from("BlockGuardClause#1"),
+        container: Some(RecordType::BlockGuardCheck(block_check(
+            Some(sentence),
+            false,
+            false,
+        ))),
+        children: vec![reporting()],
+    };
+    let messages_of = |record: EventRecord<'static>| -> Vec<Option<String>> {
+        report_all_failed_clauses_for_rules(&[record])
+            .iter()
+            .map(|clause| match clause {
+                ClauseReport::Block(block) => block.messages.error_message.clone(),
+                other => panic!("a block report, got {:?}", other),
+            })
+            .collect()
+    };
+    let unlisted = String::from("An evaluator head no reader lists: boom");
+    let known = format!("{}A failed", crate::rules::eval::BLOCK_QUERY_ERROR_HEAD);
+    assert_eq!(
+        (
+            vec![
+                Some(String::from("A failed")),
+                Some(unlisted.clone())
+            ],
+            vec![Some(String::from("A failed"))],
+        ),
+        (messages_of(parent(unlisted)), messages_of(parent(known))),
+        "an unlisted head is written once beside the entry; a known head quoting the entry's error is not"
+    );
+}
+
+/// The body joiner in every arm of a called rule's sentence. A mark of the body (a type block's gate mark,
+/// which no condition met) follows `a body clause also met` in the arm that keeps a displaced sentence, in
+/// the arm whose slot is the evaluator's, and, beside a refusal the rule's failed condition did meet, after
+/// that refusal's own joiner: head, `the condition also met: C`, `a body clause also met: B`. Fails when a
+/// body mark is worded as one the condition met in any arm, or when the mixed sentence loses a group.
+#[test]
+fn a_body_mark_follows_the_body_joiner_in_every_arm_of_a_called_rules_sentence() {
+    use crate::rules::eval_context::{
+        BODY_ALSO_MET, NESTED_ALSO_MET, RULE_FAILED_ON_AN_ERROR_HEAD,
+    };
+    use crate::rules::CustomSlot;
+    use frame_sources::{mark, rule, under_a_condition, HELD, OTHER};
+    const NESTED: &str = "the read of `N` was refused, at path /Resources/N/Tags";
+    registered_as_in_a_run!(HELD, OTHER, NESTED);
+    const BODY: &str = "the author's body";
+    const SENTENCE: &str = "The rule's own sentence";
+    let error_of = |record: EventRecord<'static>| -> (Option<String>, Option<String>) {
+        match report_all_failed_clauses_for_rules(&[record]).as_slice() {
+            [ClauseReport::Rule(rule)] => (
+                rule.messages.error_message.clone(),
+                rule.messages.custom_message.clone(),
+            ),
+            other => panic!("one rule report, got {:?}", other),
+        }
+    };
+    // A mark of a clause in the body (a silent failed block holding the gate mark): no condition met it.
+    let body_mark = || EventRecord {
+        context: String::from("BlockGuardClause#2"),
+        container: Some(RecordType::BlockGuardCheck(frame_sources::block_check(
+            None, false, false,
+        ))),
+        children: vec![mark(HELD)],
+    };
+    // The arm that keeps the sentence the body displaced: the error message.
+    let (displaced, _) = error_of(rule(
+        Some(BODY.to_string()),
+        Some((CustomSlot::Evaluator, SENTENCE.to_string())),
+        CustomSlot::Author,
+        &[],
+        vec![body_mark()],
+    ));
+    // The arm whose slot is the evaluator's: the sentence is the custom message.
+    let (_, evaluator) = error_of(rule(
+        Some(SENTENCE.to_string()),
+        None,
+        CustomSlot::Evaluator,
+        &[],
+        vec![body_mark()],
+    ));
+    // Both groups: a failed condition that met OTHER and a body mark HELD.
+    let (mixed, _) = error_of(rule(
+        Some(BODY.to_string()),
+        None,
+        CustomSlot::Author,
+        &[],
+        vec![
+            under_a_condition(RecordType::RuleCondition(Status::FAIL), vec![mark(OTHER)]),
+            body_mark(),
+        ],
+    ));
+    // All three groups: the rule's own condition met OTHER, a type block nested in its body had a failed
+    // condition that met NESTED, and a clause mark HELD.
+    let (three, _) = error_of(rule(
+        Some(BODY.to_string()),
+        None,
+        CustomSlot::Author,
+        &[],
+        vec![
+            under_a_condition(RecordType::RuleCondition(Status::FAIL), vec![mark(OTHER)]),
+            frame_sources::type_block(None, &[], vec![mark(NESTED)]),
+            body_mark(),
+        ],
+    ));
+    assert_eq!(
+        (
+            Some(format!("{SENTENCE}{BODY_ALSO_MET}{HELD}")),
+            Some(format!("{SENTENCE}{BODY_ALSO_MET}{HELD}")),
+            Some(format!(
+                "{RULE_FAILED_ON_AN_ERROR_HEAD}{ALSO_MET}{OTHER}{BODY_ALSO_MET}{HELD}"
+            )),
+            Some(format!(
+                "{RULE_FAILED_ON_AN_ERROR_HEAD}{ALSO_MET}{OTHER}{NESTED_ALSO_MET}{NESTED}{BODY_ALSO_MET}{HELD}"
+            )),
+        ),
+        (displaced, evaluator, mixed, three),
+        "the displaced arm, the evaluator arm, the mixed sentence and the three-group sentence, each mark behind its own joiner"
+    );
+}
+
+/// Every sentence the evaluator writes on a failed block, `when`, type-block or disjunction record (and the
+/// per-value clause record) is built from a head or a tail the reader (`quoted_error`) knows, so the error it
+/// quotes is read back whole: a sentence is told by what it quotes and never by wording nobody lists. The
+/// shapes are the writers' format strings in `eval.rs`, built here from the same constants: the block's three
+/// failure heads and the refused-selection sentence (`fail_block_on_unevaluatable`, `refused_selection`), the
+/// block clause's bailing tail and per-value tail, the `when`'s unevaluated head and its condition tail, the
+/// type block's two tails and the disjunction's undecided head. A bare refusal sentence (a raised refusal's
+/// record) quotes itself. The cell shows that every head and tail in the two lists reads back to the error it
+/// quotes, that each listed wording is defined exactly once across the non-test files of this module (never
+/// written inline besides its constant), and that every `"Error {` writer names a listed tail within its
+/// statement; it does not show that no writer exists outside the lists. Fails when a listed wording is not
+/// read back, is written inline, or an `"Error {` writer names no listed tail: its sentence would be
+/// written beside entries that already tell the error.
+#[test]
+fn every_sentence_the_evaluator_writes_on_a_parent_record_is_read_back_by_the_reader() {
+    use crate::rules::eval::{PARENT_SENTENCE_HEADS, PARENT_SENTENCE_TAILS};
+    const E: &str = "a plain error that ended the run";
+    // The two lists are the ones the writers and the reader share (`eval.rs`): every head and tail reads
+    // back to the error it quotes, and a bare raised sentence quotes itself.
+    let mut shapes: Vec<(String, String)> = PARENT_SENTENCE_HEADS
+        .iter()
+        .map(|head| (format!("head {head:?}"), format!("{head}{E}")))
+        .collect();
+    shapes.extend(
+        PARENT_SENTENCE_TAILS
+            .iter()
+            .map(|(_, tail)| (format!("tail {tail:?}"), format!("Error {E}{tail}"))),
+    );
+    shapes.push((String::from("a bare raised sentence"), E.to_string()));
+    let unread: Vec<&String> = shapes
+        .iter()
+        .filter(|(_, sentence)| quoted_error(sentence) != E)
+        .map(|(label, _)| label)
+        .collect();
+    assert!(
+        unread.is_empty(),
+        "sentences the reader does not read back to the error they quote: {:?}",
+        unread
+    );
+    // The writers use the lists: scan the non-test source of this module for a wording written inline.
+    // Each listed wording is defined exactly once across the files (its constant; a count of zero would
+    // mean the scan missed the definition), and every `"Error {` format string names a listed tail within
+    // its statement (`statement_of`: its own call, or up to the first `,` or `;` at its nesting level). A
+    // new literal writer that is not in the lists fails here, where a
+    // cell built only from the lists could not see it.
+    //
+    // The files are read from the module's directory at test time (every `.rs` under `src/rules`, the
+    // test files named `*_tests.rs`, `test_common.rs` and `parser_regression_repros.rs` left out), so a new
+    // non-test file is scanned without anyone adding it here; the cell fails when the directory yields no
+    // `eval.rs`, the file the lists live in. Every comment span is blanked (`blank_comments`; the line
+    // numbers stay), so a wording in a comment is never counted as written.
+    fn module_sources(
+        dir: &std::path::Path,
+        root: &std::path::Path,
+        out: &mut Vec<(String, String)>,
+    ) {
+        let mut entries: Vec<_> = std::fs::read_dir(dir)
+            .expect("the module's source directory is readable")
+            .map(|entry| entry.expect("a directory entry").path())
+            .collect();
+        entries.sort();
+        for path in entries {
+            if path.is_dir() {
+                // `libyaml` wraps the C YAML library's events: it writes no sentence of the evaluator's
+                // and none of its text is read by the report builder, so it is not scanned.
+                if path.file_name().and_then(|name| name.to_str()) != Some("libyaml") {
+                    module_sources(&path, root, out);
+                }
+                continue;
+            }
+            let name = path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("");
+            let is_test = name.ends_with("_tests.rs")
+                || name == "test_common.rs"
+                || name == "parser_regression_repros.rs";
+            if !name.ends_with(".rs") || is_test {
+                continue;
+            }
+            let source = std::fs::read_to_string(&path).expect("a source file is readable");
+            // Every comment span is blanked, a trailing comment after code included (a wording there is
+            // not written by the code), with the string literals and the code left as they are.
+            let code = blank_comments(&source);
+            let relative = path.strip_prefix(root).unwrap_or(&path);
+            out.push((relative.display().to_string(), code));
+        }
+    }
+    let rules_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/rules");
+    // The scan reads the crate's own sources: a run from a packaged crate, or from a build that moved the
+    // manifest directory away from its sources, has none to read. A run with no scan proves nothing about the
+    // writers, so the cell FAILS there, unless the run opts out by name with
+    // `CFN_GUARD_SKIP_SOURCE_SCAN=1` (then it says so and returns; the read-back checks above have run).
+    // The value is compared, as the message says: an empty value or `=0` does not skip the scan.
+    if !rules_dir.is_dir() {
+        if std::env::var("CFN_GUARD_SKIP_SOURCE_SCAN").as_deref() == Ok("1") {
+            eprintln!(
+                "skipped the source scan of the parent-sentence writers: {} is not a directory",
+                rules_dir.display()
+            );
+            return;
+        }
+        panic!(
+            "the source scan of the parent-sentence writers found no directory at {}; set \
+             CFN_GUARD_SKIP_SOURCE_SCAN=1 to run without the scan",
+            rules_dir.display()
+        );
+    }
+    let mut files: Vec<(String, String)> = Vec::new();
+    module_sources(&rules_dir, &rules_dir, &mut files);
+    assert!(
+        files.iter().any(|(name, _)| name == "eval.rs"),
+        "the scan found no eval.rs under {:?}: {:?}",
+        rules_dir,
+        files.iter().map(|(name, _)| name).collect::<Vec<_>>()
+    );
+    let defined_once = |wording: &str| {
+        files
+            .iter()
+            .map(|(_, code)| code.matches(wording.trim()).count())
+            .sum::<usize>()
+    };
+    let not_once: Vec<(&str, usize)> = PARENT_SENTENCE_HEADS
+        .iter()
+        .copied()
+        .chain(PARENT_SENTENCE_TAILS.iter().map(|(_, tail)| *tail))
+        .map(|wording| (wording, defined_once(wording)))
+        .filter(|(_, count)| *count != 1)
+        .collect();
+    assert!(
+        not_once.is_empty(),
+        "a listed wording is not defined exactly once in the module's non-test source (wording, count): {:?}",
+        not_once
+    );
+    // The writer's statement: from the `format!(` that holds the literal (or the literal itself) to the
+    // end of that call, or to the first `;`, `,` or closing bracket at the writer's own nesting level,
+    // never past the end of the file.
+    fn statement_of(code: &str, literal_at: usize) -> &str {
+        // The end of the statement that starts at `start`: the first `;` or `,` at its own nesting level
+        // or a closing bracket below it. Characters inside a string literal (a `;`, a `,` or a bracket in
+        // a message) and inside a char literal (`'"'`, `'\''`) neither end the window nor change the depth;
+        // a lifetime's `'` is not a char literal. Raw strings are read as ordinary strings: no scanned
+        // file holds a raw string with a quote in it. The window never leaves this file's text.
+        fn end_from(code: &str, start: usize) -> usize {
+            let bytes = code.as_bytes();
+            let (mut depth, mut in_string, mut escaped) = (0i32, false, false);
+            let mut at = start;
+            while at < bytes.len() {
+                let c = bytes[at];
+                if in_string {
+                    match (escaped, c) {
+                        (true, _) => escaped = false,
+                        (false, b'\\') => escaped = true,
+                        (false, b'"') => in_string = false,
+                        _ => {}
+                    }
+                    at += 1;
+                    continue;
+                }
+                match c {
+                    b'"' => in_string = true,
+                    b'\'' => {
+                        // `'x'` or `'\x'`: skip the whole char literal; otherwise a lifetime.
+                        if bytes.get(at + 1) == Some(&b'\\') && bytes.get(at + 3) == Some(&b'\'') {
+                            at += 3;
+                        } else if bytes.get(at + 2) == Some(&b'\'') {
+                            at += 2;
+                        }
+                    }
+                    b'(' | b'[' | b'{' => depth += 1,
+                    b')' | b']' | b'}' => {
+                        depth -= 1;
+                        if depth < 0 {
+                            return at;
+                        }
+                    }
+                    b';' | b',' if depth == 0 => return at,
+                    _ => {}
+                }
+                at += 1;
+            }
+            code.len()
+        }
+        let before = &code[..literal_at];
+        let start = match before.rfind("format!(") {
+            Some(at) if literal_at - at < 200 => at,
+            _ => literal_at,
+        };
+        let end = end_from(code, start);
+        // The span must cover the literal: a `format!(` in an earlier statement that ended before the
+        // literal is not this writer's, so the window is read again from the literal itself.
+        match end < literal_at {
+            true => &code[literal_at..end_from(code, literal_at)],
+            false => &code[start..end],
+        }
+    }
+    let unlisted: Vec<String> = files
+        .iter()
+        .flat_map(|(name, code)| {
+            code.match_indices("\"Error {")
+                .filter(|(at, _)| !code[*at..].starts_with("\"Error {e} when handling clause"))
+                .filter(|(at, _)| {
+                    let statement = statement_of(code, *at);
+                    !PARENT_SENTENCE_TAILS
+                        .iter()
+                        .any(|(tail_name, _)| statement.contains(tail_name))
+                })
+                .map(|(at, _)| format!("{name}:{}", code[..at].matches('\n').count() + 1))
+                .collect::<Vec<_>>()
+        })
+        .collect();
+    assert!(
+        unlisted.is_empty(),
+        "an `Error {{..}}` sentence written with no listed tail, at {:?}",
+        unlisted
+    );
+}
+
+/// The by-field rule, positively: the author's `<< >>` text sits in `custom_message` and is NOT an entry
+/// beside entries that report (the base rule: a parent is listed by that text only when nothing beneath it
+/// reports), on a block, an inline `when` and a disjunction alike; the entries alone are listed. The same
+/// records carrying an evaluator `message` under a head no reader lists write it once, after the entries.
+/// Fails when the author's text is listed as an entry, or the evaluator's sentence is dropped or repeated.
+#[test]
+fn author_text_beside_reporting_entries_is_not_an_entry_and_an_evaluator_sentence_is_one_once() {
+    use frame_sources::block_check;
+    const AUTHOR: &str = "the author's text";
+    const EVALUATOR: &str = "An evaluator head no reader lists: boom";
+    let reporting = || EventRecord {
+        context: String::from("GuardBlockAccessClause#1"),
+        container: Some(RecordType::GuardClauseBlockCheck(block_check(
+            Some(String::from("A failed")),
+            false,
+            false,
+        ))),
+        children: vec![],
+    };
+    let parent = |kind: &str, message: Option<&str>, custom: Option<&str>| {
+        let mut check = block_check(message.map(String::from), false, false);
+        check.custom_message = custom.map(String::from);
+        EventRecord {
+            context: String::from("Parent#1"),
+            container: Some(match kind {
+                "block" => RecordType::BlockGuardCheck(check),
+                "when" => RecordType::WhenCheck(check),
+                _ => RecordType::Disjunction(check),
+            }),
+            children: vec![reporting()],
+        }
+    };
+    let listed = |record: EventRecord<'static>| -> Vec<Option<String>> {
+        let mut out = Vec::new();
+        for clause in report_all_failed_clauses_for_rules(&[record]) {
+            match clause {
+                ClauseReport::Block(block) => out.push(block.messages.error_message.clone()),
+                ClauseReport::Disjunctions(ors) => {
+                    for each in &ors.checks {
+                        match each {
+                            ClauseReport::Block(block) => {
+                                out.push(block.messages.error_message.clone())
+                            }
+                            other => panic!("a block entry, got {:?}", other),
+                        }
+                    }
+                }
+                other => panic!("a block or disjunction report, got {:?}", other),
+            }
+        }
+        out
+    };
+    let a_failed = || Some(String::from("A failed"));
+    for kind in ["block", "when", "disjunction"] {
+        assert_eq!(
+            (
+                vec![a_failed()],
+                vec![a_failed(), Some(EVALUATOR.to_string())]
+            ),
+            (
+                listed(parent(kind, None, Some(AUTHOR))),
+                listed(parent(kind, Some(EVALUATOR), None))
+            ),
+            "({}) the author's text is no entry beside a reporting entry; an evaluator sentence is written once after it",
+            kind
+        );
+    }
+}
+
+/// A sentence is told by an entry that is itself a bailing or head sentence for the same error: a type
+/// block's "Error X during type block evaluation, bailing" over a `when`'s "Error X during type condition
+/// evaluation, bailing" lists X once, and a different error is not told by it. Fails when the entry side
+/// is compared by its clause-error spelling alone, which lists X once per level.
+#[test]
+fn nested_bailing_sentences_for_one_error_are_told_once() {
+    use crate::rules::eval::{TYPE_BLOCK_BAILING_TAIL, TYPE_CONDITION_BAILING_TAIL};
+    const X: &str = "a plain error that ended the run";
+    const Y: &str = "another plain error";
+    let entry = ClauseReport::Block(GuardBlockReport {
+        context: String::from("WhenBlock#2"),
+        messages: Messages {
+            error_message: Some(format!("Error {X}{TYPE_CONDITION_BAILING_TAIL}")),
+            custom_message: None,
+            location: None,
+            refusal: false,
+            parts: None,
+        },
+        unresolved: None,
+    });
+    let outer = |error: &str| format!("Error {error}{TYPE_BLOCK_BAILING_TAIL}");
+    let entries = vec![entry];
+    assert_eq!(
+        (true, false),
+        (
+            sentence_told_by(&entries, &outer(X)),
+            sentence_told_by(&entries, &outer(Y))
+        ),
+        "the same error behind another tail is told; a different error is not"
+    );
+}
+
+/// A refusal whose own text holds a `; ` is named by the sentence a rule's own `when` writes, joined to the
+/// error it held: the debug tripwire finds the converted read through the boundary parse, which reads the
+/// refusal as a span of its own after the joiner rather than splitting it at its own `; `. Two refused reads,
+/// the second joined behind "the condition also met".
+#[test]
+fn a_converted_read_with_a_semicolon_in_its_text_is_found_in_the_joined_sentence() {
+    use crate::rules::eval::RULE_CONDITION_UNEVALUATED_HEAD;
+    use crate::rules::CustomSlot;
+    use frame_sources::{mark, rule, under_a_condition, HELD};
+    const SEMICOLON: &str = "the read of `B` was refused; write it over a key the object holds, at path /Resources/B/Tags";
+    registered_as_in_a_run!(HELD, SEMICOLON);
+    let record = rule(
+        Some(format!(
+            "{RULE_CONDITION_UNEVALUATED_HEAD}{HELD}{}{SEMICOLON}",
+            crate::rules::eval_context::ALSO_MET
+        )),
+        None,
+        CustomSlot::Refusal,
+        &[SEMICOLON],
+        vec![under_a_condition(
+            RecordType::RuleCondition(Status::FAIL),
+            vec![mark(SEMICOLON)],
+        )],
+    );
+    // Nothing panics: the verbatim text is in what the rule wrote.
+    let _ = report_all_failed_clauses_for_rules(&[record]);
+}
+
+/// A rule called with a `<< >>` body whose body holds a silent block over a refused value (a gate mark): the
+/// called rule lists no entry for the silent child, so the refusal is told by the rule's own sentence,
+/// once, with the body kept as the custom text.
+#[test]
+fn a_rule_with_a_body_over_a_silent_block_tells_the_refusal_its_mark_carries() {
+    use crate::rules::CustomSlot;
+    use frame_sources::{block_check, mark, rule, HELD};
+    registered_as_in_a_run!(HELD);
+    const BODY: &str = "the author's body";
+    let silent_block = EventRecord {
+        context: String::from("BlockGuardClause#2"),
+        container: Some(RecordType::BlockGuardCheck(block_check(None, false, false))),
+        children: vec![mark(HELD)],
+    };
+    let record = rule(
+        Some(BODY.to_string()),
+        None,
+        CustomSlot::Author,
+        &[],
+        vec![silent_block],
+    );
+    let reports = report_all_failed_clauses_for_rules(&[record]);
+    match &reports[..] {
+        [ClauseReport::Rule(rule)] => {
+            assert_eq!(
+                (true, Some(BODY), 1),
+                (
+                    rule.checks.is_empty(),
+                    rule.messages.custom_message.as_deref(),
+                    rule.messages
+                        .error_message
+                        .as_deref()
+                        .map_or(0, |text| text.matches(HELD).count())
+                ),
+                "the body kept, the refusal told once by the rule's sentence: {:?}",
+                rule.messages
+            );
+            // The mark is a refusal of the body, which the rule's failed condition did not meet: it follows
+            // the body joiner and not "the condition also met".
+            let error = rule.messages.error_message.as_deref().unwrap_or("");
+            let joiner = rule.messages.parts.as_ref().map(|parts| parts.joiner());
+            assert_eq!(
+                (true, false, Some(crate::rules::eval_context::BODY_ALSO_MET)),
+                (
+                    error.contains(crate::rules::eval_context::BODY_ALSO_MET),
+                    error.contains(ALSO_MET),
+                    joiner
+                ),
+                "the body's mark is joined under the body joiner alone: {}",
+                error
+            );
+            assert!(
+                error.starts_with(crate::rules::eval_context::RULE_FAILED_HEAD)
+                    && !error.contains(crate::rules::eval_context::RULE_FAILED_ON_AN_ERROR_HEAD),
+                "no failed condition met anything, so no error is said to have ended the evaluation: {}",
+                error
+            );
+        }
+        other => panic!("one rule report, got {:?}", other),
+    }
+}
+
+/// The tripwire fires, in a debug build, on a frame whose read no record or sentence names: the loss it
+/// exists to catch. One cell per source, each with the read registered as a refusal and nothing in the
+/// report that names it (a sentence about another refusal, no records beneath).
+///
+/// Fails when a source does not panic, so a refusal the conversion swallowed would be reported
+/// nowhere.
+#[cfg(debug_assertions)]
+mod an_untold_frame_read_trips_the_assertion {
+    use super::*;
+    use crate::rules::eval::{RULE_CONDITION_UNEVALUATED_HEAD, WHEN_UNEVALUATED_HEAD};
+    use crate::rules::CustomSlot;
+    use frame_sources::*;
+
+    #[test]
+    #[should_panic(expected = "converted a refusal that no record or sentence")]
+    fn a_rules_own_when() {
+        walk_a_converted_frame(rule(
+            Some(format!("{RULE_CONDITION_UNEVALUATED_HEAD}{OTHER}")),
+            None,
+            CustomSlot::Refusal,
+            &[HELD],
+            vec![],
+        ));
+    }
+
+    #[test]
+    #[should_panic(expected = "converted a refusal that no record or sentence")]
+    fn an_inline_when() {
+        walk_a_converted_frame(when_block(
+            Some(format!("{WHEN_UNEVALUATED_HEAD}{OTHER}")),
+            &[HELD],
+            vec![],
+        ));
+    }
+
+    #[test]
+    #[should_panic(expected = "converted a refusal that no record or sentence")]
+    fn a_type_block() {
+        walk_a_converted_frame(type_block(
+            Some(format!(
+                "Error {OTHER} during type condition evaluation, bailing"
+            )),
+            &[HELD],
+            vec![mark(OTHER)],
+        ));
+    }
+
+    /// The record's sentence quotes a plain error Z and an entry beneath it carries Z, so the sentence is
+    /// not written beside the entries (it is told). The converted read HELD lives in no written text and in
+    /// no entry: the sentence is not credited with it, only the entries are. A sentence dropped because an
+    /// entry carries ITS error is no account of a read it does not name.
+    #[test]
+    #[should_panic(expected = "converted a refusal that no record or sentence")]
+    fn a_bailing_type_block_whose_sentence_is_not_written_beside_its_entries() {
+        const Z: &str = "a plain error that ended the run";
+        let carries_z = EventRecord {
+            context: String::from("GuardAccessClause#blockZ"),
+            container: Some(RecordType::GuardClauseBlockCheck(block_check(
+                Some(Z.to_string()),
+                false,
+                false,
+            ))),
+            children: vec![],
+        };
+        walk_a_converted_frame(type_block(
+            Some(format!(
+                "Error {Z} during type condition evaluation, bailing"
+            )),
+            &[HELD],
+            vec![carries_z],
+        ));
+    }
+
+    /// A call's body with nothing beneath it that names the read: the author's body is no account of it.
+    #[test]
+    #[should_panic(expected = "converted a refusal that no record or sentence")]
+    fn a_rule_with_a_body_and_nothing_beneath_that_names_the_read() {
+        walk_a_converted_frame(rule(
+            Some(String::from("the author's body")),
+            None,
+            CustomSlot::Author,
+            &[HELD],
+            vec![],
+        ));
+    }
+}
+
+/// `lead; R; cause` yields the refusal R and nothing else: the unregistered `cause` is the sentence's own
+/// account of the failure, never a refusal the condition met, so a rule sentence "HEAD: R; cause" gains no
+/// "also met: cause". A registered remainder (`lead: R1; R2`) is still a refusal and is kept.
+///
+/// Fails when `cause` is appended as a refusal part, or when R2 is dropped.
+#[test]
+fn an_unregistered_remainder_is_never_appended_as_a_refusal() {
+    let rules_file = RulesFile::try_from("rule r { Resources exists }").expect("parses");
+    let _root = root_scope(
+        &rules_file,
+        Rc::new(PathAwareValue::try_from("{ Resources: {} }").expect("parses")),
+    );
+    const R1: &str = "the read of `A` was refused, at path /Resources/A/Tags";
+    const R2: &str = "the read of `B` was refused, at path /Resources/B/Tags";
+    for text in [R1, R2] {
+        let _ = register_refusal(text);
+    }
+    let texts = |sentence: &str| {
+        let mut out = Vec::new();
+        push_refusal(&mut out, sentence, None);
+        out.into_iter().map(|(text, _)| text).collect::<Vec<_>>()
+    };
+    assert_eq!(
+        (
+            vec![R1.to_string()],
+            vec![R1.to_string()],
+            vec![R1.to_string(), R2.to_string()]
+        ),
+        (
+            texts(&format!("lead; {R1}; cause")),
+            texts(&format!("{R1}; cause")),
+            texts(&format!("lead: {R1}; {R2}"))
+        ),
+        "the registered refusal alone; a registered remainder kept"
+    );
+}
+
+/// A call that carries a `<< >>` body over a rule that failed on an error that ended its evaluation, with no
+/// sentence of the evaluator's beside the body, reports the refusals its failed condition met in
+/// `error_message` under a neutral head (the condition is not claimed to be the deciding error), as two
+/// parts: the head and the refusals joined whole. The kind is the deciding error's own, a plain error, so
+/// the flag is false; the author's body stays the custom message.
+///
+/// Fails when the sentence leads with "The rule's condition could not be evaluated", when the
+/// flag is true, when the parts are absent, or when the body is displaced.
+#[test]
+fn a_body_only_call_over_a_run_ending_error_names_the_conditions_refusals_under_a_neutral_head() {
+    const FIRST: &str = "the read of `A` was refused";
+    const SECOND: &str = "the read of `B` was refused";
+    let clause_error = |sentence: &str| EventRecord {
+        context: String::from("GuardAccessClause#blockA"),
+        container: Some(RecordType::GuardClauseBlockCheck(BlockCheck {
+            status: Status::FAIL,
+            at_least_one_matches: false,
+            raised: true,
+            message: Some(crate::rules::eval::clause_error_message(
+                &crate::rules::errors::Error::undecidable(sentence.to_string()),
+            )),
+            refusal: true,
+            custom_message: None,
+            gate_mark: false,
+            frame_reads: Vec::new(),
+        })),
+        children: vec![],
+    };
+    let rule = EventRecord {
+        context: String::from("gated"),
+        container: Some(RecordType::RuleCheck(NamedStatus {
+            name: "gated",
+            status: Status::FAIL,
+            message: Some(String::from("the author's body")),
+            slot: crate::rules::CustomSlot::Author,
+            displaced: None,
+            frame_reads: Vec::new(),
+            // The run ended on an error: the head says so (`ended_by_error` is the record's account).
+            ended_by_error: true,
+        })),
+        children: vec![EventRecord {
+            context: String::from("Rule#gated/When"),
+            container: Some(RecordType::RuleCondition(Status::FAIL)),
+            children: vec![clause_error(FIRST), clause_error(SECOND)],
+        }],
+    };
+    let read = match report_all_failed_clauses_for_rules(&[rule]).as_slice() {
+        [ClauseReport::Rule(rule)] => (
+            rule.messages.error_message.clone(),
+            rule.messages.custom_message.clone(),
+            rule.messages.refusal,
+            rule.messages.parts.clone(),
+        ),
+        other => panic!("one rule report, got {:?}", other),
+    };
+    let head = RULE_FAILED_ON_AN_ERROR_HEAD;
+    assert_eq!(
+        (
+            Some(format!("{head}{ALSO_MET}{FIRST}; {SECOND}")),
+            Some(String::from("the author's body")),
+            false,
+            Some(SentenceParts::refusals_beside(
+                head,
+                &format!("{FIRST}; {SECOND}"),
+                SentenceSlot::Error,
+            )),
+        ),
+        read,
+        "a neutral head, the refusals whole as the second part, a plain kind, the body kept"
+    );
+}
+
+/// A failed condition's records that carry the RAISE survive whatever report kind they become, and a
+/// called rule's decided answers are dropped like the condition's own. Under a message-less failed rule's
+/// condition (a record order the real tree has: RuleCheck > RuleCondition > the condition's clauses and
+/// called rules): a reference that failed on an error (a `DependentRule` with a message) is listed; one
+/// that merely did not pass (no message) is not; a per-value check with its refusal flag set is listed; a
+/// called rule over [a decided answer, a silent block] is listed with the block's generic sentence alone.
+///
+/// Fails when the raise-carrying reference or refusal check is dropped (the rule is listed
+/// with empty checks), when a decided answer is listed, or when the called rule lists its
+/// decided answer.
+#[test]
+fn a_failed_conditions_raise_survives_in_every_report_kind_and_a_called_rules_decided_answers_do_not(
+) {
+    const GENERIC: &str =
+        "the block clause failed, and none of the checks recorded under it reports why";
+    let silent = || EventRecord {
+        context: String::from("BlockGuardClause#2"),
+        container: Some(RecordType::BlockGuardCheck(BlockCheck {
+            status: Status::FAIL,
+            at_least_one_matches: false,
+            raised: false,
+            message: None,
+            refusal: false,
+            custom_message: None,
+            gate_mark: false,
+            frame_reads: Vec::new(),
+        })),
+        children: vec![EventRecord {
+            context: String::from("GuardBlockAccessClause#2"),
+            container: Some(RecordType::GuardClauseBlockCheck(BlockCheck {
+                status: Status::FAIL,
+                at_least_one_matches: false,
+                raised: false,
+                message: None,
+                refusal: false,
+                custom_message: None,
+                gate_mark: false,
+                frame_reads: Vec::new(),
+            })),
+            children: vec![],
+        }],
+    };
+    let reference = |message: Option<&str>| EventRecord {
+        context: String::from("gate"),
+        container: Some(RecordType::ClauseValueCheck(ClauseCheck::DependentRule(
+            crate::rules::MissingValueCheck {
+                rule: "gate",
+                message: message.map(String::from),
+                custom_message: None,
+                status: Status::FAIL,
+                // A message is the account of an error the reference failed on, stored once.
+                failure: message.map(|text| crate::rules::ReferenceFailure {
+                    text: text.to_string(),
+                    token: None,
+                    refusal: false,
+                }),
+            },
+        ))),
+        children: vec![],
+    };
+    let refused_value = EventRecord {
+        context: String::from("Properties.Tags"),
+        container: Some(RecordType::ClauseValueCheck(
+            ClauseCheck::MissingBlockValue(ValueCheck {
+                from: QueryResult::UnResolved(UnResolved {
+                    traversed_to: Rc::new(PathAwareValue::try_from("{ A: 1 }").expect("parses")),
+                    remaining_query: String::new(),
+                    reason: Some(String::from("the read was refused")),
+                    kind: UnResolvedKind::Undecidable {
+                        refusal: Some(crate::rules::errors::RefusalToken::minted(1)),
+                        carried: None,
+                    },
+                }),
+                message: Some(String::from("the read was refused")),
+                custom_message: None,
+                status: Status::FAIL,
+                refusal: true,
+            }),
+        )),
+        children: vec![],
+    };
+    let called_rule = EventRecord {
+        context: String::from("helper"),
+        container: Some(RecordType::RuleCheck(NamedStatus {
+            name: "helper",
+            status: Status::FAIL,
+            message: None,
+            slot: Default::default(),
+            displaced: None,
+            frame_reads: Vec::new(),
+            ended_by_error: false,
+        })),
+        children: vec![reference(None), silent()],
+    };
+    let rule = |conditions: Vec<EventRecord<'static>>| EventRecord {
+        context: String::from("gated"),
+        container: Some(RecordType::RuleCheck(NamedStatus {
+            name: "gated",
+            status: Status::FAIL,
+            message: None,
+            slot: Default::default(),
+            displaced: None,
+            frame_reads: Vec::new(),
+            ended_by_error: false,
+        })),
+        children: vec![EventRecord {
+            context: String::from("Rule#gated/When"),
+            container: Some(RecordType::RuleCondition(Status::FAIL)),
+            children: conditions,
+        }],
+    };
+    let shape = |conditions: Vec<EventRecord<'static>>| -> Vec<String> {
+        match report_all_failed_clauses_for_rules(&[rule(conditions)]).as_slice() {
+            [ClauseReport::Rule(rule)] => rule
+                .checks
+                .iter()
+                .map(|check| match check {
+                    ClauseReport::Clause(clause) => {
+                        let messages = clause.get_message();
+                        format!(
+                            "clause {:?} refusal={}",
+                            messages.error_message.unwrap_or_default(),
+                            messages.refusal
+                        )
+                    }
+                    ClauseReport::Block(block) => format!(
+                        "block {:?} refusal={}",
+                        block.messages.error_message.clone().unwrap_or_default(),
+                        block.messages.refusal
+                    ),
+                    ClauseReport::Rule(called) => format!(
+                        "rule {} over {}",
+                        called.name,
+                        called
+                            .checks
+                            .iter()
+                            .map(|check| match check {
+                                ClauseReport::Block(block) => {
+                                    block.messages.error_message.clone().unwrap()
+                                }
+                                ClauseReport::Clause(_) => String::from("clause"),
+                                other => panic!("under the called rule, got {:?}", other),
+                            })
+                            .collect::<Vec<_>>()
+                            .join(" | ")
+                    ),
+                    other => panic!("under the rule, got {:?}", other),
+                })
+                .collect(),
+            other => panic!("one rule report, got {:?}", other),
+        }
+    };
+    assert_eq!(
+        (
+            vec![String::from(
+                "clause \"Check was not compliant as dependent rule [gate] did not PASS. Context [gate]; gate failed due to error\" refusal=false"
+            )],
+            Vec::<String>::new(),
+            vec![String::from(
+                "block \"the read was refused\" refusal=true"
+            )],
+            vec![format!("rule helper over {GENERIC}")],
+        ),
+        (
+            shape(vec![reference(Some("gate failed due to error"))]),
+            shape(vec![reference(None)]),
+            shape(vec![refused_value]),
+            shape(vec![called_rule]),
+        ),
+        "a reference that failed on an error, a refused value and a called rule's silent block surface; a reference that did not pass does not, and the called rule's decided answer is dropped"
+    );
+}
+
+/// A reference that failed on a REFUSING error (`fail_reference_on_error` writes its `DependentRule` with the
+/// error in the message and the refusal flag from `is_refusal`) is reported with the flag the record
+/// carries: the structured reports say `refusal: true` and the console keeps the remedy past the bound a
+/// plain message gets. The same record with the flag clear reports no refusal, whatever its words.
+///
+/// Fails when the flag is dropped (a refusal reported as a plain failure), or when a plain error's
+/// reference is flagged.
+#[test]
+fn a_reference_that_failed_on_a_refusing_error_is_reported_a_refusal() {
+    const REFUSAL: &str = "the read of `Tags` was refused, at path /Resources/R/Tags";
+    let record = |refusal: bool| EventRecord {
+        context: String::from("gate"),
+        container: Some(RecordType::ClauseValueCheck(ClauseCheck::DependentRule(
+            crate::rules::MissingValueCheck {
+                rule: "gate",
+                message: Some(format!("gate failed due to error {REFUSAL}")),
+                custom_message: None,
+                status: Status::FAIL,
+                failure: Some(crate::rules::ReferenceFailure {
+                    text: REFUSAL.to_string(),
+                    token: None,
+                    refusal,
+                }),
+            },
+        ))),
+        children: vec![],
+    };
+    let read = |refusal: bool| -> (bool, bool) {
+        let clauses = report_all_failed_clauses_for_rules(&[record(refusal)]);
+        match clauses.as_slice() {
+            [ClauseReport::Clause(GuardClauseReport::Unary(report))] => (
+                report.messages.refusal,
+                report
+                    .messages
+                    .error_message
+                    .as_deref()
+                    .unwrap_or_default()
+                    .contains(REFUSAL),
+            ),
+            other => panic!(
+                "one unary clause report for one record, got {}",
+                other.len()
+            ),
+        }
+    };
+    assert_eq!(
+        ((true, true), (false, true)),
+        (read(true), read(false)),
+        "a refusing error's reference is flagged and names the refusal; a plain one is not flagged"
+    );
+}
+
+/// A rule that failed closed on its condition names a refusal a REFERENCE in the condition failed on once, in
+/// the rule's sentence: the reference's record stores the error and its token, and the walk of the failed
+/// condition reads them there. A refusal the sentence already carries is not repeated.
+///
+/// Fails when the refusal is absent from the sentence, appears twice, or when the walk reads
+/// the words of the reference's message and not the stored error.
+#[test]
+fn a_refusal_a_reference_failed_on_is_named_once_in_the_rules_sentence() {
+    const HEAD: &str = "The rule's condition could not be evaluated, so the rule fails rather than being treated as not applicable";
+    const HELD: &str = "the held read of `A` was refused";
+    const OTHER: &str = "the read of `B`, which the reference failed on, was refused";
+    let reference = |error: &str| EventRecord {
+        context: String::from("gate"),
+        container: Some(RecordType::ClauseValueCheck(ClauseCheck::DependentRule(
+            crate::rules::MissingValueCheck {
+                rule: "gate",
+                // Words that differ from the stored error, so a walk that read the message would not
+                // find the refusal.
+                message: Some(String::from("gate failed for a reason told elsewhere")),
+                custom_message: None,
+                status: Status::FAIL,
+                failure: Some(crate::rules::ReferenceFailure {
+                    text: error.to_string(),
+                    token: None,
+                    refusal: true,
+                }),
+            },
+        ))),
+        children: vec![],
+    };
+    let sentence_for = |held: &str, references: Vec<EventRecord<'static>>| {
+        let rule = EventRecord {
+            context: String::from("gated"),
+            container: Some(RecordType::RuleCheck(NamedStatus {
+                name: "gated",
+                status: Status::FAIL,
+                message: Some(format!("{HEAD}: {held}")),
+                slot: crate::rules::CustomSlot::Refusal,
+                displaced: None,
+                frame_reads: Vec::new(),
+                ended_by_error: false,
+            })),
+            children: vec![EventRecord {
+                context: String::from("Rule#gated/When"),
+                container: Some(RecordType::RuleCondition(Status::FAIL)),
+                children: references,
+            }],
+        };
+        match report_all_failed_clauses_for_rules(&[rule]).as_slice() {
+            [ClauseReport::Rule(rule)] => rule.messages.custom_message.clone(),
+            other => panic!("one rule report, got {:?}", other),
+        }
+    };
+    assert_eq!(
+        (
+            Some(format!("{HEAD}: {HELD}; the condition also met: {OTHER}")),
+            Some(format!("{HEAD}: {HELD}")),
+        ),
+        (
+            sentence_for(HELD, vec![reference(HELD), reference(OTHER)]),
+            sentence_for(HELD, vec![reference(HELD)]),
+        ),
+        "the second reference's refusal is added once; the one the sentence carries is not repeated"
+    );
+}
+
+/// The REAL tree of a type block's failed condition: TypeCheck(FAIL, no message) > TypeBlock(FAIL) >
+/// TypeCondition(FAIL) > Disjunction > one GuardClauseBlockCheck per disjunct > the disjunct's per-value
+/// checks. A disjunction of two decided answers (the first `Resources.X exists`, a decided no, and a
+/// reference that did not pass) lists nothing: the condition's own test of whether the type block applies.
+/// With a refused value in the second disjunct the refusal is listed alone, with its sentence and its flag,
+/// and the decided sibling is not.
+///
+/// Fails when a decided answer is listed under the condition (the filter stopped at the
+/// disjunct's clause record and kept its decided per-value children), or when the refusal is
+/// listed without its sentence or flag.
+#[test]
+fn a_type_blocks_failed_condition_lists_a_refusal_alone_and_never_a_decided_disjunct() {
+    let decided = || EventRecord {
+        context: String::from("GuardAccessClause#blockX"),
+        container: Some(RecordType::GuardClauseBlockCheck(BlockCheck {
+            status: Status::FAIL,
+            at_least_one_matches: false,
+            raised: false,
+            message: None,
+            refusal: false,
+            custom_message: None,
+            gate_mark: false,
+            frame_reads: Vec::new(),
+        })),
+        // The shape the evaluator writes for `Properties.A exists` over a map that lacks `A`: the
+        // disjunct's block record over a `Unary` clause record whose value check has no message and a
+        // clear refusal flag (`record_unary_clause`). A `MissingBlockValue` is written only by the block
+        // value loop, with a message and under a block access clause, never here.
+        children: vec![EventRecord {
+            context: String::from("Properties.A"),
+            container: Some(RecordType::ClauseValueCheck(ClauseCheck::Unary(
+                UnaryValueCheck {
+                    comparison: (CmpOperator::Exists, false),
+                    value: ValueCheck {
+                        from: QueryResult::UnResolved(UnResolved {
+                            traversed_to: Rc::new(
+                                PathAwareValue::try_from("{ B: 1 }").expect("parses"),
+                            ),
+                            remaining_query: String::from("A"),
+                            reason: Some(String::from("Could not find key A")),
+                            kind: UnResolvedKind::Absent,
+                        }),
+                        message: None,
+                        custom_message: None,
+                        status: Status::FAIL,
+                        refusal: false,
+                    },
+                },
+            ))),
+            children: vec![],
+        }],
+    };
+    // A reference that did not pass: the evaluator closes its `DependentRule` (no message) beside the
+    // disjunct's clause records, under the disjunction, not under a clause's own record.
+    let decided_reference = || EventRecord {
+        context: String::from("gate"),
+        container: Some(RecordType::ClauseValueCheck(ClauseCheck::DependentRule(
+            crate::rules::MissingValueCheck {
+                rule: "gate",
+                message: None,
+                custom_message: None,
+                status: Status::FAIL,
+                failure: None,
+            },
+        ))),
+        children: vec![],
+    };
+    let refused = || EventRecord {
+        context: String::from("GuardAccessClause#blockY"),
+        container: Some(RecordType::GuardClauseBlockCheck(BlockCheck {
+            status: Status::FAIL,
+            at_least_one_matches: false,
+            raised: false,
+            message: None,
+            refusal: false,
+            custom_message: None,
+            gate_mark: false,
+            frame_reads: Vec::new(),
+        })),
+        children: vec![EventRecord {
+            context: String::from("Properties.Tags"),
+            container: Some(RecordType::ClauseValueCheck(
+                ClauseCheck::MissingBlockValue(ValueCheck {
+                    from: QueryResult::UnResolved(UnResolved {
+                        traversed_to: Rc::new(
+                            PathAwareValue::try_from("{ A: 1 }").expect("parses"),
+                        ),
+                        remaining_query: String::new(),
+                        reason: Some(String::from("the read was refused")),
+                        kind: UnResolvedKind::Undecidable {
+                            refusal: Some(crate::rules::errors::RefusalToken::minted(1)),
+                            carried: None,
+                        },
+                    }),
+                    message: Some(String::from("the read was refused")),
+                    custom_message: None,
+                    status: Status::FAIL,
+                    refusal: true,
+                }),
+            )),
+            children: vec![],
+        }],
+    };
+    let type_check = |disjuncts: Vec<EventRecord<'static>>| EventRecord {
+        context: String::from("AWS::X::Y"),
+        container: Some(RecordType::TypeCheck(TypeBlockCheck {
+            type_name: "AWS::X::Y",
+            block: BlockCheck {
+                status: Status::FAIL,
+                at_least_one_matches: false,
+                raised: false,
+                message: None,
+                refusal: false,
+                custom_message: None,
+                gate_mark: false,
+                frame_reads: Vec::new(),
+            },
+        })),
+        children: vec![EventRecord {
+            context: String::from("TypeBlock"),
+            container: Some(RecordType::TypeBlock(Status::FAIL)),
+            children: vec![EventRecord {
+                context: String::from("TypeBlock/When"),
+                container: Some(RecordType::TypeCondition(Status::FAIL)),
+                children: vec![EventRecord {
+                    context: String::from("Disjunction#1"),
+                    container: Some(RecordType::Disjunction(BlockCheck {
+                        status: Status::FAIL,
+                        at_least_one_matches: false,
+                        raised: false,
+                        message: None,
+                        refusal: false,
+                        custom_message: None,
+                        gate_mark: false,
+                        frame_reads: Vec::new(),
+                    })),
+                    children: disjuncts,
+                }],
+            }],
+        }],
+    };
+    let listed = |record: EventRecord<'static>| -> Vec<String> {
+        let mut found = Vec::new();
+        fn collect(clauses: &[ClauseReport<'_>], found: &mut Vec<String>) {
+            for clause in clauses {
+                match clause {
+                    ClauseReport::Block(block) => found.push(format!(
+                        "block {:?} refusal={}",
+                        block.messages.error_message.clone().unwrap_or_default(),
+                        block.messages.refusal
+                    )),
+                    ClauseReport::Clause(_) => found.push(String::from("a clause")),
+                    ClauseReport::Disjunctions(report) => collect(&report.checks, found),
+                    ClauseReport::Rule(rule) => collect(&rule.checks, found),
+                }
+            }
+        }
+        collect(&report_all_failed_clauses_for_rules(&[record]), &mut found);
+        found
+    };
+    assert_eq!(
+        (
+            Vec::<String>::new(),
+            vec![String::from("block \"the read was refused\" refusal=true")],
+        ),
+        (
+            listed(type_check(vec![decided(), decided_reference()])),
+            listed(type_check(vec![decided(), decided_reference(), refused()])),
+        ),
+        "a missing property and a reference that did not pass list nothing; a refused disjunct beside them lists the refusal alone"
+    );
+    // A DECIDED disjunct that keeps an explanatory message (an empty selection explained) is still a
+    // decided answer: its record is written with `raised` clear, so the message does not keep it. Red
+    // when the walk keeps a block record by the presence of its message.
+    let decided_with_message = || {
+        let mut record = decided();
+        if let Some(RecordType::GuardClauseBlockCheck(check)) = record.container.as_mut() {
+            check.message = Some(String::from(
+                "the selection was empty, so nothing was checked",
+            ));
+        }
+        record
+    };
+    // A plain raise (not a refusal): the clause-error record, written on a raise with its refusal flag
+    // clear, is the account of the raise and is still kept.
+    const PLAIN_RAISE: &str = "a converter could not read the value";
+    let plain_raise = || EventRecord {
+        context: String::from("GuardAccessClause#blockZ"),
+        container: Some(RecordType::GuardClauseBlockCheck(BlockCheck {
+            status: Status::FAIL,
+            at_least_one_matches: false,
+            raised: true,
+            message: Some(crate::rules::eval::clause_error_message(
+                &crate::rules::errors::Error::undecidable(PLAIN_RAISE.to_string()),
+            )),
+            refusal: false,
+            custom_message: None,
+            gate_mark: false,
+            frame_reads: Vec::new(),
+        })),
+        // Decided children only: every one is dropped by the walk, so the record is kept by `raised`
+        // alone (a childless record would be kept by having no children, whatever its flag).
+        children: vec![decided_reference()],
+    };
+    let kept_plain_raise = listed(type_check(vec![decided(), plain_raise()]));
+    // A block record written on a raise that carries no sentence and has no child that carries the raise
+    // (the gate-role undecided exit, the run-ending exit): it is kept, and it never prints the retrieval
+    // sentence ("did not retrieve any value"), which would be false; it says what is true.
+    let raised_silent_block = || EventRecord {
+        context: String::from("BlockGuardClause#raised"),
+        container: Some(RecordType::BlockGuardCheck(BlockCheck {
+            status: Status::FAIL,
+            at_least_one_matches: false,
+            raised: true,
+            message: None,
+            refusal: false,
+            custom_message: None,
+            gate_mark: false,
+            frame_reads: Vec::new(),
+        })),
+        children: vec![],
+    };
+    assert_eq!(
+        vec![format!("block {:?} refusal=false", SILENT_BLOCK_SENTENCE)],
+        listed(type_check(vec![decided(), raised_silent_block()])),
+        "a kept raised block record with no sentence and no child lists the silent-block sentence, never the retrieval one"
+    );
+    assert_eq!(
+        (
+            Vec::<String>::new(),
+            (1, true, true),
+        ),
+        (
+            listed(type_check(vec![decided_with_message(), decided_reference()])),
+            (
+                kept_plain_raise.len(),
+                kept_plain_raise
+                    .iter()
+                    .all(|entry| entry.contains(PLAIN_RAISE)),
+                kept_plain_raise
+                    .iter()
+                    .all(|entry| entry.ends_with("refusal=false")),
+            ),
+        ),
+        "a decided disjunct that keeps an explanatory message lists nothing; a plain raise's clause-error record is still kept, flagged no refusal"
+    );
+}
+
+/// The report model keeps every part whole; only the console bounds them. A PLAIN head (a converter's error
+/// quoting a long template value) that a refusal is joined to stays whole beside the refusal, as two parts
+/// (`SentenceParts`: the sentence, the refusals) whose join is the sentence byte for byte, and a head that
+/// is already a refusal's gets the same parts (its kind is the record's flag, which the console reads to
+/// bound it); a head that gains nothing is returned as it is, however long. A refusal the head quotes PAST
+/// the plain bound (the head is whole, so the carried test reads the text the record emits) is carried, and
+/// a bare record of it is not appended.
+///
+/// Fails when the head is cut in the model, when the parts do not join to the sentence, when an
+/// unjoined head changes, or when a refusal quoted past the bound is dropped or appended again.
+#[test]
+fn a_joined_sentence_keeps_every_part_whole_and_a_refusal_quoted_past_the_bound_is_carried() {
+    let rules_file = RulesFile::try_from("rule r { Resources exists }").expect("parses");
+    let _root = root_scope(
+        &rules_file,
+        Rc::new(PathAwareValue::try_from("{ Resources: {} }").expect("parses")),
+    );
+    const REFUSAL: &str = "the read of `Tags` was refused, at path /Resources/M/Tags";
+    const QUOTED: &str = "the read of `Late` was refused, at path /Resources/M/Late";
+    let _ = crate::rules::eval_context::register_refusal(REFUSAL);
+    let _ = crate::rules::eval_context::register_refusal(QUOTED);
+    let long_head = format!(
+        "failed to convert a string: {} into an integer",
+        "x ".repeat(400)
+    );
+    let record = |sentence: &str| EventRecord {
+        context: String::from("GuardAccessClause#blockA"),
+        container: Some(RecordType::GuardClauseBlockCheck(BlockCheck {
+            status: Status::FAIL,
+            at_least_one_matches: false,
+            raised: true,
+            message: Some(crate::rules::eval::clause_error_message(
+                &crate::rules::errors::Error::undecidable(sentence.to_string()),
+            )),
+            refusal: true,
+            custom_message: None,
+            gate_mark: false,
+            frame_reads: Vec::new(),
+        })),
+        children: vec![],
+    };
+    // The records of a failed condition sit under its `RuleCondition(FAIL)`, as the walk reads them.
+    let under = |records: Vec<EventRecord<'static>>| {
+        vec![EventRecord {
+            context: String::from("Rule#gated/When"),
+            container: Some(RecordType::RuleCondition(Status::FAIL)),
+            children: records,
+        }]
+    };
+    let refused = under(vec![record(REFUSAL)]);
+    let (plain, plain_parts) =
+        sentence_and_whether_refusals_joined(&long_head, &refused, SentenceSlot::Error);
+    let (unjoined, unjoined_parts) =
+        sentence_and_whether_refusals_joined(&long_head, &[], SentenceSlot::Error);
+    // A refusal quoted past the plain bound of a long head: carried, so the bare record adds nothing.
+    let quoting = format!("{}: {QUOTED}", "y ".repeat(300));
+    let (quoted_text, quoted_parts) = sentence_and_whether_refusals_joined(
+        &quoting,
+        &under(vec![record(QUOTED)]),
+        SentenceSlot::Error,
+    );
+    let join = format!("{ALSO_MET}{REFUSAL}");
+    assert_eq!(
+        (
+            true,
+            true,
+            (long_head.clone(), false),
+            (quoting.clone(), false),
+        ),
+        (
+            plain == format!("{long_head}{join}"),
+            plain_parts.as_ref().is_some_and(|parts| parts.head() == long_head
+                && parts.message() == REFUSAL
+                && parts.join()
+                    == (crate::rules::eval_context::PartsJoin::Refusals {
+                        slot: crate::rules::eval_context::SentenceSlot::Error
+                    })
+                && parts.refusals_text() == plain),
+            (unjoined, unjoined_parts.is_some()),
+            (quoted_text, quoted_parts.is_some()),
+        ),
+        "the parts are whole and join to the sentence, whatever kind the head is (the kind is the record's flag, not a reason to carry no parts); an unjoined head is returned as it is; a refusal quoted past the plain bound is carried"
+    );
+}
+
+/// The one join design of a failed rule's sentence, by row. A plain error's sentence that gains refusals
+/// keeps its kind (`refusal` false: the plain error decided the verdict) and carries the join's parts; a
+/// called rule under it contributes its children's refusals first and its own sentence, head stripped,
+/// only when they add nothing (the refusal is listed once, not as `R; R`); a refused `IN` comparison is
+/// read; a sentence that already ends with a refusal as `S: R; cause`, or quotes a numbered raise
+/// `(1) R2 (2) R1`, carries those refusals, so a bare record of the same refusal is not appended again
+/// (the registry holds R1, and a second registration of it mints another token).
+///
+/// Fails when the kind is promoted, when a nested rule's refusal is listed twice, when the `IN`
+/// refusal is lost, or when a carried refusal is appended.
+#[test]
+fn a_joined_sentence_keeps_its_kind_and_lists_each_refusal_once() {
+    use crate::rules::errors::RefusalToken;
+    let rules_file = RulesFile::try_from("rule r { Resources exists }").expect("parses");
+    let _root = root_scope(
+        &rules_file,
+        Rc::new(PathAwareValue::try_from("{ Resources: {} }").expect("parses")),
+    );
+    const PLAIN: &str = "failed to convert a string: prod into an integer";
+    const R1: &str = "the read of `A` was refused, at path /Resources/A/Tags";
+    const R2: &str = "the read of `B` was refused, at path /Resources/B/Tags";
+    const R3: &str = "the membership of `C` was refused, at path /Resources/C/Tags";
+    for text in [R1, R2, R3] {
+        let _ = crate::rules::eval_context::register_refusal(text);
+    }
+    let clause_error = |sentence: &str| EventRecord {
+        context: String::from("GuardAccessClause#blockA"),
+        container: Some(RecordType::GuardClauseBlockCheck(BlockCheck {
+            status: Status::FAIL,
+            at_least_one_matches: false,
+            raised: true,
+            message: Some(crate::rules::eval::clause_error_message(
+                &crate::rules::errors::Error::undecidable(sentence.to_string()),
+            )),
+            refusal: true,
+            custom_message: None,
+            gate_mark: false,
+            frame_reads: Vec::new(),
+        })),
+        children: vec![],
+    };
+    // The record the evaluator writes for a left-hand value paired with a refused `%name`'s marker under a
+    // positive `IN`: a comparison record flagged a refusal, the refusal's text as its message. The
+    // membership record (`InComparisonCheck`) is never written flagged.
+    let in_refusal = |sentence: &str| EventRecord {
+        context: String::from("Properties.C IN"),
+        container: Some(RecordType::ClauseValueCheck(ClauseCheck::Comparison(
+            crate::rules::ComparisonClauseCheck {
+                comparison: (CmpOperator::In, false),
+                // A value the rules-file value grammar reads (a bare word is no value there: the cell's
+                // fixture failed to parse on `x`).
+                from: QueryResult::Literal(Rc::new(
+                    PathAwareValue::try_from("{ B: 2 }").expect("parses"),
+                )),
+                to: Some(QueryResult::UnResolved(UnResolved {
+                    traversed_to: Rc::new(PathAwareValue::try_from("{ A: 1 }").expect("parses")),
+                    remaining_query: String::new(),
+                    reason: Some(sentence.to_string()),
+                    kind: UnResolvedKind::Undecidable {
+                        refusal: Some(RefusalToken::minted(900)),
+                        carried: None,
+                    },
+                })),
+                message: Some(sentence.to_string()),
+                custom_message: None,
+                status: Status::FAIL,
+                refusal: true,
+            },
+        ))),
+        children: vec![],
+    };
+    let nested_rule = |own: &str, children: Vec<EventRecord<'static>>| EventRecord {
+        context: String::from("helper"),
+        container: Some(RecordType::RuleCheck(NamedStatus {
+            name: "helper",
+            status: Status::FAIL,
+            message: Some(format!(
+                "{}{own}",
+                crate::rules::eval::RULE_CONDITION_UNEVALUATED_HEAD
+            )),
+            slot: crate::rules::CustomSlot::Refusal,
+            displaced: None,
+            frame_reads: Vec::new(),
+            ended_by_error: false,
+        })),
+        children: vec![EventRecord {
+            context: String::from("Rule#helper/When"),
+            container: Some(RecordType::RuleCondition(Status::FAIL)),
+            children,
+        }],
+    };
+    // (the rule's text, its slot, the records of its failed condition) -> what the report holds
+    let read = |sentence: &str, children: Vec<EventRecord<'static>>| {
+        let rule = EventRecord {
+            context: String::from("gated"),
+            container: Some(RecordType::RuleCheck(NamedStatus {
+                name: "gated",
+                status: Status::FAIL,
+                message: Some(sentence.to_string()),
+                slot: crate::rules::CustomSlot::Evaluator,
+                displaced: None,
+                frame_reads: Vec::new(),
+                ended_by_error: false,
+            })),
+            children: vec![EventRecord {
+                context: String::from("Rule#gated/When"),
+                container: Some(RecordType::RuleCondition(Status::FAIL)),
+                children,
+            }],
+        };
+        match report_all_failed_clauses_for_rules(&[rule]).as_slice() {
+            [ClauseReport::Rule(rule)] => (
+                rule.messages.custom_message.clone().unwrap_or_default(),
+                rule.messages.refusal,
+                rule.messages.parts.is_some(),
+            ),
+            other => panic!("one rule report, got {:?}", other),
+        }
+    };
+    let joined = |head: &str, appended: &str| format!("{head}{ALSO_MET}{appended}");
+    assert_eq!(
+        vec![
+            // a plain error's sentence plus a refusal: kind kept, parts carried
+            (joined(PLAIN, R1), false, true),
+            // a nested rule over a refused child: R1 once, not `R1; R1`
+            (joined(PLAIN, R1), false, true),
+            // a refused IN comparison is read
+            (joined(PLAIN, R3), false, true),
+            // `S: R; cause` carries R1: the bare record of R1 adds nothing
+            (format!("wrap: {R1}; cause"), false, false),
+            // a quoted numbered raise carries R2 and R1; a bare R1 adds nothing
+            (format!("wrap: (1) {R2} (2) {R1}"), false, false),
+        ],
+        vec![
+            read(PLAIN, vec![clause_error(R1)]),
+            read(PLAIN, vec![nested_rule(R1, vec![clause_error(R1)])]),
+            read(PLAIN, vec![in_refusal(R3)]),
+            read(&format!("wrap: {R1}; cause"), vec![clause_error(R1)]),
+            read(&format!("wrap: (1) {R2} (2) {R1}"), vec![clause_error(R1)]),
+        ],
+        "a plain sentence keeps its kind and lists each refusal once; a carried refusal is not appended"
+    );
+}
+
+/// A record that WRAPS an error is skipped by its kind when the failed condition's refusals are read: a
+/// `when` block's explanation ("The condition could not be evaluated, so the block it guards is not
+/// checked: <e>"), the type-condition wrapper ("Error <e> during type condition evaluation, bailing") and a
+/// disjunction's ("Disjunction could not be decided: .. <e>") each quote the refusal the rule's own sentence
+/// already carries, so the sentence gains no "also met" part from any of them, while the clause record
+/// beneath the wrapper that names a DIFFERENT refusal still adds it, once. One row per wrapper kind.
+///
+/// Fails when a wrapper's message is read as a refusal of its own (the sentence gains a part that
+/// quotes the refusal it already carries), or when the other refusal under it is lost.
+#[test]
+fn a_wrapper_record_adds_no_part_to_the_sentence_that_quotes_its_refusal() {
+    const HELD: &str = "the held refusal at /Resources/A/Tags";
+    const OTHER: &str = "the other refusal at /Resources/B/Tags";
+    let sentence = format!("The rule's condition could not be evaluated: {HELD}");
+    let block = |message: Option<String>, refusal: bool| BlockCheck {
+        status: Status::FAIL,
+        at_least_one_matches: false,
+        raised: message.is_some(), // the fixture's records with a sentence model a raise's record
+        message,
+        refusal,
+        custom_message: None,
+        gate_mark: false,
+        frame_reads: Vec::new(),
+    };
+    let record =
+        |container: RecordType<'static>, children: Vec<EventRecord<'static>>| EventRecord {
+            context: String::from("wrapper"),
+            container: Some(container),
+            children,
+        };
+    // The clause record the evaluator writes for a refusal a clause met in the gate role.
+    let clause_naming = |refusal: &str| {
+        record(
+            RecordType::GuardClauseBlockCheck(block(
+                Some(format!("Error {refusal} when handling clause, bailing")),
+                true,
+            )),
+            vec![],
+        )
+    };
+    let under = |wrapper: RecordType<'static>, inner: Vec<EventRecord<'static>>| {
+        vec![record(
+            RecordType::RuleCondition(Status::FAIL),
+            vec![record(wrapper, inner)],
+        )]
+    };
+    let extended = |children: Vec<EventRecord<'static>>| {
+        sentence_and_whether_refusals_joined(&sentence, &children, SentenceSlot::Error).0
+    };
+    let when_wrapper = RecordType::WhenCheck(block(
+        Some(format!(
+            "The condition could not be evaluated, so the block it guards is not checked: {HELD}"
+        )),
+        true,
+    ));
+    let type_wrapper = RecordType::WhenCheck(block(
+        Some(format!(
+            "Error {HELD} during type condition evaluation, bailing"
+        )),
+        true,
+    ));
+    let disjunction = RecordType::Disjunction(block(
+        Some(format!(
+            "Disjunction could not be decided: no disjunct answered, and one could not be evaluated: {HELD}"
+        )),
+        true,
+    ));
+    let also = |other: &str| format!("{sentence}; the condition also met: {other}");
+    assert_eq!(
+        (
+            sentence.clone(),
+            sentence.clone(),
+            sentence.clone(),
+            also(OTHER),
+            also(OTHER),
+            also(OTHER),
+        ),
+        (
+            extended(under(when_wrapper.clone(), vec![clause_naming(HELD)])),
+            extended(under(type_wrapper.clone(), vec![clause_naming(HELD)])),
+            extended(under(disjunction.clone(), vec![clause_naming(HELD)])),
+            extended(under(when_wrapper, vec![clause_naming(OTHER)])),
+            extended(under(type_wrapper, vec![clause_naming(OTHER)])),
+            extended(under(disjunction, vec![clause_naming(OTHER)])),
+        ),
+        "a wrapper quoting the held refusal adds nothing; the clause record beneath it naming another refusal adds it once"
+    );
+}
+
+/// One refusal is one refusal in whichever spelling a record wrote it. A rule's sentence holds the error its
+/// condition held as `Error::Unevaluatable`'s display writes it (wrapped: "Clause could not be evaluated
+/// against the incoming context `R`"), a clause-error record beneath it holds the same wrapped form, and a
+/// settle record holds the bare `R`. The sentence a failed condition's walk builds lists `R` once, as the
+/// sentence's own account, whichever of the three records names it again, and still adds the OTHER refusal
+/// the condition met, once. Built from `Error::Unevaluatable`, the error that writes the wrapper (the
+/// other join cells use `Error::undecidable`, which does not).
+///
+/// Fails when `R` is listed a second time after the sentence's `; the condition also met:` (the
+/// wrapped and the bare spelling counted as two refusals), or when the other refusal is lost.
+#[test]
+fn a_refusal_in_its_wrapped_and_its_bare_spelling_is_listed_once() {
+    use crate::rules::errors::Error;
+    // Built over a root scope, as the neighbouring cells are: the registry is what finds the registered
+    // refusal inside the wrapped "R; cause", and without the scope the registered tail is not found (the
+    // text "R; cause" is then no refusal and is listed beside the sentence's own R).
+    let rules_file = RulesFile::try_from("rule r { Resources exists }").expect("parses");
+    let _root = root_scope(
+        &rules_file,
+        Rc::new(PathAwareValue::try_from("{ Resources: {} }").expect("parses")),
+    );
+    const HELD: &str = "the read of `A` was refused, at path /Resources/A/Tags";
+    const OTHER: &str = "the read of `B` was refused, at path /Resources/B/Tags";
+    for text in [HELD, OTHER] {
+        let _ = crate::rules::eval_context::register_refusal(text);
+    }
+    let sentence = format!(
+        "{}{}",
+        crate::rules::eval::RULE_CONDITION_UNEVALUATED_HEAD,
+        Error::Unevaluatable(HELD.to_string())
+    );
+    let record = |message: String| EventRecord {
+        context: String::from("GuardAccessClause#blockA"),
+        container: Some(RecordType::GuardClauseBlockCheck(BlockCheck {
+            status: Status::FAIL,
+            at_least_one_matches: false,
+            raised: true,
+            message: Some(message),
+            refusal: true,
+            custom_message: None,
+            gate_mark: false,
+            frame_reads: Vec::new(),
+        })),
+        children: vec![],
+    };
+    // The wrapped clause-error record the evaluator writes, and the bare settle record.
+    let wrapped = |refusal: &str| {
+        record(crate::rules::eval::clause_error_message(
+            &Error::Unevaluatable(refusal.to_string()),
+        ))
+    };
+    let bare = |refusal: &str| record(refusal.to_string());
+    let under = |records: Vec<EventRecord<'static>>| {
+        vec![EventRecord {
+            context: String::from("Rule#gated/When"),
+            container: Some(RecordType::RuleCondition(Status::FAIL)),
+            children: records,
+        }]
+    };
+    let counts = |records: Vec<EventRecord<'static>>| {
+        let text =
+            sentence_and_whether_refusals_joined(&sentence, &under(records), SentenceSlot::Error).0;
+        (text.matches(HELD).count(), text.matches(OTHER).count())
+    };
+    // The wrapped spelling of a refusal that carries a cause after it ("R; cause"): the wrapper is removed
+    // BEFORE the text is split at the refusal's boundary, so the registered `R` is found at position 0 and
+    // the cause is not read as a second refusal. Split first, the wrapper's own text leads the candidate and
+    // `R` is listed a second time.
+    let with_a_cause = format!("{HELD}; a cause");
+    assert_eq!(
+        vec![(1, 0), (1, 0), (1, 1), (1, 1), (1, 0)],
+        vec![
+            counts(vec![wrapped(HELD)]),
+            counts(vec![bare(HELD)]),
+            counts(vec![wrapped(HELD), wrapped(OTHER)]),
+            counts(vec![bare(HELD), wrapped(OTHER)]),
+            counts(vec![wrapped(&with_a_cause)]),
+        ],
+        "the held refusal is the sentence's own, once, in either spelling and with a cause after it; the other is added once"
+    );
+}
+
+/// A type block with an explanation of its own keeps it, and its silent child block gives no generic
+/// sentence beside it: the type block's walk of its children runs with the generic fallback off where the
+/// block has a message (`generic_fallback && message.is_none()`), so a raised, message-less child is skipped
+/// and the explanation is the one entry.
+///
+/// Fails when the generic "none of the checks recorded under it reports why" sentence is listed
+/// beside (or in place of) the explanation.
+#[test]
+fn a_type_blocks_explanation_is_kept_and_its_silent_child_gives_no_generic_sentence() {
+    let silent = EventRecord {
+        context: String::from("BlockGuardClause#2"),
+        container: Some(RecordType::BlockGuardCheck(BlockCheck {
+            status: Status::FAIL,
+            at_least_one_matches: false,
+            raised: true,
+            message: None,
+            refusal: false,
+            custom_message: None,
+            gate_mark: false,
+            frame_reads: Vec::new(),
+        })),
+        children: vec![],
+    };
+    let type_check = EventRecord {
+        context: String::from("TypeBlock#S3"),
+        container: Some(RecordType::TypeCheck(crate::rules::TypeBlockCheck {
+            type_name: "AWS::S3::Bucket",
+            block: BlockCheck {
+                status: Status::FAIL,
+                at_least_one_matches: false,
+                raised: true,
+                message: Some(String::from("the type block's own explanation")),
+                refusal: false,
+                custom_message: None,
+                gate_mark: false,
+                frame_reads: Vec::new(),
+            },
+        })),
+        children: vec![silent],
+    };
+    let listed: Vec<String> = report_failed_clauses(&[type_check], true, false)
+        .iter()
+        .map(|clause| match clause {
+            ClauseReport::Block(block) => block.messages.error_message.clone().unwrap_or_default(),
+            other => panic!("a block entry, got {:?}", other),
+        })
+        .collect();
+    assert_eq!(
+        vec![String::from("the type block's own explanation")],
+        listed,
+        "the parent keeps its own explanation and the silent child adds no generic sentence"
+    );
+}
+
+/// A called rule whose own sentence quotes a HELD refusal that left no flagged record beside a sibling
+/// disjunct's flagged one: the outer rule's sentence names both, once each. The children's refusal (the
+/// sibling's) is read first, and the called rule's own sentence, head stripped, is read as well, since it is
+/// the only account of the held one.
+///
+/// Fails when the held refusal is dropped (the own sentence was skipped because the children said
+/// something), or when either is named twice.
+#[test]
+fn a_called_rules_held_refusal_and_a_siblings_flagged_one_are_both_listed_once() {
+    // Built over a root scope with both sentences registered, as in a run (the neighbouring cells'
+    // setup): the dedupe consults the registry, and a cell without it tests a state the evaluator never
+    // produces.
+    let rules_file = RulesFile::try_from("rule r { Resources exists }").expect("parses");
+    let _root = root_scope(
+        &rules_file,
+        Rc::new(PathAwareValue::try_from("{ Resources: {} }").expect("parses")),
+    );
+    const HELD: &str = "the read of `A` was refused, at path /Resources/A/Tags";
+    const SIBLING: &str = "the read of `B` was refused, at path /Resources/B/Tags";
+    for text in [HELD, SIBLING] {
+        let _ = register_refusal(text);
+    }
+    let sibling = EventRecord {
+        context: String::from("GuardAccessClause#blockA"),
+        container: Some(RecordType::GuardClauseBlockCheck(BlockCheck {
+            status: Status::FAIL,
+            at_least_one_matches: false,
+            raised: true,
+            message: Some(crate::rules::eval::clause_error_message(
+                &crate::rules::errors::Error::undecidable(SIBLING.to_string()),
+            )),
+            refusal: true,
+            custom_message: None,
+            gate_mark: false,
+            frame_reads: Vec::new(),
+        })),
+        children: vec![],
+    };
+    let helper = EventRecord {
+        context: String::from("helper"),
+        container: Some(RecordType::RuleCheck(NamedStatus {
+            name: "helper",
+            status: Status::FAIL,
+            message: Some(format!(
+                "{}{HELD}",
+                crate::rules::eval::RULE_CONDITION_UNEVALUATED_HEAD
+            )),
+            slot: crate::rules::CustomSlot::Refusal,
+            displaced: None,
+            frame_reads: Vec::new(),
+            ended_by_error: false,
+        })),
+        children: vec![EventRecord {
+            context: String::from("Rule#helper/When"),
+            container: Some(RecordType::RuleCondition(Status::FAIL)),
+            children: vec![sibling],
+        }],
+    };
+    let plain = "The rule's condition could not be evaluated: a plain error";
+    let (text, ..) = rule_report_of(rule_over(
+        vec![helper],
+        plain,
+        crate::rules::CustomSlot::Evaluator,
+        None,
+    ));
+    let text = text.unwrap_or_default();
+    assert_eq!(
+        (1, 1),
+        (text.matches(HELD).count(), text.matches(SIBLING).count()),
+        "both refusals, once each, in the outer sentence: {text}"
+    );
+}
+
+/// A record whose text leads with a refusal and carries a cause after it ("R; cause"), beside a rule sentence
+/// that already carries R ("lead: R"), adds nothing: R is listed once and the cause is not appended as a
+/// refusal (it stays in the sentence that carries it). A record "R1; R2" beside "lead: R1" appends R2, a
+/// registered refusal of its own. The first row reads the registry at the position-0 candidate (the whole
+/// text starts with the refusal), the second at the boundary after the first.
+///
+/// Fails when the first row gains "also met: cause" or lists R twice, or when the second row loses
+/// R2.
+#[test]
+fn a_refusal_with_a_cause_after_it_is_listed_once_and_a_second_refusal_is_kept() {
+    let rules_file = RulesFile::try_from("rule r { Resources exists }").expect("parses");
+    let _root = root_scope(
+        &rules_file,
+        Rc::new(PathAwareValue::try_from("{ Resources: {} }").expect("parses")),
+    );
+    const R1: &str = "the read of `A` was refused, at path /Resources/A/Tags";
+    const R2: &str = "the read of `B` was refused, at path /Resources/B/Tags";
+    for text in [R1, R2] {
+        let _ = register_refusal(text);
+    }
+    let record = |message: String| EventRecord {
+        context: String::from("GuardAccessClause#blockA"),
+        container: Some(RecordType::GuardClauseBlockCheck(BlockCheck {
+            status: Status::FAIL,
+            at_least_one_matches: false,
+            raised: true,
+            message: Some(message),
+            refusal: true,
+            custom_message: None,
+            gate_mark: false,
+            frame_reads: Vec::new(),
+        })),
+        children: vec![],
+    };
+    let under = |records: Vec<EventRecord<'static>>| {
+        vec![EventRecord {
+            context: String::from("Rule#gated/When"),
+            container: Some(RecordType::RuleCondition(Status::FAIL)),
+            children: records,
+        }]
+    };
+    let lead = format!("lead: {R1}");
+    let (first, _) = sentence_and_whether_refusals_joined(
+        &lead,
+        &under(vec![record(format!("{R1}; a cause"))]),
+        SentenceSlot::Error,
+    );
+    let (second, _) = sentence_and_whether_refusals_joined(
+        &lead,
+        &under(vec![record(format!("{R1}; {R2}"))]),
+        SentenceSlot::Error,
+    );
+    assert_eq!(
+        (lead.clone(), format!("{lead}{ALSO_MET}{R2}")),
+        (first, second),
+        "R once and the cause not appended; R2 kept beside the carried R1"
+    );
+}
+
+/// A refused per-value record of a failed condition: a unary check flagged a refusal, its marker carrying
+/// `token`, with `message` as its sentence.
+fn refused_unary(
+    message: &str,
+    token: Option<crate::rules::errors::RefusalToken>,
+) -> EventRecord<'static> {
+    EventRecord {
+        context: String::from("Properties.Tags"),
+        container: Some(RecordType::ClauseValueCheck(ClauseCheck::Unary(
+            UnaryValueCheck {
+                value: ValueCheck {
+                    from: QueryResult::UnResolved(UnResolved {
+                        traversed_to: Rc::new(
+                            PathAwareValue::try_from("{ A: 1 }").expect("parses"),
+                        ),
+                        remaining_query: String::new(),
+                        reason: Some(message.to_string()),
+                        kind: UnResolvedKind::Undecidable {
+                            refusal: token,
+                            carried: None,
+                        },
+                    }),
+                    message: Some(message.to_string()),
+                    custom_message: None,
+                    status: Status::FAIL,
+                    refusal: true,
+                },
+                comparison: (CmpOperator::Exists, false),
+            },
+        ))),
+        children: vec![],
+    }
+}
+
+/// A rule's record over a failed `when` condition holding `conditions`.
+fn rule_over(
+    conditions: Vec<EventRecord<'static>>,
+    message: &str,
+    slot: crate::rules::CustomSlot,
+    displaced: Option<(crate::rules::CustomSlot, String)>,
+) -> EventRecord<'static> {
+    EventRecord {
+        context: String::from("gated"),
+        container: Some(RecordType::RuleCheck(NamedStatus {
+            name: "gated",
+            status: Status::FAIL,
+            message: Some(message.to_string()),
+            slot,
+            displaced,
+            frame_reads: Vec::new(),
+            // A rule whose own `when` failed ended on an error (the evaluator closes it so).
+            ended_by_error: true,
+        })),
+        children: vec![EventRecord {
+            context: String::from("Rule#gated/When"),
+            container: Some(RecordType::RuleCondition(Status::FAIL)),
+            children: conditions,
+        }],
+    }
+}
+
+/// The rule report of a one-rule tree: (custom message, error message, refusal flag, slot).
+fn rule_report_of(
+    record: EventRecord<'static>,
+) -> (
+    Option<String>,
+    Option<String>,
+    bool,
+    crate::rules::CustomSlot,
+) {
+    match report_all_failed_clauses_for_rules(&[record]).as_slice() {
+        [ClauseReport::Rule(rule)] => (
+            rule.messages.custom_message.clone(),
+            rule.messages.error_message.clone(),
+            rule.messages.refusal,
+            rule.custom_slot,
+        ),
+        other => panic!("one rule report, got {:?}", other),
+    }
+}
+
+/// A refusal is one sentence, by identity, in either order of a wrapper that quotes it and the bare record:
+/// two records naming one refusal by its token (a wrapper sentence that contains the refusal's text, and the
+/// bare text) list it once, wrapper first or bare first, and a rule sentence that already carries it gains
+/// nothing from either. A numbered raise `(1) R2 (2) R1` after a collected `R1` lists `R2`: containment never
+/// decides. Built over a root scope so the registry holds the sentences, as in a run (the report is built
+/// while the scope is alive).
+///
+/// Fails when the refusal is named twice (a wrapper-first order keeps the wrapper and then the bare
+/// text), when a numbered raise is dropped whole because it contains a collected part, or when the
+/// sentence that carries the refusal gains it again.
+#[test]
+fn one_refusal_is_one_sentence_by_identity_in_every_order() {
+    let rules_file = RulesFile::try_from("rule r { Resources exists }").expect("parses");
+    let _root = root_scope(
+        &rules_file,
+        Rc::new(PathAwareValue::try_from("{ Resources: {} }").expect("parses")),
+    );
+    let first = "the read of `S` is refused at path /Resources/F/Tags";
+    let second = "the read of `T` is refused at path /Resources/G/Tags";
+    let first_token = register_refusal(first);
+    let _ = register_refusal(second);
+    let wrapper = format!("the value to compare from could not be read: {first}");
+    let wrapper_token = ensure_registered_wrap(&wrapper, Some(first_token));
+    assert_eq!(
+        first_token, wrapper_token,
+        "premise: the wrap is registered under the refusal's token"
+    );
+    let plain = "The rule's condition could not be evaluated: a plain error";
+    let carrying = format!("The rule's condition could not be evaluated: {first}");
+    let occurrences = |text: &Option<String>, needle: &str| {
+        text.as_deref().unwrap_or_default().matches(needle).count()
+    };
+    let evaluator = crate::rules::CustomSlot::Evaluator;
+    // Every row is read, so a first failure hides none.
+    fn row<T: PartialEq + std::fmt::Debug>(
+        failed: &mut Vec<String>,
+        label: &str,
+        wanted: T,
+        got: T,
+    ) {
+        if wanted != got {
+            failed.push(format!("{label}: wanted {wanted:?}, got {got:?}"));
+        }
+    }
+    let mut failed: Vec<String> = Vec::new();
+    for (label, order) in [("wrapper first", [0, 1]), ("bare first", [1, 0])] {
+        let records = |message: &str| {
+            let both = [
+                refused_unary(&wrapper, Some(first_token)),
+                refused_unary(first, Some(first_token)),
+            ];
+            let [a, b] = order.map(|index| both[index].clone());
+            rule_over(vec![a, b], message, evaluator, None)
+        };
+        let (named_by_plain, _, _, _) = rule_report_of(records(plain));
+        row(
+            &mut failed,
+            &format!("({label}) a plain sentence gains the refusal once"),
+            1,
+            occurrences(&named_by_plain, first),
+        );
+        let (named_by_carrier, _, _, _) = rule_report_of(records(&carrying));
+        row(
+            &mut failed,
+            &format!("({label}) a sentence that carries the refusal gains nothing"),
+            Some(carrying.clone()),
+            named_by_carrier,
+        );
+    }
+    let numbered = format!("(1) {second} (2) {first}");
+    let (text, _, _, _) = rule_report_of(rule_over(
+        vec![
+            refused_unary(first, Some(first_token)),
+            refused_unary(&numbered, None),
+        ],
+        plain,
+        evaluator,
+        None,
+    ));
+    row(
+        &mut failed,
+        "a numbered raise after a collected part still lists the part beside it",
+        (1, 1),
+        (occurrences(&text, first), occurrences(&text, second)),
+    );
+    assert!(failed.is_empty(), "{:#?}", failed);
+}
+
+/// A disjunction NESTED under a conjunction keeps its held refusal in the rule's sentence: its per-value
+/// records carry no message (the gate role writes none on purpose), so the disjunction's own message is the
+/// only account of the refusal and is read, stripped of its head to the quoted error. A disjunction whose
+/// children name a refusal is read through them and its message is not read again.
+///
+/// Fails when the nested refusal is named nowhere, or when the quoted error is named twice.
+#[test]
+fn a_nested_disjunctions_held_refusal_is_listed_once() {
+    let rules_file = RulesFile::try_from("rule r { Resources exists }").expect("parses");
+    let _root = root_scope(
+        &rules_file,
+        Rc::new(PathAwareValue::try_from("{ Resources: {} }").expect("parses")),
+    );
+    let held = "the read of `K` is refused at path /Resources/N/Tags";
+    let message = |refusal: bool, text: String| EventRecord {
+        context: String::from("Disjunction#1"),
+        container: Some(RecordType::Disjunction(BlockCheck {
+            status: Status::FAIL,
+            at_least_one_matches: false,
+            raised: false,
+            message: Some(text),
+            refusal,
+            custom_message: None,
+            gate_mark: false,
+            frame_reads: Vec::new(),
+        })),
+        children: vec![EventRecord {
+            context: String::from("GuardBlockAccessClause#1"),
+            container: Some(RecordType::GuardClauseBlockCheck(BlockCheck {
+                status: Status::FAIL,
+                at_least_one_matches: false,
+                raised: false,
+                message: None,
+                refusal: true,
+                custom_message: None,
+                gate_mark: false,
+                frame_reads: Vec::new(),
+            })),
+            children: vec![],
+        }],
+    };
+    let wrapped = format!("{}{held}", crate::rules::eval::DISJUNCTION_UNDECIDED_HEAD);
+    let plain = "The rule's condition could not be evaluated: a plain error";
+    let evaluator = crate::rules::CustomSlot::Evaluator;
+    let (text, _, flag, slot) = rule_report_of(rule_over(
+        vec![message(true, wrapped.clone())],
+        plain,
+        evaluator,
+        None,
+    ));
+    let (kept, ..) = rule_report_of(rule_over(
+        vec![message(true, wrapped)],
+        &format!("{plain}; the condition also met: {held}"),
+        evaluator,
+        None,
+    ));
+    assert_eq!(
+        (
+            Some(format!("{plain}; the condition also met: {held}")),
+            false,
+            crate::rules::CustomSlot::Evaluator,
+            Some(format!("{plain}; the condition also met: {held}")),
+        ),
+        (text, flag, slot, kept),
+        "the nested disjunction's quoted refusal is listed once, and not again where the sentence carries it; the sentence keeps its plain kind"
+    );
+}
+
+/// A rule whose call carries a `<< >>` body and whose own sentence is absent (the run-ending case: slot
+/// Author, nothing displaced) reports the refusals its failed condition met as its error message under the
+/// neutral head, joined, with the flag of the deciding error (a plain one: false), and keeps the body
+/// untouched. With a sentence the body displaced (slot Author, the displaced sentence a refusal's, so the
+/// flag is true), the refusals the condition met beyond the one that sentence carries are appended to the
+/// ERROR message and the body is never edited.
+///
+/// Fails when the body is edited, when the refusals are named nowhere in the report, when the
+/// neutral head is missing, or when the alone row is flagged a refusal.
+#[test]
+fn a_calls_body_keeps_its_text_and_the_refusals_join_the_error_message() {
+    let rules_file = RulesFile::try_from("rule r { Resources exists }").expect("parses");
+    let _root = root_scope(
+        &rules_file,
+        Rc::new(PathAwareValue::try_from("{ Resources: {} }").expect("parses")),
+    );
+    let first = "the read of `S` is refused at path /Resources/F/Tags";
+    let second = "the read of `T` is refused at path /Resources/G/Tags";
+    let author = crate::rules::CustomSlot::Author;
+    let body = "the callers own words";
+    let two = || vec![refused_unary(first, None), refused_unary(second, None)];
+    let alone = rule_report_of(rule_over(two(), body, author, None));
+    let sentence = format!("The rule's condition could not be evaluated: {first}");
+    let displaced = rule_report_of(rule_over(
+        two(),
+        body,
+        author,
+        Some((crate::rules::CustomSlot::Refusal, sentence.clone())),
+    ));
+    assert_eq!(
+        (
+            (
+                Some(body.to_string()),
+                Some(format!(
+                    "{RULE_FAILED_ON_AN_ERROR_HEAD}{ALSO_MET}{first}; {second}"
+                )),
+                false,
+                author,
+            ),
+            (
+                Some(body.to_string()),
+                Some(format!("{sentence}; the condition also met: {second}")),
+                true,
+                author,
+            ),
+        ),
+        (alone, displaced),
+        "the body stays as written; the refusals join the error message"
+    );
+}
+
+/// A rule whose own sentence is a PLAIN error's (slot Evaluator, flag clear) that gains a refusal from its
+/// failed condition's records KEEPS its kind: the refusal did not decide the verdict, so the report's slot
+/// stays Evaluator and the flag false, and the refusal rides as the second of the sentence's two parts,
+/// whole with its remedy (the console cuts the plain part at the recorded-message bound and prints the
+/// refusal part whole). A sentence that gains nothing keeps its kind and carries no parts.
+///
+/// Fails when the slot or the flag is promoted to a refusal's, when the refusal part is cut or
+/// absent, or when a sentence that gained nothing carries parts.
+#[test]
+fn a_plain_sentence_that_gains_a_refusal_keeps_its_kind_and_the_refusal_part_is_whole() {
+    let refusal_record = || EventRecord {
+        context: String::from("Properties.Tags"),
+        container: Some(RecordType::GuardClauseBlockCheck(BlockCheck {
+            status: Status::FAIL,
+            at_least_one_matches: false,
+            raised: true,
+            message: Some(String::from("the settled refusal, remedy included")),
+            refusal: true,
+            custom_message: None,
+            gate_mark: false,
+            frame_reads: Vec::new(),
+        })),
+        children: vec![],
+    };
+    let rule = |children: Vec<EventRecord<'static>>, slot: crate::rules::CustomSlot| EventRecord {
+        context: String::from("gated"),
+        container: Some(RecordType::RuleCheck(NamedStatus {
+            name: "gated",
+            status: Status::FAIL,
+            message: Some(String::from(
+                "The rule's condition could not be evaluated: a plain error",
+            )),
+            slot,
+            displaced: None,
+            frame_reads: Vec::new(),
+            ended_by_error: false,
+        })),
+        children: vec![EventRecord {
+            context: String::from("Rule#gated/When"),
+            container: Some(RecordType::RuleCondition(Status::FAIL)),
+            children,
+        }],
+    };
+    let read = |record: EventRecord<'static>| match report_all_failed_clauses_for_rules(&[record])
+        .as_slice()
+    {
+        [ClauseReport::Rule(rule)] => (
+            rule.custom_slot,
+            rule.messages.refusal,
+            rule.messages.custom_message.clone().unwrap_or_default(),
+            rule.messages.parts.clone(),
+        ),
+        other => panic!("one rule report, got {:?}", other),
+    };
+    let (slot, flag, text, parts) = read(rule(
+        vec![refusal_record()],
+        crate::rules::CustomSlot::Evaluator,
+    ));
+    assert_eq!(
+        (
+            crate::rules::CustomSlot::Evaluator,
+            false,
+            true,
+            Some(String::from("the settled refusal, remedy included"))
+        ),
+        (
+            slot,
+            flag,
+            text.ends_with("the condition also met: the settled refusal, remedy included"),
+            parts.map(|parts| parts.message().to_string())
+        ),
+        "the joined refusal leaves the sentence plain and rides as the whole second part"
+    );
+    let (slot, flag, text, parts) = read(rule(vec![], crate::rules::CustomSlot::Evaluator));
+    assert_eq!(
+        (crate::rules::CustomSlot::Evaluator, false, false, false),
+        (slot, flag, text.contains("also met"), parts.is_some()),
+        "a sentence that gained nothing keeps its kind and carries no parts"
+    );
+}
+
+/// A call's `<< >>` body over a silent failing block is the failure text in every consumer: the rule's
+/// `checks` stay empty (no generic "none of the checks recorded under it reports why" entry fills them), the
+/// console's unattributed section names the rule by its message, and the JUnit failure text
+/// (`get_message_with_rule_records`) is the body, with the generic sentence nowhere. A rule with NO text
+/// keeps the generic entry, so a failing rule is never listed with nothing to say.
+///
+/// Fails when the body's rule lists the generic sentence in `checks` or in the JUnit text, or when
+/// the message-less rule lists nothing.
+#[test]
+fn a_calls_body_over_a_silent_block_is_the_failure_text_and_the_generic_sentence_is_not() {
+    const BODY: &str = "AUTHOR BODY";
+    let silent = || EventRecord {
+        context: String::from("BlockGuardClause#2"),
+        container: Some(RecordType::BlockGuardCheck(BlockCheck {
+            status: Status::FAIL,
+            at_least_one_matches: false,
+            raised: false,
+            message: None,
+            refusal: false,
+            custom_message: None,
+            gate_mark: false,
+            frame_reads: Vec::new(),
+        })),
+        children: vec![EventRecord {
+            context: String::from("GuardBlockAccessClause#2"),
+            container: Some(RecordType::GuardClauseBlockCheck(BlockCheck {
+                status: Status::FAIL,
+                at_least_one_matches: false,
+                raised: false,
+                message: None,
+                refusal: false,
+                custom_message: None,
+                gate_mark: false,
+                frame_reads: Vec::new(),
+            })),
+            children: vec![],
+        }],
+    };
+    let call = |message: Option<&str>| EventRecord {
+        context: String::from("inner"),
+        container: Some(RecordType::RuleCheck(NamedStatus {
+            name: "inner",
+            status: Status::FAIL,
+            message: message.map(String::from),
+            slot: match message {
+                Some(_) => crate::rules::CustomSlot::Author,
+                None => crate::rules::CustomSlot::Evaluator,
+            },
+            displaced: None,
+            frame_reads: Vec::new(),
+            ended_by_error: false,
+        })),
+        children: vec![silent()],
+    };
+    let read = |record: EventRecord<'static>| match report_all_failed_clauses_for_rules(&[record])
+        .as_slice()
+    {
+        [report @ ClauseReport::Rule(rule)] => (
+            rule.checks.len(),
+            report
+                .get_message_with_rule_records()
+                .into_iter()
+                .flat_map(|messages| [messages.custom_message, messages.error_message])
+                .flatten()
+                .collect::<Vec<_>>(),
+        ),
+        other => panic!("one rule report, got {:?}", other),
+    };
+    assert_eq!(
+        (
+            (0, vec![String::from(BODY)]),
+            (1, vec![String::from(SILENT_BLOCK_SENTENCE)]),
+        ),
+        (read(call(Some(BODY))), read(call(None))),
+        "the body alone with empty checks; the message-less rule keeps the generic entry"
+    );
+}
+
+/// A `MissingBlockValue` record flagged a refusal that carries no message of its own (no writer in
+/// `eval.rs` builds one, but the record admits it) is reported as the refusal it is, with the marker's
+/// reason as its sentence, and not as a missing property with the flag dropped.
+///
+/// Fails when the report reads "is missing" and refusal false.
+#[test]
+fn a_refused_missing_value_without_a_message_is_reported_as_the_refusal() {
+    let record = EventRecord {
+        context: String::from("Properties.Tags"),
+        container: Some(RecordType::ClauseValueCheck(
+            ClauseCheck::MissingBlockValue(ValueCheck {
+                from: QueryResult::UnResolved(UnResolved {
+                    traversed_to: Rc::new(PathAwareValue::try_from("{ A: 1 }").expect("parses")),
+                    remaining_query: String::new(),
+                    reason: Some(String::from("the read was refused")),
+                    kind: UnResolvedKind::Undecidable {
+                        refusal: Some(crate::rules::errors::RefusalToken::minted(1)),
+                        carried: None,
+                    },
+                }),
+                message: None,
+                custom_message: None,
+                status: Status::FAIL,
+                refusal: true,
+            }),
+        )),
+        children: vec![],
+    };
+    match report_all_failed_clauses_for_rules(&[record]).as_slice() {
+        [ClauseReport::Block(block)] => assert_eq!(
+            (Some("the read was refused"), true),
+            (
+                block.messages.error_message.as_deref(),
+                block.messages.refusal
+            ),
+            "the marker's reason is the sentence and the flag stays"
+        ),
+        other => panic!("one block report, got {:?}", other),
+    }
 }
 
 /// A parent WITH a message of its own drops a silent child block beside a sibling that reports: a block
@@ -11749,7 +18563,7 @@ fn a_failed_condition_is_walked_only_for_a_rule_without_a_message_and_generic_en
 /// reports), and a disjunction with a message over the same two children lists the reporting disjunct
 /// alone.
 ///
-/// Expected, not yet run. Red: the silent block's generic sentence is listed beside the reporting child.
+/// Fails when the silent block's generic sentence is listed beside the reporting child.
 #[test]
 fn a_parent_with_a_message_drops_a_silent_child_beside_a_reporting_sibling() {
     let reporting = || EventRecord {
@@ -11757,9 +18571,12 @@ fn a_parent_with_a_message_drops_a_silent_child_beside_a_reporting_sibling() {
         container: Some(RecordType::GuardClauseBlockCheck(BlockCheck {
             status: Status::FAIL,
             at_least_one_matches: false,
+            raised: true,
             message: Some(String::from("A failed")),
             refusal: false,
             custom_message: None,
+            gate_mark: false,
+            frame_reads: Vec::new(),
         })),
         children: vec![],
     };
@@ -11768,18 +18585,24 @@ fn a_parent_with_a_message_drops_a_silent_child_beside_a_reporting_sibling() {
         container: Some(RecordType::BlockGuardCheck(BlockCheck {
             status: Status::FAIL,
             at_least_one_matches: false,
+            raised: false,
             message: None,
             refusal: false,
             custom_message: None,
+            gate_mark: false,
+            frame_reads: Vec::new(),
         })),
         children: vec![EventRecord {
             context: String::from("GuardBlockAccessClause#2"),
             container: Some(RecordType::GuardClauseBlockCheck(BlockCheck {
                 status: Status::FAIL,
                 at_least_one_matches: false,
+                raised: false,
                 message: None,
                 refusal: false,
                 custom_message: None,
+                gate_mark: false,
+                frame_reads: Vec::new(),
             })),
             children: vec![],
         }],
@@ -11787,9 +18610,17 @@ fn a_parent_with_a_message_drops_a_silent_child_beside_a_reporting_sibling() {
     let with_message = || BlockCheck {
         status: Status::FAIL,
         at_least_one_matches: false,
-        message: Some(String::from("the parent's own message")),
+        raised: true,
+        // The evaluator's sentence quoting the error the reporting child lists (a record's `message` is
+        // never the author's text), so that child tells it and the parent writes no entry of its own.
+        message: Some(format!(
+            "{}A failed",
+            crate::rules::eval::WHEN_UNEVALUATED_HEAD
+        )),
         refusal: false,
         custom_message: None,
+        gate_mark: false,
+        frame_reads: Vec::new(),
     };
     let block = EventRecord {
         context: String::from("BlockGuardClause#1"),
@@ -11832,8 +18663,9 @@ fn a_parent_with_a_message_drops_a_silent_child_beside_a_reporting_sibling() {
 /// carry flagged a generic sentence as a refusal). The child is a gate role's mark: a failing
 /// `GuardClauseBlockCheck` with no message and no children.
 ///
-/// Expected, not yet run. Red: the case with a message reports the generic sentence or loses the flag; the
-/// case without one reports `refusal: true`, or the block is not listed at all (an empty list of checks).
+/// Fails when the case with a message reports the generic sentence or loses the flag, when the case
+/// without one reports `refusal: true`, or when the block is not listed at all (an empty list of
+/// checks).
 #[test]
 fn a_failing_block_whose_children_report_nothing_is_listed_by_its_own_record() {
     const GENERIC: &str =
@@ -11844,18 +18676,24 @@ fn a_failing_block_whose_children_report_nothing_is_listed_by_its_own_record() {
         container: Some(RecordType::BlockGuardCheck(BlockCheck {
             status: Status::FAIL,
             at_least_one_matches: false,
+            raised: message.is_some(), // the fixture's records with a sentence model a raise's record
             message: message.map(String::from),
             refusal: true,
             custom_message: None,
+            gate_mark: false,
+            frame_reads: Vec::new(),
         })),
         children: vec![EventRecord {
             context: String::from("GuardBlockAccessClause#1"),
             container: Some(RecordType::GuardClauseBlockCheck(BlockCheck {
                 status: Status::FAIL,
                 at_least_one_matches: false,
+                raised: false,
                 message: None,
                 refusal: true,
                 custom_message: None,
+                gate_mark: false,
+                frame_reads: Vec::new(),
             })),
             children: vec![],
         }],
@@ -11917,9 +18755,12 @@ fn a_failing_block_whose_children_report_nothing_is_listed_by_its_own_record() {
         container: Some(RecordType::WhenCheck(BlockCheck {
             status: Status::FAIL,
             at_least_one_matches: false,
+            raised: message.is_some(), // the fixture's records with a sentence model a raise's record
             message: message.map(String::from),
             refusal: false,
             custom_message: None,
+            gate_mark: false,
+            frame_reads: Vec::new(),
         })),
         children: vec![block(None)],
     };

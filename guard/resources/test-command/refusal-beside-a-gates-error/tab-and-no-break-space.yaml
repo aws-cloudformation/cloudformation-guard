@@ -1,0 +1,24 @@
+###
+# The input of the `test` cell for the escapes on the reason of an unmet expectation. The compared entry of `L`
+# holds a tab and a no-break space inside its value, so the converter's error quotes them; `M` holds an
+# intrinsic beside the compared entry (a refused selection), so each gated rule of the rules file fails closed
+# on the converter's error with the refusal settled beside it. Both expectations are PASS, so both are unmet,
+# and the reason on each line is the rule's sentence.
+###
+---
+- name: a tab and a no-break space in the value a converter's error quotes
+  input:
+    Resources:
+      M:
+        Tags:
+          Env: dev
+          ENV:
+            Ref: Stage
+      L:
+        Tags:
+          - Key: Env
+            Value: "a\tb\xA0c"
+  expectations:
+    rules:
+      opened_by_some: PASS
+      opened_by_all: PASS

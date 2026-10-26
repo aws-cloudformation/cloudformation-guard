@@ -375,27 +375,14 @@ fn single_line(
     let rendered = super::common::Rendered::of(by_resources.values());
 
     for (_resource_name, resource) in by_resources {
-        writeln!(writer, "Resource = {} {{", resource.name.yellow().bold())?;
-        let prefix = String::from("  ");
-        writeln!(
+        super::common::write_resource_header(
             writer,
-            "{prefix}{0:<width$}= {rt}",
-            "Type",
-            prefix = prefix,
-            width = 10,
-            rt = resource.resource_type,
+            &resource.name,
+            resource.resource_type,
+            resource.cdk_path.as_ref().map_or("", |p| *p),
+            colour_on(),
         )?;
-        let cdk_path = resource.cdk_path.as_ref().map_or("", |p| *p);
-        if !cdk_path.is_empty() {
-            writeln!(
-                writer,
-                "{prefix}{0:<width$}= {cdk}",
-                "CDK-Path",
-                prefix = prefix,
-                width = 10,
-                cdk = cdk_path
-            )?;
-        }
+        let prefix = String::from("  ");
         for each_rule in &failure_report.not_compliant {
             let rule_name = match each_rule {
                 ClauseReport::Rule(RuleReport { name, .. }) => format!("/{}", name),
@@ -732,8 +719,8 @@ mod code_excerpt_tests {
     /// reset), and a tab, which neither ends nor hides a line, is kept as it is written. The ESC is built
     /// with `char::from`, since the source holds no raw control.
     ///
-    /// Expected, not yet run. Red: a raw ESC byte beside the colour sequences, the control written as
-    /// text with no escape, or the tab written as `\t`.
+    /// Fails when a raw ESC byte appears beside the colour sequences, when the control is
+    /// written as text with no escape, or when the tab is written as `\t`.
     #[test]
     fn a_control_in_a_source_line_is_escaped_before_the_colour_and_a_tab_is_kept() {
         let esc = char::from(0x1b);
@@ -777,8 +764,8 @@ mod code_excerpt_tests {
     /// backstop does not keep turns it red, where a backstop test that builds its own sequence would stay
     /// green while every coloured `Code:` line printed the sequence as text.
     ///
-    /// Expected, not yet run. Red: the backstop's output differs from the writer's (a colour sequence the
-    /// writer emits is written as text), or the excerpt holds no colour at all.
+    /// Fails when the backstop's output differs from the writer's (a colour sequence the writer
+    /// emits is written as text), or when the excerpt holds no colour at all.
     #[test]
     fn a_coloured_excerpt_passes_the_writers_backstop_unchanged() {
         let esc = char::from(0x1b);
