@@ -8013,7 +8013,7 @@ fn a_parameter_a_probe_reads_is_resolved_once_for_the_enumeration() -> Result<()
 /// clause, read by `Kind IN %k`) reads the same: nothing binds `k` on a scalar, the clause is left
 /// unread, zero resolutions, refused.
 #[test]
-fn a_capture_the_predicate_declares_is_read_by_each_entrys_probe_on_its_own() -> Result<()> {
+fn a_capture_the_predicate_declares_is_read_by_each_entries_probe_on_its_own() -> Result<()> {
     use crate::rules::eval_context::QUIET_PROBE_RESOLUTIONS;
 
     const TWO_SCALARS: &str = r#"{"Cfg": {"A": "x", "B": "y"}}"#;
@@ -8080,7 +8080,7 @@ fn a_capture_the_predicate_declares_is_read_by_each_entrys_probe_on_its_own() ->
 /// that tells the exclusion apart is the three-scalar own-capture row of the cell above (two
 /// resolutions, one with a cache that kept the capture).
 #[test]
-fn a_wildcard_capture_and_a_lets_capture_the_predicate_declares_are_each_entrys_own() -> Result<()>
+fn a_wildcard_capture_and_a_lets_capture_the_predicate_declares_are_each_entries_own() -> Result<()>
 {
     use crate::rules::eval_context::QUIET_PROBE_RESOLUTIONS;
 
@@ -21673,7 +21673,7 @@ fn a_bindings_resolution_ranges_leave_with_the_root_scope_that_recorded_them() -
 /// which `Limits[*].K` finds no `Limits`, so both entries were deselected with no marker at all; the
 /// predicate's own `C1` is the `Cfg[ c | .. ]` entry, as the control spells it.)
 #[test]
-fn a_block_lets_refusal_inside_the_entrys_run_refuses_the_entry_as_the_inline_spelling_does(
+fn a_block_lets_refusal_inside_the_entries_run_refuses_the_entry_as_the_inline_spelling_does(
 ) -> Result<()> {
     let rules =
         "rule r { Resources[ x | this { let l = Cfg[ c | Limits[*].K exists ]\n %l !empty } ] !empty }";
@@ -21811,7 +21811,7 @@ fn a_let_resolved_inside_another_lets_resolution_leaves_both_entries_one_kind_in
 /// body inside each entry's run, so the body's scope is built after the run opened and the refusal its
 /// `let` mints marks the entry: `A` and `B` REFUSED in both orders, as the inline spelling reads them.
 #[test]
-fn a_called_rules_body_let_inside_the_entrys_run_refuses_the_entry() -> Result<()> {
+fn a_called_rules_body_let_inside_the_entries_run_refuses_the_entry() -> Result<()> {
     let rules = "rule check(p) { let v = %p.Cfg[ c | Limits[*].K exists ]\n %v !empty }\nrule r { Resources[ x | check(this) ] !empty }";
     let mut cells = CellFailures::default();
     for (order, template) in [
@@ -44090,7 +44090,7 @@ fn the_grounding_probe_is_a_quiet_reading_independent_of_what_ran_first(
     Status::FAIL,
     true
 )]
-#[case::the_control_grounds_through_the_entrys_own_tag_list(
+#[case::the_control_grounds_through_the_entries_own_tag_list(
     "rule r { Resources.A.Properties.Rules[*][ R1 !exists or Tags[ Key == 'Env' ] !empty ] !empty }",
     Status::PASS,
     false
@@ -68093,7 +68093,7 @@ fn an_entry_whose_run_minted_its_own_refusal_is_refused_beside_a_binding_resolve
 /// promotion arm read the two tokens by minting alone and promoted the entry's own refusal over to the
 /// binding's in the first entry). Labels carry the markers read, so a red names which entry read which.
 #[test]
-fn a_blocks_body_and_a_single_comparison_rank_the_bindings_token_as_the_entrys_run_does(
+fn a_blocks_body_and_a_single_comparison_rank_the_bindings_token_as_the_entries_run_does(
 ) -> Result<()> {
     const BLOCK_OWN_FIRST: &str = "let lim = Resources.*.Cfg[ c | Limits[*].K exists ]\nrule r { Resources[ x | this { Cfg[ c | Limits[*].K exists ] !empty  %lim !empty } ] !empty }";
     const BLOCK_BINDING_FIRST: &str = "let lim = Resources.*.Cfg[ c | Limits[*].K exists ]\nrule r { Resources[ x | this { %lim !empty  Cfg[ c | Limits[*].K exists ] !empty } ] !empty }";
@@ -68353,7 +68353,7 @@ const KEY_FILTER_UNDER_RUN_B_THEN_A: &str = r#"{ Resources: { B: { Name: 'b', Cf
 /// memoized binding's, kept C and read REFUSED: the swap the direct folds closed, reached through the key
 /// filter's own fold, which took no ranking. Labels carry the markers read.
 #[test]
-fn a_key_filter_under_a_run_keeps_the_entrys_own_refusal_over_a_later_binding_resolved_token(
+fn a_key_filter_under_a_run_keeps_the_entries_own_refusal_over_a_later_binding_resolved_token(
 ) -> Result<()> {
     const OWN_FIRST: &str = "let lim = Resources.*.Cfg[ c | Limits[*].K exists ]\nrule r { Resources[ x | Cfg[ c | Limits[*].K exists  %lim !empty ] !empty or Name exists   Props[ keys IN %c ] !empty ] !empty }";
     const BINDING_FIRST: &str = "let lim = Resources.*.Cfg[ c | Limits[*].K exists ]\nrule r { Resources[ x | Cfg[ c | %lim !empty  Limits[*].K exists ] !empty or Name exists   Props[ keys IN %c ] !empty ] !empty }";
@@ -71000,7 +71000,7 @@ fn two_entry_gate_run(
 /// running.
 ///
 /// This cell does not reach the failure counters of the outer fold, since neither entry fails; the control
-/// below (`a_gate_role_block_over_a_lone_refused_selection_that_decided_a_no_decides_a_sibling_entrys_raise`)
+/// below (`a_gate_role_block_over_a_lone_refused_selection_that_decided_a_no_decides_a_sibling_entries_raise`)
 /// is the shape in which `I2` fails on a decided no.
 ///
 /// Rows on one run: the premise (the same rules over a document whose first entry is not named `n1`, so
@@ -71065,7 +71065,7 @@ fn a_gate_role_block_over_a_lone_refused_selection_beside_a_raise_fails_closed_a
 /// line naming `%y`, `r` fails closed) if a decided FAIL of an entry stops deciding a sibling entry's
 /// raise.
 #[test]
-fn a_gate_role_block_over_a_lone_refused_selection_that_decided_a_no_decides_a_sibling_entrys_raise(
+fn a_gate_role_block_over_a_lone_refused_selection_that_decided_a_no_decides_a_sibling_entries_raise(
 ) -> Result<()> {
     const DECIDED_BY_A_SIBLING_ENTRY: &str = "was decided by a sibling entry's failure";
     const DECIDED_BY_A_SIBLING_CLAUSE: &str = "was decided by a sibling clause's failure";
@@ -79742,7 +79742,7 @@ fn a_filter_capture_is_scoped_to_its_block_and_survives_it(
 /// holds that resource's keys alone, so `A`'s `beta` and `B`'s `alpha` are both outside `%x` and the
 /// selection is one peer per resource.
 #[test]
-fn a_capture_made_inside_a_wildcard_predicate_is_the_entrys_own() -> Result<()> {
+fn a_capture_made_inside_a_wildcard_predicate_is_the_entries_own() -> Result<()> {
     const R1_THEN_R2: &str = r#"{
         "Resources": {
             "R1": { "Mode": "fast", "Tags": [ { "Key": "Env", "Value": "prod" } ], "M": { "DEV": 1 } },
@@ -80619,7 +80619,7 @@ fn the_own_key_of_an_expanded_member_belongs_to_the_lists_loop_in_both_spellings
 /// under each entry and selected all four peers. A compliant one-entry document passes in both shapes,
 /// and a reader after the query reads the accumulation of both tags in document order on both paths.
 #[test]
-fn the_continuation_after_an_own_key_enumeration_reads_each_entrys_own_capture() -> Result<()> {
+fn the_continuation_after_an_own_key_enumeration_reads_each_entries_own_capture() -> Result<()> {
     const A_PROD_THEN_B_DEV: &str = r#"{
         "Cfg": {
             "Mode": [ "fast" ],
@@ -81239,10 +81239,10 @@ fn an_own_key_enumerations_captures_come_back_in_loop_order_whatever_ends_the_lo
 /// `bs`, whose keys are filed below the entry's segment and taken back; the entry's own `k` tag under `b`
 /// is parked at the entry's end whatever the reading moved, so neither resource is selected whichever comes
 /// first, and a resource whose `Target` names its own tag is selected alone. The frame-level mechanism is
-/// `a_measured_readings_filing_below_leaves_the_entrys_own_appends_parked_at_its_end`; these cells pin
+/// `a_measured_readings_filing_below_leaves_the_entries_own_appends_parked_at_its_end`; these cells pin
 /// the shape through the engine.
 #[test]
-fn a_let_forced_under_a_measured_when_leaves_each_entrys_own_capture_with_the_entry() -> Result<()>
+fn a_let_forced_under_a_measured_when_leaves_each_entries_own_capture_with_the_entry() -> Result<()>
 {
     const A_C_B: &str = r#"{
         "Resources": {
@@ -95714,12 +95714,12 @@ fn an_unmoved_gate_is_measured_by_one_reading(
     r#"{ Resources: { A: { Properties: { Config: '{"Mode":"strict"}' } }, C: { Properties: { Config: '{"Other":1}' } } } }"#,
     &[]
 )]
-#[case::an_enumeration_over_an_empty_list_in_the_result_is_the_querys_own_entry(
+#[case::an_enumeration_over_an_empty_list_in_the_result_is_the_queries_own_entry(
     "let cfg = json_parse(Resources.*.Properties.Config)\nlet a = %cfg[*]\nrule r when %a !empty { Resources.A.Type == \"Y\" }",
     r#"{ Resources: { A: { Properties: { Config: '["x"]' } }, B: { Properties: { Other: 1 } }, C: { Properties: { Config: '[]' } } } }"#,
     &[]
 )]
-#[case::an_enumeration_handed_to_a_parameter_over_an_empty_list_is_the_querys_own_entry(
+#[case::an_enumeration_handed_to_a_parameter_over_an_empty_list_is_the_queries_own_entry(
     "let cfg = json_parse(Resources.*.Properties.Config)\nrule guarded(x) when %x !empty { Resources.A.Type == \"Y\" }\nrule r { guarded(%cfg[*]) }",
     r#"{ Resources: { A: { Properties: { Config: '["x"]' } }, B: { Properties: { Other: 1 } }, C: { Properties: { Config: '[]' } } } }"#,
     &[]
@@ -95742,7 +95742,7 @@ fn an_unmoved_gate_is_measured_by_one_reading(
         "%x is a function's result read as 3 entries where it was read as 2 before: 1 entry the function had no answer for beside 2 values it did answer, the first at /Resources/B/Properties",
     ]
 )]
-#[case::the_mixed_input_fails_on_the_querys_own_entry_under_both_readings(
+#[case::the_mixed_input_fails_on_the_queries_own_entry_under_both_readings(
     "let cfg = json_parse(Resources.*.Properties.Config)\nlet mode = %cfg.Mode\nrule r when %mode == 'strict' { Resources.A.Type == \"Y\" }",
     r#"{ Resources: { A: { Properties: { Config: '{"Mode":"strict"}' } }, B: { Properties: { Other: 1 } }, C: { Properties: { Config: '{"Other":1}' } } } }"#,
     &[]
@@ -96262,7 +96262,7 @@ fn the_notice_names_the_moved_condition_after_a_derived_names_entries_were_looke
 #[case::a_when_block_inside_a_block_over_three_resources(
     "let cfg = json_parse(Resources.*.Properties.Config)\nlet mode = %cfg.Mode\nrule r { Resources.* { when %mode == 'strict' { Type exists } } }"
 )]
-fn a_derived_name_with_only_its_querys_own_entries_reads_its_root_afresh_never(
+fn a_derived_name_with_only_its_queries_own_entries_reads_its_root_afresh_never(
     #[case] rules: &str,
 ) -> Result<()> {
     let input = r#"{ Resources: { A: { Type: 'AWS::S3::Bucket', Properties: { Config: '{"Mode":"strict"}' } }, B: { Type: 'AWS::S3::Bucket', Properties: { Config: '{"Other":1}' } }, C: { Type: 'AWS::S3::Bucket', Properties: { Config: '{"Other":2}' } } } }"#;
@@ -96369,7 +96369,7 @@ fn an_entry_set_built_from_a_readings_memo_goes_back_with_the_memo() -> Result<(
 #[case::block_level(
     "rule r {\n    let tags = to_lower(Resources.*.Properties.Tags)\n    let t2 = to_upper(Resources.*.Properties.Tags)\n    let d = %t2\n    when some %tags !exists or %d !empty { Resources.A exists }\n    when %d == \"A\" { Resources.A exists }\n}"
 )]
-fn a_gate_read_after_anothers_reading_memoized_its_root_first_still_gets_its_notice(
+fn a_gate_read_after_others_reading_memoized_its_root_first_still_gets_its_notice(
     #[case] rules: &str,
 ) -> Result<()> {
     let input =

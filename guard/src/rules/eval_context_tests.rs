@@ -6076,7 +6076,7 @@ fn a_cut_in_the_other_home_leaves_the_frame_alone() {
 }
 
 #[test]
-fn a_result_filed_below_the_segment_survives_the_entrys_end() {
+fn a_result_filed_below_the_segment_survives_the_entries_end() {
     let mut frames = CaptureFrames::default();
     let mut store: CaptureStore<'static> = HashMap::new();
     let mut merged: CaptureStore<'static> = HashMap::new();
@@ -6096,7 +6096,7 @@ fn a_result_filed_below_the_segment_survives_the_entrys_end() {
 }
 
 #[test]
-fn a_mark_counts_the_parked_slices_so_a_later_entrys_cut_leaves_an_earlier_entrys_slice_alone() {
+fn a_mark_counts_the_parked_slices_so_a_later_entries_cut_leaves_an_earlier_entries_slice_alone() {
     // The F5a shape: entry 1 parks [a]; under entry 2 a clause binds fresh and is refused. Its mark is
     // taken on the absolute scale (the live length plus what is parked), so the cut back to it drops
     // entry 2's own bind and nothing of entry 1's. Read against the live length alone the mark was 0,
@@ -6194,7 +6194,7 @@ fn a_cut_answers_whether_the_live_entry_shrank() {
 /// `t` ("Variable t is both assigned and declared as a filter capture"), so the row is this one, at the
 /// frames' own API.
 #[test]
-fn an_entrys_end_removes_a_name_the_entry_made_and_the_close_puts_it_back() {
+fn an_entries_end_removes_a_name_the_entry_made_and_the_close_puts_it_back() {
     let mut frames = CaptureFrames::default();
     let mut store: CaptureStore<'static> = HashMap::new();
     let mut merged: CaptureStore<'static> = HashMap::new();
@@ -7143,7 +7143,7 @@ fn the_member_loop_ends_its_segment_on_the_exit_that_refuses_the_key_bind() -> R
 }
 
 #[test]
-fn the_exit_that_refuses_the_key_bind_under_another_entry_leaves_that_entrys_segment_running(
+fn the_exit_that_refuses_the_key_bind_under_another_entry_leaves_that_entries_segment_running(
 ) -> Result<()> {
     // The entry closure run for one value under ANOTHER loop's entry (the filter after a key over a
     // one-object map): the outer segment is running at depth 1 on the root's frame, the inner begin
@@ -7232,7 +7232,7 @@ fn the_exit_that_refuses_the_key_bind_under_another_entry_leaves_that_entrys_seg
 /// let's own frame one let deeper under it, the let's key bound there, the let's frame closed, the entry
 /// ended.
 #[test]
-fn a_block_built_under_a_measurement_files_a_forced_lets_keys_below_the_forcing_entrys_segment(
+fn a_block_built_under_a_measurement_files_a_forced_lets_keys_below_the_forcing_entries_segment(
 ) -> Result<()> {
     let rules_file = RulesFile::try_from(
         "rule r {\n  let bs = Resources[ b | Type == 'X' ]\n  Resources exists\n}",
@@ -7497,7 +7497,7 @@ fn a_refusal_raised_under_a_list_filters_member_leaves_no_frame_open() -> Result
 /// With the start left where the reading moved it, the end parked nothing of the one own append (it parks
 /// only past the start) and the next entry read it.
 #[test]
-fn a_measured_readings_filing_below_leaves_the_entrys_own_appends_parked_at_its_end() -> Result<()>
+fn a_measured_readings_filing_below_leaves_the_entries_own_appends_parked_at_its_end() -> Result<()>
 {
     let rules_file = RulesFile::try_from(
         "rule r {\n  let bs = Resources[ b | Type == 'X' ]\n  Resources exists\n}",
@@ -10381,7 +10381,7 @@ fn a_part_a_little_over_the_bound_renders_whole_and_a_long_one_is_cut_shorter() 
 /// and a 300-character leaf segment, whose END the tail keeps (its last characters before the location)
 /// while its start goes to the marker.
 #[test]
-fn a_paths_middle_cut_keeps_whole_characters_at_both_ends_and_a_long_leafs_end() {
+fn a_paths_middle_cut_keeps_whole_characters_at_both_ends_and_a_long_leaves_end() {
     let half = LONGEST_TEMPLATE_PART_IN_A_REFUSAL / 2;
     let expected = |path: &Path| -> String {
         let chars: Vec<char> = path.0.chars().collect();
@@ -12703,7 +12703,7 @@ fn a_refusal_a_clause_entry_reports_beside_a_mark_for_it_is_listed_once() {
 /// instead: beside entries that report it is not written
 /// (`a_parent_with_a_message_drops_a_silent_child_beside_a_reporting_sibling`).
 #[test]
-fn a_parents_own_sentence_is_told_once_beside_a_childs_marks_only_entry() {
+fn a_parents_own_sentence_is_told_once_beside_a_children_marks_only_entry() {
     use frame_sources::{block_check, mark, refused_clause, type_block, when_block, HELD, OTHER};
     registered_as_in_a_run!(HELD, OTHER);
     use crate::rules::eval::{BLOCK_CLAUSE_BAILING_TAIL, TYPE_CONDITION_BAILING_TAIL};

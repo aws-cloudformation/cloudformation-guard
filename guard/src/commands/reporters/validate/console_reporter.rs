@@ -595,7 +595,7 @@ mod tests {
     ///
     /// Fails when a line the tree writes carries a raw ESC from a data key.
     #[test]
-    fn the_value_traversed_to_on_a_missing_propertys_line_is_written_escaped(
+    fn the_value_traversed_to_on_a_missing_properties_line_is_written_escaped(
     ) -> crate::rules::Result<()> {
         let printed = failed_tree(
             "rule r { Items.Missing exists }",
