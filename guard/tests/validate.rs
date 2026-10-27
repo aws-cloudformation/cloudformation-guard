@@ -4509,12 +4509,15 @@ mod validate_tests {
 
         // And they differ by the directory, not by something incidental. Requiring each notice to
         // carry its own parent and not the other's is what makes the assertion above mean "the
-        // locator distinguishes them" rather than "the two lines happen to be unequal".
+        // locator distinguishes them" rather than "the two lines happen to be unequal". The locator
+        // renders the path with the platform's separator, so the expected tail is built with `join`
+        // rather than written with a slash.
         for parent in ["first", "second"] {
-            let matched: Vec<&&str> = notices
-                .iter()
-                .filter(|n| n.contains(&format!("{parent}/incomparable_membership.guard")))
-                .collect();
+            let tail = std::path::Path::new(parent)
+                .join("incomparable_membership.guard")
+                .display()
+                .to_string();
+            let matched: Vec<&&str> = notices.iter().filter(|n| n.contains(&tail)).collect();
 
             assert_eq!(
                 1,
