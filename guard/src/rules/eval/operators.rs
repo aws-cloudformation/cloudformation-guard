@@ -266,10 +266,14 @@ enum Membership {
 /// `PartialEq` first, then `compare_eq`, over every element of `rhsl`. The one walk both arms of
 /// `contained_in` ask, so a range or a regex nested in a list literal reaches the function that
 /// knows about it whether the left-hand side is a scalar or a list.
+///
+/// A regex element skips the `PartialEq` pass. `compare_eq` matches a regex against a string and
+/// against another regex itself, so asking `eq` first compiled and ran the pattern twice for the
+/// same answer.
 fn is_one_of(each: &PathAwareValue, rhsl: &[PathAwareValue]) -> Membership {
     let mut unanswerable: Option<String> = None;
     for elem in rhsl {
-        if elem == each {
+        if !matches!(elem, PathAwareValue::Regex(_)) && elem == each {
             return Membership::Matched;
         }
         match compare_eq(each, elem) {
