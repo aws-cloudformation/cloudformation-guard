@@ -106204,7 +106204,13 @@ fn published_address_check(
             "the address names the anchor {anchor}, not the item's anchor filter-through-a-variable"
         ));
     }
-    let path = repository.join(relative);
+    // Joined component by component, so the path renders with the platform's separator throughout
+    // (`docs\KNOWN_ISSUES.md` on Windows), as the caller that builds the same path with two `join`s
+    // renders it; joined as the one string `docs/KNOWN_ISSUES.md`, the error below named a mixed path
+    // that the Windows job's assertion on the rendered path did not find.
+    let path = relative
+        .split('/')
+        .fold(repository.to_path_buf(), |path, part| path.join(part));
     let text = match known_issues_text_to_check(&path, packaged)? {
         Some(text) => text,
         None => return Ok(false),
