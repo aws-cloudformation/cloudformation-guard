@@ -353,12 +353,13 @@ impl PartialEq for PathAwareValue {
 /// arms were removed rather than mirrored, because membership is `compare_eq`'s job and it keeps its
 /// own range table.
 ///
-/// A range nested in a list literal does still arrive here, through `Vec::contains` in
-/// `contained_in`, and that is what the removed arms were not reaching: `contains` asks
+/// A range nested in a list literal does still arrive here, through `elem == value` in
+/// `contained_in`, and that is what the removed arms were not reaching: the comparison runs
 /// `element == value`, so it needed the reverse arm, the one that never existed. Membership through a
 /// list was therefore answered `false` for every range, in both polarities, until `contained_in`
-/// started asking `compare_eq` as well. The arms stay out; the caller asks the function that has the
-/// table.
+/// started asking `compare_eq` as well. Both of its arms do now, the one for a scalar left-hand side
+/// and the one for a list-valued left-hand side, through the same `is_one_of` walk. The arms stay out;
+/// the caller asks the function that has the table.
 ///
 /// Numeric widening does stay, reached through `compare_values`. Unlike the other two it is an
 /// equivalence relation on the values it relates, and `Hash` agrees with it.

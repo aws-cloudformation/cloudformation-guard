@@ -7526,3 +7526,106 @@ const THIRTY_AS: &str = r#"
     }
 }
 "#;
+
+const THIRTY_AS_IN_A_LIST: &str = r#"
+{
+    Resources: {
+        V: { Type: 'AWS::EC2::Volume', Properties: { Size: ['aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'] } }
+    }
+}
+"#;
+
+/// A list-valued property must not be admitted by a denylist that could not evaluate it.
+///
+/// `contained_in` decides a scalar left-hand side and a list-valued one in different arms, and
+/// only the scalar arm read `compare_eq`'s error. The list arm asked `Vec::contains`, which is
+/// `PartialEq`, where an unevaluatable regex reads as "not equal", so every element ended up in the
+/// diff, the negation wrapper turned that failure into a success, and `NOT IN` exited 0.
+///
+/// `IN` is here because its status was already FAIL and its reason was not: it reported "not
+/// present", a claim nothing established. The message assertion is what makes those cells
+/// discriminate.
+#[rstest::rstest]
+#[case::scalar_in(THIRTY_AS, "IN [/(?!x)((a+)+)b/]")]
+#[case::scalar_not_in(THIRTY_AS, "NOT IN [/(?!x)((a+)+)b/]")]
+#[case::list_in(THIRTY_AS_IN_A_LIST, "IN [/(?!x)((a+)+)b/]")]
+#[case::list_not_in(THIRTY_AS_IN_A_LIST, "NOT IN [/(?!x)((a+)+)b/]")]
+fn a_denylist_refuses_a_value_it_could_not_evaluate_in_either_spelling(
+    #[case] template: &str,
+    #[case] rhs: &str,
+) {
+    let clause = format!("Resources.*[ Type == 'AWS::EC2::Volume' ].Properties.Size {rhs}");
+    let (status, messages) = status_and_messages(clause.as_str(), template).unwrap();
+
+    assert_eq!(
+        Status::FAIL,
+        status,
+        "`{}` must fail the clause in both polarities",
+        clause
+    );
+    assert!(
+        messages
+            .iter()
+            .any(|m| m.contains("regular expression could not be evaluated")),
+        "`{}` should say the regex could not be evaluated rather than claim the value was absent; \
+         recorded {:?}",
+        clause,
+        messages
+    );
+}
+
+/// A range inside a list literal is a range for a list-valued left-hand side too.
+///
+/// The scalar arm reads a range nested in a list literal as a range; the list arm decided with
+/// `Vec::contains`, which has no range-membership arm, so for a `Ports` of `[85]`,
+/// `Ports IN [r[80,90]]` failed and `Ports NOT IN [r[80,90]]` passed. The plain-element cells are
+/// the reference: `[r[80,90]]` has to answer as `[85]` does for a value the range covers. Every cell
+/// has its opposite polarity, so a fix that made membership constant fails half the table.
+#[rstest::rstest]
+#[case::scalar_covered_wrapped("Port", "IN [r[80,90]]", Status::PASS)]
+#[case::scalar_denied_wrapped("Port", "NOT IN [r[80,90]]", Status::FAIL)]
+#[case::list_covered("Ports", "IN [r[80,90]]", Status::PASS)]
+#[case::list_denied("Ports", "NOT IN [r[80,90]]", Status::FAIL)]
+#[case::list_reference_plain_element("Ports", "IN [85]", Status::PASS)]
+#[case::list_reference_plain_element_denied("Ports", "NOT IN [85]", Status::FAIL)]
+#[case::list_uncovered("Outside", "IN [r[80,90]]", Status::FAIL)]
+#[case::list_undenied("Outside", "NOT IN [r[80,90]]", Status::PASS)]
+#[case::every_element_covered("AllIn", "IN [r[80,90]]", Status::PASS)]
+#[case::every_element_denied("AllIn", "NOT IN [r[80,90]]", Status::FAIL)]
+#[case::partly_covered_is_not_a_subset("Partly", "IN [r[80,90]]", Status::FAIL)]
+#[case::partly_covered_is_still_denied("Partly", "NOT IN [r[80,90]]", Status::FAIL)]
+#[case::range_beside_a_string("Ports", r#"IN [r[80,90], "zzz"]"#, Status::PASS)]
+#[case::range_beside_a_string_denied("Ports", r#"NOT IN [r[80,90], "zzz"]"#, Status::FAIL)]
+#[case::two_ranges_neither_covering("Outside", "IN [r[10,20], r[30,40]]", Status::FAIL)]
+#[case::two_ranges_neither_covering_undenied(
+    "Outside",
+    "NOT IN [r[10,20], r[30,40]]",
+    Status::PASS
+)]
+fn a_range_in_a_list_denylist_denies_a_list_valued_property(
+    #[case] property: &str,
+    #[case] comparison: &str,
+    #[case] expected: Status,
+) -> Result<()> {
+    const INPUT: &str = r#"
+    {
+        Port: 85,
+        Ports: [85],
+        Outside: [99],
+        AllIn: [81, 85, 89],
+        Partly: [85, 99]
+    }
+    "#;
+
+    let rules = format!("rule membership {{ {property} {comparison} }}");
+
+    assert_eq!(
+        expected,
+        rule_status_in(&rules, INPUT, "membership")?,
+        "clause: {} {}",
+        property,
+        comparison
+    );
+
+    Ok(())
+}

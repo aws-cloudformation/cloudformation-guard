@@ -251,6 +251,68 @@ fn not_comparable_because(
     }))
 }
 
+/// What a right-hand list says about one left-hand value.
+///
+/// Three answers because `compare_eq` has three outcomes, and folding the middle one into
+/// `NoMatch` is what let a denylist admit a value. `Matched` outranks `Unanswerable`: once an
+/// element matches, the answer did not depend on the comparison that failed.
+enum Membership {
+    Matched,
+    NoMatch,
+    /// No element matched and at least one comparison had no answer; carries the first reason.
+    Unanswerable(String),
+}
+
+/// `PartialEq` first, then `compare_eq`, over every element of `rhsl`. The one walk both arms of
+/// `contained_in` ask, so a range or a regex nested in a list literal reaches the function that
+/// knows about it whether the left-hand side is a scalar or a list.
+fn is_one_of(each: &PathAwareValue, rhsl: &[PathAwareValue]) -> Membership {
+    let mut unanswerable: Option<String> = None;
+    for elem in rhsl {
+        if elem == each {
+            return Membership::Matched;
+        }
+        match compare_eq(each, elem) {
+            Ok(true) => return Membership::Matched,
+            Ok(false) => {}
+            Err(err @ Error::RegexError(_)) => {
+                if unanswerable.is_none() {
+                    unanswerable = Some(unanswerable_reason(err));
+                }
+            }
+            Err(_) => {}
+        }
+    }
+    match unanswerable {
+        Some(reason) => Membership::Unanswerable(reason),
+        None => Membership::NoMatch,
+    }
+}
+
+/// The left-hand elements no right-hand element matched, and the first reason one of them could
+/// not be decided. An element with no answer goes into the diff beside the plain misses, so an
+/// empty diff never carries a reason.
+fn elements_not_matched(
+    lhsl: &[PathAwareValue],
+    rhsl: &[PathAwareValue],
+) -> (Vec<Rc<PathAwareValue>>, Option<String>) {
+    let mut diff = Vec::new();
+    let mut unanswerable: Option<String> = None;
+    for each in lhsl {
+        match is_one_of(each, rhsl) {
+            Membership::Matched => {}
+            Membership::NoMatch => diff.push(Rc::new(each.clone())),
+            Membership::Unanswerable(reason) => {
+                if unanswerable.is_none() {
+                    unanswerable = Some(reason);
+                }
+                diff.push(Rc::new(each.clone()));
+            }
+        }
+    }
+    (diff, unanswerable)
+}
+
 fn is_literal(query_results: &[QueryResult]) -> Option<Rc<PathAwareValue>> {
     if query_results.len() == 1 {
         if let QueryResult::Literal(p) = &query_results[0] {
@@ -317,21 +379,26 @@ fn contained_in(lhs_value: Rc<PathAwareValue>, rhs_value: Rc<PathAwareValue>) ->
                         )))
                     }
                 } else {
-                    let diff = lhsl
-                        .iter()
-                        .filter(|each| !rhsl.contains(each))
-                        .cloned()
-                        .map(Rc::new)
-                        .collect::<Vec<_>>();
+                    // Each element goes through the same walk the scalar arm uses, so a range or a
+                    // regex in the right-hand list is read as one here too. `Vec::contains` asked
+                    // `element == value` through `PartialEq`, which has no range-membership arm and
+                    // reads an unevaluatable regex as `false`: `Ports not in [r[80,90]]` admitted a
+                    // `Ports` of `[85]`, and `Names not in [/re/]` admitted a value the pattern
+                    // gave up on.
+                    let (diff, unanswerable) = elements_not_matched(lhsl, rhsl);
 
-                    if diff.is_empty() {
-                        ValueEvalResult::ComparisonResult(ComparisonResult::Success(
+                    match (diff.is_empty(), unanswerable) {
+                        (true, _) => ValueEvalResult::ComparisonResult(ComparisonResult::Success(
                             Compare::ListIn(ListIn::new(diff, lhs_value, rhs_value)),
-                        ))
-                    } else {
-                        ValueEvalResult::ComparisonResult(ComparisonResult::Fail(Compare::ListIn(
-                            ListIn::new(diff, lhs_value, rhs_value),
-                        )))
+                        )),
+
+                        (false, Some(reason)) => {
+                            not_comparable_because(lhs_value, rhs_value, reason)
+                        }
+
+                        (false, None) => ValueEvalResult::ComparisonResult(ComparisonResult::Fail(
+                            Compare::ListIn(ListIn::new(diff, lhs_value, rhs_value)),
+                        )),
                     }
                 }
             }
@@ -379,41 +446,19 @@ fn contained_in(lhs_value: Rc<PathAwareValue>, rhs_value: Rc<PathAwareValue>) ->
                 // spelling so that rule authors hear about the change before a pipeline does.
                 // Failing those cells here would land that change without its notice, and it moves
                 // cells of `every_operator_and_operand_shape_agrees_with_a_stated_oracle`.
-                let mut unanswerable: Option<String> = None;
-                let mut found = false;
-                for elem in rhsl {
-                    if elem == rest {
-                        found = true;
-                        break;
-                    }
-                    match compare_eq(rest, elem) {
-                        Ok(true) => {
-                            found = true;
-                            break;
-                        }
-                        Ok(false) => {}
-                        Err(err @ Error::RegexError(_)) => {
-                            if unanswerable.is_none() {
-                                unanswerable = Some(unanswerable_reason(err));
-                            }
-                        }
-                        Err(_) => {}
-                    }
-                }
-
-                match (found, unanswerable) {
-                    (true, _) => ValueEvalResult::ComparisonResult(ComparisonResult::Success(
-                        Compare::ValueIn(LhsRhsPair::new(
+                match is_one_of(rest, rhsl) {
+                    Membership::Matched => ValueEvalResult::ComparisonResult(
+                        ComparisonResult::Success(Compare::ValueIn(LhsRhsPair::new(
                             Rc::new(rest.clone()),
                             Rc::clone(&rhs_value),
-                        )),
-                    )),
+                        ))),
+                    ),
 
-                    (false, Some(reason)) => {
+                    Membership::Unanswerable(reason) => {
                         not_comparable_because(Rc::new(rest.clone()), Rc::clone(&rhs_value), reason)
                     }
 
-                    (false, None) => {
+                    Membership::NoMatch => {
                         ValueEvalResult::ComparisonResult(ComparisonResult::Fail(Compare::ValueIn(
                             LhsRhsPair::new(Rc::new(rest.clone()), Rc::clone(&rhs_value)),
                         )))
