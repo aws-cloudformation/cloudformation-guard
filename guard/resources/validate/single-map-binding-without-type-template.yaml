@@ -1,0 +1,35 @@
+# The template of single-map-binding-with-password-template.yaml with the scalar `Type` entry left out of
+# the resource whose logical id is `Metadata`: its map holds only the authentication block, so it has no
+# scalar entry. A predicate written against the map's own key, `"AWS::CloudFormation::Authentication"
+# exists`, names a key the map holds itself and none of its map-valued entries holds, so a filter through
+# a variable bound to this map keeps the walk over the map's entries: it selects none of them, the
+# `when` gate does not apply, and the rule is SKIP with the lost-selection notice. With the `Type` entry
+# the same filter tests the map as a whole (single-map-binding-with-password-template.yaml).
+Resources:
+  RootRole:
+    Type: "AWS::IAM::Role"
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: "Allow"
+            Principal:
+              Service:
+                - "ec2.amazonaws.com"
+            Action:
+              - "sts:AssumeRole"
+  EC2I4LBA1:
+    Type: "AWS::EC2::Instance"
+    Properties:
+      ImageId: "ami-6df1e514"
+      InstanceType: "t2.micro"
+      SubnetId:
+        "Ref": "subnetId"
+  Metadata:
+    AWS::CloudFormation::Authentication:
+      testBasic:
+        type: "basic"
+        username: "testUsername1"
+        password: "sensitive_password"
+        uris:
+          - "http://www.example.com/test"

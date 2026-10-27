@@ -3,13 +3,12 @@
 # resource whose logical id is `Metadata`), then filtered through the variable with a predicate written
 # against that map's own keys.
 #
-# In the previous release a filter through a variable bound this way tested the bound map itself, so
-# `%cfn_authentication_rule[ "AWS::CloudFormation::Authentication" exists ... ]` selected the map and
-# the rule applied. A filter through a variable now walks the entries of the value the variable holds,
-# exactly as the literal `Resources.Metadata[ ... ]` always did, so the predicate is tested against
-# the `Type` string and the `AWS::CloudFormation::Authentication` map, matches neither, selects
-# nothing, and the `when` gate makes the rule SKIP. The notice on stderr is the only output that
-# records the change.
+# The `Metadata` map holds a non-null scalar entry (`Type`) beside its authentication block, so it is
+# one object: a filter through the variable tests the map itself, as `%cfn_authentication_rule[*][ ... ]`
+# does, the predicate written against the map's own keys holds, the map is selected and the rule
+# applies: FAIL over an authentication block that defines a password, PASS over one that does not,
+# the verdicts cfn-guard 3.2.1 gives the published rule's own two tests. Nothing is announced on
+# stderr; the verdict is the report.
 #
 let cfn_authentication_rule = Resources.Metadata
 let skip_cfn_authentication = %cfn_authentication_rule[

@@ -2,11 +2,10 @@
 # A variable bound to a map written out in the rules file, and then filtered through the variable
 # with a predicate written against that map's own keys.
 #
-# In the previous release a filter through a variable tested the bound map itself, whatever bound the
-# variable, so `%policy[ Statement exists ]` selected the literal map. The filter now walks the
-# entries of the value the variable holds, as it does after a `let` bound to a key path, so the
-# predicate is tested against the `Version` string and the `Statement` list, matches neither, and
-# selects nothing. The notice on stderr names the literal as the author wrote it.
+# The literal holds a non-null scalar entry (`Version`) and the predicate names `Statement`, a key none
+# of the map's map-valued entries holds, so the map is one object: the filter through the variable
+# tests the map itself, as `%policy[*][ ... ]` does, `Statement exists` holds on it, the map is selected
+# and `!empty` passes. Nothing is announced on stderr.
 #
 let policy = {
     "Version": "2012-10-17",
@@ -17,8 +16,15 @@ rule LITERAL_POLICY_HAS_A_STATEMENT when %policy !empty {
     %policy[ Statement exists ] !empty
 }
 
-# The same document as a YAML map under a key, filtered the same way: the literal spelling, whose
-# answer the filter through the variable now gives, and which is not announced.
+# The same document as a YAML map under a key, filtered the same way with the authored `[*]` before the
+# filter: the answer the filter through the variable gives, PASS.
+rule CONTROL_STAR_SPELLING {
+    Resources.Q.Properties.Doc[*][ Statement exists ] !empty
+}
+
+# The same document filtered after the key, with no `[*]`: the filter walks the map's entries, the
+# predicate names `Statement`, a key of the map itself, and the filter is refused (FAIL, exit 19). The
+# refusal tells the author to write `X[*] { Key == value }` or `X[*].Key == value`.
 rule CONTROL_KEY_SPELLING {
     Resources.Q.Properties.Doc[ Statement exists ] !empty
 }

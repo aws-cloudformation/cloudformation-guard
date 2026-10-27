@@ -1,16 +1,15 @@
 #
-# The spelling docs/CLAUSES.md warns about: a variable holding one resource, filtered for a key that
-# resource has. The filter walks the resource's entries. Its Metadata and Properties maps have no
-# Metadata key, so the predicate rejects them; its Type string is a scalar entry, passed over,
-# neither selected nor reported. Nothing is selected in the resource's place, and a DEPRECATION
-# notice on stderr names the `let` and the filter.
+# A variable holding one resource, filtered for a key that resource has. The resource holds a scalar
+# `Type`, and `Metadata` is not a key of any of its map-valued entries (its Metadata and Properties
+# maps), so it is one object: the filter tests the resource as a whole, as `%m[*][ ... ]` does, the
+# predicate holds on it, and the resource is selected in its own place. Nothing is announced on stderr.
 #
-# What each rule then reports, on a template whose WebServer block holds a password: the selection
-# is empty, so all three are SKIP, not applicable, where the old reading failed on the password (the
-# fail-open direction):
-# - the ungated `!exists` over nothing;
-# - the same assertion behind `when %auth !empty`, whose gate does not apply;
-# - a positive `exists` over nothing.
+# What each rule then reports, on a template whose WebServer block holds a password:
+# - the ungated `!exists` FAILs on the password;
+# - the same assertion behind `when %auth !empty` applies, since the selection is not empty, and FAILs;
+# - a positive `exists` PASSes.
+# On a template with no WebServer the variable holds nothing, so no map is tested and nothing is
+# announced: the ungated `!exists` PASSes, the gated rule is SKIP, and the positive `exists` FAILs.
 #
 let m = Resources.WebServer
 let auth = %m[ Metadata."AWS::CloudFormation::Authentication" exists ]

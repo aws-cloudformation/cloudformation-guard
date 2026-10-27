@@ -105,7 +105,7 @@ Rules files are named for the clause they hold; `after_star` is `X[*][ ... ]`, `
 | env_tag_not_empty_after_star.guard | list_shaped_tags.yaml | FAIL | FAIL | FAIL | PASS |
 | bucket_name_exists_after_star.guard | bucket_without_a_bucket_name.yaml | not run | not run | not run | FAIL |
 | bucket_name_exists_after_the_key.guard | bucket_without_a_bucket_name.yaml | not run | not run | not run | FAIL |
-| tags_absent_not_empty_through_a_variable_bound_to_properties.guard | scalar_properties_without_tags.yaml | not run | not run | not run | FAIL |
+| tags_absent_not_empty_through_a_variable_bound_to_properties.guard | scalar_properties_without_tags.yaml | not run | not run | not run | PASS |
 | mode_ref_equals_captured_keys_gate.guard | captured_modes_beside_a_refused_walk.yaml | SKIP | SKIP | SKIP | SKIP |
 | some_names_not_in_captured_keys_gate.guard | captured_modes_beside_a_refused_walk.yaml | SKIP | SKIP | SKIP | SKIP |
 | owner_equals_tag_names_empty.guard | bucket_owner_beside_map_shaped_tags.yaml | internal error, no verdict | internal error, no verdict | internal error, no verdict | PASS |
@@ -154,7 +154,11 @@ now).
 | `type_tag_not_empty_after_star.guard` | map_shaped_tags.yaml | yes |
 
 The `now` verdicts of the released-column cells did not change between the engine they were first read on
-and the one this directory was committed at. A release column reading "not run" marks a cell the released
+and the one this directory was committed at. The one `now` verdict that changed since is
+`tags_absent_not_empty_through_a_variable_bound_to_properties.guard` over `scalar_properties_without_tags.yaml`,
+which was `FAIL` (exit 19) and is `PASS` (exit 0): the variable holds one map with a non-null scalar entry
+(`BucketName`) and the predicate names no key one of the map's map-valued entries holds, so the filter
+through the variable tests the map itself, as `%p[*][ Tags !exists ]` does, and the `!empty` holds. A release column reading "not run" marks a cell the released
 binaries were never run over: the three documents added for the current engine
 (`bucket_without_a_bucket_name.yaml`, `scalar_properties_without_tags.yaml`,
 `launch_template_with_tag_specifications.yaml`) and the one rule added for it,

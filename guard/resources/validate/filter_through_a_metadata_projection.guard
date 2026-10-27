@@ -1,0 +1,15 @@
+#
+# A binding whose query projects in the middle and ends in a key:
+# `Resources.*[ Metadata exists ].Metadata` holds one `Metadata` map per resource that has one, several
+# maps. No map holds a scalar entry, and the predicate names `AWS::CloudFormation::Authentication`, a key
+# the instance's map holds itself and none of its map-valued entries holds, so the filter through the
+# variable keeps the walk: it tests each map's entries, selects nothing, and the rule gated on the
+# selection is SKIP (exit 0). The predicate holds on the instance's map as a whole, so one notice names
+# the map that lost its selection; the role's map lacks the key and draws none.
+#
+# A map with a scalar entry is one object and draws no notice (filter_through_a_key_tailed_projection.guard).
+#
+let blocks = Resources.*[ Metadata exists ].Metadata
+rule FILTER_THROUGH_A_METADATA_PROJECTION when %blocks[ "AWS::CloudFormation::Authentication" exists ] !empty {
+  %blocks[ "AWS::CloudFormation::Authentication" exists ]."AWS::CloudFormation::Authentication".*.username == "no-such-user-zzz"
+}

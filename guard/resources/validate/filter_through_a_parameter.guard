@@ -1,6 +1,10 @@
 #
-# The filtered variable is a parameterized rule's parameter. There is no `let` to name, so the notice
-# names the parameter and the rule, and the query the call site bound it to.
+# The filtered variable is a parameterized rule's parameter. Over a `Metadata` map with no scalar entry
+# (single-map-binding-without-type-template.yaml) the filter keeps the walk and loses its selection; there
+# is no `let` to name, so the notice names the parameter and the rule, and the query the call site bound
+# it to. Over a `Metadata` map that holds a scalar `Type` (single-map-binding-with-password-template.yaml)
+# the map is one object, the filter selects it as `%m[*][ ... ]` does, and the rule FAILs on the password
+# with no notice.
 #
 rule has_no_password(m) {
   %m[ "AWS::CloudFormation::Authentication" exists ]."AWS::CloudFormation::Authentication".*.password !exists

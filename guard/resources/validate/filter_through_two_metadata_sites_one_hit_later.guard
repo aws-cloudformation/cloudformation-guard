@@ -1,0 +1,16 @@
+#
+# The binding of filter_through_a_metadata_projection.guard, filtered at two sites that different
+# templates reach: the `AWS::CloudFormation::Authentication` site loses its selection on every template
+# whose instance carries that block, the `AWS::CloudFormation::Init` site only on a template whose
+# instance also carries an Init block. Over metadata-maps-authentication-without-init-template.yaml then
+# metadata-maps-authentication-and-init-other-id-template.yaml, the first site is drawn by both files and
+# the second by the second file alone, so the single-line output writes one line per site and one
+# trailer, for the first site, naming the second file.
+#
+let blocks = Resources.*[ Metadata exists ].Metadata
+rule AUTHENTICATION_SITE when %blocks[ "AWS::CloudFormation::Authentication" exists ] !empty {
+  %blocks[ "AWS::CloudFormation::Authentication" exists ]."AWS::CloudFormation::Authentication".*.username == "no-such-user-zzz"
+}
+rule INIT_SITE when %blocks[ "AWS::CloudFormation::Init" exists ] !empty {
+  %blocks[ "AWS::CloudFormation::Init" exists ]."AWS::CloudFormation::Init".config.commands == "no-such-commands-zzz"
+}

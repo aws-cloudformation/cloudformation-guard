@@ -1,0 +1,34 @@
+# The two resources of metadata-maps-authentication-and-init-template.yaml with the instance's Init block
+# removed, under the logical id `Box`: it draws the authentication site of
+# filter_through_authentication_and_init_sites.guard and of
+# filter_through_two_metadata_sites_one_hit_later.guard, and not the init site.
+Resources:
+  RootRole:
+    Type: "AWS::IAM::Role"
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: "Allow"
+            Principal:
+              Service:
+                - "ec2.amazonaws.com"
+            Action:
+              - "sts:AssumeRole"
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W11
+            reason: "the role is scoped by its trust policy"
+  Box:
+    Type: "AWS::EC2::Instance"
+    Properties:
+      ImageId: "ami-6df1e514"
+      SubnetId:
+        "Ref": "subnetId"
+    Metadata:
+      AWS::CloudFormation::Authentication:
+        testBasic:
+          type: "basic"
+          username: "testUsername1"
+          password: "sensitive_password"

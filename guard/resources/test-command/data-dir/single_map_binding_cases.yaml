@@ -4,10 +4,10 @@
 # `resources/validate/filter_through_a_single_map_binding.guard`, shared with the validate-side test so
 # one fixture describes the change.
 #
-# Both expect SKIP, which is the engine's reading: the filter through `%cfn_authentication_rule` walks
-# the entries of the `Metadata` map and selects none, so the `when` gate does not apply. The rules file
-# is evaluated once per case, so the notice is produced for each and collapsed to one before it is
-# written; the test asserts one.
+# The `Metadata` map holds a scalar `Type` beside its authentication block, one object, so the filter
+# through `%cfn_authentication_rule` tests the map itself, as `[*]` reads it, and the rule applies:
+# FAIL with a password, PASS without, the verdicts the published rule's own tests expect. No notice is
+# written for either case.
 ###
 ---
 - name: Authentication block with a password
@@ -36,7 +36,7 @@
               - "http://www.example.com/test"
   expectations:
     rules:
-      CFN_AUTHENTICATION_RULE: SKIP
+      CFN_AUTHENTICATION_RULE: FAIL
 
 - name: Authentication block without a password
   input:
@@ -63,4 +63,4 @@
               - "somebucket333"
   expectations:
     rules:
-      CFN_AUTHENTICATION_RULE: SKIP
+      CFN_AUTHENTICATION_RULE: PASS

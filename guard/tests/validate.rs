@@ -15224,122 +15224,77 @@ mod validate_tests {
         )
     }
 
-    /// A filter through a variable that a plain key path bound to ONE map walks that map's entries, as
-    /// the literal path always did. In the previous release it tested the map itself, so a predicate
-    /// written against the map's own keys selected the map; now it selects nothing. When that is what
-    /// happened -- the filter did not select the map and the predicate holds on it -- a notice on stderr
-    /// names the `let`, the filter, and the rewrite. The verdict does not move: SKIP stays SKIP.
+    /// A filter through a variable that a plain key path bound to ONE map tests that map itself when the
+    /// map is one object (a non-null scalar entry, `Type`, beside its sub-map), as the authored
+    /// `%v[*][ ... ]` reads it and as the previous release did: the predicate written against the map's
+    /// own keys holds, the map is selected, and the rule applies.
     ///
     /// The fixture is the structure of a published registry rule, and the two templates are the two
-    /// shapes its own tests carry. Both SKIP at exit 0 (a filter that tested the map itself would make
-    /// both apply, PASS without a password and FAIL with one), and the notice is the only output that
-    /// records the reading. One notice per run: the second filter in the rule body is behind the `when`
-    /// gate and never runs.
-    ///
-    /// The notice is bound to its site, not merely counted: it has to name the `let` and the line of
-    /// the filter's first clause, so a notice raised at some other filter would not satisfy this.
+    /// shapes its own tests carry: FAIL at the validation failure code over the authentication block
+    /// that defines a password, PASS at exit 0 over the one that does not. Nothing is announced: the
+    /// selection the previous release made is the selection made now, so there is no lost selection for
+    /// the bound-map notice to name. Read apart from the wildcard spelling, this filter walked the one
+    /// map's entries, selected nothing, and reported SKIP with a notice on a template that defines a
+    /// password.
     #[rstest::rstest]
-    #[case("single-map-binding-with-password-template.yaml")]
-    #[case("single-map-binding-without-password-template.yaml")]
-    fn a_filter_through_a_single_map_binding_that_now_selects_nothing_is_announced(
+    #[case::with_a_password(
+        "single-map-binding-with-password-template.yaml",
+        StatusCode::VALIDATION_ERROR,
+        "CFN_AUTHENTICATION_RULE    FAIL"
+    )]
+    #[case::without_a_password(
+        "single-map-binding-without-password-template.yaml",
+        StatusCode::SUCCESS,
+        "CFN_AUTHENTICATION_RULE    PASS"
+    )]
+    fn a_filter_through_a_single_map_binding_tests_the_map_itself_as_the_wildcard_does(
         #[case] template: &str,
+        #[case] expected_code: i32,
+        #[case] verdict: &str,
     ) {
         let (status_code, stdout, stderr) =
             validate_both_streams("filter_through_a_single_map_binding.guard", template);
 
         assert_eq!(
-            StatusCode::SUCCESS,
-            status_code,
-            "the notice must not move the verdict; the rule is SKIP either way"
-        );
-        assert!(
-            stdout.contains("CFN_AUTHENTICATION_RULE    SKIP"),
-            "the when gate does not apply once the filter selects nothing, got stdout {:?}",
+            expected_code, status_code,
+            "{template}: the rule applies to the one map and its verdict is the exit code; stdout {:?}",
             stdout
         );
         assert!(
-            !stdout.contains("DEPRECATION"),
-            "a notice on stdout would land inside the report, got {:?}",
+            stdout.contains(verdict),
+            "{template}: the filter selected the map itself, so the when gate applies, got stdout {:?}",
             stdout
         );
-
-        let notices: Vec<&str> = stderr
-            .lines()
-            .filter(|l| l.contains("DEPRECATION"))
-            .collect();
-        assert_eq!(
-            1,
-            notices.len(),
-            "expected one notice for the one filter that ran, got {:?} from stderr {:?}",
-            notices,
+        assert!(
+            !stdout.contains("DEPRECATION") && !stderr.contains("DEPRECATION"),
+            "{template}: no selection was lost, so nothing is announced; stdout {:?} stderr {:?}",
+            stdout,
             stderr
-        );
-        let notice = notices[0];
-        assert!(
-            notice.contains("let cfn_authentication_rule = Resources.Metadata"),
-            "the notice names the binding that holds the single map, got {:?}",
-            notice
-        );
-        assert!(
-            notice.contains("filter_through_a_single_map_binding.guard, line:16,"),
-            "the notice names the filter's position in the rules file, got {:?}",
-            notice
-        );
-        assert!(
-            notice.contains("selected that map itself")
-                && notice.contains("walks the map's entries"),
-            "the notice says what the filter selected before and what it selects now, got {:?}",
-            notice
-        );
-        assert!(
-            notice.contains(
-                "did not select the map at /Resources/Metadata, which `let cfn_authentication_rule = \
-                 Resources.Metadata` held; it selected none of the map's entries."
-            ),
-            "the notice names the map that lost its selection, got {:?}",
-            notice
-        );
-        assert!(
-            notice.contains("`when`") && notice.contains(".*["),
-            "the notice gives both rewrites, got {:?}",
-            notice
-        );
-        assert!(
-            notice.contains("the filter `%cfn_authentication_rule[ ")
-                && notice.contains("Metadata.cfn_nag.rules_to_suppress !exists or")
-                && !notice.contains("(filter-clauses)"),
-            "the filter is named by its predicate as written, not by a placeholder, got {:?}",
-            notice
         );
     }
 
     /// A filter through a variable bound to a function's result, or to a map written out in the rules
-    /// file, walks that map's entries as a filter through a key-bound variable does, and lost its
-    /// selection the same way: the previous release tested the bound map itself whatever bound the
-    /// variable. Both are announced, naming the `let` -- the call with its argument as written, the
-    /// literal elided to `{ ... }` so a lookup table is not dumped into one line -- and the map by
-    /// where it came from: the property a parsed map was parsed from, and no path for a map the
-    /// document never held. The verdict is the one the literal key spelling of the same filter gives,
-    /// read from the control rule in the same file, which is not announced.
+    /// file, is read as a filter through a key-bound variable is. The bound map holds a non-null
+    /// scalar entry (`Version`) and the predicate names `Statement`, a key none of its map-valued
+    /// entries holds, so the map is one object: the filter tests the map itself, as the authored
+    /// `[*]` does, `Statement exists` holds on it, the map is selected and `!empty` passes. The verdict
+    /// is the one the `[*]` spelling of the same filter gives, read from `CONTROL_STAR_SPELLING` in the
+    /// same file. The key spelling with no `[*]` (`CONTROL_KEY_SPELLING`) walks the map's entries
+    /// instead, names a key of the map itself, and is refused: FAIL at exit 19 with the sentence that
+    /// points the author at `X[*] { Key == value }` and `X[*].Key == value`. Nothing is announced for
+    /// either binding: no selection was lost, so there is no notice to write.
     #[rstest::rstest]
     #[case::function_result(
         "filter_through_a_function_result_binding.guard",
-        "POLICY_HAS_A_STATEMENT",
-        "did not select the map parsed from /Resources/Q/Properties/PolicyText, which `let doc = \
-         json_parse(Resources.Q.Properties.PolicyText)` held",
-        "the filter `%doc[ Statement exists ]`"
+        "POLICY_HAS_A_STATEMENT"
     )]
     #[case::literal_map(
         "filter_through_a_literal_map_binding.guard",
-        "LITERAL_POLICY_HAS_A_STATEMENT",
-        "did not select the map, which `let policy = { ... }` held",
-        "the filter `%policy[ Statement exists ]`"
+        "LITERAL_POLICY_HAS_A_STATEMENT"
     )]
-    fn a_filter_through_a_function_result_or_literal_binding_is_announced(
+    fn a_filter_through_a_function_result_or_literal_binding_tests_the_map_itself(
         #[case] rules: &str,
-        #[case] announced_rule: &str,
-        #[case] holder: &str,
-        #[case] filter: &str,
+        #[case] bound_rule: &str,
     ) {
         let (status_code, stdout, stderr) =
             validate_both_streams(rules, "bound-map-from-a-function-or-literal-template.yaml");
@@ -15357,68 +15312,39 @@ mod validate_tests {
                 }
             })
         };
-        let announced = verdict_of(announced_rule);
-        let control = verdict_of("CONTROL_KEY_SPELLING");
+        let bound = verdict_of(bound_rule);
+        let star_control = verdict_of("CONTROL_STAR_SPELLING");
+        assert_eq!(
+            Some("PASS".to_string()),
+            bound,
+            "{rules}: the filter through the variable selects the one-object map, so `!empty` passes\n{stdout}"
+        );
+        assert_eq!(
+            star_control, bound,
+            "{rules}: the filter through the variable answers as the authored `[*]` spelling does\n{stdout}"
+        );
+        assert_eq!(
+            Some("FAIL".to_string()),
+            verdict_of("CONTROL_KEY_SPELLING"),
+            "{rules}: the key spelling with no `[*]` names a key of the map itself and is refused\n{stdout}"
+        );
         assert!(
-            announced.is_some() && announced == control,
-            "the filter through the variable answers as the key spelling does: {:?} vs control {:?}\n{}",
-            announced,
-            control,
+            stdout.contains("Write `X[*] { Key == value }` or `X[*].Key == value`"),
+            "{rules}: the refusal of the key spelling points at the `[*]` spellings, got {:?}",
             stdout
         );
-        assert_ne!(
-            StatusCode::PARSING_ERROR,
+        assert_eq!(
+            StatusCode::VALIDATION_ERROR,
             status_code,
-            "the notice must not stop the run:\n{}\n{}",
+            "{rules}: the exit code is the refused control rule's; the rule under test is not what fails:\n{}\n{}",
             stdout,
             stderr
         );
         assert!(
-            !stdout.contains("DEPRECATION"),
-            "a notice on stdout would land inside the report, got {:?}",
-            stdout
-        );
-
-        let notices: Vec<&str> = stderr
-            .lines()
-            .filter(|l| l.contains("DEPRECATION"))
-            .collect();
-        assert_eq!(
-            1,
-            notices.len(),
-            "{}: expected one notice for the one filter through the variable, got {:?} from stderr {:?}",
-            rules,
-            notices,
+            !stdout.contains("DEPRECATION") && !stderr.contains("DEPRECATION"),
+            "{rules}: no selection was lost, so nothing is announced; stdout {:?} stderr {:?}",
+            stdout,
             stderr
-        );
-        let notice = notices[0];
-        assert!(
-            notice.contains(holder),
-            "the notice names the map by where it came from and the binding by its `let`, a map \
-             literal elided, got {:?}",
-            notice
-        );
-        assert!(
-            !notice.contains("\"Version\""),
-            "a map written in the rules file is not dumped into the notice, got {:?}",
-            notice
-        );
-        assert!(
-            notice.contains(filter) && !notice.contains("(filter-clauses)"),
-            "the filter is named by its predicate as written, got {:?}",
-            notice
-        );
-        assert!(
-            notice.contains(&format!("{}, line:", rules)),
-            "the notice names the filter's position in the rules file, got {:?}",
-            notice
-        );
-        assert!(
-            notice.contains("selected that map itself")
-                && notice.contains("walks the map's entries")
-                && notice.contains("`when`"),
-            "the notice says what moved and gives the rewrite, got {:?}",
-            notice
         );
     }
 
@@ -15474,56 +15400,57 @@ mod validate_tests {
     }
 
     /// A binding that holds several maps, filtered through the variable with a predicate that holds on
-    /// exactly one of them: SKIP with one notice naming that map. In the previous release the filter
-    /// tested each map as a whole, selected the one carrying `ImageId`, and the rule FAILed at exit 19;
-    /// it now walks each map's entries, selects nothing, and the rule is SKIP at exit 0. A gate that
-    /// required the binding to hold exactly one value left this row silent.
+    /// exactly one of them, is read per map. The instance's `Properties` map holds scalar entries
+    /// (`ImageId`, `InstanceType`) and the predicate names `ImageId`, a key none of the map's
+    /// map-valued entries holds, so that map is one object: the filter tests it as a whole, as
+    /// `%props[*][ ... ]` does, selects it, and the rule's body compares its `ImageId` to a value it
+    /// does not have and FAILs at exit 19. The role's `Properties` map has no scalar entry and no
+    /// `ImageId`, so the predicate does not hold on it and it is not selected. Nothing is announced.
     ///
-    /// One notice, not one per map: the maps the predicate rejects were never selected, and the notice
-    /// is recorded once per filter site, naming the first map that lost its selection. The second
-    /// template is the registry's password shape, where the previous release reported SKIP for a
-    /// different reason -- a resource with no `Properties` resolved unresolved and failed the `!empty` --
-    /// while its verbose output shows the filter selecting the instance's `Properties`; the selection
-    /// moved there too, so the same notice goes out.
+    /// The second template is the registry's password shape. Its `Metadata` resource has no
+    /// `Properties`, so the projection also yields an unresolved value beside the two maps; the rule
+    /// is SKIP at exit 0 and no notice goes out there either. The notice for a binding that holds
+    /// several maps, one of which has no scalar entry and keeps the walk, is pinned by the
+    /// once-per-site cells below, which use the `Metadata` projection fixtures.
     #[rstest::rstest]
-    #[case(
+    #[case::instance_properties_with_an_image(
         "two-properties-maps-one-with-image-template.yaml",
-        "/Resources/EC2I4LBA1/Properties"
+        StatusCode::VALIDATION_ERROR,
+        "FILTER_THROUGH_A_KEY_TAILED_PROJECTION    FAIL"
     )]
-    #[case(
+    #[case::a_resource_without_properties_beside_them(
         "single-map-binding-with-password-template.yaml",
-        "/Resources/EC2I4LBA1/Properties"
+        StatusCode::SUCCESS,
+        "FILTER_THROUGH_A_KEY_TAILED_PROJECTION    SKIP"
     )]
-    fn a_filter_through_a_binding_that_held_several_maps_is_announced_once(
+    fn a_filter_through_a_binding_that_held_several_maps_reads_each_map_as_the_wildcard_does(
         #[case] template: &str,
-        #[case] path: &str,
+        #[case] expected_code: i32,
+        #[case] verdict: &str,
     ) {
         let (status_code, stdout, stderr) =
             validate_both_streams("filter_through_a_key_tailed_projection.guard", template);
-        assert_eq!(StatusCode::SUCCESS, status_code, "stdout {:?}", stdout);
+        assert_eq!(expected_code, status_code, "stdout {:?}", stdout);
         assert!(
-            stdout.contains("FILTER_THROUGH_A_KEY_TAILED_PROJECTION    SKIP"),
-            "the when gate does not apply once the filter selects nothing, got {:?}",
+            stdout.contains(verdict),
+            "{template}: expected the summary to carry {:?}, got {:?}",
+            verdict,
             stdout
         );
-        let notices: Vec<&str> = stderr
-            .lines()
-            .filter(|l| l.contains("DEPRECATION"))
-            .collect();
-        assert_eq!(
-            1,
-            notices.len(),
-            "one notice for the one filter site, not one per map, got {:?} from stderr {:?}",
-            notices,
-            stderr
-        );
+        if expected_code == StatusCode::VALIDATION_ERROR {
+            assert!(
+                stdout.contains("/Resources/EC2I4LBA1/Properties/ImageId")
+                    && !stdout.contains("/Resources/RootRole/Properties/ImageId")
+                    && !stdout.contains("Could not be evaluated"),
+                "{template}: the body failed on the instance's own ImageId and nothing was refused, got {:?}",
+                stdout
+            );
+        }
         assert!(
-            notices[0].contains("let props = Resources.*[ Type exists ].Properties")
-                && notices[0].contains("the filter `%props[ ImageId exists ]`")
-                && notices[0].contains(&format!("did not select the map at {}", path))
-                && notices[0].contains("filter_through_a_key_tailed_projection.guard, line:13,"),
-            "the notice names the binding, the filter, the map that lost its selection and the line, got {:?}",
-            notices[0]
+            !stdout.contains("DEPRECATION") && !stderr.contains("DEPRECATION"),
+            "{template}: no selection was lost, so nothing is announced; stdout {:?} stderr {:?}",
+            stdout,
+            stderr
         );
     }
 
@@ -15697,23 +15624,20 @@ mod validate_tests {
         );
     }
 
-    /// A predicate that held on a named map only by a miss at the map's own first key is announced: the
-    /// miss is on a map the author named, so the selection it made was one the author could see move.
+    /// A predicate that held on a named map only by a miss at the map's own first key selects the map
+    /// when the map is one object, and nothing is announced.
     ///
     /// `let m = Resources.Metadata` with `%m[ Type == 'AWS::S3::Bucket' or Properties.Tags empty ]`: the
     /// `Type` clause resolves and fails, the `Properties.Tags empty` clause holds because `Metadata` has no
-    /// `Properties`. The previous release selected `Metadata` on that pass and the body ran; the walk now
-    /// selects the authentication sub-map in its place (the `Type` string is passed over), so the `when`
-    /// over the selection applies and the body fails on the sub-map, which is no bucket either. The
-    /// failing `Type` clause does not count toward the anchoring, the probe
-    /// reads clauses one by one; the passing clause is anchored by nothing, and the map's entries decide:
-    /// `Metadata` holds a scalar `Type` beside its authentication sub-map, an object, so the lost
-    /// selection is announced. The same vacuous pass on `let r = Resources`, whose entries are all maps
-    /// the predicate reaches into, is the quiet idiom the not-announced rows cover. This row was a
-    /// not-announced row while a miss at any map's first key read as vacuous; the direction moved, on
-    /// stderr alone, and the verdict did not.
+    /// `Properties`. `Metadata` holds a scalar `Type` beside its authentication sub-map and the predicate
+    /// names no key the sub-map holds, so the map is one object: the filter tests it as a whole, as
+    /// `%m[*][ ... ]` does, the second clause holds on it, and `Metadata` itself is selected. The `when`
+    /// over the selection applies and the body compares the map's own `Type`, an authentication type and
+    /// no bucket, so the rule FAILs at exit 19. The verdict is the one the previous release gave; what
+    /// changed is that the filter through the variable and the filter after `[*]` select the same map,
+    /// so there is no lost selection to name and stderr stays empty.
     #[test]
-    fn a_filter_held_by_a_miss_at_a_named_maps_first_key_is_announced() {
+    fn a_filter_held_by_a_miss_at_a_named_maps_first_key_selects_the_map_and_is_not_announced() {
         let (status_code, stdout, stderr) = validate_both_streams(
             "filter_with_a_vacuous_disjunct.guard",
             "single-map-binding-with-password-template.yaml",
@@ -15721,7 +15645,7 @@ mod validate_tests {
         assert_eq!(
             StatusCode::VALIDATION_ERROR,
             status_code,
-            "the when over the selected sub-map applies and the body fails; stdout {:?}",
+            "the when over the selected map applies and the body fails; stdout {:?}",
             stdout
         );
         assert!(
@@ -15729,24 +15653,11 @@ mod validate_tests {
             "got {:?}",
             stdout
         );
-        let notices: Vec<&str> = stderr
-            .lines()
-            .filter(|l| l.contains("DEPRECATION"))
-            .collect();
-        assert_eq!(
-            1,
-            notices.len(),
-            "one notice for the one filter, got {:?} from stderr {:?}",
-            notices,
-            stderr
-        );
         assert!(
-            notices[0].contains(
-                "did not select the map at /Resources/Metadata, which `let m = Resources.Metadata` \
-                 held; it selected one of the map's entries in its place."
-            ) && notices[0].contains("filter_with_a_vacuous_disjunct.guard, line:13,"),
-            "the notice names the map, the let and the filter's line, got {:?}",
-            notices[0]
+            !stdout.contains("DEPRECATION") && !stderr.contains("DEPRECATION"),
+            "the map is selected, so no selection was lost; stdout {:?} stderr {:?}",
+            stdout,
+            stderr
         );
     }
 
@@ -15847,12 +15758,14 @@ mod validate_tests {
     /// then `%b[ ... ]`. The notice names the `let` the author wrote for `b`, `let b = %a`, not the
     /// query at the end of the chain -- `let b = Resources.Metadata` is not a line in the file, and an
     /// author told to rebind it would look for it in vain. Red before this: the notice printed the chain's
-    /// end.
+    /// end. The template leaves the scalar `Type` entry out of the `Metadata` map, so the map has no
+    /// scalar entry and keeps the walk; with the entry the map is one object, the filter selects it, and
+    /// there is no notice (`a_filter_through_a_chained_binding_or_a_parameter_tests_the_map_itself`).
     #[test]
     fn a_filter_through_a_chained_binding_names_the_let_as_written() {
         let (status_code, stdout, stderr) = validate_both_streams(
             "filter_through_a_chained_binding.guard",
-            "single-map-binding-with-password-template.yaml",
+            "single-map-binding-without-type-template.yaml",
         );
         assert_eq!(StatusCode::SUCCESS, status_code, "stdout {:?}", stdout);
         assert!(
@@ -15873,18 +15786,58 @@ mod validate_tests {
         );
     }
 
+    /// The same two spellings over the template that keeps the scalar `Type` entry in the `Metadata`
+    /// map: the filtered name bound to another variable (`let b = %a`), and a parameterized rule's
+    /// parameter bound to `Resources.Metadata` at the call site. Either way the variable holds one map
+    /// with a non-null scalar entry and the predicate names no key its map-valued entry holds, so the
+    /// map is one object: the filter tests it as a whole, as `%b[*][ ... ]` does, selects it, and the
+    /// rule applies. The password makes the body fail, so each rule FAILs at exit 19 and names the
+    /// password's path. Nothing is announced: no selection was lost.
+    #[rstest::rstest]
+    #[case::chained_binding(
+        "filter_through_a_chained_binding.guard",
+        "FILTER_THROUGH_A_CHAINED_BINDING"
+    )]
+    #[case::parameter("filter_through_a_parameter.guard", "FILTER_THROUGH_A_PARAMETER")]
+    fn a_filter_through_a_chained_binding_or_a_parameter_tests_the_map_itself(
+        #[case] rules: &str,
+        #[case] rule: &str,
+    ) {
+        let (status_code, stdout, stderr) =
+            validate_both_streams(rules, "single-map-binding-with-password-template.yaml");
+        assert_eq!(
+            StatusCode::VALIDATION_ERROR,
+            status_code,
+            "{rules}: the rule applies to the one map and fails on its password; stdout {:?}",
+            stdout
+        );
+        assert!(
+            stdout.contains(&format!("{rule}    FAIL"))
+                && stdout.contains(
+                    "/Resources/Metadata/AWS::CloudFormation::Authentication/testBasic/password["
+                ),
+            "{rules}: the rule fails on the password under the selected map, got {:?}",
+            stdout
+        );
+        assert!(
+            !stdout.contains("DEPRECATION") && !stderr.contains("DEPRECATION"),
+            "{rules}: no selection was lost, so nothing is announced; stdout {:?} stderr {:?}",
+            stdout,
+            stderr
+        );
+    }
+
     /// A clause grounded by a key that resolved before a nested filter that selected nothing:
     /// `%b[ Properties.Tags[ Key == 'Owner' ] empty ]` on a bucket with tags but no Owner tag. The
     /// clause holds on the bucket for real -- `Properties.Tags` is there, and no element of it has the
-    /// key -- and the previous release selected the bucket on it (measured: the rule FAILed at exit
-    /// 19 on its missing Owner tag). The filter now walks the bucket's entries and selects its
-    /// `Properties` entry, where the same clause holds (the `Type` string is passed over), so the gate
-    /// applies, the body fails on the missing Owner tag under `Properties`, and the notice goes out.
-    /// Red before: grounding was read from the clause's final results
-    /// alone, the nested filter's empty selection read as "resolved nothing", and the lost selection
-    /// of this common "missing tag" idiom went unannounced.
+    /// key. The bucket holds a scalar `Type`, and the predicate's first key, `Properties`, is not a key
+    /// of any of the bucket's map-valued entries, so the bucket is one object: the filter tests it as a
+    /// whole, as `%b[*][ ... ]` does, the clause holds on it, and the bucket itself is selected, as the
+    /// previous release selected it. The gate applies, the body fails on the missing Owner tag
+    /// (exit 19), and nothing is announced: no selection was lost, so the grounding of a nested filter
+    /// inside the predicate has no notice to gate here.
     #[test]
-    fn a_filter_whose_clause_resolved_a_key_before_a_nested_filter_is_announced() {
+    fn a_filter_whose_clause_resolved_a_key_before_a_nested_filter_selects_the_bucket_itself() {
         let (status_code, stdout, stderr) = validate_both_streams(
             "filter_with_a_nested_filter_in_its_predicate.guard",
             "two-tagged-resources-template.yaml",
@@ -15892,49 +15845,31 @@ mod validate_tests {
         assert_eq!(
             StatusCode::VALIDATION_ERROR,
             status_code,
-            "the gate opens on the selected Properties entry and the body fails; stdout {:?}",
+            "the gate opens on the selected bucket and the body fails; stdout {:?}",
             stdout
         );
         assert!(
             stdout.contains("BUCKET_HAS_AN_OWNER_TAG    FAIL"),
-            "the when gate applies once the filter selects the Properties entry (the Type string is passed over), got {:?}",
+            "the when gate applies once the filter selects the bucket, got {:?}",
             stdout
         );
-        let notices: Vec<&str> = stderr
-            .lines()
-            .filter(|l| l.contains("DEPRECATION"))
-            .collect();
-        assert_eq!(
-            1,
-            notices.len(),
-            "got {:?} from stderr {:?}",
-            notices,
-            stderr
-        );
         assert!(
-            notices[0].contains("let b = Resources.Bucket")
-                && notices[0]
-                    .contains("the filter `%b[ Properties.Tags[ Key == 'Owner' ] empty ]`")
-                && notices[0].contains("did not select the map at /Resources/Bucket")
-                && notices[0].contains("filter_with_a_nested_filter_in_its_predicate.guard, line:11,"),
-            "the notice names the binding, the filter with its nested filter, the bucket and the line, got {:?}",
-            notices[0]
+            !stdout.contains("DEPRECATION") && !stderr.contains("DEPRECATION"),
+            "the bucket is selected, so no selection was lost; stdout {:?} stderr {:?}",
+            stdout,
+            stderr
         );
     }
 
-    /// A filter through a named-map binding whose predicate is an all-key absence check is announced when
-    /// the check missed on that map: `%b[ Properties.Tags !exists ]` on a bucket with `Properties` and no
-    /// `Tags`. The lookup got into the map before the key it names was missing (`Properties` resolved
-    /// and `Tags` did not), which anchors the pass in the map; a miss at the map's own first key would
-    /// anchor nothing and be judged from the map's entries instead. The walk selects the
-    /// `Properties` entry in the bucket's place and passes the `Type` string over, so the `when` gate
-    /// over the selection applies and the body fails on the missing `Tags` under `Properties`, as the
-    /// previous release's body failed on the bucket (a `Type` string reported unresolved would fail the
-    /// gate and leave the rule SKIP). The sibling with a nested filter after `Properties.Tags` is
-    /// announced as well; a grounding that read only the whole query's resolved results would announce
-    /// the nested filter and miss an all-key query.
+    /// A filter through a named-map binding whose predicate is an all-key absence check selects the
+    /// map itself when the map is one object: `%b[ Properties.Tags !exists ]` on a bucket with
+    /// `Properties` and no `Tags`. The bucket holds a scalar `Type`, and `Properties` is not a key of
+    /// any of its map-valued entries, so the filter tests the bucket as a whole, as `%b[*][ ... ]`
+    /// does: the check holds on it (`Properties` resolves and `Tags` does not), the bucket is selected
+    /// in the same place the previous release selected it, the `when` gate over the selection applies,
+    /// and the body fails on the missing `Tags` (exit 19). Nothing is announced: no selection was lost.
     #[test]
-    fn a_filter_through_a_named_map_whose_absence_check_missed_on_the_map_is_announced() {
+    fn a_filter_through_a_named_map_whose_absence_check_held_on_the_map_selects_the_map_itself() {
         let (status_code, stdout, stderr) = validate_both_streams(
             "filter_with_an_absence_check_in_its_predicate.guard",
             "bucket-without-tags-template.yaml",
@@ -15942,33 +15877,19 @@ mod validate_tests {
         assert_eq!(
             StatusCode::VALIDATION_ERROR,
             status_code,
-            "the gate opens on the selected Properties entry and the body fails; stdout {:?}",
+            "the gate opens on the selected bucket and the body fails; stdout {:?}",
             stdout
         );
         assert!(
             stdout.contains("BUCKET_HAS_TAGS    FAIL"),
-            "the when gate applies once the filter selects the Properties entry (the Type string is passed over), got {:?}",
+            "the when gate applies once the filter selects the bucket, got {:?}",
             stdout
         );
-        let notices: Vec<&str> = stderr
-            .lines()
-            .filter(|l| l.contains("DEPRECATION"))
-            .collect();
-        assert_eq!(
-            1,
-            notices.len(),
-            "got {:?} from stderr {:?}",
-            notices,
-            stderr
-        );
         assert!(
-            notices[0].contains("let b = Resources.Bucket")
-                && notices[0].contains("the filter `%b[ Properties.Tags !exists ]`")
-                && notices[0].contains("did not select the map at /Resources/Bucket")
-                && notices[0]
-                    .contains("filter_with_an_absence_check_in_its_predicate.guard, line:12,"),
-            "the notice names the binding, the filter, the bucket and the line, got {:?}",
-            notices[0]
+            !stdout.contains("DEPRECATION") && !stderr.contains("DEPRECATION"),
+            "the bucket is selected, so no selection was lost; stdout {:?} stderr {:?}",
+            stdout,
+            stderr
         );
     }
 
@@ -16118,8 +16039,9 @@ mod validate_tests {
     /// structured report: the notice names a different map for each file, so the texts differ, and a
     /// set keyed by text wrote two lines for one filter. The structured validate reporters keep the
     /// once-per-site reading across data files by `(kind, site)`, as the test command does across
-    /// cases: one line, the first file's. Red before: two lines, naming `/Resources/EC2I4LBA1/Properties`
-    /// and `/Resources/Instance/Properties`.
+    /// cases: one line, the first file's. Red before: two lines, naming `/Resources/EC2I4LBA1/Metadata`
+    /// and `/Resources/Instance/Metadata`. The maps the filter loses are `Metadata` maps with no scalar
+    /// entry, which keep the walk; a map with a scalar entry is one object and draws no notice.
     #[rstest::rstest]
     #[case("json")]
     #[case("junit")]
@@ -16132,10 +16054,10 @@ mod validate_tests {
                 .expect("Failed to create writer.");
             let status_code = ValidateTestRunner::default()
                 .data(vec![
-                    "two-properties-maps-one-with-image-template.yaml",
-                    "two-properties-maps-one-with-image-other-id-template.yaml",
+                    "metadata-maps-authentication-and-init-template.yaml",
+                    "metadata-maps-authentication-and-init-other-id-template.yaml",
                 ])
-                .rules(vec!["filter_through_a_key_tailed_projection.guard"])
+                .rules(vec!["filter_through_a_metadata_projection.guard"])
                 .structured()
                 .output_format(Some(output))
                 .run(&mut writer, &mut reader);
@@ -16158,7 +16080,7 @@ mod validate_tests {
             stderr
         );
         assert!(
-            notices[0].contains("/Resources/EC2I4LBA1/Properties"),
+            notices[0].contains("/Resources/EC2I4LBA1/Metadata"),
             "the first file's text is the one kept, got {:?}",
             notices[0]
         );
@@ -16223,13 +16145,14 @@ mod validate_tests {
     /// ever swallowed the per-file warnings (one warning line) or wrote the notice per file (two notice
     /// lines). The run ends with the trailer naming the second file as one that drew the announced
     /// site; that line is a `NOTE:` line, so the count of `DEPRECATION:` lines is one with or without it.
+    /// The maps the filter loses are `Metadata` maps with no scalar entry, which keep the walk.
     #[test]
     fn a_rule_notice_is_written_once_and_a_file_warning_once_per_file_in_the_single_line_output() {
         let (status_code, stderr) = single_line_stderr_across(
-            "filter_through_a_key_tailed_projection.guard",
+            "filter_through_a_metadata_projection.guard",
             vec![
-                "two-properties-maps-one-with-image-duplicate-key-template.yaml",
-                "two-properties-maps-one-with-image-other-id-duplicate-key-template.yaml",
+                "metadata-maps-authentication-and-init-duplicate-key-template.yaml",
+                "metadata-maps-authentication-and-init-other-id-duplicate-key-template.yaml",
             ],
         );
         assert_eq!(
@@ -16261,7 +16184,7 @@ mod validate_tests {
         );
         assert!(
             trailers[0].contains(
-                "two-properties-maps-one-with-image-other-id-duplicate-key-template.yaml"
+                "metadata-maps-authentication-and-init-other-id-duplicate-key-template.yaml"
             ) && trailers[0].contains("the filter notice"),
             "the trailer names the second file and the filter notice:\n{}",
             trailers[0]
@@ -16287,18 +16210,19 @@ mod validate_tests {
     /// directory of templates reached that author once per template for each filter: a near-identical
     /// line per file, differing only in the logical id of the map it names. The single-line path now
     /// keeps the once-per-site reading across the data-file loop, as the structured reporters and the
-    /// test command do. Red before: two lines, naming `/Resources/EC2I4LBA1/Properties` and then
-    /// `/Resources/Instance/Properties`. What the second file keeps is a trailer after the loop: one
+    /// test command do. Red before: two lines, naming `/Resources/EC2I4LBA1/Metadata` and then
+    /// `/Resources/Instance/Metadata`. What the second file keeps is a trailer after the loop: one
     /// line naming the later files that drew a notice the run announced once, and which notice, so the
     /// reader of the run still learns that the second file hit the same site. The trailer says which
     /// kind of notice it refers to ("the filter notice") because one site can hold notices of two kinds.
+    /// The maps the filter loses are `Metadata` maps with no scalar entry, which keep the walk.
     #[test]
     fn a_site_notice_is_written_once_across_data_files_in_the_single_line_output() {
         let (status_code, notices) = single_line_notices_across(
-            "filter_through_a_key_tailed_projection.guard",
+            "filter_through_a_metadata_projection.guard",
             vec![
-                "two-properties-maps-one-with-image-template.yaml",
-                "two-properties-maps-one-with-image-other-id-template.yaml",
+                "metadata-maps-authentication-and-init-template.yaml",
+                "metadata-maps-authentication-and-init-other-id-template.yaml",
             ],
         );
         assert_eq!(StatusCode::SUCCESS, status_code, "both files are SKIP");
@@ -16311,8 +16235,8 @@ mod validate_tests {
             notices
         );
         assert!(
-            lines[0].contains("/Resources/EC2I4LBA1/Properties")
-                && lines[0].contains("filter_through_a_key_tailed_projection.guard, line:13,"),
+            lines[0].contains("/Resources/EC2I4LBA1/Metadata")
+                && lines[0].contains("filter_through_a_metadata_projection.guard, line:13,"),
             "the first file's text is the one kept, and it names the site, got {:?}",
             lines[0]
         );
@@ -16325,10 +16249,10 @@ mod validate_tests {
         assert!(
             trailers[0].starts_with("NOTE: also drawn by ")
                 && trailers[0].contains("the filter notice for the site at Location[file:")
-                && trailers[0].contains("filter_through_a_key_tailed_projection.guard, line:13,")
+                && trailers[0].contains("filter_through_a_metadata_projection.guard, line:13,")
                 && trailers[0]
-                    .contains("two-properties-maps-one-with-image-other-id-template.yaml")
-                && !trailers[0].contains("two-properties-maps-one-with-image-template.yaml"),
+                    .contains("metadata-maps-authentication-and-init-other-id-template.yaml")
+                && !trailers[0].contains("metadata-maps-authentication-and-init-template.yaml"),
             "the trailer is a note naming the second file only, and the filter notice at its site, \
              got {:?}",
             trailers[0]
@@ -16574,19 +16498,19 @@ mod validate_tests {
     }
 
     /// A site first drawn by a LATER data file is written when that file is reached: the first file
-    /// draws nothing (its one `Properties` map has no `ImageId`, so the filter never selected it under
-    /// either reading), the second draws the key-tailed filter's notice, and the run writes exactly that
-    /// one line, naming the second file's map. The three cells around this one all draw every notice
-    /// from the first file, so a path that wrote only the first file's lines would have passed them;
-    /// this one pins that the set across the loop admits a site whenever it is new, not only at the
-    /// first file. One file drew the site, so no trailer follows.
+    /// draws nothing (its `Metadata` maps hold no authentication block, so the predicate holds on none
+    /// of them and no selection is lost), the second draws the projection filter's notice, and the run
+    /// writes exactly that one line, naming the second file's map. The three cells around this one all
+    /// draw every notice from the first file, so a path that wrote only the first file's lines would
+    /// have passed them; this one pins that the set across the loop admits a site whenever it is new,
+    /// not only at the first file. One file drew the site, so no trailer follows.
     #[test]
     fn a_site_notice_first_drawn_by_a_later_data_file_is_written() {
         let (status_code, notices) = single_line_notices_across(
-            "filter_through_a_key_tailed_projection.guard",
+            "filter_through_a_metadata_projection.guard",
             vec![
-                "no-volumes-template.yaml",
-                "two-properties-maps-one-with-image-other-id-template.yaml",
+                "metadata-maps-init-without-authentication-template.yaml",
+                "metadata-maps-authentication-and-init-other-id-template.yaml",
             ],
         );
         assert_eq!(StatusCode::SUCCESS, status_code, "both files are SKIP");
@@ -16597,8 +16521,8 @@ mod validate_tests {
             notices
         );
         assert!(
-            notices[0].contains("/Resources/Instance/Properties")
-                && notices[0].contains("filter_through_a_key_tailed_projection.guard, line:13,"),
+            notices[0].contains("/Resources/Instance/Metadata")
+                && notices[0].contains("filter_through_a_metadata_projection.guard, line:13,"),
             "the second file's text names its own map and the site, got {:?}",
             notices[0]
         );
@@ -16607,19 +16531,21 @@ mod validate_tests {
     /// A site drawn by more than one data file is announced once, beside the first file, and the run
     /// ends with one trailer for that site naming the later files that drew it too, so a reader of a
     /// multi-file run can tell which files hit a site after the first without the notice being
-    /// repeated beside each of them. Two sites here: `ImageId exists` loses its selection on both
-    /// templates and `Marker exists` on the second alone. So two notices, one per site, each the text
-    /// of the first file that drew it, and exactly one trailer, for the `ImageId` site, naming the
-    /// second file and not the first; the `Marker` site, drawn once, gets none. The trailer is a
-    /// `NOTE:` line: a notice, so the library entry drops it from a failure text as it drops the
-    /// notices, and not a deprecation, so a count of `DEPRECATION:` lines stays at the two notices.
+    /// repeated beside each of them. Two sites here: the authentication-block predicate loses its
+    /// selection on both templates and the init-block predicate on the second alone. So two notices,
+    /// one per site, each the text of the first file that drew it, and exactly one trailer, for the
+    /// authentication site, naming the second file and not the first; the init site, drawn once, gets
+    /// none. The trailer is a `NOTE:` line: a notice, so the library entry drops it from a failure text
+    /// as it drops the notices, and not a deprecation, so a count of `DEPRECATION:` lines stays at the
+    /// two notices. The maps the filters lose are `Metadata` maps with no scalar entry, which keep the
+    /// walk.
     #[test]
     fn a_site_repeated_across_data_files_gets_one_trailer_naming_the_later_files() {
         let (status_code, notices) = single_line_notices_across(
-            "filter_through_two_sites_one_hit_later.guard",
+            "filter_through_two_metadata_sites_one_hit_later.guard",
             vec![
-                "two-properties-maps-one-with-image-template.yaml",
-                "two-properties-maps-image-and-marker-template.yaml",
+                "metadata-maps-authentication-without-init-template.yaml",
+                "metadata-maps-authentication-and-init-other-id-template.yaml",
             ],
         );
         assert_eq!(StatusCode::SUCCESS, status_code, "both files are SKIP");
@@ -16631,14 +16557,14 @@ mod validate_tests {
             "one notice per site across two data files, got {:?}",
             notices
         );
-        let image_site = "filter_through_two_sites_one_hit_later.guard, line:10,";
-        let marker_site = "filter_through_two_sites_one_hit_later.guard, line:13,";
+        let authentication_site = "filter_through_two_metadata_sites_one_hit_later.guard, line:11,";
+        let init_site = "filter_through_two_metadata_sites_one_hit_later.guard, line:14,";
         assert!(
             lines.iter().any(|n| {
-                n.contains(image_site) && n.contains("/Resources/EC2I4LBA1/Properties")
-            }) && lines.iter().any(|n| {
-                n.contains(marker_site) && n.contains("/Resources/Instance/Properties")
-            }),
+                n.contains(authentication_site) && n.contains("/Resources/Box/Metadata")
+            }) && lines
+                .iter()
+                .any(|n| n.contains(init_site) && n.contains("/Resources/Instance/Metadata")),
             "each site's line is the first file's text that drew it, got {:?}",
             lines
         );
@@ -16652,10 +16578,10 @@ mod validate_tests {
         assert!(
             trailer.starts_with("NOTE: also drawn by ")
                 && trailer.contains("the filter notice for the site at Location[file:")
-                && trailer.contains(image_site)
-                && trailer.contains("two-properties-maps-image-and-marker-template.yaml")
-                && !trailer.contains("two-properties-maps-one-with-image-template.yaml")
-                && !trailer.contains(marker_site),
+                && trailer.contains(authentication_site)
+                && trailer.contains("metadata-maps-authentication-and-init-other-id-template.yaml")
+                && !trailer.contains("metadata-maps-authentication-without-init-template.yaml")
+                && !trailer.contains(init_site),
             "the trailer is a note naming the repeated site and only the files after its first, \
              got {:?}",
             trailer
@@ -16688,10 +16614,10 @@ mod validate_tests {
     #[test]
     fn two_filter_sites_write_two_lines_across_data_files_in_the_single_line_output() {
         let (status_code, notices) = single_line_notices_across(
-            "filter_through_two_key_tailed_projections.guard",
+            "filter_through_two_metadata_projections.guard",
             vec![
-                "two-properties-maps-one-with-image-template.yaml",
-                "two-properties-maps-one-with-image-other-id-template.yaml",
+                "metadata-maps-authentication-and-init-template.yaml",
+                "metadata-maps-authentication-and-init-other-id-template.yaml",
             ],
         );
         assert_eq!(StatusCode::SUCCESS, status_code, "both files are SKIP");
@@ -16710,8 +16636,8 @@ mod validate_tests {
             notices
         );
         assert!(
-            trailers[0].contains("two-properties-maps-one-with-image-other-id-template.yaml")
-                && !trailers[0].contains("two-properties-maps-one-with-image-template.yaml")
+            trailers[0].contains("metadata-maps-authentication-and-init-other-id-template.yaml")
+                && !trailers[0].contains("metadata-maps-authentication-and-init-template.yaml")
                 && trailers[0]
                     .matches("the filter notice for the site at Location[file:")
                     .count()
@@ -16723,7 +16649,7 @@ mod validate_tests {
         // The lines come out in text order, which is not site order, so each site is looked up rather
         // than read by position.
         for line in ["line:9,", "line:12,"] {
-            let site = format!("filter_through_two_key_tailed_projections.guard, {line}");
+            let site = format!("filter_through_two_metadata_projections.guard, {line}");
             let at_site: Vec<&&String> = lines.iter().filter(|n| n.contains(&site)).collect();
             assert_eq!(
                 1,
@@ -16732,7 +16658,7 @@ mod validate_tests {
                 notices
             );
             assert!(
-                at_site[0].contains("/Resources/EC2I4LBA1/Properties"),
+                at_site[0].contains("/Resources/EC2I4LBA1/Metadata"),
                 "the site's line is the first file's text, got {:?}",
                 at_site[0]
             );
@@ -16757,11 +16683,11 @@ mod validate_tests {
     #[test]
     fn the_trailer_is_written_before_a_later_files_evaluation_error_is_propagated() {
         let (status_code, stderr) = single_line_stderr_across(
-            "filter_through_a_site_then_a_gated_undeclared_name.guard",
+            "filter_through_a_metadata_site_then_a_gated_undeclared_name.guard",
             vec![
-                "two-properties-maps-one-with-image-template.yaml",
-                "two-properties-maps-one-with-image-other-id-template.yaml",
-                "two-properties-maps-with-a-trigger-template.yaml",
+                "metadata-maps-authentication-and-init-template.yaml",
+                "metadata-maps-authentication-and-init-other-id-template.yaml",
+                "metadata-maps-with-a-trigger-template.yaml",
             ],
         );
         assert_eq!(
@@ -16797,12 +16723,13 @@ mod validate_tests {
             stderr
         );
         assert!(
-            lines[trailer].contains("two-properties-maps-one-with-image-other-id-template.yaml")
-                && !lines[trailer].contains("two-properties-maps-one-with-image-template.yaml")
-                && !lines[trailer].contains("two-properties-maps-with-a-trigger-template.yaml")
+            lines[trailer].contains("metadata-maps-authentication-and-init-other-id-template.yaml")
+                && !lines[trailer].contains("metadata-maps-authentication-and-init-template.yaml")
+                && !lines[trailer].contains("metadata-maps-with-a-trigger-template.yaml")
                 && lines[trailer].contains("the filter notice for the site at Location[file:")
-                && lines[trailer]
-                    .contains("filter_through_a_site_then_a_gated_undeclared_name.guard, line:9,"),
+                && lines[trailer].contains(
+                    "filter_through_a_metadata_site_then_a_gated_undeclared_name.guard, line:10,"
+                ),
             "the trailer names the second file alone, and the filter notice at its site, got {:?}",
             lines[trailer]
         );
@@ -16817,10 +16744,10 @@ mod validate_tests {
     #[test]
     fn the_trailer_is_written_before_a_later_files_parameter_merge_error_is_propagated() {
         let (status_code, stderr) = single_line_stderr_across_with_parameters(
-            "filter_through_a_key_tailed_projection.guard",
+            "filter_through_a_metadata_projection.guard",
             vec![
-                "two-properties-maps-one-with-image-template.yaml",
-                "two-properties-maps-one-with-image-other-id-template.yaml",
+                "metadata-maps-authentication-and-init-template.yaml",
+                "metadata-maps-authentication-and-init-other-id-template.yaml",
                 "two-properties-maps-with-parameters-template.yaml",
             ],
             vec!["input-parameters-dir/db_params.yaml"],
@@ -16847,11 +16774,11 @@ mod validate_tests {
             .find(|l| is_trailer(l))
             .unwrap_or_else(|| panic!("no trailer on stderr: {:?}", stderr));
         assert!(
-            trailer.contains("two-properties-maps-one-with-image-other-id-template.yaml")
-                && !trailer.contains("two-properties-maps-one-with-image-template.yaml")
+            trailer.contains("metadata-maps-authentication-and-init-other-id-template.yaml")
+                && !trailer.contains("metadata-maps-authentication-and-init-template.yaml")
                 && !trailer.contains("two-properties-maps-with-parameters-template.yaml")
                 && trailer.contains("the filter notice for the site at Location[file:")
-                && trailer.contains("filter_through_a_key_tailed_projection.guard, line:13,"),
+                && trailer.contains("filter_through_a_metadata_projection.guard, line:13,"),
             "the trailer names the second file alone, and the filter notice at its site, got {:?}",
             trailer
         );
@@ -16859,26 +16786,27 @@ mod validate_tests {
 
     /// Two groups whose shortened file lists would read the same stay shortened and are told apart by
     /// the first name where they differ. Six templates over two sites: the first draws both, the next
-    /// three draw both, the fifth draws the `ImageId` site alone and the sixth the `InstanceType` site
-    /// alone. The two sites' later-file lists share their first three names and their count and differ
-    /// in the last file, so shortened they would both read "<three names> and 1 more". Each still names
-    /// three files and counts the fourth, and adds the one name its list lacks and the other's holds
-    /// (`not <the other site's own template>`), so the line stays bounded whatever the directory's size;
-    /// a run over two hundred templates is pinned in the command's own unit cell. This cell once asserted
-    /// the opposite shape, every file named in full and no count, and carried that shape in its name;
-    /// that reading made the trailer's length grow with the directory, which is the line the count exists
-    /// to prevent.
+    /// three draw both, the fifth draws the authentication-block site alone and the sixth the
+    /// init-block site alone. The two sites' later-file lists share their first three names and their
+    /// count and differ in the last file, so shortened they would both read "<three names> and 1 more".
+    /// Each still names three files and counts the fourth, and adds the one name its list lacks and the
+    /// other's holds (`not <the other site's own template>`), so the line stays bounded whatever the
+    /// directory's size; a run over two hundred templates is pinned in the command's own unit cell. This
+    /// cell once asserted the opposite shape, every file named in full and no count, and carried that
+    /// shape in its name; that reading made the trailer's length grow with the directory, which is the
+    /// line the count exists to prevent. The maps the filters lose are `Metadata` maps with no scalar
+    /// entry, which keep the walk.
     #[test]
     fn two_groups_whose_shortened_file_lists_would_read_the_same_stay_short_and_are_told_apart() {
         let (status_code, notices) = single_line_notices_across(
-            "filter_through_image_and_instance_type_sites.guard",
+            "filter_through_authentication_and_init_sites.guard",
             vec![
-                "two-properties-maps-one-with-image-fourth-id-template.yaml",
-                "two-properties-maps-one-with-image-template.yaml",
-                "two-properties-maps-one-with-image-other-id-template.yaml",
-                "two-properties-maps-one-with-image-third-id-template.yaml",
-                "two-properties-maps-image-without-instance-type-template.yaml",
-                "two-properties-maps-instance-type-without-image-template.yaml",
+                "metadata-maps-authentication-and-init-fourth-id-template.yaml",
+                "metadata-maps-authentication-and-init-template.yaml",
+                "metadata-maps-authentication-and-init-other-id-template.yaml",
+                "metadata-maps-authentication-and-init-third-id-template.yaml",
+                "metadata-maps-authentication-without-init-template.yaml",
+                "metadata-maps-init-without-authentication-template.yaml",
             ],
         );
         assert_eq!(StatusCode::SUCCESS, status_code, "every file is SKIP");
@@ -16900,21 +16828,21 @@ mod validate_tests {
         // image-site trailer is the one that says "not <the instance-type-only template>".
         for (site, own, lacking) in [
             (
-                "line:11,",
-                "two-properties-maps-image-without-instance-type-template.yaml",
-                "two-properties-maps-instance-type-without-image-template.yaml",
+                "line:12,",
+                "metadata-maps-authentication-without-init-template.yaml",
+                "metadata-maps-init-without-authentication-template.yaml",
             ),
             (
-                "line:14,",
-                "two-properties-maps-instance-type-without-image-template.yaml",
-                "two-properties-maps-image-without-instance-type-template.yaml",
+                "line:15,",
+                "metadata-maps-init-without-authentication-template.yaml",
+                "metadata-maps-authentication-without-init-template.yaml",
             ),
         ] {
             let trailer = trailers
                 .iter()
                 .find(|t| {
                     t.contains(&format!(
-                        "filter_through_image_and_instance_type_sites.guard, {site}"
+                        "filter_through_authentication_and_init_sites.guard, {site}"
                     ))
                 })
                 .unwrap_or_else(|| panic!("no trailer for the site at {site}: {:?}", trailers));
@@ -16923,9 +16851,11 @@ mod validate_tests {
                 .unwrap_or_else(|| panic!("no notice named in the trailer: {:?}", trailer));
             assert!(
                 files.starts_with("NOTE: also drawn by ")
-                    && files.contains("two-properties-maps-one-with-image-template.yaml")
-                    && files.contains("two-properties-maps-one-with-image-other-id-template.yaml")
-                    && files.contains("two-properties-maps-one-with-image-third-id-template.yaml")
+                    && files.contains("metadata-maps-authentication-and-init-template.yaml")
+                    && files
+                        .contains("metadata-maps-authentication-and-init-other-id-template.yaml")
+                    && files
+                        .contains("metadata-maps-authentication-and-init-third-id-template.yaml")
                     && files.contains(" and 1 more, not ")
                     && files.ends_with(lacking)
                     && !files.contains(own)
@@ -16946,13 +16876,13 @@ mod validate_tests {
     #[test]
     fn a_trailer_names_at_most_three_later_files_and_counts_the_rest() {
         let (status_code, notices) = single_line_notices_across(
-            "filter_through_a_key_tailed_projection.guard",
+            "filter_through_a_metadata_projection.guard",
             vec![
-                "two-properties-maps-one-with-image-template.yaml",
-                "two-properties-maps-one-with-image-other-id-template.yaml",
-                "two-properties-maps-image-and-marker-template.yaml",
-                "two-properties-maps-one-with-image-third-id-template.yaml",
-                "two-properties-maps-one-with-image-fourth-id-template.yaml",
+                "metadata-maps-authentication-and-init-template.yaml",
+                "metadata-maps-authentication-and-init-other-id-template.yaml",
+                "metadata-maps-authentication-without-init-template.yaml",
+                "metadata-maps-authentication-and-init-third-id-template.yaml",
+                "metadata-maps-authentication-and-init-fourth-id-template.yaml",
             ],
         );
         assert_eq!(StatusCode::SUCCESS, status_code, "every file is SKIP");
@@ -16981,13 +16911,13 @@ mod validate_tests {
                 .unwrap_or_else(|| panic!("{name} is not named in {:?}", files))
         };
         assert!(
-            position("two-properties-maps-one-with-image-other-id-template.yaml")
-                < position("two-properties-maps-image-and-marker-template.yaml")
-                && position("two-properties-maps-image-and-marker-template.yaml")
-                    < position("two-properties-maps-one-with-image-third-id-template.yaml")
+            position("metadata-maps-authentication-and-init-other-id-template.yaml")
+                < position("metadata-maps-authentication-without-init-template.yaml")
+                && position("metadata-maps-authentication-without-init-template.yaml")
+                    < position("metadata-maps-authentication-and-init-third-id-template.yaml")
                 && files.ends_with(" and 1 more")
                 && !files.contains("fourth-id")
-                && !files.contains("two-properties-maps-one-with-image-template.yaml"),
+                && !files.contains("metadata-maps-authentication-and-init-template.yaml"),
             "the trailer names three later files in run order and counts the fourth, got {:?}",
             trailers[0]
         );
@@ -17067,10 +16997,13 @@ mod validate_tests {
     /// says which parameter of which rule, and what the call site bound it to, and its rewrite talks
     /// about the call rather than a `let`. Red before this: the notice printed `let m = Resources.Metadata`.
     ///
-    /// The verdict is the engine's: the `Type` string is passed over and the maps lack the key, so the
-    /// selection is empty and the `!exists` over it is not applicable (SKIP) where the previous
-    /// release's reading selected the map and FAILed on its password. That move is what the notice is
-    /// for. The notice site is reached at retrieval for any clause and does not hold the operator, so
+    /// The template leaves the scalar `Type` entry out of the `Metadata` map, so the map has no scalar
+    /// entry and keeps the walk (with the entry the map is one object, the filter selects it and there
+    /// is no notice: `a_filter_through_a_chained_binding_or_a_parameter_tests_the_map_itself`).
+    ///
+    /// The verdict is the engine's: the maps lack the key, so the selection is empty and the
+    /// `!exists` over it is not applicable (SKIP) where the previous release's reading selected the
+    /// map and FAILed on its password. That move is what the notice is for. The notice site is reached at retrieval for any clause and does not hold the operator, so
     /// the runtime line names the moved selection, says once which way a verdict moves (the fail-open
     /// direction, except on the selection itself under `!empty`, which fails where it passed, and
     /// under a `when ... empty` gate, which now opens), and points to the per-operator table in the
@@ -17084,12 +17017,12 @@ mod validate_tests {
     fn a_filter_through_a_parameter_names_the_parameter_and_its_rule() {
         let (status_code, stdout, stderr) = validate_both_streams(
             "filter_through_a_parameter.guard",
-            "single-map-binding-with-password-template.yaml",
+            "single-map-binding-without-type-template.yaml",
         );
         assert_eq!(StatusCode::SUCCESS, status_code, "stdout {:?}", stdout);
         assert!(
             stdout.contains("FILTER_THROUGH_A_PARAMETER    SKIP"),
-            "the selection is empty (the Type string is passed over, the maps lack the key), so the assertion over it is not applicable; got {:?}",
+            "the selection is empty (the maps lack the key), so the assertion over it is not applicable; got {:?}",
             stdout
         );
         let notices: Vec<&str> = stderr
@@ -18205,27 +18138,21 @@ mod validate_tests {
         );
     }
 
-    /// `docs/CLAUSES.md` says an absence predicate through a variable holding one resource holds on
-    /// the map entries that lack the key, which are then selected in the resource's place, while a
-    /// scalar entry is still reported unresolved. Both spellings the docs name are pinned, since the
-    /// notice grounds `empty` apart from `not exists`: `let m = Resources.Only` then
-    /// `%m[ Properties.Tags !exists ]` or `%m[ Properties.Tags empty ]` on a resource whose entries are
-    /// exactly two maps without `Properties.Tags` and the `Type` string. The notice counts the two
-    /// entries selected in the map's place, and a positive `exists` over the selection passes on them
-    /// and fails on the `Type` string, naming its path. The template is this test's own, so the shape
-    /// the count rides on is pinned here and nowhere else.
+    /// An absence predicate through a variable holding one resource holds on the resource itself when
+    /// the resource is one object. Both spellings are pinned, since the notice once grounded `empty`
+    /// apart from `not exists`: `let m = Resources.Only` then `%m[ Properties.Tags !exists ]` or
+    /// `%m[ Properties.Tags empty ]` on a resource whose entries are the `Type` string and two maps
+    /// without `Properties.Tags`. The resource holds a scalar entry and `Properties` is not a key of
+    /// either map, so the filter tests the resource as a whole, as `%m[*][ ... ]` does: the absence
+    /// holds on it, and the resource is selected in its own place. A positive `exists` over the
+    /// selection passes, the `Type` string is neither selected nor reported, and nothing is announced:
+    /// no selection was lost. The template is this test's own, so the shape is pinned here and
+    /// nowhere else.
     #[rstest::rstest]
-    #[case(
-        "absence_predicate_through_an_instance_binding.guard",
-        "`%m[ Properties.Tags !exists ]`"
-    )]
-    #[case(
-        "empty_predicate_through_an_instance_binding.guard",
-        "`%m[ Properties.Tags empty ]`"
-    )]
-    fn an_absence_predicate_through_an_instance_binding_selects_the_maps_lacking_the_key(
+    #[case("absence_predicate_through_an_instance_binding.guard")]
+    #[case("empty_predicate_through_an_instance_binding.guard")]
+    fn an_absence_predicate_through_an_instance_binding_selects_the_instance_itself(
         #[case] rules: &str,
-        #[case] filter_as_written: &str,
     ) {
         let (status_code, stdout, stderr) =
             validate_both_streams(rules, "one-resource-two-maps-one-scalar-template.yaml");
@@ -18233,7 +18160,7 @@ mod validate_tests {
         assert_eq!(
             StatusCode::SUCCESS,
             status_code,
-            "the positive assertion passes on the two selected maps; the Type string is passed over; stdout {:?}",
+            "the positive assertion passes on the selected resource; stdout {:?}",
             stdout
         );
         assert_eq!(
@@ -18245,33 +18172,14 @@ mod validate_tests {
         assert!(
             !stdout.contains("/Resources/Only/Type[")
                 && !stdout.contains("Filter on value type that was not a struct or array"),
-            "the scalar entry is passed over, neither selected nor reported, got stdout {:?}",
+            "the scalar entry is neither selected nor reported, got stdout {:?}",
             stdout
         );
-
-        let notices: Vec<&str> = stderr
-            .lines()
-            .filter(|l| l.contains("DEPRECATION"))
-            .collect();
-        assert_eq!(
-            1,
-            notices.len(),
-            "one filter lost its map, so one notice; got {:?} from stderr {:?}",
-            notices,
+        assert!(
+            !stdout.contains("DEPRECATION") && !stderr.contains("DEPRECATION"),
+            "the resource is selected, so no selection was lost; stdout {:?} stderr {:?}",
+            stdout,
             stderr
-        );
-        assert!(
-            notices[0].contains(&format!("the filter {filter_as_written} at")),
-            "the notice quotes the filter as written, got {:?}",
-            notices[0]
-        );
-        assert!(
-            notices[0].contains(
-                "did not select the map at /Resources/Only, which `let m = Resources.Only` held; it \
-                 selected 2 of the map's entries in its place."
-            ),
-            "the notice counts the two maps lacking the key as selected in the resource's place, got {:?}",
-            notices[0]
         );
     }
 
@@ -18321,32 +18229,33 @@ mod validate_tests {
         );
     }
 
-    /// The spelling `docs/CLAUSES.md` warns about, `let m = Resources.WebServer` then
+    /// The spelling `docs/CLAUSES.md` describes, `let m = Resources.WebServer` then
     /// `%m[ Metadata."AWS::CloudFormation::Authentication" exists ]`, on the template whose `WebServer`
-    /// block holds a password. The filter walks the resource's entries and selects no map in its
-    /// place: the `Metadata` and `Properties` maps have no `Metadata` key, and the `Type` string is not
-    /// a value the predicate can be applied to, so that entry is reported unresolved. Three rules over
-    /// the selection pin what the docs say follows: the ungated `!exists` reads the unresolved entry as
-    /// absent and PASSes where the previous reading failed on the password; behind `when %auth !empty`
-    /// the rule is SKIP; a positive `exists` FAILs, naming the `Type` entry. One notice names the `let`,
-    /// the filter as written and the map that lost its selection.
+    /// block holds a password. The resource holds a scalar `Type`, and `Metadata` is not a key of any
+    /// of its map-valued entries (its `Metadata` and `Properties` maps), so the resource is one object:
+    /// the filter tests it as a whole, as `%m[*][ ... ]` does, the predicate holds on it, and the
+    /// resource is selected in its own place. Three rules over the selection: the ungated `!exists`
+    /// FAILs on the password and names its path; behind `when %auth !empty` the same assertion applies
+    /// and FAILs; a positive `exists` PASSes. The exit code is 19 and nothing is announced: no
+    /// selection was lost.
     #[test]
-    fn the_documented_filter_through_an_instance_binding_fails_open_and_is_announced() {
+    fn the_documented_filter_through_an_instance_binding_selects_the_instance_and_fails_on_its_password(
+    ) {
         let (status_code, stdout, stderr) = validate_both_streams(
             "authentication_filtered_through_an_instance_binding.guard",
             "authentication-under-metadata-template.yaml",
         );
 
         assert_eq!(
-            StatusCode::SUCCESS,
+            StatusCode::VALIDATION_ERROR,
             status_code,
-            "every rule is not applicable over the empty selection; stdout {:?}",
+            "the password under the selected WebServer fails the `!exists`; stdout {:?}",
             stdout
         );
         for (rule, verdict) in [
-            ("authentication_has_no_password", "SKIP"),
-            ("authentication_has_no_password_when_selected", "SKIP"),
-            ("authentication_block_is_selected", "SKIP"),
+            ("authentication_has_no_password", "FAIL"),
+            ("authentication_has_no_password_when_selected", "FAIL"),
+            ("authentication_block_is_selected", "PASS"),
         ] {
             assert_eq!(
                 Some(verdict.to_string()),
@@ -18356,43 +18265,23 @@ mod validate_tests {
             );
         }
         assert!(
-            !stdout.contains("/Resources/WebServer/Type[")
-                && !stdout.contains("Filter on value type that was not a struct or array"),
-            "the Type string is passed over, neither selected nor reported; got stdout {:?}",
+            stdout.contains(
+                "PropertyPath    = /Resources/WebServer/Metadata/AWS::CloudFormation::Authentication/WebCreds/password["
+            ),
+            "the failure names the password under the selected WebServer; got stdout {:?}",
             stdout
         );
-
-        let notices: Vec<&str> = stderr
-            .lines()
-            .filter(|l| l.contains("DEPRECATION"))
-            .collect();
-        assert_eq!(
-            1,
-            notices.len(),
-            "one filter lost its selection, so one notice; got {:?} from stderr {:?}",
-            notices,
+        assert!(
+            !stdout.contains("/Resources/WebServer/Type[")
+                && !stdout.contains("Filter on value type that was not a struct or array"),
+            "the Type string is neither selected nor reported; got stdout {:?}",
+            stdout
+        );
+        assert!(
+            !stdout.contains("DEPRECATION") && !stderr.contains("DEPRECATION"),
+            "the resource is selected, so no selection was lost; stdout {:?} stderr {:?}",
+            stdout,
             stderr
-        );
-        let notice = notices[0];
-        assert!(
-            notice.contains(
-                r#"the filter `%m[ Metadata."AWS::CloudFormation::Authentication" exists ]`"#
-            ),
-            "the notice quotes the filter as written, got {:?}",
-            notice
-        );
-        assert!(
-            notice.contains("authentication_filtered_through_an_instance_binding.guard, line:16,"),
-            "the notice names the filter's position in the rules file, got {:?}",
-            notice
-        );
-        assert!(
-            notice.contains(
-                "did not select the map at /Resources/WebServer, which `let m = Resources.WebServer` \
-                 held; it selected none of the map's entries."
-            ),
-            "the notice names the map that lost its selection, got {:?}",
-            notice
         );
     }
 

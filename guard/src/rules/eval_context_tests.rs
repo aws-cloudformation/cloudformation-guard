@@ -3752,7 +3752,12 @@ fn a_quiet_bound_map_filter_site_is_read_once_and_never_re_walked() -> Result<()
 /// for a positive predicate.
 ///
 /// `let s = spec` over a Deployment `spec` of `selector`, `template` and `strategy` (sub-maps sharing no
-/// key name) with a scalar `replicas` beside them: an object. The filter sits inside a type block that
+/// key name): an object. The first spec has no scalar entry on purpose. A scalar `replicas` beside the
+/// sub-maps, with none of them holding the key the predicate names, makes the spec one object to the
+/// slot after `%s`, which tests the predicate on the spec itself as `spec[*][ f ]` does; a map kept that
+/// way is no lost selection, records no quiet verdict, and the site then pays its probe and its re-walk
+/// on every evaluation (12 and 12 over the twelve below, as read from the evaluator). The second spec
+/// keeps its scalar and is mixed: its sub-maps hold the key. The filter sits inside a type block that
 /// matches twelve buckets, so the clause is evaluated twelve times. Three predicates:
 /// - `%s[ securityContext exists ] empty` does not hold on the object and can hold on no field of it
 ///   either, since `exists` never holds by absence, so nothing can have been gained: the probe stops it
@@ -3783,7 +3788,7 @@ fn an_object_the_predicate_did_not_hold_on_is_re_walked_once_or_not_at_all() -> 
         ));
     }
     let object = format!(
-        "{buckets}spec:\n  replicas: 3\n  selector:\n    matchLabels:\n      app: a\n  template:\n    \
+        "{buckets}spec:\n  selector:\n    matchLabels:\n      app: a\n  template:\n    \
          metadata:\n      labels:\n        app: a\n  strategy:\n    type: Recreate\n"
     );
     let carrying = format!(

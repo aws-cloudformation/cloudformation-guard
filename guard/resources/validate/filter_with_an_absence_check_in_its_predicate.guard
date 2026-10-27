@@ -1,12 +1,10 @@
 #
 # The predicate's one clause is `Properties.Tags !exists`, an absence check two keys deep: `Properties`
-# resolves on the bucket and `Tags` is missing under it. The clause holds on the bucket for real, and
-# before 3.2 the filter selected the bucket and the rule's body ran. Now the walk selects the bucket's
-# `Properties` entry in its place, where the same absence holds, and passes the `Type` string over, so
-# the gate over the selection applies and the body fails on the missing `Tags`. The pass is anchored
-# in the bucket because the lookup got into it, `Properties` resolving, before the key it names was
-# missing; a miss at a map's own first key anchors nothing and is judged from the map's entries instead.
-# A reading from the whole query's resolved results alone saw nothing resolve and stayed quiet.
+# resolves on the bucket and `Tags` is missing under it. The clause holds on the bucket for real. The
+# bucket holds a scalar `Type` and `Properties` is not a key of any of its map-valued entries, so the
+# bucket is one object: the filter through the variable tests it as a whole, as `%b[*][ ... ]` does, and
+# selects the bucket itself. The gate over the selection applies and the body fails on the missing
+# `Tags`. Nothing is announced on stderr.
 #
 let b = Resources.Bucket
 let untagged = %b[ Properties.Tags !exists ]

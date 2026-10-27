@@ -1,13 +1,14 @@
 #
 # A binding whose query projects in the middle and ends in a key: `Resources.*[ Type exists ].Properties`
-# holds one `Properties` map per resource, several maps. Its last act is a key, so the reader walks the
-# reserved slot for it as for a plain binding, and the filter tests each map's entries.
+# holds one `Properties` map per resource, several maps. Its last act is a key, so the reader inserts a
+# slot after the `%props` root for the filter, and each map is read on its own.
 #
-# In the previous release the slot was consumed for every value a binding held, so this filter tested
-# each `Properties` map as a whole and selected the one carrying `ImageId`; the rule gated on that
-# selection FAILed on the body (exit 19). It now selects nothing from any of them and the rule is SKIP
-# (exit 0). Measured over a template of two resources that both carry Properties, so the move is the
-# filter's and not an unresolved value's. One notice, naming the map that lost its selection.
+# A `Properties` map with a non-null scalar entry (an instance's `ImageId`) whose predicate names no key
+# one of its map-valued entries holds is one object: the filter tests the map as a whole, as
+# `%props[*][ ... ]` does, selects the one carrying `ImageId`, and the rule gated on that selection runs
+# its body and FAILs (exit 19). A map with no scalar entry that lacks the key (the role's) is not
+# selected. Nothing is announced on stderr; the verdict is the report. The notice for a map that keeps
+# the walk is drawn by the `Metadata` projection fixtures (filter_through_a_metadata_projection.guard).
 #
 let props = Resources.*[ Type exists ].Properties
 rule FILTER_THROUGH_A_KEY_TAILED_PROJECTION when %props[ ImageId exists ] !empty {

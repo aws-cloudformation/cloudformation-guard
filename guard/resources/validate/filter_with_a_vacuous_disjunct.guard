@@ -1,13 +1,11 @@
 #
-# A disjunction whose first clause is grounded but fails and whose second clause passes by a miss at the
-# map's own first key. The `Metadata` resource's `Type` resolves and is not a bucket, and it has no
-# `Properties`, so `Properties.Tags empty` holds over a key the map does not have. The previous release
-# selected `Metadata` on that pass and the body ran; the walk now selects the authentication sub-map in
-# its place (the `Type` string is passed over), the `when` over the selection applies, and the body fails
-# on the sub-map, which is no bucket either. The pass is anchored by
-# nothing, so the map's entries decide: `Metadata` holds a scalar `Type` beside its authentication sub-map,
-# an object and not a collection of items the predicate is about, so the lost selection is announced. The
-# failing `Type` clause does not count toward the anchoring, since the probe reads each clause on its own.
+# A disjunction whose first clause fails and whose second clause passes by a miss at the map's own first
+# key. The `Metadata` resource's `Type` resolves and is not a bucket, and it has no `Properties`, so
+# `Properties.Tags empty` holds over a key the map does not have. The map holds a scalar `Type` beside its
+# authentication sub-map and the predicate names no key the sub-map holds, so it is one object: the filter
+# through the variable tests the map as a whole, as `%m[*][ ... ]` does, the second clause holds on it, and
+# `Metadata` itself is selected. The `when` over the selection applies and the body compares the map's own
+# `Type`, an authentication type and no bucket, so the rule FAILs. Nothing is announced on stderr.
 #
 let m = Resources.Metadata
 let selected = %m[ Type == 'AWS::S3::Bucket' or Properties.Tags empty ]

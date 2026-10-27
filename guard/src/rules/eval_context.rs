@@ -8202,19 +8202,21 @@ fn filter_next_over_a_non_collection(
 /// - The value in hand is one of the maps the binding resolved to. Nothing about the binding's query
 ///   or its value count enters: an arm that consumes the slot for every binding and for every value it
 ///   returns tests each map a variable held as that map, whether the variable held one or several and
-///   whether its query projected or not. Measured three ways against the previous release's
-///   binary, each pinned by a `validate` test. `let p = Wrapper.*[ Marker == 'selected' ].Config` holding
-///   one map: `%p[ Status == 'Enabled' ]` selected the map (the rule gated on it FAILed at exit 19) and
-///   selects nothing now (SKIP at exit 0), the same move as the plain `let m = Outer.Config`
-///   (`a_filter_through_a_projecting_binding_that_held_one_map_is_announced`).
-///   `let props = Resources.*[ Type exists ].Properties` holding two maps with `ImageId` in one:
-///   `%props[ ImageId exists ]` selected that one map (FAIL at exit 19) and selects nothing now (SKIP at
-///   exit 0) (`a_filter_through_a_binding_that_held_several_maps_is_announced_once`). The registry's own
-///   shape is `a_filter_through_a_single_map_binding_that_now_selects_nothing_is_announced`. A gate that
-///   required exactly one value left the several-map move silent, and a gate that required a
-///   projection-free query left the projecting one silent; neither was the fact. The caller's
-///   `binding_enumerated` is not it either: it says only that the binding's *last* act did not project,
-///   which is what routes every one of these here.
+///   whether its query projected or not. Read three ways against the previous release's binary, each
+///   pinned by a `validate` test. `let p = Wrapper.*[ Marker == 'selected' ].Config` holding one all-scalar
+///   map: `%p[ Status == 'Enabled' ]` names the map's own key and is refused, the same answer as the plain
+///   `let m = Outer.Config` (`a_filter_through_a_projecting_binding_that_held_one_map_is_announced`).
+///   `let props = Resources.*[ Type exists ].Properties` holding two maps with `ImageId` in one: each
+///   map holds a scalar entry and is one object, so `%props[ ImageId exists ]` tests each map itself as
+///   `[*]` does and never reaches this function
+///   (`a_filter_through_a_binding_that_held_several_maps_reads_each_map_as_the_wildcard_does`); the
+///   registry's own shape, a resource with a `Type` string beside its authentication block, is read the
+///   same way (`a_filter_through_a_single_map_binding_tests_the_map_itself_as_the_wildcard_does`), and
+///   the walk this function reads is the one over a map with no scalar entry. A gate that required
+///   exactly one value left the several-map move silent, and a gate that required a projection-free
+///   query left the projecting one silent; neither was the fact. The caller's `binding_enumerated` is
+///   not it either: it says only that the binding's *last* act did not project, which is what routes
+///   every one of these here.
 /// - The map itself is not among what the filter selected, read from the filter's own output rather
 ///   than the end of the query: the entry walk passes a scalar entry over, neither selected nor
 ///   reported, and yields a map entry only when the predicate holds on it, and the map comes back
@@ -8275,7 +8277,10 @@ fn filter_next_over_a_non_collection(
 ///
 /// Both spellings of the slot are covered. `%m[ f ]` arrives with the reserved `AllIndices(None)` at
 /// slot 1 and `%m[*][ f ]` with the author's own `AuthoredIndices`; an arm that consumes the slot takes
-/// either, so both would select the map, and both walk its entries.
+/// either, so both would select the map, and both walk its entries. A map with a non-null scalar entry
+/// that the predicate does not read as a member key is one object under both spellings
+/// (`MapUnderAWildcardFilter::OneObject`): the slot arm tests the predicate on it and hands it on
+/// before the walk, so such a map never reaches this function and nothing is announced for it.
 ///
 /// Deposited through `record_deprecation_once`, keyed by the filter's position, so it is one line on
 /// stderr per filter site however many maps the binding held and however many test cases evaluate the
@@ -8596,11 +8601,15 @@ fn announce_a_filter_that_lost_its_map<'value, 'loc: 'value>(
         Ok(selected) => selected,
         Err(_) => return,
     };
-    // A defensive check that cannot fire today: for a map at an `AllIndices`/`AuthoredIndices` slot
-    // with a filter next, the root-variable arm always goes through `accumulate_map`, which yields the
-    // map's entries and never the map itself. Kept because it guards the fact this notice rests on
-    // rather than this function's reasoning: if that arm ever hands the map through again, the filter
-    // kept its selection and there is nothing to announce.
+    // The filter kept the map itself: a map with a non-null scalar entry that the predicate does not
+    // read as a member key is one object under the reader's slot as under the author's `[*]`
+    // (`MapUnderAWildcardFilter::OneObject`), handed on whole by the slot arm and selected when the
+    // predicate holds on it, so the selection the previous release made is the selection made now and
+    // there is nothing to announce. The quiet verdict is recorded for the map at this site under the
+    // same provenance rule as the exits above: without the record every evaluation of the site over
+    // such a map paid this re-walk again (twelve re-walks over twelve evaluations, where the idiom's
+    // exits pay one), the cost `an_object_the_predicate_did_not_hold_on_is_re_walked_once_or_not_at_all`
+    // pins at one per site.
     let kept_the_map = selected.iter().any(|result| match result {
         QueryResult::Resolved(value) | QueryResult::Literal(value) => {
             value.self_path().0 == *map_path
@@ -8608,6 +8617,9 @@ fn announce_a_filter_that_lost_its_map<'value, 'loc: 'value>(
         QueryResult::UnResolved(_) => false,
     });
     if kept_the_map {
+        if let Some(key) = quiet_key.get(resolver) {
+            resolver.record_quiet_filter_site(DeprecationKind::FilterOverABoundMap, location, key);
+        }
         return;
     }
     let selected_entries = selected
@@ -22670,10 +22682,16 @@ fn query_retrieval_with_converter<'value, 'loc: 'value>(
                     // whether its keys exist or are empty (`Condition exists`, `"Fn::ImportValue"
                     // exists`) asked for an absence and got it, as it does over the one-element list.
                     //
-                    // The author's `[*]` only. The slot the reader inserts after a `%v` root is not an
-                    // enumeration the author wrote, so `%v[ f ]` over a map the variable holds keeps its
-                    // reading: that is a filter over a named map, which has its own rule
-                    // (`filter_over_a_named_map`), not the array-or-single leniency.
+                    // The author's `[*]` takes every reading below. The slot the reader inserts after a
+                    // `%v` root takes the one-object reading alone: a filter through a variable that holds
+                    // one map with a non-null scalar entry, `%v[ f ]`, tests the predicate on that map as
+                    // `%v[*][ f ]` does. Read apart, the variable spelling walked the one map's entries
+                    // where the authored wildcard tested the map itself, and a published rule written as
+                    // `%v[ <own key> exists ]` over one resource reported SKIP where the wildcard spelling
+                    // reported its verdict. A collection, a mixed map and a map whose own key the
+                    // predicate names keep the slot's own reading in the `else` arm below (a filter over
+                    // a named map, `filter_over_a_named_map`, with its notices), not the array-or-single
+                    // leniency.
                     //
                     // An EMPTY map at the population with a selection still ahead is the empty
                     // selection, as `Resources: {}` is under `Resources.*.Properties.Tags[ f ]`
@@ -22735,12 +22753,16 @@ fn query_retrieval_with_converter<'value, 'loc: 'value>(
                     // reading the query a second time (a read whose miss would be a panic, not a
                     // verdict).
                     let under_a_filter = match query.get(query_index + 1) {
-                        Some(QueryPart::Filter(filter_name, conjunctions)) if !reader_slot => {
-                            Some((
-                                filter_name,
-                                conjunctions,
-                                map_under_a_wildcard_filter(map, conjunctions),
-                            ))
+                        Some(QueryPart::Filter(filter_name, conjunctions)) => {
+                            let classified = map_under_a_wildcard_filter(map, conjunctions);
+                            // The reader slot takes the one-object reading alone (see above).
+                            if !reader_slot
+                                || matches!(classified, MapUnderAWildcardFilter::OneObject)
+                            {
+                                Some((filter_name, conjunctions, classified))
+                            } else {
+                                None
+                            }
                         }
                         _ => None,
                     };
@@ -23278,8 +23300,12 @@ fn query_retrieval_with_converter<'value, 'loc: 'value>(
                             resolver
                                 .add_variable_capture_key(capture.as_str(), Rc::clone(&current))?;
                         }
-                        // This branch is the author's `[*]` (`!reader_slot`), which always marks.
-                        shape.note(query_index + 1 >= query.len());
+                        // The author's `[*]` marks the pass-through; the slot the reader inserts after a
+                        // `%v` root leaves no mark, as everywhere in this arm, though it classifies the map
+                        // the same way.
+                        if marks_pass_through {
+                            shape.note(query_index + 1 >= query.len());
+                        }
                         // When the predicate compares against keys of which the object holds none
                         // AND a query part follows the filter, the filter is applied here rather
                         // than one arm down: the same call the filter arm makes for an expanded
