@@ -24802,7 +24802,17 @@ fn query_retrieval_with_converter<'value, 'loc: 'value>(
                             // filter's pending notice, and the hold is dropped where the clause had
                             // already failed closed. A plain inner filter's marker (no token, no
                             // registered sentence) stays this map's answer as it was.
+                            // The token is recovered from the registry for a text that carries none
+                            // (a numbered text over token-less registered markers, or one registered
+                            // sentence raised with no token), as the query arm recovers it: `rhs_undecided`
+                            // asserts a token for a numbered text of registered parts and would mint one
+                            // at the wrap for a single registered sentence, marking the enclosing run's
+                            // entry REFUSED for a refusal registered before the run.
                             Err(Error::UndecidableComparison(reason, refusal)) => {
+                                let ranking =
+                                    crate::rules::eval::ranking_under(resolver.refusal_frames());
+                                let refusal =
+                                    refusal.or_else(|| token_of_registered(&reason, &ranking));
                                 let undecided = if refusal.is_some() || is_refusal_text(&reason) {
                                     rhs_undecided(reason, refusal)
                                 } else {
@@ -27156,10 +27166,14 @@ impl<'value, 'loc: 'value> EvalContext<'value, 'loc> for RootScope<'value, 'loc>
         variable_name: &str,
         merged: MergedKeys,
     ) -> (RhsEnumeration, PassedOn) {
-        let names_its_value = self.scope.literals.contains_key(variable_name)
-            || self.holds_own_capture(variable_name, merged);
-        if names_its_value {
+        if self.scope.literals.contains_key(variable_name) {
             return (RhsEnumeration::Names, PassedOn::default());
+        }
+        // A capture holds the keys a filter bound, the members it kept: one entry set to `IN`, as
+        // `query_projects` reads a bare capture for a function's argument, so `Prefix IN %b` and
+        // `%lit IN %b` are membership in the keys, over one key as over two. A capture passed nothing on.
+        if self.holds_own_capture(variable_name, merged) {
+            return (RhsEnumeration::LastPart, PassedOn::default());
         }
         self.scope
             .variable_shapes
@@ -30756,10 +30770,12 @@ impl<'value, 'loc: 'value, 'eval> EvalContext<'value, 'loc> for BlockScope<'valu
         variable_name: &str,
         merged: MergedKeys,
     ) -> (RhsEnumeration, PassedOn) {
-        if self.scope.literals.contains_key(variable_name)
-            || self.holds_own_capture(variable_name, merged)
-        {
+        if self.scope.literals.contains_key(variable_name) {
             return (RhsEnumeration::Names, PassedOn::default());
+        }
+        // A capture's keys are one entry set, as the root scope reads them (`variable_shape` there).
+        if self.holds_own_capture(variable_name, merged) {
+            return (RhsEnumeration::LastPart, PassedOn::default());
         }
         if self.scope.function_expressions.contains_key(variable_name)
             || self.scope.variable_queries.contains_key(variable_name)

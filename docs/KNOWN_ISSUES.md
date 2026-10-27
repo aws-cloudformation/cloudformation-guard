@@ -1796,8 +1796,10 @@ let api_gws = Resources.*[ Type == 'AWS::ApiGateway::RestApi' ]
     sentence re-read whole is the registered refusal it is, read by text, but the shape `(1) <refusal> (2) <spent
     budget>`, which a raise over a refusal and a budget marker writes, parses to no registered set (the numbered
     parser accepts registered parts only, all or nothing), so the re-read carries no token and names no registered
-    text. Recovering the registered parts' tokens through a lenient parse of the numbered text would close it and is
-    deferred: the one residual of the token carrier, recorded as the design it keeps. Nothing moves with it but the
+    text. The refused READS such a raise names are already read leniently: `refusal_reads_of` names the registered
+    parts of a numbered text that also carries an unregistered reason, for the refused-read line and the fail-closed
+    `not` record alike. Recovering the registered parts' TOKENS the same way for the re-read would close this item
+    and is deferred: the one residual of the token carrier, recorded as the design it keeps. Nothing moves with it but the
     record's flag and the console's remedy line for that re-read; the verdict, the exit code and the registry are the
     same. Pinned as it reads by `eval_tests.rs:a_let_bound_refusal_re_read_keeps_its_flag_by_text_alone`, whose
     residual row goes red when the re-read recovers its token.

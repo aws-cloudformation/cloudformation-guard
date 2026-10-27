@@ -15,13 +15,15 @@
 # rule names, all of them expected", "2 failed rules, all of them expected", "0 unreadable rules files,
 # 0 unrunnable test cases", "3 orphaned test files, all of them expected".
 #
-# The signature of a corpus that has moved is specific enough to recognize on sight: exactly TWO
-# `file sizes:` lines reporting an `actual` of 0 -- e.g. "248 bytes expected, 0 bytes actual" and "182
-# bytes expected, 0 bytes actual" -- alongside "FAIL: condition 1 (exit code): expected 1, got 0",
-# "condition 2 (unchecked-expectation set)" and "condition 5 (orphaned-test-file set)". Exactly two
-# because `byte_evidence` below has exactly two call sites, one per checked-in list, and both lists go
-# empty when the corpus lands aws-guard-rules-registry#288. Measured at b9fc1eb7, four commits past the
-# pin. The pin itself produces no `file sizes:` line at all.
+# The signature of a corpus that has moved is specific enough to recognize on sight: `file sizes:`
+# lines reporting an `actual` of 0 -- e.g. "248 bytes expected, 0 bytes actual" and "182 bytes
+# expected, 0 bytes actual" -- alongside "FAIL: condition 1 (exit code): expected 1, got 0", "condition
+# 2 (unchecked-expectation set)" and "condition 5 (orphaned-test-file set)". `byte_evidence` below has
+# three call sites, one per checked-in list; the unchecked-expectation and orphaned-test-file lists go
+# empty when the corpus lands aws-guard-rules-registry#288, while the failed-rule list
+# (`failed-rules.txt`) stays as it is, since the two cases it names are malformed inputs of the pin that
+# this evaluator refuses on purpose, not expectations #288 corrects. Read at b9fc1eb7, four commits past
+# the pin. The pin itself produces no `file sizes:` line at all.
 #
 # The pin comment in pr.yml already says this red is intentional -- "Fixing the corpus turns this red on
 # purpose". The note exists because the vocabulary is genuinely misleading rather than wrong: the script
@@ -211,9 +213,19 @@ fail() {
 
 # Strips the comment and blank lines from an expected-state file, and any CR a checkout might have
 # left. This repository's .gitattributes pins eol=lf, so the CR strip is belt and braces -- but the
-# alternative is a Windows-only failure that nothing outside CI would ever reproduce.
+# alternative is a Windows-only failure that nothing outside CI would ever reproduce. Everything from
+# a `#` to the end of the line is a comment, so a test-case name holding a `#` cannot be listed in a
+# state file; no case in the pinned corpus has one, and a case named that way would show up as a
+# condition-3 mismatch naming the case, never as a silent pass.
 strip_comments() {
     tr -d '\r' <"$1" | sed -e 's/[[:space:]]*#.*$//' -e '/^[[:space:]]*$/d'
+}
+
+# Drops the leading blanks of each line: the state files indent their data lines for reading, and the
+# comparison must not turn on that indentation, so both sides are compared unindented and indented only
+# when printed.
+unindent() {
+    sed -e 's/^[[:space:]]*//'
 }
 
 # `tr` and not `paste -sd' '`: BSD paste is stricter about the combined form.
@@ -368,17 +380,17 @@ fi
 jq -r '[.[] | .test_cases[]?
         | . as $case
         | .failed_rules[]?
-        | "  \($case.name // "<unnamed case>"): rule \(.name), expected \(.expected), evaluated \(.evaluated | join(", "))"]
+        | "\($case.name // "<unnamed case>"): rule \(.name), expected \(.expected), evaluated \(.evaluated | join(", "))"]
        | .[]' "$report" \
     | tr -d '\r' | LC_ALL=C sort >"$work/actual/failed-rules.txt"
 
-strip_comments "$expected_failed" | LC_ALL=C sort >"$work/expected/failed-rules.txt"
+strip_comments "$expected_failed" | unindent | LC_ALL=C sort >"$work/expected/failed-rules.txt"
 
 if ! cmp -s "$work/expected/failed-rules.txt" "$work/actual/failed-rules.txt"; then
 
     detail=""
     LC_ALL=C comm -13 "$work/expected/failed-rules.txt" "$work/actual/failed-rules.txt" \
-        | sed -e 's/^/  /' >"$work/appeared.txt"
+        | sed -e 's/^/    /' >"$work/appeared.txt"
     if [[ -s $work/appeared.txt ]]; then
         detail="$detail
   appeared (a rule that ran and did not meet its expectation, and did not before):
@@ -386,7 +398,7 @@ $(cat "$work/appeared.txt")"
     fi
 
     LC_ALL=C comm -23 "$work/expected/failed-rules.txt" "$work/actual/failed-rules.txt" \
-        | sed -e 's/^/  /' >"$work/disappeared.txt"
+        | sed -e 's/^/    /' >"$work/disappeared.txt"
     if [[ -s $work/disappeared.txt ]]; then
         detail="$detail
   disappeared (expected to fail its expectation, and no longer does):
@@ -404,8 +416,9 @@ fi
 # ---- condition 4: nothing else went wrong -------------------------------------------------------
 
 # Without this, a rules file that stopped parsing would pass all three conditions above: it exits 1,
-# adds no unchecked expectation, and reports no failed rule. Condition 3 only means "nothing failed"
-# if the things that were supposed to run actually ran.
+# adds no unchecked expectation, and reports no failed rule, so its failed-rule set still matches the
+# known one. Condition 3 only means "the failed rules are the known ones" if the things that were
+# supposed to run actually ran.
 jq -r '[.[] | select(has("test_cases") | not)
         | "  \(.rule_file): \(.error)"] | .[]' "$report" >"$work/unreadable-files.txt"
 jq -r '[.[] | .test_cases[]? | select(has("error"))

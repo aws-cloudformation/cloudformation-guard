@@ -9744,24 +9744,29 @@ mod validate_tests {
         "buckets_name_full.yaml",
         PASSES
     )]
-    // The same capture read bare as the right-hand side compares key by key: `Prefix IN %buckets`
-    // after `Resources[ buckets | Type == 'AWS::S3::Bucket' ]` holds for a prefix contained in some
-    // captured key and fails for one contained in none, whatever the caller's body has bound and read
-    // under the name before the call. The caller here binds an enumerating `let buckets =
-    // Resources.*.Type` and reads it first; answered from that `let`, the captured keys were a set and
-    // no prefix of a key was a member. `Bkt` is in both keys `BktOne` and `BktTwo` and in neither
-    // resource type, so reading the `let`'s values in place of the capture fails it too; `One` is in the
-    // first key only, so a reading that asks every key to contain the prefix fails it; `Zzz` is in
-    // neither key and fails under every reading.
+    // The same capture read bare as the right-hand side is one entry set: `Prefix IN %buckets` after
+    // `Resources[ buckets | Type == 'AWS::S3::Bucket' ]` holds for a prefix that IS a captured key and
+    // fails for one that is not, a prefix of a key included, whatever the caller's body has bound and
+    // read under the name before the call. The caller here binds an enumerating `let buckets =
+    // Resources.*.Type` and reads it first; answered from that `let`, the key `BktOne` is no resource
+    // type and the row that names it fails, so the control tells the capture's keys from the `let`'s
+    // values. `Bkt` and `One` are each contained in a key and are no key, so a reading that searched
+    // the keys for the prefix (the per-value haystack reading a plain `let`'s one string keeps) passes
+    // them; `Zzz` is in no key and fails under every reading.
     #[case(
         "key_in_captured_bucket_keys_param_when_let_read.guard",
-        "buckets_prefix_bkt.yaml",
+        "buckets_prefix_bktone.yaml",
         PASSES
     )]
     #[case(
         "key_in_captured_bucket_keys_param_when_let_read.guard",
+        "buckets_prefix_bkt.yaml",
+        FAILS
+    )]
+    #[case(
+        "key_in_captured_bucket_keys_param_when_let_read.guard",
         "buckets_prefix_one.yaml",
-        PASSES
+        FAILS
     )]
     #[case(
         "key_in_captured_bucket_keys_param_when_let_read.guard",
@@ -12034,6 +12039,61 @@ mod validate_tests {
             "the refusal must be the key or merge refusal, with its position:\n{}",
             err
         );
+    }
+
+    /// A failed rule whose `or` a later disjunct decided reports nothing beneath that disjunction.
+    ///
+    /// `Missing exists or Type == 'AWS::EC2::Instance'` fails its first disjunct on a key the instance
+    /// lacks and passes on its second; the clause beside it, `InstanceType == 'no-such-type'`, fails for
+    /// real. The rule's failure is that clause alone: the console summary and the `-o json` report's
+    /// `not_compliant` entry list one check, the `InstanceType` comparison, and the `Missing exists` miss
+    /// appears nowhere, since a disjunct a sibling decided past is no part of the rule's failure. The
+    /// walker's passing-disjunction arm (`find_failing_clauses`) is what keeps it out; before it, the
+    /// failed first disjunct was listed as a violation beside the real one.
+    #[rstest::rstest]
+    #[case::json("json")]
+    #[case::console("")]
+    fn a_passing_disjunction_lists_nothing_beneath_it_in_the_report(#[case] output: &str) {
+        let mut reader = Reader::default();
+        let mut writer = Writer::new(WBVec(vec![])).expect("Failed to create writer.");
+
+        let status_code = match output {
+            "" => ValidateTestRunner::default()
+                .data(vec!["single-map-binding-with-password-template.yaml"])
+                .rules(vec!["or_decided_by_its_second_disjunct.guard"])
+                .show_summary(vec!["all"])
+                .run(&mut writer, &mut reader),
+            _ => ValidateTestRunner::default()
+                .data(vec!["single-map-binding-with-password-template.yaml"])
+                .rules(vec!["or_decided_by_its_second_disjunct.guard"])
+                .output_format(Some(output))
+                .show_summary(vec!["none"])
+                .run(&mut writer, &mut reader),
+        };
+        assert_eq!(
+            StatusCode::VALIDATION_ERROR,
+            status_code,
+            "the `InstanceType` clause fails the rule"
+        );
+        let text = writer.stripped().expect("failed to read the writer");
+        assert!(
+            text.contains("InstanceType") && !text.contains("Missing"),
+            "the failing clause is listed and nothing beneath the passing disjunction is:\n{}",
+            text
+        );
+        if output == "json" {
+            let report: serde_json::Value = serde_json::from_str(&text)
+                .expect("the structured output must be one JSON document");
+            let checks = report["not_compliant"][0]["Rule"]["checks"]
+                .as_array()
+                .expect("the failed rule lists its checks");
+            assert_eq!(
+                1,
+                checks.len(),
+                "one check, the failing comparison, and none for the passing `or`:\n{}",
+                text
+            );
+        }
     }
 
     /// `-o json` reports a clause-level `not` on a unary clause with the polarity the clause asked for.

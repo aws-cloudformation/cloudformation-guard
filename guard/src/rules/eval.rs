@@ -3080,12 +3080,13 @@ pub(crate) fn kind_for(role: ClauseRole) -> crate::rules::RaiseKind {
 /// before anything of the clause ran) was noted by no inner site (the clause's own query refused through
 /// `?` before any comparison ran, a right-hand query's or a function argument's refusal, a `when`
 /// condition's re-raise of a registered text), so it is noted here at the clause's own site, with the reads
-/// the error's text names (`registered_refusal_texts`: a registered sentence whole, or the registered
-/// parts of a numbered text; a token-only raise, whose text the registry does not hold, names its whole
-/// text) and the kind of the clause's role (`kind_for`). A raise an inner site noted precisely moved the
-/// mark and is not noted twice; a raise that is no refusal has no line to write. The precise sites stay,
-/// since the collection there knows refused reads beside an unregistered reason (`(1) <budget> (2)
-/// <refusal>`) that the text parser rejects all-or-nothing; this net catches what they cannot see. It
+/// the error's text names (`refusal_reads_of`: a registered sentence whole, the registered parts of a
+/// numbered text, a numbered text's registered parts beside an unregistered reason, or, for a token-only
+/// raise whose text the registry does not hold, its whole text) and the kind of the clause's role
+/// (`kind_for`). A raise an inner site noted precisely moved the mark and is not noted twice; a raise
+/// that is no refusal has no line to write. The precise sites stay, since the collection there knows the
+/// refused reads by their markers, where this net reads them off the text; this net catches what they
+/// cannot see. It
 /// runs before the role split, so a strict leaf's FAIL on a refusal has its entry too; the net every
 /// clause KIND passes on exit, `judge_clause_exit`, catches a raise or a FAIL that no site inside a
 /// block, a reference, a call or a `when` noted, so a refusal that reaches a fold has an entry at its own
@@ -3149,10 +3150,22 @@ fn raised_refusal_record_fields(error: &Error) -> (Option<String>, bool) {
 }
 
 /// The refused reads a raised refusal names: the registered sentences a numbered text names
-/// (`registered_refusal_texts`), else the error's own text as one read.
+/// (`registered_refusal_texts`), else the registered parts of a numbered text that also carries an
+/// unregistered reason (`(1) <refusal> (2) <budget>`, raised under the refusal's token; the whole text is
+/// nobody's registered sentence and the budget has no read of its own), else the error's own text as one
+/// read (a raise known by its token alone). Read by `note_refusal_raise` and `basis_of_error` alike, so
+/// the refused-read line and the fail-closed `not` record name the same reads for one raise.
 fn refusal_reads_of(error: &Error) -> Vec<String> {
     let text = error_text_of(error);
     let mut reads = crate::rules::eval_context::registered_refusal_texts(&text);
+    if reads.is_empty() {
+        let registered: Vec<String> = numbered_display_parts(&text)
+            .into_iter()
+            .filter(|part| crate::rules::eval_context::is_registered_refusal(part))
+            .map(str::to_string)
+            .collect();
+        reads = registered;
+    }
     if reads.is_empty() {
         reads.push(text);
     }
@@ -3175,22 +3188,10 @@ fn note_refusal_raise<'value, 'loc: 'value>(
     if !is_refusal(error) {
         return false;
     }
-    let mut reads = refusal_reads_of(error);
-    // A raise beside a refusal AND a marker that is no refusal (a key filter's spent regex budget)
-    // carries both numbered, `(1) <refusal> (2) <budget>`, under the refusal's token. The whole text is
-    // nobody's registered sentence, so `refusal_reads_of` names it whole; the line owes the refusal
-    // alone (a spent budget has no entry and no line), so the registered parts are kept where there are
-    // any. A text with no registered part (a raise known by its token alone) still names itself whole.
-    if reads.len() == 1 {
-        let registered: Vec<String> = numbered_display_parts(&reads[0])
-            .into_iter()
-            .filter(|part| crate::rules::eval_context::is_registered_refusal(part))
-            .map(str::to_string)
-            .collect();
-        if !registered.is_empty() {
-            reads = registered;
-        }
-    }
+    // The reads named are `refusal_reads_of`'s, the one reading `basis_of_error` takes too: a raise
+    // beside a refusal AND a marker that is no refusal (`(1) <refusal> (2) <budget>`) names the
+    // registered parts, and a text with no registered part names itself whole.
+    let reads = refusal_reads_of(error);
     resolver.note_absorbed_raise(clause, site, &reads, kind);
     true
 }
@@ -7885,7 +7886,7 @@ fn judged_binary_operation<'value, 'loc: 'value>(
         // so the record is flagged by the bit. Not inside a predicate, where the raised text becomes the
         // entry's marker reason and every part of it has to be a registered refusal.
         let reason = match own_reason {
-            Some(own) if !a_predicates_text && own != reason => own,
+            Some(own) if !a_predicates_text && own != reason && !refused_reads.is_empty() => own,
             _ => reason,
         };
         // Asserted (the strict path's raise), a REFUSAL's reason is raised as the registered refusal it
@@ -12429,7 +12430,11 @@ fn eval_guard_block_values<'value, 'loc: 'value>(
                     // (`eval_rule`'s condition arm), with no sibling consulted. So the block spelling
                     // returns it too, through the last arm below, and the two spellings agree. Only
                     // `UndecidableComparison` is kept as a value's answer for the siblings to decide,
-                    // through `undecided_gate` in the clause spelling, and only it is kept here.
+                    // through `undecided_gate` in the clause spelling, with one exception kept here: a
+                    // plain `Unevaluatable` that is a REGISTERED refusal (a body that failed closed on
+                    // a refused read and raised the sentence whole) is folded beside the siblings too
+                    // (`plain_body_raise`), decided past when a sibling decides and handed up as the
+                    // plain error it was when none does, so its record and the condition name one raise.
                     //
                     // The undecided raise from a VALUE's body is the one a gate does meet here: a
                     // comparison or a unary operator inside the body over a key filter nobody can decide
@@ -12767,7 +12772,14 @@ fn eval_guard_block_values<'value, 'loc: 'value>(
             // refusal (a marker's reason, a spent budget) the reporters render the record through its
             // children, the `MissingBlockValue` check recorded in the loop carrying the marker's reason,
             // and the enclosing condition site names the reason again as the rule's.
-            let (raised_sentence, raised_a_refusal) = raised_refusal_record_fields(&error);
+            // The error the block returns below, so the record and the condition that reads the
+            // error name one raise: a value's body that raised a plain registered refusal beside a
+            // sibling's tokened one is handed up as that plain error, and the record says the same.
+            let raised = match plain_body_raise {
+                Some(text) => Error::Unevaluatable(text),
+                None => error,
+            };
+            let (raised_sentence, raised_a_refusal) = raised_refusal_record_fields(&raised);
             resolver.end_record(
                 &context,
                 RecordType::BlockGuardCheck(BlockCheck {
@@ -12798,10 +12810,7 @@ fn eval_guard_block_values<'value, 'loc: 'value>(
             // refusal, carried on to the run or gate that reads it (`fold_refused_body`). A value's body
             // that raised a refusal as a plain error, folded above for the siblings to decide past and
             // decided by none, is handed up as that error, as the block did when it returned at once.
-            return Err(match plain_body_raise {
-                Some(text) => Error::Unevaluatable(text),
-                None => error,
-            });
+            return Err(raised);
         }
         // A sibling decided the block, so every raise a value's body made beside a refused read is
         // absorbed into the decided status and the comparison's own writer never ran (it writes only
@@ -13972,8 +13981,11 @@ impl<'eval, 'value, 'loc: 'value> EvalContext<'value, 'loc>
         if let Some(shape) = self.parameter_shapes.get(variable_name) {
             return shape.clone();
         }
+        // A capture holds the keys a filter bound, the members it kept: one entry set to `IN`, as
+        // `query_projects` reads a bare capture for a function's argument, so `Prefix IN %b` and
+        // `%lit IN %b` are membership in the keys, over one key as over two. A capture passed nothing on.
         if self.holds_own_capture(variable_name, merged) {
-            return (RhsEnumeration::Names, PassedOn::default());
+            return (RhsEnumeration::LastPart, PassedOn::default());
         }
         self.parent.variable_shape(variable_name, merged)
     }

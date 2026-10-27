@@ -551,7 +551,7 @@ pub(crate) fn key_selected_from(
     // (a binding of an older scope resolved inside it) outranked the entry's own earlier refusal here,
     // and the entry read PLAIN in one resource order and REFUSED in the other (pinned, both resource
     // orders and both conjunct orders, by `eval_tests.rs`'s
-    // `a_key_filter_under_a_run_keeps_the_entries_own_refusal_over_a_later_binding_resolved_token`).
+    // `a_key_filter_under_a_run_keeps_the_refusal_of_the_entry_over_a_later_binding_resolved_token`).
     // The kept pairing's timing, the marker's own token or the recovered inner one, replaced with the
     // pairing by the fold itself, in the one order `eval::PairingTiming` states: the run that owns the
     // token first, then at equal rank own over recovered over none, then minting (the pair rule).
