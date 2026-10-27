@@ -24768,12 +24768,21 @@ fn query_retrieval_with_converter<'value, 'loc: 'value>(
                         // refusal of a bare right-hand query.
                         match resolve_function(function, &mut arguments) {
                             Ok(rhs) => rhs,
+                            // A REFUSAL's marker among the arguments (the filter over a scalar met
+                            // inside a predicate leaves one, with the refusal's token) is wrapped as
+                            // the query arm wraps the same refusal of a bare right-hand query, so the
+                            // map's marker carries the key filter's wrap and not the inner sentence:
+                            // the predicate clause then reads the wrap, nothing confirms the scalar
+                            // filter's pending notice, and the hold is dropped where the clause had
+                            // already failed closed. A plain inner filter's marker (no token, no
+                            // registered sentence) stays this map's answer as it was.
                             Err(Error::UndecidableComparison(reason, refusal)) => {
-                                return undecided_map_captured(
-                                    resolver,
-                                    name,
-                                    undecided_map(reason, refusal),
-                                );
+                                let undecided = if refusal.is_some() || is_refusal_text(&reason) {
+                                    rhs_undecided(reason, refusal)
+                                } else {
+                                    undecided_map(reason, refusal)
+                                };
+                                return undecided_map_captured(resolver, name, undecided);
                             }
                             // The query arm's recovery (`token_of_registered`): a refused query
                             // argument's sentence is registered by `refuse` and carries no token here.

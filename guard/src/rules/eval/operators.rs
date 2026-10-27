@@ -2466,6 +2466,37 @@ impl Comparator for InOperation {
                 }
             }
 
+            // A scalar literal against a right-hand query that NAMES several values without enumerating a
+            // collection (a filter capture holding the keys it bound, `let lit = 'A'  %lit IN %x`): the
+            // values are one set the literal is a member of or not, one verdict (`membership_in_entries`,
+            // the question the written-out list is asked), as the document-left twin `Key IN %x` over
+            // `Key: A` is a member of the keys. Read per right-hand value, each value was a haystack of
+            // its own and the question turned from "any of these" into "all of these": `'A' IN %x` failed
+            // on `Fallback` and `B` beside the `A` it matched, and `'a' NOT IN %x` was decided by the `a`
+            // inside `Fallback`. A marker among the values is the pair the arm below files for every
+            // literal, undecided beside the set's answer. Scalars alone: a list among the named values
+            // keeps the arm below, which answers a list value as the set of its elements.
+            (Some(ref l), None)
+                if !self.rhs_enumerates.is_entry_set()
+                    && !l.is_list()
+                    && selected(rhs, |_| {}, Vec::push).len() > 1
+                    && selected(rhs, |_| {}, Vec::push)
+                        .iter()
+                        .all(|value| !value.is_list()) =>
+            {
+                let rhs_values = selected(
+                    rhs,
+                    |ur| {
+                        results.push(ValueEvalResult::ComparisonResult(
+                            ComparisonResult::RhsUnresolved(ur.clone(), Rc::clone(l)),
+                        ))
+                    },
+                    Vec::push,
+                );
+                let candidates = self.candidates_for(&rhs_values);
+                results.push(membership_in_entries(l, &rhs_values, &candidates));
+            }
+
             (Some(ref l), None) => {
                 let rhs = selected(
                     rhs,

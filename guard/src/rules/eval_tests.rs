@@ -12565,9 +12565,9 @@ fn a_filter_selects_among_a_collection_and_tests_a_member() -> Result<()> {
 /// the entry, the entry itself, and the enclosing entry where a predicate handed it up. No shape
 /// writes a stderr notice; one shape writes a warning: `f2`, the gate a decided mismatch settles beside
 /// the marker, reports the refused read it did not raise (the marker's reason is the key filter's wrap
-/// of the string-filter refusal; the refusal inside is registered, the wrap is registered by nobody and
-/// travels as the marker's `beside_a_refusal` flag, which the left-hand read collects), and no other row
-/// is decided beside it.
+/// of the string-filter refusal; the refusal inside is registered, the wrap is registered under the
+/// inner refusal's token and travels with it as the marker's refusal, which the left-hand read collects),
+/// and no other row is decided beside it.
 #[test]
 fn the_hand_up_reading_of_an_undecidable_value_inside_a_unary_filter_is_pinned() -> Result<()> {
     const DOC_RESOURCES: &str = r#"{
@@ -12725,11 +12725,15 @@ fn the_hand_up_reading_of_an_undecidable_value_inside_a_unary_filter_is_pinned()
             marker_paths.to_vec(),
             paths,
         );
+        // The wrap's opening, shared by the key filter's wraps of a right-hand value it could not
+        // decide ("could not be evaluated at", the arm that catches the refused argument; "is a value
+        // nobody could decide at", a marker met as a right-hand value; "did not resolve at", an absence),
+        // so the cell reads that the marker carries the KEY FILTER's wrap and not the inner sentence bare.
         cells.check(
             &format!("{label}: every marker carries the key filter's reason"),
             true,
             markers.iter().all(|(_, reason)| {
-                reason.contains("the right-hand side of the key filter did not resolve")
+                reason.contains("the right-hand side of the key filter")
             }),
         );
     }
@@ -53798,21 +53802,28 @@ fn a_wrap_of_a_numbered_marker_registers_nothing_and_still_travels_as_a_refusal(
         .count();
     let extracted = root.reset_recorder().extract();
     let mut under_the_clause = Vec::new();
-    // The comparison's record names the capture `%i`; the bind clause names `i |`, never `%i`.
-    record_containers_list(&extracted, "%i", &mut under_the_clause);
-    let block_record = under_the_clause
+    // A record's context renders the clause's query through the parts' `Display`, which spells a key
+    // filter as `<map> (map-key-filter-clauses)` and drops its predicate, so the capture `%i` inside
+    // `[ keys IN %i ]` is in no record's context; the key filter's own rendering is the needle, and the
+    // one key filter of each rule here is `Maps.M[ keys IN %i ]`.
+    record_containers_list(&extracted, "map-key-filter-clauses", &mut under_the_clause);
+    // Asserted, a unary clause over the wrapped marker FAILs at the marker's own per-value record, which
+    // is flagged and carries the wrap; the clause's own block record is not flagged (`docs/CLAUSES.md`,
+    // the by-role reading of a left-hand marker: "the pair's record flagged `refusal: true` and the
+    // clause's own block record not"), so the flagged record under the clause is the one read.
+    let flagged_record = under_the_clause
         .iter()
-        .find(|record| record.contains("GuardClauseBlockCheck"));
+        .find(|record| record.contains("refusal: true"));
     let mut cells = CellFailures::default();
     cells.check(
-        "the clause over the wrapped numbered marker: FAIL; the registry holds the two own-key sentences and no text with `(1) `; the block record flagged `refusal: true` and carrying the numbered text inside the wrap",
-        (Status::FAIL, 2, 0, Some(true), Some(true)),
+        "the clause over the wrapped numbered marker: FAIL; the registry holds the two own-key sentences and no text with `(1) `; a record under the clause flagged `refusal: true` and carrying the numbered text inside the wrap",
+        (Status::FAIL, 2, 0, true, Some(true)),
         (
             status,
             own_key_registered,
             numbered_registered,
-            block_record.map(|record| record.contains("refusal: true")),
-            block_record.map(|record| record.contains("(1) ") && record.contains(" (2) ")),
+            flagged_record.is_some(),
+            flagged_record.map(|record| record.contains("(1) ") && record.contains(" (2) ")),
         ),
     );
     // The same wrapped marker (a refused read by its flag alone: the wrap's text is registered by nobody)
@@ -53869,7 +53880,7 @@ fn a_wrap_of_a_numbered_marker_registers_nothing_and_still_travels_as_a_refusal(
         .count();
     let extracted = root.reset_recorder().extract();
     let mut under_the_clause = Vec::new();
-    record_containers_list(&extracted, "%i", &mut under_the_clause);
+    record_containers_list(&extracted, "map-key-filter-clauses", &mut under_the_clause);
     let block_record = under_the_clause
         .iter()
         .find(|record| record.contains("GuardClauseBlockCheck"));
@@ -53903,7 +53914,7 @@ fn a_wrap_of_a_numbered_marker_registers_nothing_and_still_travels_as_a_refusal(
         .count();
     let extracted = root.reset_recorder().extract();
     let mut under_the_clause = Vec::new();
-    record_containers_list(&extracted, "%i", &mut under_the_clause);
+    record_containers_list(&extracted, "map-key-filter-clauses", &mut under_the_clause);
     let block_record = under_the_clause
         .iter()
         .find(|record| record.contains("GuardClauseBlockCheck"));
@@ -56180,10 +56191,12 @@ fn frame_entries_decide_by_kind_and_a_rule_call_runs_in_its_own_frame() -> Resul
         (status, lines.len()),
         || format!("the lines read: {lines:?}"),
     );
-    // (H1)
+    // (H1) Every clause holds over `document_two`: `Cfg2.Mode` holds a `Ref` and no `Kind`, so the two
+    // `Cfg2` clauses read the entry that holds `Kind` and admit `Ref` in the block (`Cfg2.*.Kind exists`
+    // over `Mode` was a decided no, not a refusal, and the row then read a FAIL it had not meant).
     CLAUSE_TEXT_RENDERS.with(|renders| renders.set(0));
     let (status, _) = run(
-        "rule r { Items.*.Name exists\nItems.*.Name !empty\nMaps.M.PROD exists\nCfg2.*.Kind exists\nCfg2.* { Kind exists } }",
+        "rule r { Items.*.Name exists\nItems.*.Name !empty\nMaps.M.PROD exists\nCfg2.C.Kind exists\nCfg2.* { Kind exists or Ref exists } }",
         &document_two,
         "r",
         "",
@@ -61676,7 +61689,13 @@ fn a_retrievals_reason_escapes_a_bidi_control_in_a_key_and_keeps_its_backslash()
         let document = format!(
             "{{ {CFG}, Resources: {{ \"{key}\": {{ Type: 'AWS::S3::Bucket', Properties: {{ Name: 'n' }} }} }} }}"
         );
-        let value = Rc::new(PathAwareValue::try_from(document.as_str())?);
+        // Read by the YAML loader, whose double-quoted scalar decodes `\n` and `\x1b` to the controls
+        // the rows put in the key; the rules-language value parser (`PathAwareValue::try_from(&str)`)
+        // knows two escapes only, `\\` and `\"`, and keeps every other backslash pair as the two
+        // characters written, so through it no row ever held a raw control.
+        let value = Rc::new(PathAwareValue::try_from(serde_yaml::from_str::<
+            serde_yaml::Value,
+        >(document.as_str())?)?);
         let properties_path = match value.as_ref() {
             PathAwareValue::Map((_, top)) => match top.values.get("Resources") {
                 Some(PathAwareValue::Map((_, resources))) => match resources.values.values().next()
@@ -61722,8 +61741,8 @@ fn a_retrievals_reason_escapes_a_bidi_control_in_a_key_and_keeps_its_backslash()
         ),
     );
     // The document's double-quoted scalar spells the two controls as the escapes `\n` and `\x1b`, which the
-    // reader decodes to a line feed and an ESC in the key; a raw line feed inside the quotes would end the
-    // scalar's line, and the reader refuses an unterminated literal.
+    // YAML loader decodes to a line feed and an ESC in the key; a raw line feed inside the quotes would be
+    // folded into a space by the loader, so the escape is the one spelling that puts the control in the key.
     let (status, message, rendered_path) = run("R\\nb\\x1bc")?;
     cells.check(
         "a key holding a line feed and an ESC: the message carries no raw line feed and no raw ESC, names the path EXACTLY as `template_path` renders it for that resource's `Properties` (the line feed as `\\n`, the ESC as `\\u{1b}`, the location after it), and ends with the refusal",
@@ -66527,8 +66546,9 @@ fn a_let_bound_refusal_re_read_keeps_its_flag_by_text_alone() -> Result<()> {
 /// the `some` passed on the decided sibling: fail-open. (2b) The same refused walk as a key filter's
 /// RIGHT-hand query inside the `some` (`Properties.M[ keys == Statement[ Effect == 'Allow' ].Action ]
 /// !empty`, the right-hand query resolved against `M`, so each `Statement` sits inside its `M`): the key
-/// filter's wrap carries the refusal the run delivered, the entry is REFUSED and the `some` fails closed
-/// where `R2`'s map, whose `*` key the decided `Action` selects, would have passed it. (3) The unit: a second
+/// filter's wrap carries the refusal the run delivered and the entry is REFUSED; the `some` passes on
+/// `R2`'s map, whose `*` key the decided `Action` selects (a kept member is a witness of the existential),
+/// and the refused entry is reported on the clause's refused-read line. (3) The unit: a second
 /// registration of one sentence mints a later token and the registry's read (`token_of_registered`)
 /// returns it; one key is registered. (4) `token_of_registered` over a numbered text of registered parts
 /// returns the later-minted part's token in either order, and `None` where a part is unregistered.
@@ -66679,11 +66699,14 @@ fn a_sentence_registered_again_inside_a_run_is_the_runs_own_refusal() -> Result<
     }
     // (2) The top level first, then a `some` filter predicate.
     let top_level_then_some = "rule r { Resources.R1.Properties.Statement[ Effect == 'Allow' ].Action == '*' or Other exists  some Resources[ x | Properties.Statement[ Effect == 'Allow' ].Action == '*' ] !empty }";
+    // The needle is the clause's rendering, `x (filter-clauses)` for the `x`-capturing filter (a record's
+    // context renders a filter by its capture and drops the written predicate); the first disjunct's
+    // unnamed filter renders ` (filter-clauses)` and names nothing.
     let (status, markers, blocks) = rule_markers_and_records(
         top_level_then_some,
         ONE_OBJECT_BESIDE_A_LIST,
         "r",
-        "x | Properties.Statement",
+        "x (filter-clauses)",
     )?;
     cells.check(
         "(2) the sentence refused at the top level and delivered again inside the `some` filter: the clause fails closed, FAIL",
@@ -66704,15 +66727,17 @@ fn a_sentence_registered_again_inside_a_run_is_the_runs_own_refusal() -> Result<
     // resolved against the map the key filter reads (`M`), so each resource's `Statement` sits INSIDE `M`
     // (an earlier cut of this document put it beside `M`, where the right-hand query met an absence and
     // the wrap carried no refusal); `M` holds the key `*` under both resources, so `R2`'s decided `Action`
-    // selects it and the `some` would pass on `R2`; `R1`'s refused walk is wrapped by the key filter and
-    // the entry is REFUSED, so the clause fails closed.
+    // selects it and the `some` passes on `R2`, a kept member being a witness an undecided sibling cannot
+    // take away; `R1`'s refused walk is wrapped by the key filter and the entry is REFUSED, and the
+    // refusal is not silent: the `some` clause's own refused-read line names it, "passed by a value that
+    // holds".
     const ONE_OBJECT_BESIDE_A_LIST_WITH_MAPS: &str = r#"{ Other: 'o', Resources: { R1: { Properties: { M: { '*': 1, Statement: { Effect: 'Allow', Action: '*', Resource: '*' } } } }, R2: { Properties: { M: { '*': 1, Statement: [ { Effect: 'Allow', Action: '*' } ] } } } } }"#;
     let key_filter_in_some = "rule r { some Resources[ x | Properties.M[ keys == Statement[ Effect == 'Allow' ].Action ] !empty ] !empty }";
     let (status, markers) =
         rule_markers(key_filter_in_some, ONE_OBJECT_BESIDE_A_LIST_WITH_MAPS, "r")?;
     cells.check(
-        "(2b) the refused walk as a key filter's right-hand query inside the `some`: the clause fails closed, FAIL",
-        Status::FAIL,
+        "(2b) the refused walk as a key filter's right-hand query inside the `some`: the clause passes on the decided sibling `R2`, PASS",
+        Status::PASS,
         status,
     );
     cells.check(
@@ -66721,6 +66746,28 @@ fn a_sentence_registered_again_inside_a_run_is_the_runs_own_refusal() -> Result<
         ),
         Some(true),
         refused_at(&markers, "/Resources/R1"),
+    );
+    let rules_file = RulesFile::try_from(key_filter_in_some)?;
+    let mut root = root_scope(
+        &rules_file,
+        Rc::new(PathAwareValue::try_from(
+            ONE_OBJECT_BESIDE_A_LIST_WITH_MAPS,
+        )?),
+    );
+    eval_rules_file(&rules_file, &mut root, None)?;
+    let lines = refused_read_lines(&root);
+    cells.check_with(
+        "(2b) the refused entry is reported: the `some` clause's refused-read line, \"passed by a value that holds\", names the key `Effect` and the map `Statement` the walk refused",
+        (true, true),
+        (
+            lines
+                .iter()
+                .any(|line| line.contains("passed by a value that holds")),
+            lines
+                .iter()
+                .any(|line| line.contains("Effect") && line.contains("Statement")),
+        ),
+        || format!("the lines read: {lines:?}"),
     );
     // (3) and (4) The unit, the root scope alive for the registry.
     const NO_BUCKET: &str = "{ Resources: { Q: { Type: 'AWS::SQS::Queue' } } }";

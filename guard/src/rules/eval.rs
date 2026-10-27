@@ -3175,7 +3175,22 @@ fn note_refusal_raise<'value, 'loc: 'value>(
     if !is_refusal(error) {
         return false;
     }
-    let reads = refusal_reads_of(error);
+    let mut reads = refusal_reads_of(error);
+    // A raise beside a refusal AND a marker that is no refusal (a key filter's spent regex budget)
+    // carries both numbered, `(1) <refusal> (2) <budget>`, under the refusal's token. The whole text is
+    // nobody's registered sentence, so `refusal_reads_of` names it whole; the line owes the refusal
+    // alone (a spent budget has no entry and no line), so the registered parts are kept where there are
+    // any. A text with no registered part (a raise known by its token alone) still names itself whole.
+    if reads.len() == 1 {
+        let registered: Vec<String> = numbered_display_parts(&reads[0])
+            .into_iter()
+            .filter(|part| crate::rules::eval_context::is_registered_refusal(part))
+            .map(str::to_string)
+            .collect();
+        if !registered.is_empty() {
+            reads = registered;
+        }
+    }
     resolver.note_absorbed_raise(clause, site, &reads, kind);
     true
 }
@@ -6832,6 +6847,9 @@ fn judged_binary_operation<'value, 'loc: 'value>(
                         let mut own_kind_refusal = false;
                         match nc.cause {
                             operators::Unanswerable::EngineGaveUp => {
+                                // A resolved pair's own reason, kept apart from the fold so a gate's
+                                // raise beside a refusal can lead with it (`own_reason`).
+                                evidence.own_reason.get_or_insert_with(|| nc.reason.clone());
                                 evidence.undecided_by(nc.reason.clone(), None);
                             }
                             operators::Unanswerable::IncomparableKinds if empty_left => {
@@ -7731,6 +7749,8 @@ fn judged_binary_operation<'value, 'loc: 'value>(
     // fold around it); with no raise, a strict clause whose FAIL rests on an undecidable
     // (`fail_rests_on_an_undecidable`, read above) failed on them, and a passing clause, a clause a
     // decided no fails whatever they hold, or a gate decided by its other values moved nothing.
+    // Read before `evidence` moves into the gate: the resolved pair's own reason the raise leads with.
+    let own_reason = evidence.own_reason.clone();
     let gate = undecided_gate(&outcome, evidence, match_all, cmp.1, role);
     if marked_a_read {
         eval_context.undecided_reads_decided(
@@ -7856,6 +7876,18 @@ fn judged_binary_operation<'value, 'loc: 'value>(
             }
             _ => (reason, token),
         };
+        // A gate raised on a RESOLVED pair's own undecided reason beside a refused read (an engine that
+        // gave up on `%y != /re/` over a key that spends its budget, beside the own-key walk's marker in
+        // `%y`) names that reason FIRST and the refusal after it, `(1) <engine> (2) <refusal>`: the
+        // refusals lead a raise only where the recorded reason is no resolved pair's own. The fold above
+        // ranks the refusal's reason over the engine's (a tokened refusal displaces a token-less reason),
+        // so the engine's is read back from the evidence (`own_reason`); the token stays the refusal's,
+        // so the record is flagged by the bit. Not inside a predicate, where the raised text becomes the
+        // entry's marker reason and every part of it has to be a registered refusal.
+        let reason = match own_reason {
+            Some(own) if !a_predicates_text && own != reason => own,
+            _ => reason,
+        };
         // Asserted (the strict path's raise), a REFUSAL's reason is raised as the registered refusal it
         // is (`raised_refusal`): the `Err` arm of `eval_guard_access_clause` then records it with
         // `refusal: true` and the console prints the sentence whole. A key filter's marker is no refusal
@@ -7950,13 +7982,18 @@ fn judged_binary_operation<'value, 'loc: 'value>(
         let mut parts: Vec<String> = refused_reads.clone();
         let mut unnamed = 0usize;
         if !a_predicates_text && !refused_reads.is_empty() {
+            // A marker whose reason is a numbered text of the refused reads themselves (the plain
+            // marker a predicate's raise beside two refusals left, split into its parts by the
+            // collection) names nothing the parts do not, so it is no marker reason of its own: joined
+            // as one it numbered a numbering inside the raise, `(4) (1) .. (2) ..`.
             let marker_reasons = lhs
                 .iter()
                 .chain(rhs.iter())
                 .filter_map(|value| match value {
                     QueryResult::UnResolved(unresolved) => undecidable_reason(unresolved),
                     QueryResult::Resolved(_) | QueryResult::Literal(_) => None,
-                });
+                })
+                .filter(|text| !reads_hold(text, &refused_reads));
             // One pass over the values with a set answering membership (the chosen reason and the
             // refused reads seeded, each marker's reason added as it is met), so a template of many
             // markers costs the raise a pass and not a square; `distinct` keeps the first-met order.
@@ -8189,6 +8226,12 @@ struct ResultEvidence {
     /// raises, so a filter predicate run that error ends reads the refusal as the one minted inside it;
     /// `None` when no undecided reason named a refusal.
     refusal: Option<crate::rules::errors::RefusalToken>,
+    /// The first undecided reason that is a RESOLVED pair's own (an engine that gave up on `%y != /re/`
+    /// over a key that spends its budget), kept apart from the fold above, which ranks a refusal's
+    /// reason over it: a gate's raise beside a refusal leads with this reason and names the refusal after
+    /// it, `(1) <engine> (2) <refusal>`, where the refusals lead only when the recorded reason is no
+    /// resolved pair's own (`docs/CLAUSES.md`, the raise beside a refused read and other markers).
+    own_reason: Option<String>,
     /// Whether some value's comparison was performed and answered no, or some operand was absent, or
     /// some pair was refused on kinds. A refusal to compare kinds counts here, not in `undecided`, except
     /// under membership beside a marker (see the `NotComparable` arm); see [`operators::Unanswerable`].
@@ -8302,6 +8345,7 @@ impl ResultEvidence {
             collects_causes: false,
             rhs_causes_pending: false,
             refusal: None,
+            own_reason: None,
             decided_failure: false,
             kinds_refused: false,
             comparison_failed: false,
@@ -11507,6 +11551,14 @@ fn eval_guard_block_values<'value, 'loc: 'value>(
     // decided, and how many values were decided against. Read together after the loop, by the table
     // `undecided_gate` holds for the clause form.
     let mut undecided: Option<Error> = None;
+    // The first refusal a value's body raised as a PLAIN error (a `when` condition inside the body
+    // re-raising a `let`-bound registered refusal, a body clause's own filter over a string), kept as the
+    // value's answer for the siblings to decide past: where a sibling decides the block the raise is
+    // written as decided past under its own clause; where nothing decides, the block hands THIS error up
+    // as it did when it returned at once, so the undecided members its query read keep their holds (a
+    // raise carrying a marker's token would decide them as raised, and a notice would be written for a
+    // member that moved no verdict).
+    let mut plain_body_raise: Option<String> = None;
     // The block body's key tree for the own-key check, read once per block clause on the first map that
     // passes the provenance test and resolved per map (`block_arm_own_key_refusal`): the keys under a
     // `when` count for a map only where its condition can hold on that map.
@@ -12391,7 +12443,27 @@ fn eval_guard_block_values<'value, 'loc: 'value>(
                     // the raise is kept as the block's first undecided reason, and the loop goes on; the
                     // table after the loop decides, as it does for the block's own query. The value
                     // counts as not passed, as an unresolved value does, and not as decided.
-                    Err(Error::UndecidableComparison(reason, refusal)) if !role.is_strict() => {
+                    //
+                    // A REFUSAL a value's body re-raised as a plain error (a `when` condition inside the
+                    // body reading a `let`-bound refused selection, its registered sentence as the text) is
+                    // a value's answer too: it is the refused read the block's siblings may decide past,
+                    // written as "was decided by a sibling entry's failure" under the condition's own
+                    // clause, and a plain raise that is no refusal keeps the last arm below.
+                    Err(e)
+                        if !role.is_strict()
+                            && (matches!(e, Error::UndecidableComparison(..))
+                                || is_refusal(&e)) =>
+                    {
+                        let (reason, refusal) = match e {
+                            Error::UndecidableComparison(reason, refusal) => (reason, refusal),
+                            other => {
+                                let text = error_text_of(&other);
+                                if plain_body_raise.is_none() {
+                                    plain_body_raise = Some(text.clone());
+                                }
+                                (text, None)
+                            }
+                        };
                         // Kept for the line the decided branch writes if a sibling settles the block:
                         // the raises the body's frame collected, each with its own clause, position and
                         // reads, before the fold takes the reason. Every entry of the frame is kept,
@@ -12723,8 +12795,13 @@ fn eval_guard_block_values<'value, 'loc: 'value>(
             // The raise names the reason and carries the token of the folded value whose refusal was
             // minted latest (a fold's, minted where the fold registered it; a marker's, copied from the
             // marker), or the first undecided value's reason with no token when no folded value was a
-            // refusal, carried on to the run or gate that reads it (`fold_refused_body`).
-            return Err(error);
+            // refusal, carried on to the run or gate that reads it (`fold_refused_body`). A value's body
+            // that raised a refusal as a plain error, folded above for the siblings to decide past and
+            // decided by none, is handed up as that error, as the block did when it returned at once.
+            return Err(match plain_body_raise {
+                Some(text) => Error::Unevaluatable(text),
+                None => error,
+            });
         }
         // A sibling decided the block, so every raise a value's body made beside a refused read is
         // absorbed into the decided status and the comparison's own writer never ran (it writes only

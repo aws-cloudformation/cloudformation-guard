@@ -2118,11 +2118,20 @@ mod validate_tests {
     /// fixtures' predicate is long enough for the sentence, which writes the query before the wildcard
     /// out twice, to pass that bound, so a record read as a plain error would print it cut before its
     /// path.
+    ///
+    /// Which record the summary prints differs by shape. `X IN %x` with the marker alone compares
+    /// nothing, so its block record is the one line and carries the raise's sentence. `some ... NOT IN %x`
+    /// has a pair record for the marker's value beneath its block record, and the summary prints the pair
+    /// record in the block's place (the refusal whole, at the value's path); the raise's sentence lives in
+    /// the block record, which the summary does not list when a pair record speaks for the clause. The
+    /// refused walk that minted the marker sits under an `or` a sibling disjunct decided, and the summary
+    /// lists nothing beneath a passing disjunction, so no other record prints the sentence.
     #[rstest::rstest]
-    #[case::some_not_in("strict_raise_some_not_in_a_refused_capture.guard")]
-    #[case::marker_only_in("strict_raise_in_a_marker_only_capture.guard")]
+    #[case::some_not_in("strict_raise_some_not_in_a_refused_capture.guard", false)]
+    #[case::marker_only_in("strict_raise_in_a_marker_only_capture.guard", true)]
     fn an_asserted_refusal_raise_prints_the_refusal_whole_and_the_run_continues(
         #[case] rules: &str,
+        #[case] prints_the_raise_sentence: bool,
     ) {
         let mut reader = Reader::default();
         let mut writer = Writer::new(WBVec(vec![])).expect("Failed to create writer.");
@@ -2150,9 +2159,16 @@ mod validate_tests {
             output
         );
         assert!(
-            !output.contains("bailing")
-                && output.contains("the clause is raised and the run continues"),
-            "{}: the record says the clause is raised and the run continues, never that it bails:\n{}",
+            !output.contains("bailing"),
+            "{}: no record says the clause bails:\n{}",
+            rules,
+            output
+        );
+        assert_eq!(
+            prints_the_raise_sentence,
+            output.contains("the clause is raised and the run continues"),
+            "{}: the raise's sentence is printed where the block record is the clause's one line, and \
+             not where a pair record speaks for the clause:\n{}",
             rules,
             output
         );

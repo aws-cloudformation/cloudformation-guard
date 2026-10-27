@@ -1626,6 +1626,16 @@ pub(super) fn find_failing_clauses<'record, 'value>(
             }
         }
 
+        // An `or` one disjunct decided: the arms it decided past (a raise held and dropped when a sibling
+        // disjunct passed) are no part of the rule's failure, and a refused read among them is the
+        // refused-read line's to report, so the summary lists nothing beneath a passing disjunction.
+        // Listed, a refusal's raise under a passing `or` printed the refusal's sentence a second time
+        // beside the leaf record that carries it as the rule's own failure.
+        Some(RecordType::Disjunction(BlockCheck {
+            status: Status::PASS,
+            ..
+        })) => vec![],
+
         _ => {
             let mut acc = Vec::new();
             for child in &current.children {
