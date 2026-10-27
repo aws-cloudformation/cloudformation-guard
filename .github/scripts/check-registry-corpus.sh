@@ -12,8 +12,8 @@
 # A failure here means the corpus checkout is AHEAD of the pinned SHA. Compare the checkout's HEAD
 # against the `ref:` in .github/workflows/pr.yml before investigating anything else. Measured from an
 # isolated `git archive` of the pin, the assertion PASSES: rc=0, "30 unchecked expectations across 11
-# rule names, all of them expected", "0 failed rules, 0 unreadable rules files, 0 unrunnable test
-# cases", "3 orphaned test files, all of them expected".
+# rule names, all of them expected", "2 failed rules, all of them expected", "0 unreadable rules files,
+# 0 unrunnable test cases", "3 orphaned test files, all of them expected".
 #
 # The signature of a corpus that has moved is specific enough to recognize on sight: exactly TWO
 # `file sizes:` lines reporting an `actual` of 0 -- e.g. "248 bytes expected, 0 bytes actual" and "182
@@ -120,6 +120,7 @@ state_dir=$(cd "$(dirname "$script_path")/../registry-corpus-state" 2>/dev/null 
 }
 readonly state_dir
 readonly expected_unchecked="$state_dir/unchecked-expectations.txt"
+readonly expected_failed="$state_dir/failed-rules.txt"
 readonly expected_orphans="$state_dir/orphaned-test-files.txt"
 
 # The Windows runner builds cfn-guard.exe, and the callers pass one path for all three platforms, so the
@@ -145,7 +146,7 @@ if [[ ! -x $guard_bin ]]; then
     exit 2
 fi
 
-for expected_file in "$expected_unchecked" "$expected_orphans"; do
+for expected_file in "$expected_unchecked" "$expected_failed" "$expected_orphans"; do
     if [[ ! -f $expected_file ]]; then
         printf 'missing expected-state file %s\n' "$expected_file" >&2
         exit 2
@@ -354,19 +355,50 @@ $(byte_evidence "$work/expected/unchecked-expectations.txt" \
         "$work/actual/unchecked-expectations.txt")"
 fi
 
-# ---- condition 3: nothing actually failed -------------------------------------------------------
+# ---- condition 3: the failed rules are exactly the known ones -----------------------------------
 
 # The condition the exit code cannot carry. The corpus already has unchecked expectations, which pin
 # the code at 1, so a rule that runs and fails its expectation moves the exit code not at all.
+#
+# Held against a checked-in list like conditions 2 and 5, not against "nothing failed": the pinned
+# corpus carries test inputs this evaluator answers differently from the releases (a malformed API
+# Gateway case, read as a refusal rather than deselected in silence), and those are a known state of
+# the pin, not a regression. One line per (case, rule) in the shape built here, so a rule that newly
+# fails its expectation appears and one that stops failing disappears, and either turns the job red.
 jq -r '[.[] | .test_cases[]?
         | . as $case
         | .failed_rules[]?
         | "  \($case.name // "<unnamed case>"): rule \(.name), expected \(.expected), evaluated \(.evaluated | join(", "))"]
-       | .[]' "$report" >"$work/failed-rules.txt"
+       | .[]' "$report" \
+    | tr -d '\r' | LC_ALL=C sort >"$work/actual/failed-rules.txt"
 
-if [[ -s $work/failed-rules.txt ]]; then
-    fail "condition 3 (no failed rules): $(wc -l <"$work/failed-rules.txt" | tr -d ' ') rule(s) ran and did not meet their expectation:
-$(cat "$work/failed-rules.txt")"
+strip_comments "$expected_failed" | LC_ALL=C sort >"$work/expected/failed-rules.txt"
+
+if ! cmp -s "$work/expected/failed-rules.txt" "$work/actual/failed-rules.txt"; then
+
+    detail=""
+    LC_ALL=C comm -13 "$work/expected/failed-rules.txt" "$work/actual/failed-rules.txt" \
+        | sed -e 's/^/  /' >"$work/appeared.txt"
+    if [[ -s $work/appeared.txt ]]; then
+        detail="$detail
+  appeared (a rule that ran and did not meet its expectation, and did not before):
+$(cat "$work/appeared.txt")"
+    fi
+
+    LC_ALL=C comm -23 "$work/expected/failed-rules.txt" "$work/actual/failed-rules.txt" \
+        | sed -e 's/^/  /' >"$work/disappeared.txt"
+    if [[ -s $work/disappeared.txt ]]; then
+        detail="$detail
+  disappeared (expected to fail its expectation, and no longer does):
+$(cat "$work/disappeared.txt")"
+    fi
+
+    fail "condition 3 (failed-rule set): does not match
+  .github/registry-corpus-state/failed-rules.txt$detail
+
+$(diff -u "$work/expected/failed-rules.txt" "$work/actual/failed-rules.txt" || true)
+
+$(byte_evidence "$work/expected/failed-rules.txt" "$work/actual/failed-rules.txt")"
 fi
 
 # ---- condition 4: nothing else went wrong -------------------------------------------------------
@@ -476,12 +508,14 @@ fi
 
 unchecked_total=$(jq '[.[] | .test_cases[]? | .unchecked_expectations[]?] | length' "$report")
 unchecked_names=$(wc -l <"$work/actual/unchecked-expectations.txt" | tr -d ' ')
+failed_count=$(wc -l <"$work/actual/failed-rules.txt" | tr -d ' ')
 orphan_count=$(wc -l <"$work/actual/orphaned-test-files.txt" | tr -d ' ')
 
 printf 'The pinned aws-guard-rules-registry corpus is in its known state:\n'
 printf '  exit code %d (an expectation could not be evaluated)\n' "$actual_exit"
 printf '  %s unchecked expectations across %s rule names, all of them expected\n' \
     "$unchecked_total" "$unchecked_names"
-printf '  0 failed rules, 0 unreadable rules files, 0 unrunnable test cases\n'
+printf '  %s failed rules, all of them expected\n' "$failed_count"
+printf '  0 unreadable rules files, 0 unrunnable test cases\n'
 printf '  %s orphaned test files, all of them expected\n' "$orphan_count"
 printf '\nThis is not a pass. See aws-cloudformation/aws-guard-rules-registry#288.\n'

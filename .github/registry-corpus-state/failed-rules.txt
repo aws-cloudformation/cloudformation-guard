@@ -1,0 +1,22 @@
+# Every test case in the pinned aws-guard-rules-registry corpus whose rule ran and did not meet its
+# expectation, as `cfn-guard test -d` reports it with this evaluator. One line per (case, rule), in the
+# shape .github/scripts/check-registry-corpus.sh builds from the report's `failed_rules` entries:
+# `  <case name>: rule <rule name>, expected <expectation>, evaluated <verdict>`. The two leading
+# spaces are part of the line.
+#
+# Listed here because a failed rule moves nothing the exit code can carry. The corpus already has
+# unchecked expectations, which pin the exit code at 1, so a rule that runs and fails its expectation
+# changes the number not at all -- see condition 3 of the script. Read this list as a lock on a known
+# state: a line appearing here is a rule that newly fails its expectation and turns the job red, and a
+# line disappearing means the evaluator or the corpus moved and this file has to say so.
+#
+# Both lines are the "No Method set in API GW Stage, SKIP" case of two API Gateway rules. That test
+# input is malformed: its `Resources:` holds `Type` and `Properties` directly instead of a map of
+# resources, so `Resources.*[ Type == 'AWS::ApiGateway::Stage' ... ]` walks a string and a map that
+# are not resources. Earlier releases deselected both in silence and reported SKIP; this evaluator
+# refuses the read the predicate cannot decide, and a rule-level `when` meeting a refusal fails the
+# rule rather than reporting it not applicable, so the case evaluates FAIL. The registry's own main
+# carries the same input, so aws-cloudformation/aws-guard-rules-registry#288 does not clear these.
+
+  No Method set in API GW Stage, SKIP: rule API_GW_CACHE_ENABLED_AND_ENCRYPTED, expected SKIP, evaluated FAIL
+  No Method set in API GW Stage, SKIP: rule API_GW_EXECUTION_LOGGING_ENABLED, expected SKIP, evaluated FAIL

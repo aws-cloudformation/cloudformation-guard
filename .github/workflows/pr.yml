@@ -196,10 +196,11 @@ jobs:
       # guard/src/commands/test.rs makes the error code sticky, so a run where a rule ran and failed
       # its expectation for real exits 1 too, and tolerating that number would hide it. So the check
       # holds the report against checked-in lists in .github/registry-corpus-state/ instead -- which
-      # expectations go unchecked, which test files nothing claims, and that nothing else went wrong.
-      # Fixing the corpus turns this red on purpose: when
-      # aws-cloudformation/aws-guard-rules-registry#288 merges, the pin and those lists move
-      # together, and the lists become empty.
+      # expectations go unchecked, which rules ran and failed their expectation (two API Gateway
+      # cases over a malformed test input that this evaluator refuses to read rather than skips),
+      # which test files nothing claims, and that nothing else went wrong. Fixing the corpus turns
+      # this red on purpose: when aws-cloudformation/aws-guard-rules-registry#288 merges, the pin and
+      # those lists move together, and the unchecked-expectation list becomes empty.
       - name: Run integration tests using test command
         run: |
           bash cloudformation-guard/.github/scripts/check-registry-corpus.sh \
@@ -272,7 +273,8 @@ jobs:
           ref: 7f7340c26ae5d5e8874651dbffeb12e0e9f505b6
       # The same script the linux/macos job runs, under `shell: bash` -- Git for Windows' bash, which
       # this runner image ships -- rather than a pwsh transcription of it. See that job for what a
-      # green here means, and for why it is not "the corpus passes".
+      # green here means (the checked-in lists include the two API Gateway rules that fail their
+      # expectation with this evaluator), and for why it is not "the corpus passes".
       #
       # One implementation and not two because the two had already drifted, on the one thing this
       # check is about. This step was `cfn-guard test -d ...` followed by `if ($LASTEXITCODE -eq 0)`,
