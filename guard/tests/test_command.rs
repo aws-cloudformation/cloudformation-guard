@@ -5190,6 +5190,11 @@ mod test_command_tests {
     /// a different map in each case, so the texts differ, and a collection that deduplicated by text
     /// printed two lines for one filter. The test command keeps the once-per-site reading across cases
     /// by `(kind, site)`: one line, the first case's. Red before that: two lines.
+    ///
+    /// The filter is `testBasic !exists` over `Resources.*[ Metadata exists ].Metadata`. Each case's
+    /// instance holds one authentication block, which carries the key and is no member, so the
+    /// instance's `Metadata` map loses its selection and is named. The role's map holds one sub-map
+    /// that lacks the key, so it is selected quietly and the `when` gate opens: both cases expect PASS.
     #[rstest]
     #[case("")]
     #[case("json")]
@@ -5217,7 +5222,7 @@ mod test_command_tests {
 
         let (status_code, _) = run(output);
         let (_, err_writer) = run(output);
-        assert_eq!(StatusCode::SUCCESS, status_code, "both cases expect SKIP");
+        assert_eq!(StatusCode::SUCCESS, status_code, "both cases expect PASS");
 
         let stderr = err_writer.err_to_stripped().expect("failed to read stderr");
         let notices: Vec<&str> = stderr
@@ -5247,13 +5252,29 @@ mod test_command_tests {
     /// that does not. The filter through the variable tests the one map itself, as `[*]` does, so the
     /// expectations hold, the command succeeds, and no notice is written on either stream. The JSON
     /// report has to parse.
+    ///
+    /// The second pair of cases is the same two shapes with the scalar `Type` entry left out. A map
+    /// with no scalar entry whose own key the predicate names (and none of its map-valued entries
+    /// holds) is one object too, so the filter tests the map itself and the expectations are the same
+    /// FAIL and PASS, with no notice.
     #[rstest]
-    #[case("")]
-    #[case("json")]
+    #[case::with_a_type_entry("", "resources/test-command/data-dir/single_map_binding_cases.yaml")]
+    #[case::with_a_type_entry_json(
+        "json",
+        "resources/test-command/data-dir/single_map_binding_cases.yaml"
+    )]
+    #[case::without_a_type_entry(
+        "",
+        "resources/test-command/data-dir/single_map_binding_without_type_cases.yaml"
+    )]
+    #[case::without_a_type_entry_json(
+        "json",
+        "resources/test-command/data-dir/single_map_binding_without_type_cases.yaml"
+    )]
     fn a_single_map_binding_of_one_object_is_judged_by_the_test_command_without_a_notice(
         #[case] output: &str,
+        #[case] data: &str,
     ) {
-        const DATA: &str = "resources/test-command/data-dir/single_map_binding_cases.yaml";
         const RULES: &str = "resources/validate/filter_through_a_single_map_binding.guard";
 
         let run = |output: &str| {
@@ -5263,11 +5284,11 @@ mod test_command_tests {
 
             let status_code = match output {
                 "" => TestCommandTestRunner::default()
-                    .test_data(Option::from(DATA))
+                    .test_data(Option::from(data))
                     .rules(Some(RULES))
                     .run(&mut writer, &mut reader),
                 _ => TestCommandTestRunner::default()
-                    .test_data(Option::from(DATA))
+                    .test_data(Option::from(data))
                     .rules(Some(RULES))
                     .output_format(output)
                     .run(&mut writer, &mut reader),
@@ -5282,7 +5303,7 @@ mod test_command_tests {
         assert_eq!(
             StatusCode::SUCCESS,
             status_code,
-            "the cases expect FAIL and PASS, the verdicts the filter gives once it tests the map itself"
+            "{data}: the cases expect FAIL and PASS, the verdicts the filter gives once it tests the map itself"
         );
 
         let stdout = out_writer.stripped().expect("failed to read stdout");
@@ -5304,23 +5325,26 @@ mod test_command_tests {
         );
     }
 
-    /// The single-map filter notice reaches the test command, once, on stderr.
+    /// The bound-map filter notice reaches the test command, once, on stderr.
     ///
-    /// The cases are the two shapes of the published registry rule's own tests with the scalar `Type`
-    /// entry left out of the `Metadata` map. With no scalar entry, and a predicate that names a key the
-    /// map holds itself and none of its map-valued entries holds, the filter through the variable keeps
-    /// the walk and selects nothing; both cases expect SKIP, which is the verdict the engine gives, so
-    /// the command succeeds. The rules file is evaluated once per case and the same filter loses the
-    /// same selection each time, so two notices are produced and collapsed to one before they are
-    /// written. Not on stdout, where the report that consumers parse lives; the JSON report has to
-    /// parse with the notice beside it.
+    /// The cases are two instances, each with an authentication block under its `Metadata`, and the
+    /// rules file filters `Resources.*[ Metadata exists ].Metadata` through a variable with
+    /// `testBasic !exists`. The maps have no scalar entry and the predicate names no key a map holds
+    /// itself, so the filter keeps the walk: the authentication block carries `testBasic` and is no
+    /// member, and the selection the predicate held on the map by absence is lost. The role's map
+    /// holds one sub-map that lacks the key, which is selected, so the `when` gate opens and both
+    /// cases expect PASS, which is the verdict the engine gives, so the command succeeds. The rules
+    /// file is evaluated once per case and the same filter loses a selection each time, so two
+    /// notices are produced and collapsed to one before they are written. Not on stdout, where the
+    /// report that consumers parse lives; the JSON report has to parse with the notice beside it.
+    /// The single-map registry shape, which is one object and draws no notice, is in the cases of
+    /// `a_single_map_binding_of_one_object_is_judged_by_the_test_command_without_a_notice`.
     #[rstest]
     #[case("")]
     #[case("json")]
     fn a_single_map_binding_notice_reaches_the_test_command(#[case] output: &str) {
-        const DATA: &str =
-            "resources/test-command/data-dir/single_map_binding_without_type_cases.yaml";
-        const RULES: &str = "resources/validate/filter_through_a_single_map_binding.guard";
+        const DATA: &str = "resources/test-command/data-dir/metadata_projection_two_ids_cases.yaml";
+        const RULES: &str = "resources/validate/filter_through_a_metadata_projection.guard";
 
         let run = |output: &str| {
             let mut reader = Reader::default();
@@ -5348,7 +5372,7 @@ mod test_command_tests {
         assert_eq!(
             StatusCode::SUCCESS,
             status_code,
-            "both cases expect SKIP and the notice must not move that"
+            "both cases expect PASS and the notice must not move that"
         );
 
         let stdout = out_writer.stripped().expect("failed to read stdout");
@@ -5375,7 +5399,7 @@ mod test_command_tests {
             stderr
         );
         assert!(
-            notices[0].contains("let cfn_authentication_rule = Resources.Metadata"),
+            notices[0].contains("`let blocks = Resources.*[ Metadata exists ].Metadata`"),
             "the notice names the binding, got {:?}",
             notices[0]
         );

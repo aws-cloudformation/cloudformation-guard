@@ -4,11 +4,11 @@
 # rules file is `resources/validate/filter_through_a_single_map_binding.guard`.
 #
 # Here the `Metadata` map has no scalar entry and the predicate names `AWS::CloudFormation::Authentication`,
-# a key the map holds itself and none of its map-valued entries holds, so the filter through
-# `%cfn_authentication_rule` keeps the walk: it tests the map's entries, selects nothing, and the `when`
-# gate does not apply. Both cases expect SKIP. The rules file is evaluated once per case and the same
-# filter loses the same selection each time, so the notice is produced for each case and collapsed to
-# one before it is written; the test asserts one.
+# a key the map holds itself and none of its map-valued entries holds. A map with no scalar entry whose
+# own key the predicate names is one object, as the map with the `Type` entry is: the filter through
+# `%cfn_authentication_rule` tests the map itself, as `[*]` does, the predicate holds, the map is
+# selected and the rule applies: FAIL with a password, PASS without. cfn-guard 3.2.1 also reports FAIL
+# for the password shape (its reporter then exits 101). No notice is written for either case.
 ###
 ---
 - name: Authentication block with a password, no Type entry
@@ -36,7 +36,7 @@
               - "http://www.example.com/test"
   expectations:
     rules:
-      CFN_AUTHENTICATION_RULE: SKIP
+      CFN_AUTHENTICATION_RULE: FAIL
 
 - name: Authentication block without a password, no Type entry
   input:
@@ -62,4 +62,4 @@
               - "somebucket333"
   expectations:
     rules:
-      CFN_AUTHENTICATION_RULE: SKIP
+      CFN_AUTHENTICATION_RULE: PASS

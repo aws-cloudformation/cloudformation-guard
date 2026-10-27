@@ -1,10 +1,13 @@
 #
-# The filtered variable is bound to another variable, not to a path. Over a `Metadata` map with no scalar
-# entry (single-map-binding-without-type-template.yaml) the filter keeps the walk and loses its selection,
-# and the notice names the `let` the author wrote for the filtered name, `let b = %a`, not the query behind
-# the chain. Over a `Metadata` map that holds a scalar `Type` (single-map-binding-with-password-template.yaml)
-# the map is one object, the filter selects it as `%b[*][ ... ]` does, and the rule FAILs on the password
-# with no notice.
+# The filtered variable is bound to another variable, not to a path. The predicate names a key the
+# `Metadata` map holds itself, so the map is one object whether or not it holds a scalar entry: over
+# single-map-binding-with-password-template.yaml (a scalar `Type` beside the authentication block) and over
+# single-map-binding-without-type-template.yaml (the authentication block alone) the filter tests the map
+# as a whole, as `%b[*][ ... ]` does, selects it, and the rule FAILs on the password with no notice.
+#
+# The chain's notice, which names the `let` the author wrote for the filtered name (`let b = %a`), is
+# drawn by a filter that walks the entries and loses its selection: see
+# walking_filter_through_a_chained_binding.guard.
 #
 let a = Resources.Metadata
 let b = %a

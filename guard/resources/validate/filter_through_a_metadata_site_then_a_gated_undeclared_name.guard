@@ -7,8 +7,8 @@
 # error is reported.
 #
 let blocks = Resources.*[ Metadata exists ].Metadata
-rule AUTHENTICATION_SITE when %blocks[ "AWS::CloudFormation::Authentication" exists ] !empty {
-  %blocks[ "AWS::CloudFormation::Authentication" exists ]."AWS::CloudFormation::Authentication".*.username == "no-such-user-zzz"
+rule AUTHENTICATION_SITE when %blocks[ testBasic !exists ] !empty {
+  %blocks !empty
 }
 rule BROKEN_BEHIND_A_TRIGGER when Resources.Trigger exists {
   %nosuch == 1

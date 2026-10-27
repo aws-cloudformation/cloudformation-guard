@@ -1,0 +1,19 @@
+#
+# The filtered variable is a parameterized rule's parameter, and the filter walks the map's entries.
+# Over the `Metadata` map of single-map-binding-without-type-template.yaml, which holds only the
+# authentication block (no scalar entry, and `testBasic` is not a key of the map itself), the filter
+# keeps the walk. The one entry carries `testBasic`, so `testBasic !exists` rejects it and nothing is
+# kept, while the predicate holds on the map read as one value, because the map lacks the key. The
+# selection is lost, so the rule's `when` gate does not apply (SKIP, exit 0). There is no `let` to name,
+# so the notice names the parameter and the rule, and the query the call site bound it to.
+#
+# The same call with a predicate that names the map's own key is one object and is tested as a whole
+# (filter_through_a_parameter.guard), with no notice.
+#
+rule has_no_test_basic(m) when %m[ testBasic !exists ] !empty {
+  %m exists
+}
+
+rule FILTER_THROUGH_A_PARAMETER {
+  has_no_test_basic(Resources.Metadata)
+}

@@ -10,6 +10,13 @@
 # the verdicts cfn-guard 3.2.1 gives the published rule's own two tests. Nothing is announced on
 # stderr; the verdict is the report.
 #
+# A `Metadata` map with NO scalar entry is one object too when the predicate names a key the map holds
+# itself that none of its map-valued entries holds, as `"AWS::CloudFormation::Authentication" exists`
+# does over the authentication block alone (single-map-binding-without-type-template.yaml): the filter
+# tests the map itself, the map is selected, and the rule applies with the same verdicts, FAIL over a
+# block that defines a password and PASS over one that does not. cfn-guard 3.2.1 gives FAIL for the
+# password shape.
+#
 let cfn_authentication_rule = Resources.Metadata
 let skip_cfn_authentication = %cfn_authentication_rule[
       "AWS::CloudFormation::Authentication" exists

@@ -1,15 +1,15 @@
 #
 # A binding whose query projects in the middle and ends in a key:
 # `Resources.*[ Metadata exists ].Metadata` holds one `Metadata` map per resource that has one, several
-# maps. No map holds a scalar entry, and the predicate names `AWS::CloudFormation::Authentication`, a key
-# the instance's map holds itself and none of its map-valued entries holds, so the filter through the
-# variable keeps the walk: it tests each map's entries, selects nothing, and the rule gated on the
-# selection is SKIP (exit 0). The predicate holds on the instance's map as a whole, so one notice names
-# the map that lost its selection; the role's map lacks the key and draws none.
-#
-# A map with a scalar entry is one object and draws no notice (filter_through_a_key_tailed_projection.guard).
+# maps. No map holds a scalar entry, and `testBasic` is not a key any of them holds itself, so the filter
+# through the variable walks each map's entries. The role's map holds one sub-map, which lacks `testBasic`
+# and is selected: a uniform population that draws no notice. The instance's map holds an authentication
+# sub-map that carries `testBasic` and is no member, beside an init sub-map that lacks it: the predicate
+# holds on the map by absence and the selection moved, so one notice names that map. The gate opens on
+# the selected sub-maps and the body passes (exit 0). A predicate that names a key the map holds itself
+# is one object: filter_through_a_metadata_projection_as_one_object.guard.
 #
 let blocks = Resources.*[ Metadata exists ].Metadata
-rule FILTER_THROUGH_A_METADATA_PROJECTION when %blocks[ "AWS::CloudFormation::Authentication" exists ] !empty {
-  %blocks[ "AWS::CloudFormation::Authentication" exists ]."AWS::CloudFormation::Authentication".*.username == "no-such-user-zzz"
+rule FILTER_THROUGH_A_METADATA_PROJECTION when %blocks[ testBasic !exists ] !empty {
+  %blocks !empty
 }

@@ -23,8 +23,9 @@ struct or array int /spec/replicas`), reported as the rule's `FAIL` at exit 19. 
 same under the plain invocation, `--verbose` and `--show-summary all`. The table's last three rows are also
 the probe set behind the sentence on a refused read beside a value that does not match (the
 behavior-change entry on a marker among a comparison's right-hand values in docs/CLAUSES.md, and the
-README's bullet on it). docs/KNOWN_ISSUES.md records the same `3.1.12` reading; no release column was
-re-measured for this table since it was written.
+README's bullet on it). docs/KNOWN_ISSUES.md records the same `3.1.12` reading. No release column was
+read again for this table since it was written, except two `3.2.1` cells read on the installed 3.2.1 release
+binary and marked as such in the table (the two rows named under "Cells" below).
 
 ## What the released trees show
 
@@ -35,9 +36,16 @@ of the document (`Path=[L:0,C:0]`), `Resources.*.Properties.Tags[*][ Key == 'Env
 `Resources.*.Properties.PolicyDocument.Statement[*][ ... ]` of the resource (`Path=/Resources/F`,
 `Path=/Resources/P`). Over a map, `.*` followed by a filter enumerated the map's entries and tested each.
 A filter through a variable, `%r[ ... ]` with `let r = Resources`, tested the bound map as one value
-(`Path=/Resources`). The engine now enumerates the members, or the list's elements, in every one of these
-shapes, and refuses the shapes it cannot read as a collection (a map of scalars, a map with a string entry
-beside the resources), at exit 19. Map-shaped tags under a predicate that reads only `Key` and `Value`
+(`Path=/Resources`). The engine now reads each of these shapes by the map's shape: a filter straight after
+`[*]`, and `.*` then a filter, enumerate the members or the list's elements, read a map with a non-null scalar
+entry as one object, and refuse at exit 19 a map that mixes a scalar entry with members holding a key the
+predicate names (a string entry beside the resources); a filter through a variable reads the map the variable
+holds by the same classification, with two readings of its own: a map with no scalar entry whose own key the
+predicate names is one object (the released reading), and a mixed map takes the literal path's reading, refused
+where the literal is. So a variable holding a map of scalars is tested as one object (the
+`tags_absent_not_empty_through_a_variable_bound_to_properties.guard` row) and a variable holding a scalar beside a
+sub-map that carries the checked key is refused (the `tag_specifications_absent_gate_through_a_variable.guard`
+row). Map-shaped tags under a predicate that reads only `Key` and `Value`
 against literals are decided by their `{ Key, Value }` list twin, so the two `env_tag_*` rules draw over
 `map_shaped_tags.yaml` what they draw over `list_shaped_tags.yaml`: the value `dev` fails `== 'prod'` and
 satisfies `!empty`.
@@ -105,11 +113,11 @@ Rules files are named for the clause they hold; `after_star` is `X[*][ ... ]`, `
 | env_tag_not_empty_after_star.guard | list_shaped_tags.yaml | FAIL | FAIL | FAIL | PASS |
 | bucket_name_exists_after_star.guard | bucket_without_a_bucket_name.yaml | not run | not run | not run | FAIL |
 | bucket_name_exists_after_the_key.guard | bucket_without_a_bucket_name.yaml | not run | not run | not run | FAIL |
-| tags_absent_not_empty_through_a_variable_bound_to_properties.guard | scalar_properties_without_tags.yaml | not run | not run | not run | PASS |
+| tags_absent_not_empty_through_a_variable_bound_to_properties.guard | scalar_properties_without_tags.yaml | not run | not run | PASS (the installed 3.2.1 binary) | PASS |
 | mode_ref_equals_captured_keys_gate.guard | captured_modes_beside_a_refused_walk.yaml | SKIP | SKIP | SKIP | SKIP |
 | some_names_not_in_captured_keys_gate.guard | captured_modes_beside_a_refused_walk.yaml | SKIP | SKIP | SKIP | SKIP |
 | owner_equals_tag_names_empty.guard | bucket_owner_beside_map_shaped_tags.yaml | internal error, no verdict | internal error, no verdict | internal error, no verdict | PASS |
-| tag_specifications_absent_gate_through_a_variable.guard | launch_template_with_tag_specifications.yaml | not run | not run | not run | SKIP |
+| tag_specifications_absent_gate_through_a_variable.guard | launch_template_with_tag_specifications.yaml | not run | not run | PASS (the installed 3.2.1 binary; the gate opened on the map read as one value) | FAIL |
 | type_or_name_not_empty_after_star.guard | bucket_with_rules_members.yaml | not run | not run | not run | FAIL |
 | type_is_bucket_not_empty_after_star.guard | bucket_with_rules_members.yaml | not run | not run | not run | FAIL |
 | description_absent_empty_after_star.guard | ingress_list_without_a_description.yaml | not run | not run | not run | FAIL |
@@ -154,12 +162,18 @@ now).
 | `type_tag_not_empty_after_star.guard` | map_shaped_tags.yaml | yes |
 
 The `now` verdicts of the released-column cells did not change between the engine they were first read on
-and the one this directory was committed at. The one `now` verdict that changed since is
-`tags_absent_not_empty_through_a_variable_bound_to_properties.guard` over `scalar_properties_without_tags.yaml`,
-which was `FAIL` (exit 19) and is `PASS` (exit 0): the variable holds one map with a non-null scalar entry
+and the one this directory was committed at. Two `now` verdicts changed since.
+`tags_absent_not_empty_through_a_variable_bound_to_properties.guard` over `scalar_properties_without_tags.yaml`
+was `FAIL` (exit 19) and is `PASS` (exit 0): the variable holds one map with a non-null scalar entry
 (`BucketName`) and the predicate names no key one of the map's map-valued entries holds, so the filter
-through the variable tests the map itself, as `%p[*][ Tags !exists ]` does, and the `!empty` holds. A release column reading "not run" marks a cell the released
-binaries were never run over: the three documents added for the current engine
+through the variable tests the map itself, as `%p[*][ Tags !exists ]` does, and the `!empty` holds.
+`tag_specifications_absent_gate_through_a_variable.guard` over `launch_template_with_tag_specifications.yaml` was
+`SKIP` (exit 0, with the bound-map notice) and is `FAIL` (exit 19): the scalar `LaunchTemplateName` sits beside a
+`LaunchTemplateData` sub-map that carries `TagSpecifications`, the key the predicate names, so the map is mixed and
+the filter through the variable is refused, as the literal `Properties[ TagSpecifications !exists ]` is. The
+`3.2.1` cells of those two rows were read on the installed 3.2.1 release binary (`cfn-guard 3.2.1`), not on a
+binary built from the tag; the other release cells were not re-read. A release column reading "not run" marks
+a cell the released binaries were never run over: the three documents added for the current engine
 (`bucket_without_a_bucket_name.yaml`, `scalar_properties_without_tags.yaml`,
 `launch_template_with_tag_specifications.yaml`) and the one rule added for it,
 `tags_absent_not_empty_after_the_key.guard`, over the two null documents, the two held-key cells

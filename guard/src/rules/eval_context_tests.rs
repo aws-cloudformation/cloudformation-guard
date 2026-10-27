@@ -3752,13 +3752,15 @@ fn a_quiet_bound_map_filter_site_is_read_once_and_never_re_walked() -> Result<()
 /// for a positive predicate.
 ///
 /// `let s = spec` over a Deployment `spec` of `selector`, `template` and `strategy` (sub-maps sharing no
-/// key name): an object. The first spec has no scalar entry on purpose. A scalar `replicas` beside the
-/// sub-maps, with none of them holding the key the predicate names, makes the spec one object to the
-/// slot after `%s`, which tests the predicate on the spec itself as `spec[*][ f ]` does; a map kept that
-/// way is no lost selection, records no quiet verdict, and the site then pays its probe and its re-walk
-/// on every evaluation (12 and 12 over the twelve below, as read from the evaluator). The second spec
-/// keeps its scalar and is mixed: its sub-maps hold the key. The filter sits inside a type block that
-/// matches twelve buckets, so the clause is evaluated twelve times. Three predicates:
+/// key name): an object. The first spec has no scalar entry on purpose, so the walk stands. A scalar
+/// `replicas` beside the sub-maps, with none of them holding the key the predicate names, makes the spec
+/// one object to the slot after `%s`, which tests the predicate on the spec itself as `spec[*][ f ]`
+/// does; the notice classifies the map from its keys before it probes anything, so a one-object spec
+/// pays no probe, no re-walk and no entry read on any of the twelve evaluations, and no notice goes out
+/// (the last row pins that). The second spec keeps its scalar and is mixed: its sub-maps hold the key, so
+/// the slot takes the literal's reading and the notice returns for it at the same classification, with
+/// the same zero cost. The filter sits inside a type block that matches twelve buckets, so the clause is
+/// evaluated twelve times. The predicates:
 /// - `%s[ securityContext exists ] empty` does not hold on the object and can hold on no field of it
 ///   either, since `exists` never holds by absence, so nothing can have been gained: the probe stops it
 ///   before the object test, no entry is read, no re-walk is paid, and the quiet verdict is recorded
@@ -3769,10 +3771,11 @@ fn a_quiet_bound_map_filter_site_is_read_once_and_never_re_walked() -> Result<()
 ///   which the evaluator applies as it applies `!exists`: held by absence on the object and announced
 ///   once, as the `!exists` control below is.
 /// - `%s[ securityContext !exists ] empty` over a `spec` that carries a `securityContext` and whose
-///   map-valued fields each carry one too (a scalar `replicas` beside them keeps it an object): the
-///   predicate does not hold on the object, the walk selects nothing of use, both readings agree and
-///   nothing is announced; the gained path's quiet exit records the verdict, so the re-walk is paid once
-///   and the next eleven evaluations stop at the recorded-site check, the probe included.
+///   map-valued fields each carry one too, with a scalar `replicas` beside them: a mixed map, which the
+///   slot reads as the literal does. The notice returns at the classification, so nothing is probed,
+///   re-walked or announced on any of the twelve evaluations: (0, 0, 0, 0).
+/// - `%s[ securityContext !exists ] !empty` over a `spec` of `replicas`, `selector` and `template`, no
+///   sub-map holding the key: one object, tested whole, selected, and the same (0, 0, 0, 0).
 /// - `%s[ securityContext !exists ] !empty` over the first `spec`, held by absence on the object and
 ///   announced as a lost selection: one probe, one re-walk, one notice, the control, as before.
 #[test]
@@ -3795,9 +3798,13 @@ fn an_object_the_predicate_did_not_hold_on_is_re_walked_once_or_not_at_all() -> 
         "{buckets}spec:\n  replicas: 3\n  securityContext:\n    securityContext: {{}}\n  selector:\n    \
          securityContext:\n      runAsNonRoot: true\n"
     );
+    let one_object = format!(
+        "{buckets}spec:\n  replicas: 3\n  selector:\n    matchLabels:\n      app: a\n  template:\n    \
+         metadata:\n      labels:\n        app: a\n"
+    );
     // (probes, re-walks, entry probes, notices) over the twelve evaluations.
     type Counts = (usize, usize, usize, usize);
-    let rows: [(&str, &str, &str, Counts); 6] = [
+    let rows: [(&str, &str, &str, Counts); 7] = [
         (
             "a positive predicate that did not hold on the object: one probe, no re-walk, then the recorded quiet verdict on the other eleven evaluations",
             &object,
@@ -3811,16 +3818,22 @@ fn an_object_the_predicate_did_not_hold_on_is_re_walked_once_or_not_at_all() -> 
             (1, 1, 0, 1),
         ),
         (
-            "the `not` spelling that did not hold on the object and selected nothing: one re-walk, then the recorded quiet verdict",
+            "the `not` spelling over a mixed spec (a scalar beside sub-maps that hold the key): classified before any probe, nothing probed, re-walked or announced",
             &carrying,
             "let s = spec\nrule r { AWS::S3::Bucket { %s[ not securityContext exists ] empty } }",
-            (1, 1, 0, 0),
+            (0, 0, 0, 0),
         ),
         (
-            "an absence check that did not hold on the object and selected nothing: one re-walk, then the recorded quiet verdict",
+            "an absence check over the same mixed spec: classified before any probe, nothing probed, re-walked or announced",
             &carrying,
             "let s = spec\nrule r { AWS::S3::Bucket { %s[ securityContext !exists ] empty } }",
-            (1, 1, 0, 0),
+            (0, 0, 0, 0),
+        ),
+        (
+            "an absence check over a one-object spec (a scalar `replicas` beside sub-maps none of which holds the key): tested whole and selected, nothing probed, re-walked or announced",
+            &one_object,
+            "let s = spec\nrule r { AWS::S3::Bucket { %s[ securityContext !exists ] !empty } }",
+            (0, 0, 0, 0),
         ),
         (
             "the control: an absence check held on the object, announced once as a lost selection",

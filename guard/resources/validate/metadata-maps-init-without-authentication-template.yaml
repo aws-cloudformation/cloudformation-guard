@@ -1,8 +1,9 @@
 # The two resources of metadata-maps-authentication-and-init-template.yaml with the instance's
 # authentication block removed, under the logical id `Node`: it draws the init site of
 # filter_through_authentication_and_init_sites.guard and not the authentication site. Under
-# filter_through_a_metadata_projection.guard, whose only site is the authentication one, no map here
-# holds the key the predicate names, so the file draws no notice.
+# filter_through_a_metadata_projection.guard, whose only site is `testBasic !exists`, every entry of
+# every map here lacks `testBasic`, so each map's entries are selected, nothing is lost, and the file
+# draws no notice.
 Resources:
   RootRole:
     Type: "AWS::IAM::Role"

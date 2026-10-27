@@ -6,6 +6,6 @@ Resources:
   Only:
     Type: AWS::S3::Bucket
     Metadata:
-      Note: kept for the filter to walk
+      Note: a map entry beside the scalar
     Properties:
       BucketName: only-bucket

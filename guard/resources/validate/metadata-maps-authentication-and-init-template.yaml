@@ -1,7 +1,7 @@
 # Two resources, each with a Metadata map and no scalar entry in it; only the instance's carries the
-# authentication and init blocks. A binding of `Resources.*[ Metadata exists ].Metadata` holds both maps,
-# and a filter for `"AWS::CloudFormation::Authentication" exists` has one map it holds on and one it does
-# not. Every resource has a Metadata map, so nothing resolves unresolved.
+# authentication and init blocks. A binding of `Resources.*[ Metadata exists ].Metadata` holds both maps.
+# A filter for `testBasic !exists` keeps the role's one sub-map, and of the instance's two blocks only the
+# init block (the authentication block carries `testBasic`). Every resource has a Metadata map.
 Resources:
   RootRole:
     Type: "AWS::IAM::Role"

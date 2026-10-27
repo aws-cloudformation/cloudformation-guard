@@ -22,9 +22,5 @@ rule CONTROL_STAR_SPELLING {
     Resources.Q.Properties.Doc[*][ Statement exists ] !empty
 }
 
-# The same document filtered after the key, with no `[*]`: the filter walks the map's entries, the
-# predicate names `Statement`, a key of the map itself, and the filter is refused (FAIL, exit 19). The
-# refusal tells the author to write `X[*] { Key == value }` or `X[*].Key == value`.
-rule CONTROL_KEY_SPELLING {
-    Resources.Q.Properties.Doc[ Statement exists ] !empty
-}
+# The spelling with no `[*]` is refused (FAIL, exit 19); it is kept apart from this file, in
+# control_key_spelling_over_the_policy_doc.guard, so that this file exits 0.

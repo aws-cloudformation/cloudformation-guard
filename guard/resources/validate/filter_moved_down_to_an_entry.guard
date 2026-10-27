@@ -1,18 +1,17 @@
 #
-# A filter whose selection moved DOWN a level rather than to nothing. `%p` holds one map whose `Name`
-# key is also a key of its `Inner` entry. In the previous release `%p[ Name exists ]` tested the map
-# itself and selected it; it now walks the map's entries and selects `Inner`. Both rules below read
-# past the filter, so what they compare moved with the selection:
+# A filter whose selection is one level DOWN from the map. `%p` holds one map with a scalar entry
+# (`Name`) beside an `Inner` entry that is itself a map, and `Name` is also a key of `Inner`. The map
+# is mixed, so the filter walks its entries as `Properties[ Name exists ]` would: the scalar is passed
+# over, `Inner` holds the key and is selected, and nothing is refused, because the predicate holds by
+# presence and not by absence. Both rules below read past the filter, so what they compare is `Inner`:
 #
-# - `.Tags exists`: the map had no `Tags` and neither does `Inner`, so the clause fails either way, but
-#   the thing it failed on changed.
-# - `.Name == 'b'`: the map's `Name` is `a` (FAIL before); `Inner`'s is `b`, and the `Name` string entry
-#   is a scalar the filter passes over, so the clause compares `Inner`'s `b` alone and passes (for one
-#   revision the string was reported unresolved beside `Inner` and failed the comparison).
+# - `.Tags exists`: neither the map nor `Inner` has `Tags`, so the clause fails (FAIL).
+# - `.Name == 'b'`: `Inner`'s `Name` is `b`; the map's own `Name` string is a scalar the filter passes
+#   over, so the clause compares `Inner`'s `b` alone and passes (PASS).
 #
-# Each filter is announced once: the predicate holds on the map and the map is not among what the
-# filter selected. A gate that read only the end of the whole query announced the first (every result
-# unresolved) with the wrong words and missed the second (a resolved result after the filter).
+# No notice is written for either site: a map with a scalar entry beside a map that holds the
+# predicate's key is never announced, because the walk's selection stands. A filter that could hold on
+# the map by absence is refused instead, and the refusal is its answer.
 #
 let p = Resources.B.Properties
 
@@ -24,7 +23,6 @@ rule MOVED_DOWN_NAME {
   %p[ Name exists ].Name == 'b'
 }
 
-# Both "before" verdicts were measured on binaries built from the 3.1.12, 3.2.0 and 3.2.1 release commits over
-# two-level-properties-template.yaml: MOVED_DOWN_NAME FAIL and MOVED_DOWN_TAGS FAIL, with no notice; the
-# "now" verdicts (NAME PASS, TAGS FAIL, one notice per site) are what the test over this file asserts. The
-# note sits after the rules so the notices' line numbers, which the test pins, stay where they were.
+# Over two-level-properties-template.yaml the verdicts are MOVED_DOWN_NAME PASS and MOVED_DOWN_TAGS FAIL,
+# with no notice; the test over this file asserts them. The note sits after the rules so the rules' line
+# numbers stay where they were.

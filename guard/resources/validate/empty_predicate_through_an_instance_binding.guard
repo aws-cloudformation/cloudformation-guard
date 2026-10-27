@@ -3,11 +3,14 @@
 # own beside `not exists`. The resource holds a scalar `Type` and `Properties` is not a key of its
 # Metadata or Properties map, so it is one object: the filter tests the resource as a whole, as
 # `%m[*][ ... ]` does, `Properties.Tags empty` holds on it, and the resource is selected in its own place.
-# A positive `exists` over the selection passes. Nothing is announced on stderr.
+# A positive `exists` over the selection passes, and so does the comparison of the selection's own
+# `Type`, which only the resource itself answers: the `Metadata` and `Properties` entries a walk would
+# select have no `Type`. Nothing is announced on stderr.
 #
 let m = Resources.Only
 let lacking = %m[ Properties.Tags empty ]
 
-rule entries_lacking_the_key_are_selected {
+rule the_resource_itself_is_selected {
     %lacking exists
+    %lacking.Type == 'AWS::S3::Bucket'
 }

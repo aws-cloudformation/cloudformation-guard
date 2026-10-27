@@ -109,7 +109,7 @@ const CITED_FIXTURE_DIRS: [&str; 1] = ["wildcard-filter-release-verdicts"];
 /// with another verdict or notice); an entry met on another number of rows than its count is reported,
 /// so no copied row inherits an exemption unlisted. Regenerate it from the test's own report, or from a
 /// reading of every row's labels against the sources.
-const KNOWN_UNRESOLVED_LABELS: [(&str, &str, &str, &str); 133] = [
+const KNOWN_UNRESOLVED_LABELS: [(&str, &str, &str, &str); 132] = [
     (
         "KNOWN_ISSUES.md",
         r#"`%s[ securityContext !exists ] !empty`"#,
@@ -181,12 +181,6 @@ const KNOWN_UNRESOLVED_LABELS: [(&str, &str, &str, &str); 133] = [
         r#"`%p[ TagSpecifications !exists ]`"#,
         "eval_tests.rs:a_sub_map_carrying_the_checked_key_under_a_named_binding_is_announced",
         r#"the example"#,
-    ),
-    (
-        "KNOWN_ISSUES.md",
-        r#"`%p[ Tags !exists ] !empty`"#,
-        "eval_tests.rs:a_filter_through_a_single_map_binding_whose_absence_check_reached_into_the_map_is_announced",
-        r#"a one-key miss at the properties map's own first key"#,
     ),
     (
         "KNOWN_ISSUES.md",

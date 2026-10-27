@@ -1,10 +1,13 @@
 # The template of single-map-binding-with-password-template.yaml with the scalar `Type` entry left out of
 # the resource whose logical id is `Metadata`: its map holds only the authentication block, so it has no
 # scalar entry. A predicate written against the map's own key, `"AWS::CloudFormation::Authentication"
-# exists`, names a key the map holds itself and none of its map-valued entries holds, so a filter through
-# a variable bound to this map keeps the walk over the map's entries: it selects none of them, the
-# `when` gate does not apply, and the rule is SKIP with the lost-selection notice. With the `Type` entry
-# the same filter tests the map as a whole (single-map-binding-with-password-template.yaml).
+# exists`, names a key the map holds itself and none of its map-valued entries holds, so the map is one
+# object: a filter through a variable bound to this map tests the map as a whole, the predicate holds,
+# the map is selected, the `when` gate opens, and the registry rule FAILs on the password, as it does
+# with the `Type` entry (single-map-binding-with-password-template.yaml). No notice is written.
+# cfn-guard 3.2.1 also reports FAIL here; its reporter then panics at exit 101. A predicate that names a
+# key none of the map itself holds (`testBasic !exists`) keeps the walk over the map's entries; that
+# shape is walking_filter_through_a_chained_binding.guard and walking_filter_through_a_parameter.guard.
 Resources:
   RootRole:
     Type: "AWS::IAM::Role"

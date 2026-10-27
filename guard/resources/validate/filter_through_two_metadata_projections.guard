@@ -1,14 +1,14 @@
 #
 # The binding of filter_through_a_metadata_projection.guard, filtered at two sites: two rules gate on
-# the same filter text at two lines. Each site loses its selection on a template that holds a
-# `Metadata` map carrying an authentication block, so one template draws two notices, one per site. Over
-# two such templates the single-line output keeps one line per site, two lines, not one per site per
-# template and not one for the run.
+# the same filter text at two lines. Each site loses its selection on a template whose instance holds an
+# authentication block (it carries `testBasic` and is no member) beside another block, so one template
+# draws two notices, one per site. Over two such templates the single-line output keeps one line per
+# site, two lines, not one per site per template and not one for the run. Both rules pass.
 #
 let blocks = Resources.*[ Metadata exists ].Metadata
-rule FIRST_SITE when %blocks[ "AWS::CloudFormation::Authentication" exists ] !empty {
-  %blocks[ "AWS::CloudFormation::Authentication" exists ]."AWS::CloudFormation::Authentication".*.username == "no-such-user-zzz"
+rule FIRST_SITE when %blocks[ testBasic !exists ] !empty {
+  %blocks !empty
 }
-rule SECOND_SITE when %blocks[ "AWS::CloudFormation::Authentication" exists ] !empty {
-  %blocks[ "AWS::CloudFormation::Authentication" exists ]."AWS::CloudFormation::Authentication".*.username == "no-such-user-yyy"
+rule SECOND_SITE when %blocks[ testBasic !exists ] !empty {
+  %blocks !empty
 }

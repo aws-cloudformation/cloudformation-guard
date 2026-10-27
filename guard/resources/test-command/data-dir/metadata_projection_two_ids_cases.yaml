@@ -1,14 +1,16 @@
 ###
 # Two cases over `resources/validate/filter_through_a_metadata_projection.guard`, each with one
 # instance carrying an authentication block under its `Metadata`, under a DIFFERENT logical id. The
-# filter loses its selection in both, so the notice it raises names a different map each time
-# (`/Resources/EC2A/Metadata`, `/Resources/EC2B/Metadata`). One filter site, so one line: the test
-# command keeps the once-per-site reading across cases by site, not by text.
+# filter, `testBasic !exists`, loses its selection in both, so the notice it raises names a different
+# map each time (`/Resources/EC2A/Metadata`, `/Resources/EC2B/Metadata`). One filter site, so one line:
+# the test command keeps the once-per-site reading across cases by site, not by text.
 #
-# Each instance's `Metadata` holds only a map-valued entry, so it has no scalar entry: the filter through
-# the variable keeps the walk, tests the entries, which lack the key, selects nothing, and the rule is
-# SKIP with its notice. A `Metadata` map with a scalar entry is one object and is tested as a whole
-# instead, which draws no notice.
+# Each instance's `Metadata` holds only a map-valued entry, so it has no scalar entry, and `testBasic` is
+# not a key the map holds itself: the filter through the variable keeps the walk. The authentication
+# block carries `testBasic` and is no member, nothing is kept from that map, and the notice goes out.
+# The role's `Metadata` holds one sub-map that lacks the key; it is selected, so the `when` gate opens
+# and the rule's body `%blocks !empty` passes. A `Metadata` map with a scalar entry is one object and is
+# tested as a whole instead, which draws no notice.
 ###
 ---
 - name: Instance named EC2A
@@ -36,7 +38,7 @@
               password: "sensitive_password"
   expectations:
     rules:
-      FILTER_THROUGH_A_METADATA_PROJECTION: SKIP
+      FILTER_THROUGH_A_METADATA_PROJECTION: PASS
 
 - name: Instance named EC2B
   input:
@@ -63,4 +65,4 @@
               password: "sensitive_password"
   expectations:
     rules:
-      FILTER_THROUGH_A_METADATA_PROJECTION: SKIP
+      FILTER_THROUGH_A_METADATA_PROJECTION: PASS

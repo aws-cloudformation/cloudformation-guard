@@ -3567,31 +3567,22 @@ mod validate_tests {
         );
     }
 
-    /// The same defect over a map whose entries are scalars, which inverts the polarity of the test
-    /// above rather than repeating it.
+    /// The same pair over a map whose entries are all scalars, where the two spellings once disagreed
+    /// in the opposite direction from the test above.
     ///
     /// `Config` is `{ Status: Enabled }`, and two facts differ from `Nested`. A filter cannot apply to
-    /// a scalar entry, so expanding the map and filtering its entries is a retrieval error. And
-    /// `Status` IS a key of `Config`, so testing the whole map as one subject matches. Together those
-    /// mean the PROJECTED spelling -- the one that consumes the slot -- is here the one that finds the
-    /// real violation, while the direct spelling errors out on the scalar. In the test above it is the
-    /// projected spelling that goes silent. Same defect, opposite presentation.
+    /// a scalar entry, and `Status` IS a key of `Config`. A map with a scalar entry is one object, so
+    /// the filter tests the map itself: `Status == 'Enabled'` holds on it, the map is selected, and
+    /// the body's `.Status == 'no-such-value-zzz'` fails as a plain comparison against "Enabled" at
+    /// the key's own path. Nothing is refused (no "`Key` is `Status`, a key of the map itself"
+    /// sentence, no "Could not be evaluated" section) and nothing is announced.
     ///
-    /// Read that inversion before trying to reconcile this pair with its neighbours. A reader who has
-    /// just absorbed "the projecting spelling goes quiet" will see this one as backwards, and it is
-    /// not; folding it into the test above on that assumption is the mistake this pair exists to
-    /// prevent, and it was made once already.
-    ///
-    /// Both sides exit 19 here, on the tip and under a fix, so the exit code carries no signal at all
-    /// and the message text is the whole measurement. At the tip the direct side reported
-    /// `Filter on value type that was not a struct or array` and the projected side a ComparisonError
-    /// against "Enabled".
-    ///
-    /// Which of those is correct is a language question this test deliberately does not settle. One
-    /// expected message is asserted for both rules, each with its own path, so what is pinned is that
-    /// the two spellings agree. If the engine later changes what it reports for a filter over a
-    /// scalar, both assertions fail together and a maintainer updates both -- where asserting only the
-    /// projected side would let a change to the direct side pass unnoticed.
+    /// Both sides exit 19 here, so the message text carries the whole signal. One expected message
+    /// is asserted for both rules and for the author's own `[*]` spelling of the same filter
+    /// (`control_star_spelling`), each with its own rule name and the key's path, so what is pinned is
+    /// that the three spellings agree. If the engine later changes what it reports for a comparison
+    /// against a scalar, the assertions fail together and a maintainer updates all three, where
+    /// asserting only the projected side would let a change to the direct side pass unnoticed.
     #[test]
     fn a_bindings_spelling_does_not_change_a_filter_over_scalar_entries() {
         let mut reader = Reader::default();
@@ -3609,30 +3600,50 @@ mod validate_tests {
             "every clause names a value that is absent or mistyped, so the run must report violations"
         );
 
-        // Named rather than inlined so the needle stays on one source line. A backslash
-        // line-continuation inside the format string bakes the source indentation into the literal,
-        // which is a defect the assertion cannot see -- the test still fails at the tip, just for
-        // the wrong reason.
-        const OWN_KEY_REFUSAL: &str = "due to retrieval error. Error Message [Error Clause could not be evaluated against the incoming context `The filter selected nothing among the map's own entries. `Key` is `Status`, a key of the map itself.";
-
         let output = writer.stripped().expect("failed to read the writer");
         for (rule, path) in [
             (
                 "filter_over_a_direct_scalar_entry_binding",
-                "/Outer/Config[",
+                "/Outer/Config/Status",
             ),
             (
                 "filter_over_a_projected_scalar_entry_binding",
-                "/Wrapper/Only/Config[",
+                "/Wrapper/Only/Config/Status",
             ),
+            ("control_star_spelling", "/Outer/Config/Status"),
         ] {
-            let needle = format!("[{}] {}", rule, OWN_KEY_REFUSAL);
+            // The comparison's own failure. The line also names the data file by its absolute
+            // path, which the test does not know, so the three parts that identify the finding are
+            // read from one line.
+            let property = format!("Property [{}] in data [", path);
+            let rule_part = format!("is not compliant with [{}] because ", rule);
+            let comparison =
+                "provided value [\"Enabled\"] did not match expected value [\"no-such-value-zzz\"]";
+            let found = output.lines().any(|line| {
+                line.contains(&property) && line.contains(&rule_part) && line.contains(comparison)
+            });
             assert!(
-                output.contains(&needle) && output.contains(path),
-                "{} should treat the all-scalar map the same way its counterpart does, refused under its own key at its path {}; wanted {:?} in:\n{}",
+                found,
+                "{} should fail on the comparison with \"Enabled\" at {}, as its counterparts do; wanted {:?}, {:?} and {:?} on one line of:\n{}",
                 rule,
                 path,
-                needle,
+                property,
+                rule_part,
+                comparison,
+                output
+            );
+        }
+        // The map is one object: nothing is refused for its own key, so neither sentence of the
+        // refusal and no "Could not be evaluated" section is written for these rules.
+        for refusal in [
+            "The filter selected nothing among the map's own entries",
+            "a key of the map itself",
+            "Could not be evaluated",
+        ] {
+            assert!(
+                !output.contains(refusal),
+                "a filter over a map whose entries are all scalars tests the map itself and is not refused; found {:?} in:\n{}",
+                refusal,
                 output
             );
         }
@@ -15296,9 +15307,20 @@ mod validate_tests {
     /// the bound-map notice to name. Read apart from the wildcard spelling, this filter walked the one
     /// map's entries, selected nothing, and reported SKIP with a notice on a template that defines a
     /// password.
+    ///
+    /// The third template leaves the scalar `Type` entry out of the `Metadata` map: its map holds only
+    /// the authentication block. The predicate, `"AWS::CloudFormation::Authentication" exists`, names
+    /// a key the map holds itself and none of its map-valued entries holds, so the map is one object
+    /// here too, and the rule FAILs at the validation failure code on the password with no notice.
+    /// cfn-guard 3.2.1 also reports FAIL for this template (its reporter then exits 101).
     #[rstest::rstest]
     #[case::with_a_password(
         "single-map-binding-with-password-template.yaml",
+        StatusCode::VALIDATION_ERROR,
+        "CFN_AUTHENTICATION_RULE    FAIL"
+    )]
+    #[case::with_a_password_and_no_type_entry(
+        "single-map-binding-without-type-template.yaml",
         StatusCode::VALIDATION_ERROR,
         "CFN_AUTHENTICATION_RULE    FAIL"
     )]
@@ -15339,10 +15361,12 @@ mod validate_tests {
     /// entries holds, so the map is one object: the filter tests the map itself, as the authored
     /// `[*]` does, `Statement exists` holds on it, the map is selected and `!empty` passes. The verdict
     /// is the one the `[*]` spelling of the same filter gives, read from `CONTROL_STAR_SPELLING` in the
-    /// same file. The key spelling with no `[*]` (`CONTROL_KEY_SPELLING`) walks the map's entries
-    /// instead, names a key of the map itself, and is refused: FAIL at exit 19 with the sentence that
-    /// points the author at `X[*] { Key == value }` and `X[*].Key == value`. Nothing is announced for
-    /// either binding: no selection was lost, so there is no notice to write.
+    /// same file, and each subject file exits 0. The key spelling with no `[*]`
+    /// (`CONTROL_KEY_SPELLING`, in `control_key_spelling_over_the_policy_doc.guard`, run apart so that
+    /// the subject files stay clean) walks the map's entries instead, names a key of the map itself,
+    /// and is refused: FAIL at exit 19 with the sentence that points the author at `X[*] { Key ==
+    /// value }` and `X[*].Key == value`. Nothing is announced for either binding or for the control:
+    /// no selection was lost, so there is no notice to write.
     #[rstest::rstest]
     #[case::function_result(
         "filter_through_a_function_result_binding.guard",
@@ -15384,19 +15408,9 @@ mod validate_tests {
             "{rules}: the filter through the variable answers as the authored `[*]` spelling does\n{stdout}"
         );
         assert_eq!(
-            Some("FAIL".to_string()),
-            verdict_of("CONTROL_KEY_SPELLING"),
-            "{rules}: the key spelling with no `[*]` names a key of the map itself and is refused\n{stdout}"
-        );
-        assert!(
-            stdout.contains("Write `X[*] { Key == value }` or `X[*].Key == value`"),
-            "{rules}: the refusal of the key spelling points at the `[*]` spellings, got {:?}",
-            stdout
-        );
-        assert_eq!(
-            StatusCode::VALIDATION_ERROR,
+            StatusCode::SUCCESS,
             status_code,
-            "{rules}: the exit code is the refused control rule's; the rule under test is not what fails:\n{}\n{}",
+            "{rules}: both rules pass, so the subject file exits 0:\n{}\n{}",
             stdout,
             stderr
         );
@@ -15406,20 +15420,122 @@ mod validate_tests {
             stdout,
             stderr
         );
+
+        // The control, run apart: the key spelling with no `[*]` names a key of the map itself and
+        // is refused.
+        let (control_code, control_stdout, control_stderr) = validate_both_streams(
+            "control_key_spelling_over_the_policy_doc.guard",
+            "bound-map-from-a-function-or-literal-template.yaml",
+        );
+        assert_eq!(
+            StatusCode::VALIDATION_ERROR,
+            control_code,
+            "{rules}: the key spelling with no `[*]` is refused, which is the exit code; stdout {:?}",
+            control_stdout
+        );
+        assert_eq!(
+            Some("FAIL".to_string()),
+            rule_status_line(&control_stdout, "CONTROL_KEY_SPELLING"),
+            "{rules}: the key spelling with no `[*]` names a key of the map itself and is refused\n{control_stdout}"
+        );
+        assert!(
+            control_stdout.contains("Write `X[*] { Key == value }` or `X[*].Key == value`"),
+            "{rules}: the refusal of the key spelling points at the `[*]` spellings, got {:?}",
+            control_stdout
+        );
+        assert!(
+            !control_stdout.contains("DEPRECATION") && !control_stderr.contains("DEPRECATION"),
+            "{rules}: a refusal is answered in the report, not announced; stdout {:?} stderr {:?}",
+            control_stdout,
+            control_stderr
+        );
+    }
+
+    /// A variable bound to a function's result and a variable bound to a map written out in the rules
+    /// file, over a map that is a collection: two sub-maps, no scalar entry, every entry carrying
+    /// `Sid`. `Sid !exists` rejects every entry, nothing is kept, and the predicate holds on the map by
+    /// absence, so each filter loses its selection. Each `when` gate does not apply (both rules SKIP at
+    /// exit 0) and each site is announced once. The function result's notice names the map by the
+    /// path it was parsed from and the `let` as written, `let doc = json_parse(...)`; the literal's
+    /// notice names the `let` as `let policy = { ... }` and does not repeat the literal's body.
+    #[test]
+    fn a_walking_filter_through_a_function_result_or_literal_binding_is_announced_by_its_binding() {
+        let (status_code, stdout, stderr) = validate_both_streams(
+            "walking_filter_through_a_function_result_or_literal_binding.guard",
+            "bound-collection-from-a-function-or-literal-template.yaml",
+        );
+        assert_eq!(
+            StatusCode::SUCCESS,
+            status_code,
+            "both gates see an empty selection and do not apply; stdout {:?}",
+            stdout
+        );
+        for rule in [
+            "WALKING_PARSED_POLICY_HAS_NO_SID",
+            "WALKING_LITERAL_POLICY_HAS_NO_SID",
+        ] {
+            assert_eq!(
+                Some("SKIP".to_string()),
+                rule_status_line(&stdout, rule),
+                "{rule}: the filter kept nothing, so the gate does not apply; stdout {:?}",
+                stdout
+            );
+        }
+        let notices: Vec<&str> = stderr
+            .lines()
+            .filter(|l| l.contains("DEPRECATION"))
+            .collect();
+        assert_eq!(
+            2,
+            notices.len(),
+            "one notice per filter site, got {:?} from stderr {:?}",
+            notices,
+            stderr
+        );
+        let parsed: Vec<&&str> = notices
+            .iter()
+            .filter(|n| n.contains("let doc = json_parse(Resources.Q.Properties.PolicyText)"))
+            .collect();
+        assert_eq!(
+            1,
+            parsed.len(),
+            "one notice names the function result's binding as written, got {:?}",
+            notices
+        );
+        assert!(
+            parsed[0].contains("the map parsed from /Resources/Q/Properties/PolicyText"),
+            "the function result's notice names the path the map was parsed from, got {:?}",
+            parsed[0]
+        );
+        let literal: Vec<&&str> = notices
+            .iter()
+            .filter(|n| n.contains("let policy = { ... }"))
+            .collect();
+        assert_eq!(
+            1,
+            literal.len(),
+            "one notice names the literal's binding as written, got {:?}",
+            notices
+        );
+        assert!(
+            !literal[0].contains("\"Read\"") && !literal[0].contains("\"Write\""),
+            "the literal's notice elides the literal's body, got {:?}",
+            literal[0]
+        );
     }
 
     /// Two bindings that hold the same one map, one by plain key descent and one through a projection
     /// that then descends a key. Each is filtered with a predicate that names a key of the map itself
-    /// over entries that are all scalars, so both filters are refused alike, naming the key and the
-    /// binding as written (`X` is `%direct_scalars`, `%projected_scalars`), with no notice: a refused
-    /// filter is answered in the report. In the previous release the reserved slot was consumed for
-    /// every binding, so each filter tested the one map its variable held and selected it; a filter
-    /// that walked the entries instead would report the scalar unresolved, fail on it and be announced,
-    /// and a gate announcing only the plain spelling would describe the projected one wrongly. Both rules
-    /// FAIL at exit 19 under every reading, which is the fixture's own assertion: agreement between the
-    /// spellings.
+    /// over entries that are all scalars. The map is one object, so both filters test the map
+    /// itself, select it, and the rule's body fails as a comparison against the value "Enabled": a
+    /// plain FAIL at exit 19 with no refusal sentence (nothing names `X` or "a key of the map
+    /// itself") and no notice, because nothing was lost. The author's own `[*]` spelling of the same
+    /// filter (`control_star_spelling`) fails the same way. The literal `Outer.Config[ Status ==
+    /// 'Enabled' ]` is the one spelling that stays refused for its own key. cfn-guard 3.2.1 reads
+    /// the variable spelling the same way: `%m[ Status == 'Enabled' ] !empty` passes over
+    /// `{ Status: Enabled }`.
     #[test]
-    fn both_spellings_over_one_map_are_refused_alike() {
+    fn both_spellings_over_one_map_test_the_map_alike() {
         let (status_code, stdout, stderr) = validate_both_streams(
             "filter_over_a_projected_binding.guard",
             "same-map-two-binding-spellings.yaml",
@@ -15427,33 +15543,57 @@ mod validate_tests {
         assert_eq!(
             StatusCode::VALIDATION_ERROR,
             status_code,
-            "the two sub-map rules fail on the value they compare, and the two scalar-entry rules are refused; stdout {:?}",
+            "the two sub-map rules and the scalar-entry rules fail on the value they compare; stdout {:?}",
             stdout
         );
         for rule in [
             "filter_over_a_direct_scalar_entry_binding",
             "filter_over_a_projected_scalar_entry_binding",
+            "control_star_spelling",
         ] {
             assert_eq!(
                 Some("FAIL".to_string()),
                 rule_status_line(&stdout, rule),
-                "{rule}: the map's entries are all scalars and the predicate names its own key `Status`, so the filter is refused under both spellings; stdout {:?}",
+                "{rule}: the map's entries are all scalars, so the filter tests the map itself under every spelling and the body's comparison fails; stdout {:?}",
                 stdout
             );
         }
         assert!(
-            !stderr.contains("DEPRECATION"),
-            "a refused filter is answered in the report and announced by no notice; the `Nested` pair \
+            !stderr.contains("DEPRECATION") && !stdout.contains("DEPRECATION"),
+            "the map is tested as one object and nothing was lost, so nothing is announced; the `Nested` pair \
              never held on its map, so nothing was lost there either; got stderr {:?}",
             stderr
         );
-        for binding in [
-            "where `X` is `%direct_scalars`, at path /Outer/Config[",
-            "where `X` is `%projected_scalars`, at path /Wrapper/Only/Config[",
+        for refusal in [
+            "where `X` is",
+            "a key of the map itself",
+            "Could not be evaluated",
         ] {
             assert!(
-                stdout.contains(binding),
-                "the refusal names the binding as written and the map's path, got stdout {:?}",
+                !stdout.contains(refusal),
+                "a plain comparison failure carries no refusal text; found {:?} in stdout {:?}",
+                refusal,
+                stdout
+            );
+        }
+        for (rule, path) in [
+            (
+                "filter_over_a_direct_scalar_entry_binding",
+                "/Outer/Config/Status",
+            ),
+            (
+                "filter_over_a_projected_scalar_entry_binding",
+                "/Wrapper/Only/Config/Status",
+            ),
+            ("control_star_spelling", "/Outer/Config/Status"),
+        ] {
+            let property = format!("Property [{}] in data [", path);
+            let rule_part = format!("is not compliant with [{}] because ", rule);
+            assert!(
+                stdout
+                    .lines()
+                    .any(|line| line.contains(&property) && line.contains(&rule_part)),
+                "{rule}: the finding names the key's own path {path}, got stdout {:?}",
                 stdout
             );
         }
@@ -15722,15 +15862,17 @@ mod validate_tests {
     }
 
     /// A filter whose selection is one level DOWN from the map rather than nothing: `%p` holds one map
-    /// whose `Name` key is also a key of its `Inner` entry, so `%p[ Name exists ]` selects `Inner`, not
-    /// the map. Both rules read past the filter, so both compare `Inner` and not the map: `.Tags exists`
-    /// fails on `Inner` (as it would on the map); `.Name == 'b'` compares `Inner`'s `b` alone, the map's
-    /// `Name` string being a scalar entry the filter passes over, so it passes (the map's own `a` would
-    /// fail it, as would the string reported unresolved beside `Inner`). Each filter is announced once,
-    /// as having not selected the map and having selected one entry in its place. The gate reads the
-    /// filter's own output: a gate reading the end of the whole query would announce the first with
-    /// "selected nothing" (every result past `.Tags` unresolved) and miss the second (a resolved result
-    /// past the filter).
+    /// with a scalar entry (`Name`) beside an `Inner` entry that is a map, and `Name` is also a key of
+    /// `Inner`. The map is mixed (a scalar beside a map that holds the predicate's key), so the filter
+    /// walks the entries as the literal `Properties[ Name exists ]` does: the scalar is passed over,
+    /// `Inner` is selected, and `%p[ Name exists ]` selects `Inner`, not the map. Both rules read past
+    /// the filter, so both compare `Inner` and not the map: `.Tags exists` fails on `Inner` (as it
+    /// would on the map); `.Name == 'b'` compares `Inner`'s `b` alone, the map's `Name` string being a
+    /// scalar entry the filter passes over, so it passes. The predicate holds by presence, not by
+    /// absence, so the literal spelling is not refused either, and the walk's selection stands with
+    /// no notice. Before the mixed shape took the literal reading, each filter was announced once as
+    /// having not selected the map and having selected one entry in its place; neither is now. The
+    /// cells below assert that no notice is written.
     #[test]
     fn a_filter_whose_selection_moved_down_is_announced() {
         let (status_code, stdout, stderr) = validate_both_streams(
@@ -15754,30 +15896,17 @@ mod validate_tests {
             .filter(|l| l.contains("DEPRECATION"))
             .collect();
         assert_eq!(
-            2,
+            0,
             notices.len(),
-            "one notice per filter site, got {:?} from stderr {:?}",
+            "the mixed shape is never announced; got {:?} from stderr {:?}",
             notices,
             stderr
         );
-        for line in ["line:20,", "line:24,"] {
-            let matched: Vec<&&str> = notices.iter().filter(|n| n.contains(line)).collect();
-            assert_eq!(
-                1,
-                matched.len(),
-                "one notice at {}, got {:?}",
-                line,
-                notices
-            );
-            assert!(
-                matched[0].contains(
-                    "did not select the map at /Resources/B/Properties, which `let p = \
-                     Resources.B.Properties` held; it selected one of the map's entries in its place."
-                ) && !matched[0].contains("selected nothing"),
-                "the notice says the selection moved down, not that it vanished, got {:?}",
-                matched[0]
-            );
-        }
+        assert!(
+            !stdout.contains("DEPRECATION") && !stdout.contains("Could not be evaluated"),
+            "the predicate holds by presence, so nothing is refused or announced in the report; got {:?}",
+            stdout
+        );
     }
 
     /// A filter whose predicate names another rule, and one whose predicate names a variable, over a
@@ -15819,12 +15948,16 @@ mod validate_tests {
     /// query at the end of the chain -- `let b = Resources.Metadata` is not a line in the file, and an
     /// author told to rebind it would look for it in vain. Red before this: the notice printed the chain's
     /// end. The template leaves the scalar `Type` entry out of the `Metadata` map, so the map has no
-    /// scalar entry and keeps the walk; with the entry the map is one object, the filter selects it, and
-    /// there is no notice (`a_filter_through_a_chained_binding_or_a_parameter_tests_the_map_itself`).
+    /// scalar entry. The predicate, `testBasic !exists`, names no key the map holds itself (the
+    /// authentication block holds `testBasic`), so the filter keeps the walk: the one entry carries the
+    /// key and is rejected, nothing is kept, and the predicate holds on the map by absence, which is a
+    /// lost selection. A predicate that names the map's own key is one object and draws no notice
+    /// (`a_filter_through_a_chained_binding_or_a_parameter_tests_the_map_itself`, and the cells of
+    /// `a_chained_binding_or_a_parameter_over_a_map_without_a_scalar_tests_the_map_itself`).
     #[test]
     fn a_filter_through_a_chained_binding_names_the_let_as_written() {
         let (status_code, stdout, stderr) = validate_both_streams(
-            "filter_through_a_chained_binding.guard",
+            "walking_filter_through_a_chained_binding.guard",
             "single-map-binding-without-type-template.yaml",
         );
         assert_eq!(StatusCode::SUCCESS, status_code, "stdout {:?}", stdout);
@@ -15887,6 +16020,57 @@ mod validate_tests {
         );
     }
 
+    /// The same two fixtures over the template whose `Metadata` map has NO scalar entry: it holds the
+    /// authentication block alone, and the predicate names that block, a key of the map itself that
+    /// none of its map-valued entries holds. The map is one object here too, so the filter tests the
+    /// map as a whole, holds, and selects it, and the rule FAILs at exit 19 on the password under the
+    /// selected map. Nothing is announced and nothing is refused. The walk and its notice are drawn
+    /// by the `walking_*` fixtures (`a_filter_through_a_chained_binding_names_the_let_as_written`,
+    /// `a_filter_through_a_parameter_names_the_parameter_and_its_rule`).
+    #[rstest::rstest]
+    #[case::chained_binding(
+        "filter_through_a_chained_binding.guard",
+        "FILTER_THROUGH_A_CHAINED_BINDING"
+    )]
+    #[case::parameter("filter_through_a_parameter.guard", "FILTER_THROUGH_A_PARAMETER")]
+    fn a_chained_binding_or_a_parameter_over_a_map_without_a_scalar_tests_the_map_itself(
+        #[case] rules: &str,
+        #[case] rule: &str,
+    ) {
+        let (status_code, stdout, stderr) =
+            validate_both_streams(rules, "single-map-binding-without-type-template.yaml");
+        assert_eq!(
+            StatusCode::VALIDATION_ERROR,
+            status_code,
+            "{rules}: the rule applies to the one map and fails on its password; stdout {:?}",
+            stdout
+        );
+        assert_eq!(
+            Some("FAIL".to_string()),
+            rule_status_line(&stdout, rule),
+            "{rules}: the gate opens on the selected map and the body fails; stdout {:?}",
+            stdout
+        );
+        assert!(
+            stdout.contains(
+                "/Resources/Metadata/AWS::CloudFormation::Authentication/testBasic/password"
+            ),
+            "{rules}: the rule fails on the password under the selected map, got {:?}",
+            stdout
+        );
+        assert!(
+            !stdout.contains("Could not be evaluated"),
+            "{rules}: the filter is not refused; got {:?}",
+            stdout
+        );
+        assert!(
+            !stdout.contains("DEPRECATION") && !stderr.contains("DEPRECATION"),
+            "{rules}: no selection was lost, so nothing is announced; stdout {:?} stderr {:?}",
+            stdout,
+            stderr
+        );
+    }
+
     /// A clause grounded by a key that resolved before a nested filter that selected nothing:
     /// `%b[ Properties.Tags[ Key == 'Owner' ] empty ]` on a bucket with tags but no Owner tag. The
     /// clause holds on the bucket for real -- `Properties.Tags` is there, and no element of it has the
@@ -15911,6 +16095,12 @@ mod validate_tests {
         assert!(
             stdout.contains("BUCKET_HAS_AN_OWNER_TAG    FAIL"),
             "the when gate applies once the filter selects the bucket, got {:?}",
+            stdout
+        );
+        assert!(
+            !stdout.contains("/Resources/Bucket/Type"),
+            "the body's comparison of the selection's own `Type` passes, since the bucket itself was \
+             selected, so the report does not name it as failed; the tags clause is the failure, got {:?}",
             stdout
         );
         assert!(
@@ -15943,6 +16133,12 @@ mod validate_tests {
         assert!(
             stdout.contains("BUCKET_HAS_TAGS    FAIL"),
             "the when gate applies once the filter selects the bucket, got {:?}",
+            stdout
+        );
+        assert!(
+            !stdout.contains("/Resources/Bucket/Type"),
+            "the body's comparison of the selection's own `Type` passes, since the bucket itself was \
+             selected, so the report does not name it as failed; the tags clause is the failure, got {:?}",
             stdout
         );
         assert!(
@@ -16095,13 +16291,77 @@ mod validate_tests {
         );
     }
 
+    /// A filter through a projecting binding whose predicate names a key the map holds itself, over
+    /// `Metadata` maps with no scalar entry. The instance's map holds the authentication block and an
+    /// init block, and the predicate, `"AWS::CloudFormation::Authentication" exists`, names the first:
+    /// a key of the map itself that none of its map-valued entries holds. The map is one object, so the
+    /// filter tests it as a whole, the predicate holds, and the map is selected: the `when` gate opens
+    /// and the body's `username` comparison fails the rule at exit 19. Over the template whose instance
+    /// holds only an init block no map holds the key, nothing is selected and the rule is SKIP at exit
+    /// 0. Neither template writes a notice, and nothing is refused. cfn-guard 3.2.1 gives the same two
+    /// verdicts over these templates (FAIL at exit 19, SKIP at exit 0).
+    #[rstest::rstest]
+    #[case::with_the_authentication_block(
+        "metadata-maps-authentication-and-init-template.yaml",
+        StatusCode::VALIDATION_ERROR,
+        "FAIL"
+    )]
+    #[case::without_the_authentication_block(
+        "metadata-maps-init-without-authentication-template.yaml",
+        StatusCode::SUCCESS,
+        "SKIP"
+    )]
+    fn a_filter_through_a_metadata_projection_tests_each_map_itself(
+        #[case] template: &str,
+        #[case] expected_code: i32,
+        #[case] verdict: &str,
+    ) {
+        let (status_code, stdout, stderr) = validate_both_streams(
+            "filter_through_a_metadata_projection_as_one_object.guard",
+            template,
+        );
+        assert_eq!(
+            expected_code, status_code,
+            "{template}: the exit code follows the rule's verdict; stdout {:?}",
+            stdout
+        );
+        assert_eq!(
+            Some(verdict.to_string()),
+            rule_status_line(
+                &stdout,
+                "FILTER_THROUGH_A_METADATA_PROJECTION_AS_ONE_OBJECT"
+            ),
+            "{template}: the filter tests each map as a whole; stdout {:?}",
+            stdout
+        );
+        if verdict == "FAIL" {
+            assert!(
+                stdout.contains("/Resources/EC2I4LBA1/Metadata")
+                    && stdout.contains("no-such-user-zzz")
+                    && !stdout.contains("Could not be evaluated"),
+                "{template}: the body failed on the instance's own block, nothing was refused; stdout {:?}",
+                stdout
+            );
+        }
+        assert!(
+            !stdout.contains("DEPRECATION") && !stderr.contains("DEPRECATION"),
+            "{template}: the map is tested as one object and nothing was lost; stdout {:?} stderr {:?}",
+            stdout,
+            stderr
+        );
+    }
+
     /// One filter site, two data files whose matching resource has a different logical id, one
     /// structured report: the notice names a different map for each file, so the texts differ, and a
     /// set keyed by text wrote two lines for one filter. The structured validate reporters keep the
     /// once-per-site reading across data files by `(kind, site)`, as the test command does across
     /// cases: one line, the first file's. Red before: two lines, naming `/Resources/EC2I4LBA1/Metadata`
-    /// and `/Resources/Instance/Metadata`. The maps the filter loses are `Metadata` maps with no scalar
-    /// entry, which keep the walk; a map with a scalar entry is one object and draws no notice.
+    /// and `/Resources/Instance/Metadata`. The filter is `testBasic !exists`. The maps it loses are
+    /// the instances' `Metadata` maps, which have no scalar entry and keep the walk: the authentication
+    /// block carries `testBasic` and is no member, the init block is selected in its place. The role's
+    /// map holds one sub-map that lacks the key, a uniform population that draws no notice. A map with
+    /// a scalar entry is one object and draws no notice either. The gate opens on the sub-maps selected,
+    /// so both files exit 0.
     #[rstest::rstest]
     #[case("json")]
     #[case("junit")]
@@ -16125,7 +16385,11 @@ mod validate_tests {
         };
         let (status_code, _) = run();
         let (_, err_writer) = run();
-        assert_eq!(StatusCode::SUCCESS, status_code, "both files are SKIP");
+        assert_eq!(
+            StatusCode::SUCCESS,
+            status_code,
+            "both files exit 0: the gate opens on the selected sub-maps"
+        );
 
         let stderr = err_writer.err_to_stripped().expect("failed to read stderr");
         let notices: Vec<&str> = stderr
@@ -16205,7 +16469,8 @@ mod validate_tests {
     /// ever swallowed the per-file warnings (one warning line) or wrote the notice per file (two notice
     /// lines). The run ends with the trailer naming the second file as one that drew the announced
     /// site; that line is a `NOTE:` line, so the count of `DEPRECATION:` lines is one with or without it.
-    /// The maps the filter loses are `Metadata` maps with no scalar entry, which keep the walk.
+    /// The filter is `testBasic !exists`; the maps it loses are the instances' `Metadata` maps, which
+    /// have no scalar entry and keep the walk.
     #[test]
     fn a_rule_notice_is_written_once_and_a_file_warning_once_per_file_in_the_single_line_output() {
         let (status_code, stderr) = single_line_stderr_across(
@@ -16218,7 +16483,7 @@ mod validate_tests {
         assert_eq!(
             StatusCode::SUCCESS,
             status_code,
-            "both files are SKIP:\n{}",
+            "both files exit 0 (the gate opens on the selected sub-maps):\n{}",
             stderr
         );
         let notices: Vec<&str> = stderr
@@ -16275,7 +16540,9 @@ mod validate_tests {
     /// line naming the later files that drew a notice the run announced once, and which notice, so the
     /// reader of the run still learns that the second file hit the same site. The trailer says which
     /// kind of notice it refers to ("the filter notice") because one site can hold notices of two kinds.
-    /// The maps the filter loses are `Metadata` maps with no scalar entry, which keep the walk.
+    /// The filter is `testBasic !exists`; the maps it loses are the instances' `Metadata` maps, which
+    /// have no scalar entry and keep the walk. The gate opens on the sub-maps selected, so both files
+    /// exit 0.
     #[test]
     fn a_site_notice_is_written_once_across_data_files_in_the_single_line_output() {
         let (status_code, notices) = single_line_notices_across(
@@ -16285,7 +16552,11 @@ mod validate_tests {
                 "metadata-maps-authentication-and-init-other-id-template.yaml",
             ],
         );
-        assert_eq!(StatusCode::SUCCESS, status_code, "both files are SKIP");
+        assert_eq!(
+            StatusCode::SUCCESS,
+            status_code,
+            "both files exit 0: the gate opens on the selected sub-maps"
+        );
         let (trailers, lines): (Vec<&String>, Vec<&String>) =
             notices.iter().partition(|n| is_trailer(n));
         assert_eq!(
@@ -16558,12 +16829,13 @@ mod validate_tests {
     }
 
     /// A site first drawn by a LATER data file is written when that file is reached: the first file
-    /// draws nothing (its `Metadata` maps hold no authentication block, so the predicate holds on none
-    /// of them and no selection is lost), the second draws the projection filter's notice, and the run
-    /// writes exactly that one line, naming the second file's map. The three cells around this one all
-    /// draw every notice from the first file, so a path that wrote only the first file's lines would
-    /// have passed them; this one pins that the set across the loop admits a site whenever it is new,
-    /// not only at the first file. One file drew the site, so no trailer follows.
+    /// draws nothing (its `Metadata` maps hold no authentication block, so every entry of every map
+    /// lacks `testBasic`, each map's entries are selected, and no selection is lost), the second draws
+    /// the projection filter's notice, and the run writes exactly that one line, naming the second
+    /// file's map. The three cells around this one all draw every notice from the first file, so a
+    /// path that wrote only the first file's lines would have passed them; this one pins that the set
+    /// across the loop admits a site whenever it is new, not only at the first file. One file drew the
+    /// site, so no trailer follows. Both files exit 0: the gate opens on the sub-maps selected.
     #[test]
     fn a_site_notice_first_drawn_by_a_later_data_file_is_written() {
         let (status_code, notices) = single_line_notices_across(
@@ -16573,7 +16845,11 @@ mod validate_tests {
                 "metadata-maps-authentication-and-init-other-id-template.yaml",
             ],
         );
-        assert_eq!(StatusCode::SUCCESS, status_code, "both files are SKIP");
+        assert_eq!(
+            StatusCode::SUCCESS,
+            status_code,
+            "both files exit 0: the gate opens on the selected sub-maps"
+        );
         assert_eq!(
             1,
             notices.len(),
@@ -16591,14 +16867,16 @@ mod validate_tests {
     /// A site drawn by more than one data file is announced once, beside the first file, and the run
     /// ends with one trailer for that site naming the later files that drew it too, so a reader of a
     /// multi-file run can tell which files hit a site after the first without the notice being
-    /// repeated beside each of them. Two sites here: the authentication-block predicate loses its
-    /// selection on both templates and the init-block predicate on the second alone. So two notices,
-    /// one per site, each the text of the first file that drew it, and exactly one trailer, for the
-    /// authentication site, naming the second file and not the first; the init site, drawn once, gets
-    /// none. The trailer is a `NOTE:` line: a notice, so the library entry drops it from a failure text
-    /// as it drops the notices, and not a deprecation, so a count of `DEPRECATION:` lines stays at the
-    /// two notices. The maps the filters lose are `Metadata` maps with no scalar entry, which keep the
-    /// walk.
+    /// repeated beside each of them. Two sites here: the `testBasic !exists` predicate loses its
+    /// selection on both templates (the authentication block carries the key and is no member) and the
+    /// `config !exists` predicate on the second alone (only its instance holds an init block, which
+    /// carries `config`). So two notices, one per site, each the text of the first file that drew it,
+    /// and exactly one trailer, for the authentication site, naming the second file and not the first;
+    /// the init site, drawn once, gets none. The trailer is a `NOTE:` line: a notice, so the library
+    /// entry drops it from a failure text as it drops the notices, and not a deprecation, so a count
+    /// of `DEPRECATION:` lines stays at the two notices. The maps the filters lose are the instances'
+    /// `Metadata` maps, which have no scalar entry and keep the walk. Both files exit 0: each gate
+    /// opens on the sub-maps selected.
     #[test]
     fn a_site_repeated_across_data_files_gets_one_trailer_naming_the_later_files() {
         let (status_code, notices) = single_line_notices_across(
@@ -16608,7 +16886,11 @@ mod validate_tests {
                 "metadata-maps-authentication-and-init-other-id-template.yaml",
             ],
         );
-        assert_eq!(StatusCode::SUCCESS, status_code, "both files are SKIP");
+        assert_eq!(
+            StatusCode::SUCCESS,
+            status_code,
+            "both files exit 0: each gate opens on the selected sub-maps"
+        );
         let (trailers, lines): (Vec<&String>, Vec<&String>) =
             notices.iter().partition(|n| is_trailer(n));
         assert_eq!(
@@ -16670,7 +16952,8 @@ mod validate_tests {
     /// files, so both are owed a trailer naming the second file, and since the files are the same the
     /// two go into one trailer line that lists both sites: one line per distinct list of later files,
     /// not one per site, so ten sites drawn by the same later files read on one line rather than the
-    /// same file list ten times.
+    /// same file list ten times. Both rules gate on `testBasic !exists`, whose gate opens on the
+    /// sub-maps selected, so both files exit 0.
     #[test]
     fn two_filter_sites_write_two_lines_across_data_files_in_the_single_line_output() {
         let (status_code, notices) = single_line_notices_across(
@@ -16680,7 +16963,11 @@ mod validate_tests {
                 "metadata-maps-authentication-and-init-other-id-template.yaml",
             ],
         );
-        assert_eq!(StatusCode::SUCCESS, status_code, "both files are SKIP");
+        assert_eq!(
+            StatusCode::SUCCESS,
+            status_code,
+            "both files exit 0: the gates open on the selected sub-maps"
+        );
         let (trailers, lines): (Vec<&String>, Vec<&String>) =
             notices.iter().partition(|n| is_trailer(n));
         assert_eq!(
@@ -16854,8 +17141,12 @@ mod validate_tests {
     /// directory's size; a run over two hundred templates is pinned in the command's own unit cell. This
     /// cell once asserted the opposite shape, every file named in full and no count, and carried that
     /// shape in its name; that reading made the trailer's length grow with the directory, which is the
-    /// line the count exists to prevent. The maps the filters lose are `Metadata` maps with no scalar
-    /// entry, which keep the walk.
+    /// line the count exists to prevent. The sites are `testBasic !exists` and `config !exists`; each
+    /// rejects the block that carries its key, so the maps the filters lose are the instances'
+    /// `Metadata` maps, which have no scalar entry and keep the walk. A template whose only block
+    /// lacks the key (`testBasic` in the init-only template, `config` in the authentication-only
+    /// one) selects that block, a uniform population, and draws no notice at that site. Every gate
+    /// opens on the sub-maps selected, so every file exits 0.
     #[test]
     fn two_groups_whose_shortened_file_lists_would_read_the_same_stay_short_and_are_told_apart() {
         let (status_code, notices) = single_line_notices_across(
@@ -16869,7 +17160,11 @@ mod validate_tests {
                 "metadata-maps-init-without-authentication-template.yaml",
             ],
         );
-        assert_eq!(StatusCode::SUCCESS, status_code, "every file is SKIP");
+        assert_eq!(
+            StatusCode::SUCCESS,
+            status_code,
+            "every file exits 0: each gate opens on the selected sub-maps"
+        );
         let (trailers, lines): (Vec<&String>, Vec<&String>) =
             notices.iter().partition(|n| is_trailer(n));
         assert_eq!(
@@ -16945,7 +17240,11 @@ mod validate_tests {
                 "metadata-maps-authentication-and-init-fourth-id-template.yaml",
             ],
         );
-        assert_eq!(StatusCode::SUCCESS, status_code, "every file is SKIP");
+        assert_eq!(
+            StatusCode::SUCCESS,
+            status_code,
+            "every file exits 0: the gate opens on the selected sub-maps"
+        );
         let (trailers, lines): (Vec<&String>, Vec<&String>) =
             notices.iter().partition(|n| is_trailer(n));
         assert_eq!(
@@ -17058,31 +17357,35 @@ mod validate_tests {
     /// about the call rather than a `let`. Red before this: the notice printed `let m = Resources.Metadata`.
     ///
     /// The template leaves the scalar `Type` entry out of the `Metadata` map, so the map has no scalar
-    /// entry and keeps the walk (with the entry the map is one object, the filter selects it and there
-    /// is no notice: `a_filter_through_a_chained_binding_or_a_parameter_tests_the_map_itself`).
+    /// entry. The predicate, `testBasic !exists`, names no key the map holds itself (the authentication
+    /// block holds `testBasic`), so the filter keeps the walk: the one entry carries the key and is
+    /// rejected, nothing is kept, and the predicate holds on the map by absence, which is a lost
+    /// selection. A predicate that names the map's own key is one object, the filter selects it and
+    /// there is no notice (`a_filter_through_a_chained_binding_or_a_parameter_tests_the_map_itself`).
     ///
-    /// The verdict is the engine's: the maps lack the key, so the selection is empty and the
-    /// `!exists` over it is not applicable (SKIP) where the previous release's reading selected the
-    /// map and FAILed on its password. That move is what the notice is for. The notice site is reached at retrieval for any clause and does not hold the operator, so
-    /// the runtime line names the moved selection, says once which way a verdict moves (the fail-open
-    /// direction, except on the selection itself under `!empty`, which fails where it passed, and
-    /// under a `when ... empty` gate, which now opens), and points to the per-operator table in the
-    /// known-issues notes, which carry the provenance of the old reading (a static read of the 3.2.1
-    /// tag). An earlier text stated the old verdicts per operator at runtime and sorted them on
-    /// whether the first key was one the map held, which was wrong for an `empty` gate (SKIP -> the
-    /// rule runs, not SKIP) and for a key read below the selection, which is not applicable under
-    /// every operator now (`.Missing !exists` PASS -> SKIP, not "SKIP where it failed"). This cell pins
-    /// one marker per sentence, never the paragraph.
+    /// The verdict is the engine's: the walk selected nothing, so the `when` gate over the selection
+    /// does not apply (SKIP) where a filter that tested the map as one value would have held on it.
+    /// That move is what the notice is for. The notice site is reached at retrieval for any clause
+    /// and does not hold the operator, so the runtime line names the moved selection, says once which
+    /// way a verdict moves (the fail-open direction, except on the selection itself under `!empty`,
+    /// which fails where it passed, and under a `when ... empty` gate, which now opens), and points to
+    /// the per-operator table in the known-issues notes, which carry the provenance of the old
+    /// reading (cfn-guard 3.2.1 read the bound map as one value; the per-operator table says which
+    /// rows it was run on). An earlier text stated the old verdicts per operator at runtime and
+    /// sorted them on whether the first key was one the map held, which was wrong for an `empty` gate
+    /// (SKIP -> the rule runs, not SKIP) and for a key read below the selection, which is not
+    /// applicable under every operator now (`.Missing !exists` PASS -> SKIP, not "SKIP where it
+    /// failed"). This cell pins one marker per sentence, never the paragraph.
     #[test]
     fn a_filter_through_a_parameter_names_the_parameter_and_its_rule() {
         let (status_code, stdout, stderr) = validate_both_streams(
-            "filter_through_a_parameter.guard",
+            "walking_filter_through_a_parameter.guard",
             "single-map-binding-without-type-template.yaml",
         );
         assert_eq!(StatusCode::SUCCESS, status_code, "stdout {:?}", stdout);
         assert!(
             stdout.contains("FILTER_THROUGH_A_PARAMETER    SKIP"),
-            "the selection is empty (the maps lack the key), so the assertion over it is not applicable; got {:?}",
+            "the walk selected nothing, so the gate over the selection does not apply; got {:?}",
             stdout
         );
         let notices: Vec<&str> = stderr
@@ -17092,8 +17395,8 @@ mod validate_tests {
         assert_eq!(1, notices.len(), "got {:?}", notices);
         assert!(
             notices[0].contains(
-                "which the parameter `m` of rule `has_no_password`, bound to `Resources.Metadata` held"
-            ) && notices[0].contains("pass `has_no_password` one")
+                "which the parameter `m` of rule `has_no_test_basic`, bound to `Resources.Metadata` held"
+            ) && notices[0].contains("pass `has_no_test_basic` one")
                 && !notices[0].contains("let m ="),
             "the notice names the parameter, its rule and the call-site query, got {:?}",
             notices[0]
@@ -17147,13 +17450,14 @@ mod validate_tests {
     }
 
     /// A projecting binding that resolves to exactly one map, filtered through the variable with a
-    /// predicate that names a key of the map over scalar entries: refused, naming the map's own key,
-    /// as the literal spelling is. In the previous release the filter selected the map and the rule
-    /// FAILed at exit 19 on the body; here it fails on the refusal, which is a verdict in the report,
-    /// not a notice (a scalar reported unresolved would leave the rule SKIP with a notice, and a gate
-    /// that required the binding's query to be projection-free would leave that row silent).
+    /// predicate that names a key of the map over scalar entries. The map is one object, so the
+    /// filter tests the map itself and selects it, as the author's own `[*]` does and as cfn-guard
+    /// 3.2.1 does (`!empty` passes over a map of scalars under a predicate naming its own key). The
+    /// `when` gate opens and the rule fails on its body, `.Status == 'no-such-value-zzz'`, as a
+    /// comparison against "Enabled" at exit 19: no refusal sentence and no notice, because the
+    /// selection was not lost.
     #[test]
-    fn a_filter_through_a_projecting_binding_that_held_one_map_is_announced() {
+    fn a_filter_through_a_projecting_binding_that_held_one_map_tests_the_map_itself() {
         let (status_code, stdout, stderr) = validate_both_streams(
             "filter_through_a_projecting_one_map_binding.guard",
             "same-map-two-binding-spellings.yaml",
@@ -17161,21 +17465,39 @@ mod validate_tests {
         assert_eq!(
             StatusCode::VALIDATION_ERROR,
             status_code,
-            "the map's entries are all scalars and the predicate names its own key, so the filter is refused; stdout {:?}",
+            "the map is selected, the gate opens and the body's comparison fails; stdout {:?}",
+            stdout
+        );
+        assert_eq!(
+            Some("FAIL".to_string()),
+            rule_status_line(&stdout, "FILTER_THROUGH_A_PROJECTING_ONE_MAP_BINDING"),
+            "the rule fails on its body, not on a refusal; stdout {:?}",
             stdout
         );
         assert!(
-            stdout.contains("FILTER_THROUGH_A_PROJECTING_ONE_MAP_BINDING    FAIL")
+            stdout.contains("Property [/Wrapper/Only/Config/Status]")
                 && stdout.contains(
-                    "The filter selected nothing among the map's own entries. `Key` is `Status`, a key of the map itself."
-                )
-                && stdout.contains("where `X` is `%p`"),
-            "the refusal names the key and the spelling that reads the map itself, got {:?}",
+                    "provided value [\"Enabled\"] did not match expected value [\"no-such-value-zzz\"]"
+                ),
+            "the failure is the body's comparison at the key's own path, got {:?}",
             stdout
         );
+        for refusal in [
+            "The filter selected nothing among the map's own entries",
+            "a key of the map itself",
+            "where `X` is",
+            "Could not be evaluated",
+        ] {
+            assert!(
+                !stdout.contains(refusal),
+                "a map tested as one object is not refused; found {:?} in stdout {:?}",
+                refusal,
+                stdout
+            );
+        }
         assert!(
-            !stderr.contains("DEPRECATION"),
-            "a refused filter is answered in the report, not announced; got stderr {:?}",
+            !stderr.contains("DEPRECATION") && !stdout.contains("DEPRECATION"),
+            "nothing was lost, so nothing is announced; got stderr {:?}",
             stderr
         );
     }
@@ -18205,9 +18527,10 @@ mod validate_tests {
     /// without `Properties.Tags`. The resource holds a scalar entry and `Properties` is not a key of
     /// either map, so the filter tests the resource as a whole, as `%m[*][ ... ]` does: the absence
     /// holds on it, and the resource is selected in its own place. A positive `exists` over the
-    /// selection passes, the `Type` string is neither selected nor reported, and nothing is announced:
-    /// no selection was lost. The template is this test's own, so the shape is pinned here and
-    /// nowhere else.
+    /// selection passes, and so does the comparison of the selection's own `Type`, which only the
+    /// resource itself answers (the `Metadata` and `Properties` entries a walk would select have none).
+    /// The `Type` string is neither selected nor reported, and nothing is announced: no selection was
+    /// lost. The template is this test's own, so the shape is pinned here and nowhere else.
     #[rstest::rstest]
     #[case("absence_predicate_through_an_instance_binding.guard")]
     #[case("empty_predicate_through_an_instance_binding.guard")]
@@ -18225,7 +18548,7 @@ mod validate_tests {
         );
         assert_eq!(
             Some("PASS".to_string()),
-            rule_status_line(&stdout, "entries_lacking_the_key_are_selected"),
+            rule_status_line(&stdout, "the_resource_itself_is_selected"),
             "stdout {:?}",
             stdout
         );

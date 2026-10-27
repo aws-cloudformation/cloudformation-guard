@@ -1,7 +1,7 @@
 # The role of metadata-maps-authentication-and-init-template.yaml beside a resource named `Trigger` and no
 # instance. Paired with filter_through_a_metadata_site_then_a_gated_undeclared_name.guard: the filter site
-# in that file selects nothing here and loses nothing (the role's Metadata map lacks the authentication
-# key, and no other resource has a Metadata map), so this template draws no notice, and the
+# in that file selects the role's one sub-map here and loses nothing (the role's Metadata map lacks
+# `testBasic`, and no other resource has a Metadata map), so this template draws no notice, and the
 # `when Resources.Trigger exists` gate in the same file opens on this template alone, reaching a name no
 # `let` declares. Last in a run after two templates that drew the site, it is the file whose evaluation
 # error must not lose the trailer those two earned.
