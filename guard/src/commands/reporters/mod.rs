@@ -335,6 +335,20 @@ impl Notices {
                             if more == 1 { "" } else { "s" }
                         )
                     }
+                    // A mixed map read as one object counts maps, as a moved reading does, with the
+                    // filter's own words.
+                    WarningKind::MixedMapReadAsOneObject => {
+                        let more = tally.readings.len() - 1;
+                        format!(
+                            "{} {} more map{} at this filter site read as one object where the filter \
+                             on the map's own path selects among its entries across {} cases in this \
+                             file; only the first is shown.",
+                            tally.first,
+                            more,
+                            if more == 1 { "" } else { "s" },
+                            tally.cases.len()
+                        )
+                    }
                     // An unraised refusal has no maps either: what each case's scope counted is the
                     // evaluations under each verdict and the refusal texts the site met, so across the
                     // cases of one spec file the line is RENDERED AGAIN from the cases' summed counts

@@ -15874,10 +15874,12 @@ mod validate_tests {
     /// (the map has no `Tags`), `.Name == 'b'` fails and `.Name == 'a'` passes, and the value the
     /// failing comparison names is `/Resources/B/Properties/Name`, never `Inner`'s. Before this, the
     /// slot took the literal's reading here and `.Name == 'b'` passed on `Inner`'s `b` with no notice,
-    /// a verdict that moved from the release's FAIL with nothing said. One DEPRECATION line per filter
+    /// a verdict that moved from the release's FAIL with nothing said. One `Warning:` line per filter
     /// site (three here) says the two spellings disagree: the variable reads the map as one object where
     /// the same filter on the map's own path selects one of its entries, with the path spelling as the
-    /// way to select among the entries.
+    /// way to select among the entries. A warning and not a deprecation: the disagreement is a lasting
+    /// difference between two spellings, not a reading being retired, so a run that fails on
+    /// `DEPRECATION:` lines does not trip on it.
     #[test]
     fn a_filter_through_a_variable_over_a_mixed_map_tests_the_map_as_one_object() {
         let (status_code, stdout, stderr) = validate_both_streams(
@@ -15910,14 +15912,19 @@ mod validate_tests {
             "the failing comparison names the map's own Name, not Inner's; got {:?}",
             stdout
         );
+        assert!(
+            !stderr.contains("DEPRECATION"),
+            "the mixed-map line is a warning, not a deprecation; got stderr {:?}",
+            stderr
+        );
         let notices: Vec<&str> = stderr
             .lines()
-            .filter(|l| l.contains("DEPRECATION"))
+            .filter(|l| l.starts_with("Warning:") && l.contains("as one object"))
             .collect();
         assert_eq!(
             3,
             notices.len(),
-            "one line per filter site says the two spellings disagree: the variable reads the map as one object where the literal selects `Inner`; got {:?} from stderr {:?}",
+            "one `Warning:` line per filter site says the two spellings disagree: the variable reads the map as one object where the literal selects `Inner`; got {:?} from stderr {:?}",
             notices,
             stderr
         );
@@ -18761,7 +18768,7 @@ mod validate_tests {
     /// selects `Wrapper` and does not refuse the filter (the predicate holds by presence), so the
     /// variable keeps the release's reading rather than refusing. Before this, the slot took the
     /// literal's reading and the password check FAILed on `Wrapper`'s password, where the release was
-    /// not applicable. The mixed map is never walked through a variable; one DEPRECATION line per filter
+    /// not applicable. The mixed map is never walked through a variable; one `Warning:` line per filter
     /// site (the `let carrying` and the rule) says the literal selects `Wrapper` where the variable reads
     /// the resource. The collection twin, the same resource with no `Type`, is the test below.
     #[test]
@@ -18796,7 +18803,7 @@ mod validate_tests {
         );
         let notices: Vec<&str> = stderr
             .lines()
-            .filter(|l| l.contains("DEPRECATION"))
+            .filter(|l| l.starts_with("Warning:") && l.contains("as one object"))
             .collect();
         assert!(
             notices.len() == 2
@@ -18805,8 +18812,9 @@ mod validate_tests {
                         "reads the map at /Resources/Only, which `let m = Resources.Only` held, as one object"
                     ) && notice.contains("selects one of its entries in the map's place")
                 })
+                && !stderr.contains("DEPRECATION")
                 && !stdout.contains("Could not be evaluated"),
-            "the mixed map is neither walked nor refused, and one line per filter site (the `let carrying` and the rule) says the literal selects `Wrapper` where the variable reads the resource; got stderr {:?} stdout {:?}",
+            "the mixed map is neither walked nor refused, and one `Warning:` line per filter site (the `let carrying` and the rule) says the literal selects `Wrapper` where the variable reads the resource, with no deprecation line; got stderr {:?} stdout {:?}",
             stderr,
             stdout
         );

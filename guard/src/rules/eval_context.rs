@@ -609,6 +609,13 @@ pub(crate) enum WarningKind {
     MovedReading,
     UnboundCapture,
     UnraisedRefusal,
+    /// A filter through a variable over a mixed map (a scalar entry beside a member that holds a key the
+    /// predicate names) read as one object where the same filter written on the map's own path keeps one
+    /// or more of the map's entries: the two spellings disagree on what is selected, a lasting difference
+    /// between them and not a reading being retired, so it is a warning and not a deprecation. One line
+    /// per filter site, keyed by the site alone; a second map read at the same site is counted into the
+    /// line, as a moved reading's maps are (`SiteWarning::also`).
+    MixedMapReadAsOneObject,
 }
 
 /// What a root scope evaluates, for the count at the end of a moved-reading line: a data file under
@@ -692,18 +699,24 @@ impl SiteWarning {
             return;
         }
         let more = self.maps.len() - 1;
-        self.line = format!(
-            "{} {} more map{} under this call read a differing value for this argument in this {}; \
-             only the first is shown.",
-            self.first,
-            more,
-            if more == 1 { "" } else { "s" },
-            match input {
-                InputKind::DataFile => "data file",
-                InputKind::Case => "case",
-                InputKind::Input => "input",
-            }
-        );
+        let input = match input {
+            InputKind::DataFile => "data file",
+            InputKind::Case => "case",
+            InputKind::Input => "input",
+        };
+        let plural = if more == 1 { "" } else { "s" };
+        self.line = match self.kind {
+            WarningKind::MixedMapReadAsOneObject => format!(
+                "{} {more} more map{plural} at this filter site read as one object where the filter on \
+                 the map's own path selects among its entries in this {input}; only the first is shown.",
+                self.first,
+            ),
+            _ => format!(
+                "{} {more} more map{plural} under this call read a differing value for this argument \
+                 in this {input}; only the first is shown.",
+                self.first,
+            ),
+        };
     }
 }
 
@@ -8345,7 +8358,10 @@ fn announce_a_filter_that_lost_its_map<'value, 'loc: 'value>(
     // predicate. Only a map the arm walks or enumerates goes on.
     if let PathAwareValue::Map((_, map)) = &**site.value {
         let reader_slot = reads_the_reader_slot(site.query, site.query_index + 1);
-        match map_under_the_slot(reader_slot, map, conjunctions) {
+        match map_under_the_slot(reader_slot, map, conjunctions, || {
+            is_a_top_level_section_path(site.value.self_path())
+                && resolver.is_top_level_alias(site.variable_name, MergedKeys::Visible)
+        }) {
             MapUnderTheSlot::OneObject | MapUnderTheSlot::RefusedOrOneObject => return,
             MapUnderTheSlot::AsTheWildcardReads(_) => {}
         }
@@ -11043,6 +11059,10 @@ impl<'value, 'loc: 'value, 'eval> EvalContext<'value, 'loc> for QuietScope<'valu
     ) -> bool {
         false
     }
+
+    /// Dropped, as `record_warning` is: the slot arm the probe re-runs wrote its own line when it ran
+    /// for real.
+    fn record_mixed_map_warning(&mut self, _site: &FileLocation<'_>, _map: &str, _notice: String) {}
 
     /// Dropped, as `record_warning` is: the probe's run is an observation about the evaluation, and the
     /// clause it re-runs reported its own refused reads when it ran for real.
@@ -15064,14 +15084,17 @@ fn the_filter_alone<'value, 'loc>(
     &query[..(query_index + 2).min(query.len())]
 }
 
-/// The one-line notice for a mixed map the reader's slot reads as one object while the literal `K[ f ]`
-/// keeps `kept` of its entries (`LiteralReading::Selects`): the two spellings of one filter now disagree
-/// on what is selected, and the project says so for every other reading that moved. Written once per
-/// filter site (`DeprecationKind::MixedMapReadAsOneObject`), naming the variable, what bound it, the map
-/// by path and the count the literal kept, with the one spelling that selects among the entries (the
-/// filter on the map's own path, which walks them) as the remedy. A refused mixed map writes nothing
-/// here: its refusal is the record. A variable the resolver cannot place (a filter capture) writes
-/// nothing either, as the bound-map notice writes nothing for it.
+/// The one-line warning for a mixed map the reader's slot reads as one object while the literal `K[ f ]`
+/// keeps `kept` of its entries (`LiteralReading::Selects`): the two spellings of one filter disagree on
+/// what is selected. A `Warning:` line, the channel the refused-read line uses, and not a `DEPRECATION:`
+/// line: nothing it reports is a reading being retired (the released evaluator read every mixed map
+/// through a variable as one object too, and said nothing); it is a lasting difference between two
+/// spellings, which a run that treats deprecation lines as failures should not trip on. Written once per
+/// filter site (`WarningKind::MixedMapReadAsOneObject`, `EvalContext::record_mixed_map_warning`), naming
+/// the variable, what bound it, the map by path and the count the literal kept, with the one spelling
+/// that selects among the entries (the filter on the map's own path, which walks them) as the remedy. A
+/// refused mixed map writes nothing here: its refusal is the record. A variable the resolver cannot place
+/// (a filter capture) writes nothing either, as the bound-map notice writes nothing for it.
 fn announce_a_mixed_map_read_as_one_object<'value, 'loc: 'value>(
     query: &'value [QueryPart<'loc>],
     query_index: usize,
@@ -15115,8 +15138,8 @@ fn announce_a_mixed_map_read_as_one_object<'value, 'loc: 'value>(
     };
     // The pointer alone names the map, as the bound-map notice names it: `Path`'s `Display` appends the
     // value's line and column, which vary between two templates that hold the same map.
-    let path = &current.self_path().0;
-    let notice = format!(
+    let path = current.self_path().0.to_string();
+    let notice = crate::utils::writer::warning(format_args!(
         "`{filter}` at {location} reads the map at {path}, which {held_by} held, as one object, the \
          reading the previous release gave a filter through a variable: the predicate is asked of the \
          map itself, and the map is the selection where it holds. The same filter written on the map's \
@@ -15124,8 +15147,8 @@ fn announce_a_mixed_map_read_as_one_object<'value, 'loc: 'value>(
          and selects {kept} in the map's place (it passes the map's scalar entries over), so a clause \
          over the selection reads the map through the variable and the entry through the path. To \
          select among the entries, write the filter on the map's own path."
-    );
-    resolver.record_deprecation_once(DeprecationKind::MixedMapReadAsOneObject, location, notice);
+    ));
+    resolver.record_mixed_map_warning(location, &path, notice);
 }
 
 /// Whether the filter's predicate holds on `map` read as ONE OBJECT, the reading `X[*][ ... ]` gives a
@@ -18529,22 +18552,31 @@ fn map_under_a_wildcard_filter<'m, 'value, 'loc: 'value>(
 /// selecting `Inner` in the map's place would pass it with no notice, where the slot now says once per
 /// site that the two spellings disagree). Two more no-scalar maps are one object under the reader's slot,
 /// the released evaluator's reading of each: a map whose own key the predicate names where that key is
-/// also the name of a plain member among members sharing a key (`let r = Resources` then `%r[ BucketA
-/// exists ]` over `{ BucketA: { Type }, TableC: { Type } }` selects `Resources`, as the release did, where
-/// the author's `[*]` enumerates the members and the literal `Resources[ BucketA exists ]` is refused), and
+/// also the name of a plain member among members sharing a key (`let r = Stack.Resources` then `%r[ BucketA
+/// exists ]` over `{ BucketA: { Type }, TableC: { Type } }` selects the map, as the release did, where
+/// the author's `[*]` enumerates the members and the literal `Stack.Resources[ BucketA exists ]` is refused), and
 /// a map holding one member map that lacks the key an absence predicate names (`Collection` with
 /// `no_member_holds_a_named_key`, `predicate_can_hold_by_absence`, `a_lone_member_map`: a `Metadata`
 /// holding only an init block under `%md[ "AWS::CloudFormation::Authentication" !exists ]` selects the
 /// `Metadata`, as the release did, where the walk kept the init block in its place and said nothing, the
 /// one entry being a population of one; the walk keeps that member for want of the key and the one-object
 /// reading holds on the map for the same want, so the two agree on the entry and differ only in what is
-/// selected). The author's `[*]` takes every classification as `map_under_a_wildcard_filter` read it.
+/// selected). Those three readings (a key the map holds beside a member that holds it too, a member named
+/// like the key, the one member map lacking an absence predicate's key) hold below the top-level sections
+/// only (and for a top-level key that is no section of the template, a Kubernetes `spec`): under the
+/// population alias, a `let` that names one of the template's top-level sections (`let r = Resources`,
+/// `let p = Parameters`; `slot_follows_the_population_alias`), the walk stays, so
+/// `%r[ DeletionPolicy !exists ]` selects among the resources over a template of one as of two, `%p[ Type
+/// == 'X' ]` selects among the parameters though one is named `Type`, and `%r[ BucketA exists ]` over two
+/// resources selects none of them and is announced; the released evaluator read the section as one value
+/// in each (observed on the 3.2.1 binary), and the walk under the alias is the documented reading of the
+/// spelling. The author's `[*]` takes every classification as `map_under_a_wildcard_filter` read it.
 enum MapUnderTheSlot<'m, 'k> {
     /// Handed on whole and tested as one object: a map with a non-null scalar entry whose keys the
     /// predicate does not read as member keys under either slot, and under the reader's slot a map with
-    /// no scalar entry that holds a key the predicate names (alone, beside a member that holds it too, or
-    /// as the name of a member among members sharing a key) or a map holding one member map that lacks
-    /// the key an absence predicate names.
+    /// no scalar entry that holds a key the predicate names (alone; or, below a top-level section, beside
+    /// a member that holds it too or as the name of a member among members sharing a key) or, below a
+    /// top-level section, a map holding one member map that lacks the key an absence predicate names.
     OneObject,
     /// A mixed map under the reader's slot: refused where the literal `K[ f ]` is refused
     /// (`the_literal_reading`), one object otherwise. Never walked.
@@ -18559,33 +18591,108 @@ fn map_under_the_slot<'m, 'value, 'loc: 'value>(
     reader_slot: bool,
     map: &'m MapValue,
     conjunctions: &'value Conjunctions<GuardClause<'loc>>,
+    population_alias: impl FnOnce() -> bool,
 ) -> MapUnderTheSlot<'m, 'value> {
-    match (reader_slot, map_under_a_wildcard_filter(map, conjunctions)) {
-        (_, MapUnderAWildcardFilter::OneObject) => MapUnderTheSlot::OneObject,
-        (true, MapUnderAWildcardFilter::OwnKeyNamed { .. }) => MapUnderTheSlot::OneObject,
-        (
-            true,
-            MapUnderAWildcardFilter::Collection {
-                own_key_a_member_holds: Some(_),
-                ..
-            }
-            | MapUnderAWildcardFilter::Collection {
-                member_named_like_the_key: Some(_),
-                ..
-            },
-        ) => MapUnderTheSlot::OneObject,
-        (
-            true,
-            MapUnderAWildcardFilter::Collection {
-                no_member_holds_a_named_key: true,
-                ..
-            },
-        ) if predicate_can_hold_by_absence(conjunctions) && a_lone_member_map(map) => {
+    let classified = map_under_a_wildcard_filter(map, conjunctions);
+    if !reader_slot {
+        return match classified {
+            MapUnderAWildcardFilter::OneObject => MapUnderTheSlot::OneObject,
+            classified => MapUnderTheSlot::AsTheWildcardReads(classified),
+        };
+    }
+    match classified {
+        MapUnderAWildcardFilter::OneObject | MapUnderAWildcardFilter::OwnKeyNamed { .. } => {
             MapUnderTheSlot::OneObject
         }
-        (true, MapUnderAWildcardFilter::Mixed { .. }) => MapUnderTheSlot::RefusedOrOneObject,
-        (_, classified) => MapUnderTheSlot::AsTheWildcardReads(classified),
+        MapUnderAWildcardFilter::Mixed { .. } => MapUnderTheSlot::RefusedOrOneObject,
+        // The three readings below hold for a map the author named below a top-level section, and for a
+        // top-level key that is no section of the template (a Kubernetes `spec`). Under the population
+        // alias (`let r = Resources`, `let p = Parameters`: a `let` that names one of the template's
+        // top-level sections, `slot_follows_the_population_alias`) the walk stays:
+        // `%r[ DeletionPolicy !exists ]` selects among the resources whether the template holds one of
+        // them or two, `%p[ Type == 'X' ]` selects among the parameters though one of them is named
+        // `Type`, and a predicate naming a logical id (`%r[ Bucket.Type == 'X' or Properties.Tags empty ]`)
+        // selects nothing over compliant resources rather than the whole section. The released evaluator
+        // read the section as one value in each of those shapes (observed on the 3.2.1 binary); the walk
+        // under the alias is the documented reading of this spelling, and under a uniform population it is
+        // quiet by the notice's listed limit, so the alias is read here once and only for the three
+        // shapes that would otherwise take the one-object reading.
+        MapUnderAWildcardFilter::Collection {
+            own_key_a_member_holds: Some(_),
+            ..
+        }
+        | MapUnderAWildcardFilter::Collection {
+            member_named_like_the_key: Some(_),
+            ..
+        } => {
+            if population_alias() {
+                MapUnderTheSlot::AsTheWildcardReads(classified)
+            } else {
+                MapUnderTheSlot::OneObject
+            }
+        }
+        MapUnderAWildcardFilter::Collection {
+            no_member_holds_a_named_key: true,
+            ..
+        } if predicate_can_hold_by_absence(conjunctions) && a_lone_member_map(map) => {
+            if population_alias() {
+                MapUnderTheSlot::AsTheWildcardReads(classified)
+            } else {
+                MapUnderTheSlot::OneObject
+            }
+        }
+        classified => MapUnderTheSlot::AsTheWildcardReads(classified),
     }
+}
+
+/// Whether the variable the reader's slot follows is the population alias: a `let` bound to one
+/// top-level key of the document (or a chain of such aliases, as `is_top_level_alias` reads it) AND that
+/// key one of the template's sections (`is_a_top_level_section_path`: `let r = Resources`, `let p =
+/// Parameters`, `let m = Mappings`, `let c = Conditions`, `Outputs`, `Metadata`, `Rules`). A `let` of
+/// another top-level key, a Kubernetes `spec` or a `metadata` at the document root, is not the alias and
+/// keeps the one-object readings the slot gives a map below a section: the released evaluator read such a
+/// map whole, and walking it instead would be a divergence from 3.2.1 that the project admits only where
+/// announced or refused, where the walk under a section is the documented reading of this spelling. Asked
+/// by `map_under_the_slot` through a closure, so the binding walk is paid only for the three collection
+/// shapes it decides.
+fn slot_follows_the_population_alias<'value, 'loc: 'value>(
+    query: &[QueryPart<'_>],
+    query_index: usize,
+    map_path: &Path,
+    resolver: &dyn EvalContext<'value, 'loc>,
+) -> bool {
+    match query_index.checked_sub(1).and_then(|at| query.get(at)) {
+        Some(QueryPart::Variable(variable_name)) => {
+            is_a_top_level_section_path(map_path)
+                && resolver.is_top_level_alias(variable_name, MergedKeys::Visible)
+        }
+        _ => false,
+    }
+}
+
+/// Whether `path` is one of the template's top-level sections, the maps the population alias binds: one
+/// segment, named `Resources`, `Parameters`, `Mappings`, `Conditions`, `Outputs`, `Metadata` or `Rules`.
+/// Not `is_a_template_section_path`, which answers the directive question (where a lone `Fn::` key stands
+/// for a section's content) and so leaves `Parameters` out and admits a section nested below another
+/// path; the alias question is about the document's own sections, `Parameters` among them (`let p =
+/// Parameters` then `%p[ Type == 'X' ]` selects among the parameters).
+fn is_a_top_level_section_path(path: &Path) -> bool {
+    let mut segments = path.0.split('/').filter(|segment| !segment.is_empty());
+    let first = match segments.next() {
+        Some(first) => first,
+        None => return false,
+    };
+    segments.next().is_none()
+        && matches!(
+            first,
+            "Resources"
+                | "Parameters"
+                | "Mappings"
+                | "Conditions"
+                | "Outputs"
+                | "Metadata"
+                | "Rules"
+        )
 }
 
 /// Whether `map` holds exactly one entry, a plain member map (`plain_member_map`: a non-empty map that is
@@ -23100,17 +23207,20 @@ fn query_retrieval_with_converter<'value, 'loc: 'value>(
                     // every mixed map outright. Two more no-scalar maps are one object here, each the
                     // release's reading (`map_under_the_slot`): one whose own key the predicate names
                     // where that key is the name of a member among members sharing a key (`%r[ BucketA
-                    // exists ]` over `{ BucketA: { Type }, TableC: { Type } }` selects the map, where
-                    // the literal is refused and `[*]` enumerates), and a map holding one member map
+                    // exists ]` with `let r = Stack.Resources` over `{ BucketA: { Type }, TableC: { Type
+                    // } }` selects the map, where the literal is refused and `[*]` enumerates), and a map holding one member map
                     // that lacks the key an absence predicate names (`%md[
                     // "AWS::CloudFormation::Authentication" !exists ]` over a `Metadata` holding only an
                     // init block selects the map, where the walk kept the block in its place and said
                     // nothing, a population of one: the walk keeps that member for want of the key and
                     // the one-object reading holds on the map for the same want, so the two agree on
-                    // the entry and differ only in what is selected). Every other collection, a map
-                    // with no scalar entry whose own key the predicate does not name, keeps the walk in
-                    // the `else` arm below, with the bound-map notice, so `let r = Resources` then `%r[
-                    // Type == 'AWS::S3::Bucket' ]` still selects among the resources.
+                    // the entry and differ only in what is selected). Those three readings hold below
+                    // the top-level sections only; through the population alias (`let r = Resources`)
+                    // the map keeps the walk in every one of those shapes, as every other collection
+                    // does: a map with no scalar entry whose own key the predicate does not name keeps
+                    // the walk in the `else` arm below, with the bound-map notice, so `let r =
+                    // Resources` then `%r[ Type == 'AWS::S3::Bucket' ]` still selects among the
+                    // resources, and so does `%r[ DeletionPolicy !exists ]` over a template of one.
                     //
                     // An EMPTY map at the population with a selection still ahead is the empty
                     // selection, as `Resources: {}` is under `Resources.*.Properties.Tags[ f ]`
@@ -23154,8 +23264,16 @@ fn query_retrieval_with_converter<'value, 'loc: 'value>(
                     let under_a_filter = match query.get(query_index + 1) {
                         Some(QueryPart::Filter(filter_name, conjunctions)) => {
                             // The slot's routing of the map, shared with the bound-map notice
-                            // (`map_under_the_slot`).
-                            match map_under_the_slot(reader_slot, map, conjunctions) {
+                            // (`map_under_the_slot`). Whether the variable is the population alias is
+                            // read only where it decides the routing.
+                            match map_under_the_slot(reader_slot, map, conjunctions, || {
+                                slot_follows_the_population_alias(
+                                    query,
+                                    query_index,
+                                    current.self_path(),
+                                    &*resolver,
+                                )
+                            }) {
                                 MapUnderTheSlot::OneObject => Some((
                                     filter_name,
                                     conjunctions,
@@ -27029,6 +27147,32 @@ impl<'value, 'loc: 'value> EvalContext<'value, 'loc> for RootScope<'value, 'loc>
         true
     }
 
+    /// Nothing is recorded during a measurement, as for `record_warning`. One line per filter site, under
+    /// its own kind: the first map's text stands, and a second map read as one object at the same site
+    /// (a binding that holds several mixed maps) is counted into the line, as a moved reading's maps are.
+    fn record_mixed_map_warning(&mut self, site: &FileLocation<'_>, map: &str, notice: String) {
+        if self.measurement != Measurement::Off {
+            return;
+        }
+        let input = if self.data_file_name.is_some() {
+            InputKind::DataFile
+        } else if self.case.is_some() {
+            InputKind::Case
+        } else {
+            InputKind::Input
+        };
+        self.warnings
+            .entry((
+                WarningKind::MixedMapReadAsOneObject,
+                site.to_string(),
+                String::new(),
+            ))
+            .or_insert_with(|| {
+                SiteWarning::first(WarningKind::MixedMapReadAsOneObject, map, notice)
+            })
+            .also(map, input);
+    }
+
     /// Nothing is recorded during a measurement, as for `record_warning`. One line per clause site,
     /// rendered from what the site has met (`SiteWarning::also_unraised`): the distinct refusal texts and
     /// the evaluations that decided the clause each way, so a repeat of the same refusal adds nothing, a
@@ -29458,6 +29602,10 @@ impl<'value, 'loc: 'value, 'eval> EvalContext<'value, 'loc>
         self.parent.record_capture_warning(site, capture, notice)
     }
 
+    fn record_mixed_map_warning(&mut self, site: &FileLocation<'_>, map: &str, notice: String) {
+        self.parent.record_mixed_map_warning(site, map, notice)
+    }
+
     fn record_unraised_refusal(
         &mut self,
         site: &FileLocation<'_>,
@@ -30023,6 +30171,10 @@ impl<'value, 'loc: 'value, 'eval> EvalContext<'value, 'loc> for ValueScope<'valu
         self.parent.record_capture_warning(site, capture, notice)
     }
 
+    fn record_mixed_map_warning(&mut self, site: &FileLocation<'_>, map: &str, notice: String) {
+        self.parent.record_mixed_map_warning(site, map, notice)
+    }
+
     fn record_unraised_refusal(
         &mut self,
         site: &FileLocation<'_>,
@@ -30554,6 +30706,10 @@ impl<'value, 'loc: 'value, 'eval> EvalContext<'value, 'loc> for BlockScope<'valu
         notice: String,
     ) -> bool {
         self.parent.record_capture_warning(site, capture, notice)
+    }
+
+    fn record_mixed_map_warning(&mut self, site: &FileLocation<'_>, map: &str, notice: String) {
+        self.parent.record_mixed_map_warning(site, map, notice)
     }
 
     fn record_unraised_refusal(

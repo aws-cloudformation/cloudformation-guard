@@ -5193,10 +5193,11 @@ mod test_command_tests {
     ///
     /// The filter is `testBasic !exists` over `Resources.*[ Metadata exists ].Metadata`. Each case's
     /// instance holds one authentication block, which carries the key and is no member, so the
-    /// instance's `Metadata` map loses its selection and is named. No other resource carries a `Metadata`
-    /// map, so the selection is empty and the key read below it is not applicable: both cases expect
-    /// SKIP, which an engine selecting the map whole (FAIL on the key it holds) or keeping the block
-    /// (PASS) would not meet.
+    /// instance's `Metadata` map loses its selection and is named. The role's `Metadata` holds one
+    /// sub-map that lacks the key, a map one object to the slot (never walked, no notice), so the
+    /// selection is the role's map and the key read below it passes: both cases expect PASS, which an
+    /// engine selecting the instance's map whole (FAIL on the key it holds, as cfn-guard 3.2.1 did,
+    /// observed on its binary) or keeping its block (FAIL on the key the block carries) would not meet.
     #[rstest]
     #[case("")]
     #[case("json")]
@@ -5224,7 +5225,11 @@ mod test_command_tests {
 
         let (status_code, _) = run(output);
         let (_, err_writer) = run(output);
-        assert_eq!(StatusCode::SUCCESS, status_code, "both cases expect SKIP");
+        assert_eq!(
+            StatusCode::SUCCESS,
+            status_code,
+            "both cases expect PASS over the role's one-member map"
+        );
 
         let stderr = err_writer.err_to_stripped().expect("failed to read stderr");
         let notices: Vec<&str> = stderr
@@ -5329,16 +5334,18 @@ mod test_command_tests {
 
     /// The bound-map filter notice reaches the test command, once, on stderr.
     ///
-    /// The cases are two instances, each with an authentication block under its `Metadata`, and the
-    /// rules file filters `Resources.*[ Metadata exists ].Metadata` through a variable with
-    /// `testBasic !exists`. The maps have no scalar entry and the predicate names no key a map holds
-    /// itself, so the filter keeps the walk: the authentication block carries `testBasic` and is no
-    /// member, and the selection the predicate held on the map by absence is lost. No other resource
-    /// carries a `Metadata` map, so the selection is empty, the key read below it is not applicable,
-    /// and both cases expect SKIP, which is the verdict the engine gives, so the command succeeds. The rules
-    /// file is evaluated once per case and the same filter loses a selection each time, so two
-    /// notices are produced and collapsed to one before they are written. Not on stdout, where the
-    /// report that consumers parse lives; the JSON report has to parse with the notice beside it.
+    /// The cases are two instances, each with an authentication block under its `Metadata`, beside a
+    /// role whose `Metadata` holds one `cfn_nag` sub-map, and the rules file filters
+    /// `Resources.*[ Metadata exists ].Metadata` through a variable with `testBasic !exists`. The maps
+    /// have no scalar entry and the predicate names no key a map holds itself. The instance's map holds
+    /// one sub-map that carries the key, so the filter keeps the walk over it: the authentication block
+    /// is no member, and the selection the predicate held on the map by absence is lost. The role's map
+    /// holds one sub-map that lacks the key, one object to the slot, selected whole and never walked. So
+    /// the selection is the role's map, the key read below it passes, and both cases expect PASS, which
+    /// is the verdict the engine gives, so the command succeeds. The rules file is evaluated once per
+    /// case and the same filter loses a selection each time, so two notices are produced and collapsed
+    /// to one before they are written. Not on stdout, where the report that consumers parse lives; the
+    /// JSON report has to parse with the notice beside it.
     /// The single-map registry shape, which is one object and draws no notice, is in the cases of
     /// `a_single_map_binding_of_one_object_is_judged_by_the_test_command_without_a_notice`.
     #[rstest]
@@ -5374,7 +5381,7 @@ mod test_command_tests {
         assert_eq!(
             StatusCode::SUCCESS,
             status_code,
-            "both cases expect SKIP and the notice must not move that"
+            "both cases expect PASS and the notice must not move that"
         );
 
         let stdout = out_writer.stripped().expect("failed to read stdout");

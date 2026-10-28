@@ -1393,6 +1393,20 @@ pub(crate) trait EvalContext<'value, 'loc: 'value>: RecordTracer<'value> {
         notice: String,
     ) -> bool;
 
+    /// Note that a filter through a variable at `site` (its first predicate clause) read the mixed map at
+    /// `map` as one object where the same filter on the map's own path keeps one or more of its entries
+    /// (`eval_context::announce_a_mixed_map_read_as_one_object`). The same rules as `record_warning`:
+    /// nothing is recorded during a measurement, no default. Keyed by the site alone, under its own kind
+    /// (`WarningKind::MixedMapReadAsOneObject`): one line per filter site, the first map's text, with a
+    /// count of the further maps read as one object at the site. A warning and not a deprecation: the
+    /// two spellings' disagreement is a lasting difference, not a reading being retired.
+    fn record_mixed_map_warning(
+        &mut self,
+        site: &exprs::FileLocation<'_>,
+        map: &str,
+        notice: String,
+    );
+
     /// Note that a comparison at `site` (written as `context`) was decided without raising the REFUSED
     /// reads among its values, on either side (`refusals`, one text each): the clause's verdict
     /// (`verdict`, one per `UnraisedVerdict` variant: a value that holds settled it, a value the document
@@ -2725,11 +2739,6 @@ pub(crate) enum DeprecationKind {
     /// release selected that map. The sites this notice decided to stay quiet on are not notices and are kept
     /// apart, in the root scope's quiet-site set; see [`EvalContext::record_quiet_filter_site`].
     FilterOverABoundMap,
-    /// A filter through a variable over a mixed map (a scalar entry beside a member that holds a key the
-    /// predicate names) read as one object, the previous release's reading, where the same filter written
-    /// on the map's own path keeps one or more of the map's entries: the two spellings disagree on what is
-    /// selected. One line per filter site.
-    MixedMapReadAsOneObject,
     /// A key filter whose string right-hand value is read as a value the key is equal to, where the
     /// previous release read it as text the key could be contained in, with the selection moving for a key.
     KeyFilterContainment,
@@ -2774,7 +2783,6 @@ impl DeprecationKind {
             }
             DeprecationKind::ListArgumentExpansion => "the list-argument notice",
             DeprecationKind::FilterOverABoundMap => "the filter notice",
-            DeprecationKind::MixedMapReadAsOneObject => "the mixed-map notice",
             DeprecationKind::KeyFilterContainment => "the key-filter containment notice",
             DeprecationKind::KeyFilterFold => "the key-filter fold notice",
             DeprecationKind::OwnKeyReadAsAMember => "the member notice",

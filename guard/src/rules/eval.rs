@@ -13336,6 +13336,11 @@ impl<'eval, 'value, 'loc: 'value> EvalContext<'value, 'loc>
     }
 
     /// Forwarded for the reason `record_warning` is.
+    fn record_mixed_map_warning(&mut self, site: &FileLocation<'_>, map: &str, notice: String) {
+        self.parent.record_mixed_map_warning(site, map, notice)
+    }
+
+    /// Forwarded for the reason `record_warning` is.
     fn record_unraised_refusal(
         &mut self,
         site: &FileLocation<'_>,

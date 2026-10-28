@@ -5,13 +5,16 @@
 # map each time (`/Resources/EC2A/Metadata`, `/Resources/EC2B/Metadata`). One filter site, so one line:
 # the test command keeps the once-per-site reading across cases by site, not by text.
 #
-# Each instance's `Metadata` holds only a map-valued entry, so it has no scalar entry, and `testBasic` is
-# not a key the map holds itself: the filter through the variable keeps the walk. The authentication
-# block carries `testBasic` and is no member, so nothing is kept from the map and the notice goes out. No
-# other resource carries a `Metadata` map, so the selection is empty and the key read below it is not
-# applicable: both cases expect SKIP. An engine that read the instance's map as one object would select
-# it (the map lacks `testBasic`) and FAIL on the key it holds; one that kept the authentication block
-# would PASS on the key the block lacks; neither meets SKIP.
+# The binding holds two maps, the role's and the instance's, neither with a scalar entry. The role's
+# `Metadata` holds one sub-map (`cfn_nag`) that lacks `testBasic`: a map holding one member map that lacks
+# the key an absence predicate names is one object through a variable, so the role's map is selected
+# whole and never walked, with no notice. The instance's `Metadata` holds one sub-map that CARRIES the
+# key, so it is a collection to the slot: the walk keeps nothing from it (the authentication block carries
+# `testBasic`) and the notice goes out. The selection is the role's map, which has no
+# `AWS::CloudFormation::Authentication` entry, so the key read below it passes: both cases expect PASS.
+# cfn-guard 3.2.1 selected both maps whole and FAILED on the instance's block (observed on its binary over
+# the same resources); an engine that kept the authentication block in the instance's map's place would
+# FAIL on the key the block carries; neither meets PASS.
 ###
 ---
 - name: Instance named EC2A
@@ -21,6 +24,11 @@
         Type: "AWS::IAM::Role"
         Properties:
           Path: "/"
+        Metadata:
+          cfn_nag:
+            rules_to_suppress:
+              - id: W11
+                reason: "the role is scoped by its trust policy"
       EC2A:
         Type: "AWS::EC2::Instance"
         Properties:
@@ -34,7 +42,7 @@
               password: "sensitive_password"
   expectations:
     rules:
-      FILTER_THROUGH_A_METADATA_PROJECTION: SKIP
+      FILTER_THROUGH_A_METADATA_PROJECTION: PASS
 
 - name: Instance named EC2B
   input:
@@ -43,6 +51,11 @@
         Type: "AWS::IAM::Role"
         Properties:
           Path: "/"
+        Metadata:
+          cfn_nag:
+            rules_to_suppress:
+              - id: W11
+                reason: "the role is scoped by its trust policy"
       EC2B:
         Type: "AWS::EC2::Instance"
         Properties:
@@ -56,4 +69,4 @@
               password: "sensitive_password"
   expectations:
     rules:
-      FILTER_THROUGH_A_METADATA_PROJECTION: SKIP
+      FILTER_THROUGH_A_METADATA_PROJECTION: PASS

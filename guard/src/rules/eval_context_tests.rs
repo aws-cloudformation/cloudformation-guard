@@ -334,6 +334,7 @@ impl<'record, 'value, 'loc: 'value> EvalContext<'value, 'loc>
     fn record_capture_warning(&mut self, _: &FileLocation<'_>, _: &str, _: String) -> bool {
         false
     }
+    fn record_mixed_map_warning(&mut self, _: &FileLocation<'_>, _: &str, _: String) {}
     fn record_unraised_refusal(
         &mut self,
         _: &FileLocation<'_>,
@@ -2109,6 +2110,9 @@ impl<'value, 'loc: 'value> EvalContext<'value, 'loc> for BindingsOnly<'value, 'l
         todo!()
     }
     fn record_capture_warning(&mut self, _: &FileLocation<'_>, _: &str, _: String) -> bool {
+        todo!()
+    }
+    fn record_mixed_map_warning(&mut self, _: &FileLocation<'_>, _: &str, _: String) {
         todo!()
     }
     fn record_unraised_refusal(
@@ -7024,6 +7028,9 @@ impl<'scope, 'value, 'loc: 'value> EvalContext<'value, 'loc>
         notice: String,
     ) -> bool {
         self.inner.record_capture_warning(site, capture, notice)
+    }
+    fn record_mixed_map_warning(&mut self, site: &FileLocation<'_>, map: &str, notice: String) {
+        self.inner.record_mixed_map_warning(site, map, notice)
     }
     fn record_unraised_refusal(
         &mut self,
