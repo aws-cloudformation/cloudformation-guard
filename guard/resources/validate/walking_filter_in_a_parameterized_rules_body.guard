@@ -1,0 +1,17 @@
+#
+# The filtered variable is a parameterized rule's parameter and the filter is written in the rule's BODY,
+# not in its `when`: walking_filter_through_a_parameter.guard gates on the same filter. Over the `Metadata`
+# map of single-map-binding-without-type-template.yaml, which holds only the authentication block (no
+# scalar entry, and `testBasic` is not a key of the map itself), the filter walks the entries; the one
+# entry carries `testBasic`, so nothing is kept and `empty` PASSes (exit 0), while the predicate holds on
+# the map read as one value, because the map lacks the key. The selection is lost, so the notice goes out
+# from inside the body, through the scope that binds the call's parameter, and names the parameter, its
+# rule and the query the call site bound it to. The caller FILTER_IN_A_PARAMETERIZED_RULES_BODY PASSes.
+#
+rule has_no_test_basic(m) {
+  %m[ testBasic !exists ] empty
+}
+
+rule FILTER_IN_A_PARAMETERIZED_RULES_BODY {
+  has_no_test_basic(Resources.Metadata)
+}

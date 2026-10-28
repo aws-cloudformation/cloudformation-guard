@@ -6,12 +6,11 @@
 # metadata-maps-init-without-authentication-template.yaml the second alone. So a run over the templates
 # with both followed by those two gives the two sites later-file lists that share their first names and
 # their count and differ only in the last file: shortened, the two trailers would read the same, so each
-# is told from the other by the first file its list lacks and the other's holds.
-#
+# is told apart by the first file its list lacks. Each clause reads a key below its selection: PASS.
 let blocks = Resources.*[ Metadata exists ].Metadata
-rule AUTHENTICATION_SITE when %blocks[ testBasic !exists ] !empty {
-  %blocks !empty
+rule AUTHENTICATION_SITE {
+  %blocks[ testBasic !exists ]."AWS::CloudFormation::Authentication" !exists
 }
-rule INIT_SITE when %blocks[ config !exists ] !empty {
-  %blocks !empty
+rule INIT_SITE {
+  %blocks[ config !exists ]."AWS::CloudFormation::Init" !exists
 }

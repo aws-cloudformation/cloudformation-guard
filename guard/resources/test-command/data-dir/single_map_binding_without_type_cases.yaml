@@ -6,9 +6,11 @@
 # Here the `Metadata` map has no scalar entry and the predicate names `AWS::CloudFormation::Authentication`,
 # a key the map holds itself and none of its map-valued entries holds. A map with no scalar entry whose
 # own key the predicate names is one object, as the map with the `Type` entry is: the filter through
-# `%cfn_authentication_rule` tests the map itself, as `[*]` does, the predicate holds, the map is
-# selected and the rule applies: FAIL with a password, PASS without. cfn-guard 3.2.1 also reports FAIL
-# for the password shape (its reporter then exits 101). No notice is written for either case.
+# `%cfn_authentication_rule` tests the map itself, the predicate holds, the map is selected and the rule
+# applies: FAIL with a password, PASS without, the verdicts cfn-guard 3.2.1 gives (observed on its
+# binary; its reporter then exits 101 on the password shape). The author's `[*]` does not read this shape
+# the same way: over a map with no scalar entry whose own key the predicate names it runs its own-key
+# enumeration and refuses the filter. No notice is written for either case.
 ###
 ---
 - name: Authentication block with a password, no Type entry

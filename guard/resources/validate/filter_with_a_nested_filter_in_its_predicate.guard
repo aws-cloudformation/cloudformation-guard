@@ -4,13 +4,17 @@
 # holds on the bucket for real. The bucket holds a scalar `Type` and the predicate's first key,
 # `Properties`, is not a key of any of its map-valued entries, so the bucket is one object: the filter
 # through the variable tests it as a whole, as `%b[*][ ... ]` does, and selects the bucket itself. The
-# gate applies. The body first compares the selection's own `Type`, which passes only when the bucket
-# itself was selected, and then fails on the missing Owner tag. Nothing is announced on stderr.
+# gate applies. BUCKET_IS_THE_SELECTION compares the selection's own `Type`, which passes only when the
+# bucket itself was selected (a selection of a sub-map would fail it); BUCKET_HAS_AN_OWNER_TAG fails on
+# the missing Owner tag. Nothing is announced on stderr.
 #
 let b = Resources.Bucket
 let untagged = %b[ Properties.Tags[ Key == 'Owner' ] empty ]
 
-rule BUCKET_HAS_AN_OWNER_TAG when %untagged !empty {
+rule BUCKET_IS_THE_SELECTION when %untagged !empty {
   %untagged.Type == 'AWS::S3::Bucket'
+}
+
+rule BUCKET_HAS_AN_OWNER_TAG when %untagged !empty {
   %untagged.Properties.Tags[ Key == 'Owner' ] !empty
 }

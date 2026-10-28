@@ -2725,6 +2725,11 @@ pub(crate) enum DeprecationKind {
     /// release selected that map. The sites this notice decided to stay quiet on are not notices and are kept
     /// apart, in the root scope's quiet-site set; see [`EvalContext::record_quiet_filter_site`].
     FilterOverABoundMap,
+    /// A filter through a variable over a mixed map (a scalar entry beside a member that holds a key the
+    /// predicate names) read as one object, the previous release's reading, where the same filter written
+    /// on the map's own path keeps one or more of the map's entries: the two spellings disagree on what is
+    /// selected. One line per filter site.
+    MixedMapReadAsOneObject,
     /// A key filter whose string right-hand value is read as a value the key is equal to, where the
     /// previous release read it as text the key could be contained in, with the selection moving for a key.
     KeyFilterContainment,
@@ -2769,6 +2774,7 @@ impl DeprecationKind {
             }
             DeprecationKind::ListArgumentExpansion => "the list-argument notice",
             DeprecationKind::FilterOverABoundMap => "the filter notice",
+            DeprecationKind::MixedMapReadAsOneObject => "the mixed-map notice",
             DeprecationKind::KeyFilterContainment => "the key-filter containment notice",
             DeprecationKind::KeyFilterFold => "the key-filter fold notice",
             DeprecationKind::OwnKeyReadAsAMember => "the member notice",

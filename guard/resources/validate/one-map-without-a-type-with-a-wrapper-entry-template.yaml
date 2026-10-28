@@ -1,11 +1,10 @@
-# The resource of one-resource-with-a-wrapper-entry-template.yaml without its `Type` string: a map of
-# three sub-maps and no scalar entry, a collection to the slot after a variable bound to it. One entry,
-# `Wrapper`, carries a `Metadata` map with an `AWS::CloudFormation::Authentication` block; the map's own
-# `Metadata` has no such key.
+# The resource of one-resource-with-a-wrapper-entry-template.yaml without its `Type` string and without a
+# `Metadata` of its own: a map of two sub-maps and no scalar entry, a collection to the slot after a
+# variable bound to it. One entry, `Wrapper`, carries a `Metadata` map with an
+# `AWS::CloudFormation::Authentication` block; the map itself has no `Metadata` key. (Had it one beside
+# `Wrapper`, the map would hold the predicate's key as `Wrapper` does and be one object to the slot.)
 Resources:
   Only:
-    Metadata:
-      Note: no authentication block at this level
     Wrapper:
       Metadata:
         AWS::CloudFormation::Authentication:

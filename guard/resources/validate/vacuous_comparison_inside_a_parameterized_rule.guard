@@ -4,7 +4,8 @@
 # with no notice, as the same clause does at the top level
 # (`vacuous_comparison_at_the_top_level.guard`). The body is evaluated through the scope that binds the
 # call's parameter, and the verdict comes back through it unchanged; what that scope forwards is pinned
-# where a notice is raised in a rule body (`walking_filter_through_a_parameter.guard`).
+# where a notice is raised in a rule body (`walking_filter_in_a_parameterized_rules_body.guard`) and in a
+# rule's `when` (`walking_filter_through_a_parameter.guard`).
 #
 rule sizes_are_fifty(cfg) {
   %cfg.Sizes == 50

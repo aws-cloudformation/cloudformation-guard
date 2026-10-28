@@ -3,14 +3,17 @@
 # resolves on the bucket and `Tags` is missing under it. The clause holds on the bucket for real. The
 # bucket holds a scalar `Type` and `Properties` is not a key of any of its map-valued entries, so the
 # bucket is one object: the filter through the variable tests it as a whole, as `%b[*][ ... ]` does, and
-# selects the bucket itself. The gate over the selection applies. The body first compares the selection's
-# own `Type`, which passes only when the bucket itself was selected, and then fails on the missing
-# `Tags`. Nothing is announced on stderr.
+# selects the bucket itself. The gate over the selection applies. BUCKET_IS_THE_SELECTION compares the
+# selection's own `Type`, which passes only when the bucket itself was selected (a selection of a sub-map
+# would fail it); BUCKET_HAS_TAGS fails on the missing `Tags`. Nothing is announced on stderr.
 #
 let b = Resources.Bucket
 let untagged = %b[ Properties.Tags !exists ]
 
-rule BUCKET_HAS_TAGS when %untagged !empty {
+rule BUCKET_IS_THE_SELECTION when %untagged !empty {
   %untagged.Type == 'AWS::S3::Bucket'
+}
+
+rule BUCKET_HAS_TAGS when %untagged !empty {
   %untagged.Properties.Tags exists
 }

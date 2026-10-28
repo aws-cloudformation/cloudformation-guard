@@ -15874,8 +15874,10 @@ mod validate_tests {
     /// (the map has no `Tags`), `.Name == 'b'` fails and `.Name == 'a'` passes, and the value the
     /// failing comparison names is `/Resources/B/Properties/Name`, never `Inner`'s. Before this, the
     /// slot took the literal's reading here and `.Name == 'b'` passed on `Inner`'s `b` with no notice,
-    /// a verdict that moved from the release's FAIL with nothing said. No notice is written: a mixed
-    /// map is never walked through a variable, so no selection moves down.
+    /// a verdict that moved from the release's FAIL with nothing said. One DEPRECATION line per filter
+    /// site (three here) says the two spellings disagree: the variable reads the map as one object where
+    /// the same filter on the map's own path selects one of its entries, with the path spelling as the
+    /// way to select among the entries.
     #[test]
     fn a_filter_through_a_variable_over_a_mixed_map_tests_the_map_as_one_object() {
         let (status_code, stdout, stderr) = validate_both_streams(
@@ -15913,16 +15915,171 @@ mod validate_tests {
             .filter(|l| l.contains("DEPRECATION"))
             .collect();
         assert_eq!(
-            0,
+            3,
             notices.len(),
-            "the mixed map is never walked, so nothing is announced; got {:?} from stderr {:?}",
+            "one line per filter site says the two spellings disagree: the variable reads the map as one object where the literal selects `Inner`; got {:?} from stderr {:?}",
             notices,
             stderr
         );
+        for notice in &notices {
+            assert!(
+                notice.contains("`%p[ Name exists ]` at")
+                    && notice.contains(
+                        "reads the map at /Resources/B/Properties, which `let p = Resources.B.Properties` held, as one object"
+                    )
+                    && notice.contains("selects one of its entries in the map's place")
+                    && notice.contains("write the filter on the map's own path"),
+                "the notice names the filter, the binding, the map, what the literal selects and the remedy; got {:?}",
+                notice
+            );
+        }
         assert!(
-            !stdout.contains("DEPRECATION") && !stdout.contains("Could not be evaluated"),
-            "the predicate holds by presence, so nothing is refused or announced in the report; got {:?}",
+            !stdout.contains("Could not be evaluated"),
+            "the predicate holds by presence, so nothing is refused in the report; got {:?}",
             stdout
+        );
+    }
+
+    /// A filter through a variable over a `Metadata` map with no scalar entry that holds the predicate's
+    /// key itself while a `Wrapper` sub-map holds the same key tests the map as one object, the reading
+    /// cfn-guard 3.2.1 gave every filter through a variable over one map (observed on its binary over
+    /// this fixture's template): `exists` selects the map (`!empty` PASS) and the password check below the
+    /// selection reads the map's OWN block, FAIL on its password (3.2.1 FAIL); `!exists` does not hold on
+    /// the map, nothing is selected, `empty` PASS (3.2.1 PASS). The literal and the author's `[*]` walk
+    /// the entries and select `Wrapper`, whose block has no password: PASS, the controls. Before this
+    /// reading the slot walked the map as a collection (the key a member holds was exempt from the own-key
+    /// test), selected `Wrapper`, passed the password check that 3.2.1 failed, selected the authentication
+    /// block under `!exists` where 3.2.1 selected nothing, and announced both. Nothing is announced now:
+    /// the map is never walked.
+    #[test]
+    fn a_filter_through_a_variable_over_an_own_key_a_member_also_holds_tests_the_map_as_one_object()
+    {
+        let (status_code, stdout, stderr) = validate_both_streams(
+            "filter_through_a_variable_over_an_own_key_a_member_also_holds.guard",
+            "metadata-own-authentication-beside-a-wrapper-template.yaml",
+        );
+        assert_eq!(
+            StatusCode::VALIDATION_ERROR,
+            status_code,
+            "the password check fails on the map's own block; stdout {:?}",
+            stdout
+        );
+        assert_eq!(
+            (
+                Some("PASS".to_string()),
+                Some("FAIL".to_string()),
+                Some("PASS".to_string()),
+                Some("PASS".to_string()),
+                Some("PASS".to_string())
+            ),
+            (
+                rule_status_line(&stdout, "OWN_KEY_BESIDE_A_MEMBER_SELECTS_THE_MAP"),
+                rule_status_line(&stdout, "OWN_KEY_BESIDE_A_MEMBER_PASSWORD"),
+                rule_status_line(&stdout, "NEGATED_OVER_THE_MAP_HOLDING_THE_KEY_SELECTS_NOTHING"),
+                rule_status_line(&stdout, "CONTROL_LITERAL_SELECTS_THE_WRAPPER"),
+                rule_status_line(&stdout, "CONTROL_STAR_SELECTS_THE_WRAPPER")
+            ),
+            "the map is selected and its own block read; the negated form selects nothing; the literal and `[*]` select Wrapper; got {:?}",
+            stdout
+        );
+        assert!(
+            stdout.contains(
+                "/Resources/Box/Metadata/AWS::CloudFormation::Authentication/testBasic/password"
+            ) && !stdout.contains("/Resources/Box/Metadata/Wrapper/"),
+            "the failing password check names the map's own block, never Wrapper's; got {:?}",
+            stdout
+        );
+        assert!(
+            !stdout.contains("DEPRECATION") && !stderr.contains("DEPRECATION"),
+            "a map read as one object is never walked, so nothing is announced; stdout {:?} stderr {:?}",
+            stdout,
+            stderr
+        );
+    }
+
+    /// A filter through a variable over a `Metadata` map holding one member map that lacks the predicate's
+    /// key (an init block alone) tests the map as one object, in both polarities, the reading cfn-guard
+    /// 3.2.1 gave every filter through a variable over one map (observed on its binary over this
+    /// fixture's template): `!exists` holds on the map by absence, the map is selected (`!empty`
+    /// PASS) and a key read below the selection reads the map (`."AWS::CloudFormation::Init" exists` PASS,
+    /// `.config exists` FAIL, the gated read PASS; 3.2.1 PASS, FAIL, PASS); `exists` does not hold on the
+    /// map, nothing is selected (`empty` PASS, `!empty` FAIL; 3.2.1 PASS, FAIL). The literal walks the
+    /// map and selects the init block, so its `.config exists` PASSes, the control. Before this reading the
+    /// slot walked the map as a collection, selected the block in the map's place and said nothing (one
+    /// sub-map lacking the key read as a population of one): a quiet divergence from 3.2.1 on every key
+    /// read below the selection. No notice is written now: a map read as one object is never walked.
+    #[test]
+    fn a_filter_through_a_variable_over_an_init_only_metadata_tests_the_map_as_one_object() {
+        let (status_code, stdout, stderr) = validate_both_streams(
+            "negated_filter_through_a_variable_over_an_init_only_metadata.guard",
+            "metadata-maps-init-without-authentication-template.yaml",
+        );
+        assert_eq!(
+            StatusCode::VALIDATION_ERROR,
+            status_code,
+            "the `.config` read and the positive `!empty` fail on the map; stdout {:?}",
+            stdout
+        );
+        assert_eq!(
+            (
+                Some("PASS".to_string()),
+                Some("PASS".to_string()),
+                Some("FAIL".to_string()),
+                Some("PASS".to_string()),
+                Some("PASS".to_string()),
+                Some("FAIL".to_string()),
+                Some("PASS".to_string())
+            ),
+            (
+                rule_status_line(&stdout, "INIT_ONLY_NEGATED_SELECTS_THE_MAP"),
+                rule_status_line(&stdout, "INIT_ONLY_NEGATED_READS_THE_MAPS_OWN_KEY"),
+                rule_status_line(&stdout, "INIT_ONLY_NEGATED_DOES_NOT_READ_THE_BLOCK"),
+                rule_status_line(&stdout, "INIT_ONLY_NEGATED_GATE_OPENS_ON_THE_MAP"),
+                rule_status_line(&stdout, "INIT_ONLY_POSITIVE_SELECTS_NOTHING"),
+                rule_status_line(&stdout, "INIT_ONLY_POSITIVE_IS_NOT_SELECTED"),
+                rule_status_line(&stdout, "CONTROL_LITERAL_SELECTS_THE_INIT_BLOCK")
+            ),
+            "the map is selected under `!exists` and read as the map; nothing is selected under `exists`; the literal selects the block; got {:?}",
+            stdout
+        );
+        assert!(
+            !stdout.contains("DEPRECATION") && !stderr.contains("DEPRECATION"),
+            "a map read as one object is never walked, so nothing is announced; stdout {:?} stderr {:?}",
+            stdout,
+            stderr
+        );
+    }
+
+    /// A filter through a parameterized rule's parameter written in the rule's BODY (not its `when`)
+    /// walks the `Metadata` map that holds only the authentication block, keeps nothing (the block carries
+    /// `testBasic`), and `empty` passes, so the called rule and its caller PASS at exit 0; the lost
+    /// selection is announced from inside the body, through the scope that binds the parameter, naming the
+    /// parameter, its rule and the query the call site bound it to, as the `when` form does
+    /// (`a_filter_through_a_parameter_names_the_parameter_and_its_rule`).
+    #[test]
+    fn a_filter_in_a_parameterized_rules_body_is_announced_through_the_call() {
+        let (status_code, stdout, stderr) = validate_both_streams(
+            "walking_filter_in_a_parameterized_rules_body.guard",
+            "single-map-binding-without-type-template.yaml",
+        );
+        assert_eq!(StatusCode::SUCCESS, status_code, "stdout {:?}", stdout);
+        assert!(
+            stdout.contains("FILTER_IN_A_PARAMETERIZED_RULES_BODY    PASS"),
+            "nothing is kept, `empty` passes inside the body and the caller passes; got {:?}",
+            stdout
+        );
+        let notices: Vec<&str> = stderr
+            .lines()
+            .filter(|l| l.contains("DEPRECATION"))
+            .collect();
+        assert_eq!(1, notices.len(), "got {:?}", notices);
+        assert!(
+            notices[0].contains(
+                "which the parameter `m` of rule `has_no_test_basic`, bound to `Resources.Metadata` held"
+            ) && notices[0].contains("/Resources/Metadata")
+                && !notices[0].contains("let m ="),
+            "the notice names the parameter, its rule and the call-site query, got {:?}",
+            notices[0]
         );
     }
 
@@ -16096,7 +16253,8 @@ mod validate_tests {
     /// whole, as `%b[*][ ... ]` does, the clause holds on it, and the bucket itself is selected, as the
     /// previous release selected it. The gate applies, the body fails on the missing Owner tag
     /// (exit 19), and nothing is announced: no selection was lost, so the grounding of a nested filter
-    /// inside the predicate has no notice to gate here.
+    /// inside the predicate has no notice to gate here. The rule comparing the selection's own `Type`
+    /// PASSes on its own, which a selection of a sub-map in the bucket's place would fail.
     #[test]
     fn a_filter_whose_clause_resolved_a_key_before_a_nested_filter_selects_the_bucket_itself() {
         let (status_code, stdout, stderr) = validate_both_streams(
@@ -16109,14 +16267,18 @@ mod validate_tests {
             "the gate opens on the selected bucket and the body fails; stdout {:?}",
             stdout
         );
-        assert!(
-            stdout.contains("BUCKET_HAS_AN_OWNER_TAG    FAIL"),
-            "the when gate applies once the filter selects the bucket, got {:?}",
+        assert_eq!(
+            (Some("PASS".to_string()), Some("FAIL".to_string())),
+            (
+                rule_status_line(&stdout, "BUCKET_IS_THE_SELECTION"),
+                rule_status_line(&stdout, "BUCKET_HAS_AN_OWNER_TAG")
+            ),
+            "the bucket itself is the selection (its own `Type` compares), and the tags rule fails; got {:?}",
             stdout
         );
         assert!(
             !stdout.contains("/Resources/Bucket/Type"),
-            "the body's comparison of the selection's own `Type` passes, since the bucket itself was \
+            "the comparison of the selection's own `Type` passes, since the bucket itself was \
              selected, so the report does not name it as failed; the tags clause is the failure, got {:?}",
             stdout
         );
@@ -16135,6 +16297,8 @@ mod validate_tests {
     /// does: the check holds on it (`Properties` resolves and `Tags` does not), the bucket is selected
     /// in the same place the previous release selected it, the `when` gate over the selection applies,
     /// and the body fails on the missing `Tags` (exit 19). Nothing is announced: no selection was lost.
+    /// The rule comparing the selection's own `Type` PASSes on its own, which a selection of a sub-map in
+    /// the bucket's place would fail.
     #[test]
     fn a_filter_through_a_named_map_whose_absence_check_held_on_the_map_selects_the_map_itself() {
         let (status_code, stdout, stderr) = validate_both_streams(
@@ -16147,14 +16311,18 @@ mod validate_tests {
             "the gate opens on the selected bucket and the body fails; stdout {:?}",
             stdout
         );
-        assert!(
-            stdout.contains("BUCKET_HAS_TAGS    FAIL"),
-            "the when gate applies once the filter selects the bucket, got {:?}",
+        assert_eq!(
+            (Some("PASS".to_string()), Some("FAIL".to_string())),
+            (
+                rule_status_line(&stdout, "BUCKET_IS_THE_SELECTION"),
+                rule_status_line(&stdout, "BUCKET_HAS_TAGS")
+            ),
+            "the bucket itself is the selection (its own `Type` compares), and the tags rule fails; got {:?}",
             stdout
         );
         assert!(
             !stdout.contains("/Resources/Bucket/Type"),
-            "the body's comparison of the selection's own `Type` passes, since the bucket itself was \
+            "the comparison of the selection's own `Type` passes, since the bucket itself was \
              selected, so the report does not name it as failed; the tags clause is the failure, got {:?}",
             stdout
         );
@@ -16405,7 +16573,7 @@ mod validate_tests {
         assert_eq!(
             StatusCode::SUCCESS,
             status_code,
-            "both files exit 0: the gate opens on the selected sub-maps"
+            "both files exit 0: the clause over the selected sub-maps passes"
         );
 
         let stderr = err_writer.err_to_stripped().expect("failed to read stderr");
@@ -16500,7 +16668,7 @@ mod validate_tests {
         assert_eq!(
             StatusCode::SUCCESS,
             status_code,
-            "both files exit 0 (the gate opens on the selected sub-maps):\n{}",
+            "both files exit 0 (the clause over the selected sub-maps passes):\n{}",
             stderr
         );
         let notices: Vec<&str> = stderr
@@ -16558,8 +16726,8 @@ mod validate_tests {
     /// reader of the run still learns that the second file hit the same site. The trailer says which
     /// kind of notice it refers to ("the filter notice") because one site can hold notices of two kinds.
     /// The filter is `testBasic !exists`; the maps it loses are the instances' `Metadata` maps, which
-    /// have no scalar entry and keep the walk. The gate opens on the sub-maps selected, so both files
-    /// exit 0.
+    /// have no scalar entry and keep the walk. The clause reads a key below the selection that the sub-maps
+    /// lack and the instance's map holds, so it passes over the sub-maps and both files exit 0.
     #[test]
     fn a_site_notice_is_written_once_across_data_files_in_the_single_line_output() {
         let (status_code, notices) = single_line_notices_across(
@@ -16572,7 +16740,7 @@ mod validate_tests {
         assert_eq!(
             StatusCode::SUCCESS,
             status_code,
-            "both files exit 0: the gate opens on the selected sub-maps"
+            "both files exit 0: the clause over the selected sub-maps passes"
         );
         let (trailers, lines): (Vec<&String>, Vec<&String>) =
             notices.iter().partition(|n| is_trailer(n));
@@ -16865,7 +17033,7 @@ mod validate_tests {
         assert_eq!(
             StatusCode::SUCCESS,
             status_code,
-            "both files exit 0: the gate opens on the selected sub-maps"
+            "both files exit 0: the clause over the selected sub-maps passes"
         );
         assert_eq!(
             1,
@@ -16906,7 +17074,7 @@ mod validate_tests {
         assert_eq!(
             StatusCode::SUCCESS,
             status_code,
-            "both files exit 0: each gate opens on the selected sub-maps"
+            "both files exit 0: each clause over the selected sub-maps passes"
         );
         let (trailers, lines): (Vec<&String>, Vec<&String>) =
             notices.iter().partition(|n| is_trailer(n));
@@ -16983,7 +17151,7 @@ mod validate_tests {
         assert_eq!(
             StatusCode::SUCCESS,
             status_code,
-            "both files exit 0: the gates open on the selected sub-maps"
+            "both files exit 0: the clauses over the selected sub-maps pass"
         );
         let (trailers, lines): (Vec<&String>, Vec<&String>) =
             notices.iter().partition(|n| is_trailer(n));
@@ -17180,7 +17348,7 @@ mod validate_tests {
         assert_eq!(
             StatusCode::SUCCESS,
             status_code,
-            "every file exits 0: each gate opens on the selected sub-maps"
+            "every file exits 0: each clause over the selected sub-maps passes"
         );
         let (trailers, lines): (Vec<&String>, Vec<&String>) =
             notices.iter().partition(|n| is_trailer(n));
@@ -17260,7 +17428,7 @@ mod validate_tests {
         assert_eq!(
             StatusCode::SUCCESS,
             status_code,
-            "every file exits 0: the gate opens on the selected sub-maps"
+            "every file exits 0: the clause over the selected sub-maps passes"
         );
         let (trailers, lines): (Vec<&String>, Vec<&String>) =
             notices.iter().partition(|n| is_trailer(n));
@@ -18593,8 +18761,9 @@ mod validate_tests {
     /// selects `Wrapper` and does not refuse the filter (the predicate holds by presence), so the
     /// variable keeps the release's reading rather than refusing. Before this, the slot took the
     /// literal's reading and the password check FAILed on `Wrapper`'s password, where the release was
-    /// not applicable. No notice: a mixed map is never walked through a variable. The collection twin,
-    /// the same resource with no `Type`, is the test below.
+    /// not applicable. The mixed map is never walked through a variable; one DEPRECATION line per filter
+    /// site (the `let carrying` and the rule) says the literal selects `Wrapper` where the variable reads
+    /// the resource. The collection twin, the same resource with no `Type`, is the test below.
     #[test]
     fn a_positive_predicate_through_a_binding_over_a_mixed_resource_tests_the_resource_itself() {
         let (status_code, stdout, stderr) = validate_both_streams(
@@ -18625,9 +18794,19 @@ mod validate_tests {
             "the Wrapper entry is not selected in the resource's place; got stdout {:?}",
             stdout
         );
+        let notices: Vec<&str> = stderr
+            .lines()
+            .filter(|l| l.contains("DEPRECATION"))
+            .collect();
         assert!(
-            !stderr.contains("DEPRECATION") && !stdout.contains("Could not be evaluated"),
-            "the mixed map is neither walked nor refused; got stderr {:?} stdout {:?}",
+            notices.len() == 2
+                && notices.iter().all(|notice| {
+                    notice.contains(
+                        "reads the map at /Resources/Only, which `let m = Resources.Only` held, as one object"
+                    ) && notice.contains("selects one of its entries in the map's place")
+                })
+                && !stdout.contains("Could not be evaluated"),
+            "the mixed map is neither walked nor refused, and one line per filter site (the `let carrying` and the rule) says the literal selects `Wrapper` where the variable reads the resource; got stderr {:?} stdout {:?}",
             stderr,
             stdout
         );
@@ -18635,12 +18814,15 @@ mod validate_tests {
 
     /// `docs/CLAUSES.md` says a positive predicate through a variable holding one map with no scalar
     /// entry holds on an entry that is itself a map carrying the key. `let m = Resources.Only` then
-    /// `%m[ Metadata."AWS::CloudFormation::Authentication" exists ]` on a map with no `Type` whose
-    /// `Wrapper` entry carries that path: a collection to the slot, so the walk stands, the `Wrapper`
-    /// map is selected in the map's place, and a `!exists` over the selection's passwords fails on the
-    /// one under `Wrapper`, naming its path, while the map's own `Metadata` and `Properties` entries are
-    /// rejected. No notice: the predicate does not hold on the map itself, so the map lost no selection,
-    /// and an entry selected because it carries what the predicate asks for is the documented reading.
+    /// `%m[ Metadata."AWS::CloudFormation::Authentication" exists ]` on a map with no `Type` and no
+    /// `Metadata` of its own whose `Wrapper` entry carries that path: a collection to the slot, so the
+    /// walk stands, the `Wrapper` map is selected in the map's place, and a `!exists` over the
+    /// selection's passwords fails on the one under `Wrapper`, naming its path, while the `Properties`
+    /// entry is rejected. No notice: the predicate does not hold on the map itself, so the map lost no
+    /// selection, and an entry selected because it carries what the predicate asks for is the documented
+    /// reading. A map that also held a `Metadata` of its own would hold the predicate's key itself and be
+    /// one object to the slot
+    /// (`a_filter_through_a_variable_over_an_own_key_a_member_also_holds_tests_the_map_as_one_object`).
     #[test]
     fn a_positive_predicate_through_a_binding_to_a_collection_selects_the_entry_carrying_the_key() {
         let (status_code, stdout, stderr) = validate_both_streams(

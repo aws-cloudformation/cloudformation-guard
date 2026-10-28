@@ -3,7 +3,10 @@
 # `Metadata` map holds itself, so the map is one object whether or not it holds a scalar entry: over
 # single-map-binding-with-password-template.yaml (a scalar `Type` beside the authentication block) and over
 # single-map-binding-without-type-template.yaml (the authentication block alone) the filter tests the map
-# as a whole, as `%b[*][ ... ]` does, selects it, and the rule FAILs on the password with no notice.
+# as a whole, selects it, and the rule FAILs on the password with no notice. Over the first template
+# `%b[*][ ... ]` reads the map the same way; over the second it runs its own-key enumeration instead and
+# refuses the filter (a map with no scalar entry whose own key the predicate names), so the two
+# spellings part there and the variable keeps the reading cfn-guard 3.2.1 gave it.
 #
 # The chain's notice, which names the `let` the author wrote for the filtered name (`let b = %a`), is
 # drawn by a filter that walks the entries and loses its selection: see

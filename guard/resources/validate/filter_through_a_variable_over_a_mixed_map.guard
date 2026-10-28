@@ -11,10 +11,11 @@
 #   `Inner` and compares `b`, PASS: the one spelling that parts from the release here.
 # - `.Name == 'a'`: the map's own `Name`, PASS (3.2.1 PASS).
 #
-# No notice is written for any site: a mixed map is never walked through a variable, so no selection
-# moves down. The literal does not refuse this filter (the predicate holds by presence, not by absence),
-# which is why the map is read as one object rather than refused; a mixed map the literal refuses
-# (`%c[ Owner !exists ]` over `{ Mode: fast, A: { Owner: o } }`) is refused through the variable too.
+# The literal does not refuse this filter (the predicate holds by presence, not by absence), which is why
+# the map is read as one object rather than refused; a mixed map the literal refuses (`%c[ Owner !exists ]`
+# over `{ Mode: fast, A: { Owner: o } }`) is refused through the variable too. Each site writes one
+# DEPRECATION line saying the two spellings disagree: the variable reads the map as one object where the
+# same filter on the map's own path selects one of its entries (`Inner`) in the map's place.
 #
 let p = Resources.B.Properties
 
@@ -31,6 +32,6 @@ rule ONE_OBJECT_NAME_IS_A {
 }
 
 # Over two-level-properties-template.yaml the verdicts are ONE_OBJECT_NAME_IS_A PASS, ONE_OBJECT_NAME_IS_B
-# FAIL and ONE_OBJECT_TAGS FAIL, with no notice; the test over this file asserts them and that the value
-# compared is the map's own `Name`, not `Inner`'s. The note sits after the rules so the rules' line
-# numbers stay where they were.
+# FAIL and ONE_OBJECT_TAGS FAIL, with one DEPRECATION line per filter site (three); the test over this file
+# asserts them and that the value compared is the map's own `Name`, not `Inner`'s. No test reads a line
+# number of this file.

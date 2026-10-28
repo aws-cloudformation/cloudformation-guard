@@ -5193,8 +5193,10 @@ mod test_command_tests {
     ///
     /// The filter is `testBasic !exists` over `Resources.*[ Metadata exists ].Metadata`. Each case's
     /// instance holds one authentication block, which carries the key and is no member, so the
-    /// instance's `Metadata` map loses its selection and is named. The role's map holds one sub-map
-    /// that lacks the key, so it is selected quietly and the `when` gate opens: both cases expect PASS.
+    /// instance's `Metadata` map loses its selection and is named. No other resource carries a `Metadata`
+    /// map, so the selection is empty and the key read below it is not applicable: both cases expect
+    /// SKIP, which an engine selecting the map whole (FAIL on the key it holds) or keeping the block
+    /// (PASS) would not meet.
     #[rstest]
     #[case("")]
     #[case("json")]
@@ -5222,7 +5224,7 @@ mod test_command_tests {
 
         let (status_code, _) = run(output);
         let (_, err_writer) = run(output);
-        assert_eq!(StatusCode::SUCCESS, status_code, "both cases expect PASS");
+        assert_eq!(StatusCode::SUCCESS, status_code, "both cases expect SKIP");
 
         let stderr = err_writer.err_to_stripped().expect("failed to read stderr");
         let notices: Vec<&str> = stderr
@@ -5331,9 +5333,9 @@ mod test_command_tests {
     /// rules file filters `Resources.*[ Metadata exists ].Metadata` through a variable with
     /// `testBasic !exists`. The maps have no scalar entry and the predicate names no key a map holds
     /// itself, so the filter keeps the walk: the authentication block carries `testBasic` and is no
-    /// member, and the selection the predicate held on the map by absence is lost. The role's map
-    /// holds one sub-map that lacks the key, which is selected, so the `when` gate opens and both
-    /// cases expect PASS, which is the verdict the engine gives, so the command succeeds. The rules
+    /// member, and the selection the predicate held on the map by absence is lost. No other resource
+    /// carries a `Metadata` map, so the selection is empty, the key read below it is not applicable,
+    /// and both cases expect SKIP, which is the verdict the engine gives, so the command succeeds. The rules
     /// file is evaluated once per case and the same filter loses a selection each time, so two
     /// notices are produced and collapsed to one before they are written. Not on stdout, where the
     /// report that consumers parse lives; the JSON report has to parse with the notice beside it.
@@ -5372,7 +5374,7 @@ mod test_command_tests {
         assert_eq!(
             StatusCode::SUCCESS,
             status_code,
-            "both cases expect PASS and the notice must not move that"
+            "both cases expect SKIP and the notice must not move that"
         );
 
         let stdout = out_writer.stripped().expect("failed to read stdout");

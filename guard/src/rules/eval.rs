@@ -7888,8 +7888,9 @@ fn judged_binary_operation<'value, 'loc: 'value>(
         // so the engine's is read back from the evidence (`own_reason`); the token stays the refusal's,
         // so the record is flagged by the bit. Not inside a predicate, where the raised text becomes the
         // entry's marker reason and every part of it has to be a registered refusal. The `refused_reads`
-        // guard (the engine's own reason leads only beside a refused read) has no test of its own yet:
-        // with it removed, every lib test holds, so the no-refusal case is unpinned.
+        // guard (the engine's own reason leads only beside a refused read) is pinned by
+        // `a_gate_raised_beside_no_refused_read_names_the_first_recorded_reason`: beside a key filter's
+        // plain marker and no refusal, the raise keeps the first reason recorded, the marker's.
         let reason = match own_reason {
             Some(own) if !a_predicates_text && own != reason && !refused_reads.is_empty() => own,
             _ => reason,

@@ -7,10 +7,11 @@
 #
 # Each instance's `Metadata` holds only a map-valued entry, so it has no scalar entry, and `testBasic` is
 # not a key the map holds itself: the filter through the variable keeps the walk. The authentication
-# block carries `testBasic` and is no member, nothing is kept from that map, and the notice goes out.
-# The role's `Metadata` holds one sub-map that lacks the key; it is selected, so the `when` gate opens
-# and the rule's body `%blocks !empty` passes. A `Metadata` map with a scalar entry is one object and is
-# tested as a whole instead, which draws no notice.
+# block carries `testBasic` and is no member, so nothing is kept from the map and the notice goes out. No
+# other resource carries a `Metadata` map, so the selection is empty and the key read below it is not
+# applicable: both cases expect SKIP. An engine that read the instance's map as one object would select
+# it (the map lacks `testBasic`) and FAIL on the key it holds; one that kept the authentication block
+# would PASS on the key the block lacks; neither meets SKIP.
 ###
 ---
 - name: Instance named EC2A
@@ -20,11 +21,6 @@
         Type: "AWS::IAM::Role"
         Properties:
           Path: "/"
-        Metadata:
-          cfn_nag:
-            rules_to_suppress:
-              - id: W11
-                reason: "the role is scoped by its trust policy"
       EC2A:
         Type: "AWS::EC2::Instance"
         Properties:
@@ -38,7 +34,7 @@
               password: "sensitive_password"
   expectations:
     rules:
-      FILTER_THROUGH_A_METADATA_PROJECTION: PASS
+      FILTER_THROUGH_A_METADATA_PROJECTION: SKIP
 
 - name: Instance named EC2B
   input:
@@ -47,11 +43,6 @@
         Type: "AWS::IAM::Role"
         Properties:
           Path: "/"
-        Metadata:
-          cfn_nag:
-            rules_to_suppress:
-              - id: W11
-                reason: "the role is scoped by its trust policy"
       EC2B:
         Type: "AWS::EC2::Instance"
         Properties:
@@ -65,4 +56,4 @@
               password: "sensitive_password"
   expectations:
     rules:
-      FILTER_THROUGH_A_METADATA_PROJECTION: PASS
+      FILTER_THROUGH_A_METADATA_PROJECTION: SKIP

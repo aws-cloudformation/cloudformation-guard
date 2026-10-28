@@ -36,13 +36,19 @@ of the document (`Path=[L:0,C:0]`), `Resources.*.Properties.Tags[*][ Key == 'Env
 `Resources.*.Properties.PolicyDocument.Statement[*][ ... ]` of the resource (`Path=/Resources/F`,
 `Path=/Resources/P`). Over a map, `.*` followed by a filter enumerated the map's entries and tested each.
 A filter through a variable, `%r[ ... ]` with `let r = Resources`, tested the bound map as one value
-(`Path=/Resources`). The engine now reads each of these shapes by the map's shape: a filter straight after
-`[*]`, and `.*` then a filter, enumerate the members or the list's elements, read a map with a non-null scalar
-entry as one object, and refuse at exit 19 a map that mixes a scalar entry with members holding a key the
-predicate names (a string entry beside the resources); a filter through a variable reads the map the variable
-holds by the same classification, with two readings of its own: a map with no scalar entry whose own key the
-predicate names is one object (the released reading), and a mixed map takes the literal path's reading, refused
-where the literal is. So a variable holding a map of scalars is tested as one object (the
+(`Path=/Resources`). The engine now reads each of these shapes by the map's shape. A filter straight after
+`[*]` enumerates the members or the list's elements, reads a map with a non-null scalar entry as one object,
+and refuses at exit 19 a map that mixes a scalar entry with members holding a key the predicate names (a
+string entry beside the resources). `.*` then a filter enumerates the members or the elements and passes a
+scalar entry over; it neither reads a scalar-bearing map as one object nor refuses a mixed map (rows 96 and
+97 below: `[*]` FAIL and `.*` PASS over `bucket_beside_a_string_entry.yaml`). A filter through a variable
+reads the map the variable holds by the `[*]` classification, with readings of its own, each the
+released evaluator's: a map with no scalar entry that holds a key the predicate names is one object, alone,
+beside a member that holds the key too, or where the key is the name of a member among members sharing a
+key; a map holding one member map that lacks the key an absence predicate names is one object; and a
+mixed map is one object unless the literal path refuses the filter over it, when it is refused the same
+way (where the literal keeps an entry instead, one DEPRECATION line per filter site says the two spellings
+disagree). So a variable holding a map of scalars is tested as one object (the
 `tags_absent_not_empty_through_a_variable_bound_to_properties.guard` row) and a variable holding a scalar beside a
 sub-map that carries the checked key is refused (the `tag_specifications_absent_gate_through_a_variable.guard`
 row). Map-shaped tags under a predicate that reads only `Key` and `Value`
@@ -172,10 +178,12 @@ through the variable tests the map itself, as `%p[*][ Tags !exists ]` does, and 
 `LaunchTemplateData` sub-map that carries `TagSpecifications`, the key the predicate names, so the map is mixed and
 the filter through the variable is refused, as the literal `Properties[ TagSpecifications !exists ]` is. The
 `3.2.1` cells of those two rows were read on the installed 3.2.1 release binary (`cfn-guard 3.2.1`), not on a
-binary built from the tag; the other release cells were not re-read. A release column reading "not run" marks
-a cell the released binaries were never run over: the three documents added for the current engine
-(`bucket_without_a_bucket_name.yaml`, `scalar_properties_without_tags.yaml`,
-`launch_template_with_tag_specifications.yaml`) and the one rule added for it,
+binary built from the tag; the other release cells were not re-read. Those two `3.2.1` cells are measurements
+of the installed binary, and the docs cite them as such. A release column reading "not run" marks
+a cell the released binaries were never run over: the documents added for the current engine
+(`bucket_without_a_bucket_name.yaml`; `scalar_properties_without_tags.yaml` and
+`launch_template_with_tag_specifications.yaml` in every column but the `3.2.1` cell of the two rows above) and
+the one rule added for it,
 `tags_absent_not_empty_after_the_key.guard`, over the two null documents, the two held-key cells
 (`type_or_name_not_empty_after_star.guard` and `type_is_bucket_not_empty_after_star.guard` over
 `bucket_with_rules_members.yaml`, a predicate that held on the bucket through its own `Type`, which the `Rules`
@@ -184,9 +192,9 @@ documented one-object cells (`description_absent_empty_after_star.guard` over th
 `type_tag_not_empty_after_star.guard` over the list-shaped tags and over its map-shaped sibling), which pin
 the reading the list form keeps beside the map form, and `assume_role_document_gate_after_star.guard` over one
 role and over two, the projecting binding's `[*]` over a map of Properties maps (the spelling
-docs/KNOWN_ISSUES.md item 15 documents; `two_roles.yaml` is a map of two roles, not a list); what the releases drew there is
-stated in the docs as an inference from the mechanism the trees show on the other cells, never as a
-measurement. The `.*` cells
+docs/KNOWN_ISSUES.md item 15 documents; `two_roles.yaml` is a map of two roles, not a list); what the releases drew on a
+"not run" cell is stated in the docs as an inference from the mechanism the trees show on the other
+cells, never as a measurement. The `.*` cells
 over `bucket_beside_a_string_entry.yaml` and over the one-object statement read `FAIL, panic 101` and
 `PASS` in the releases for different reasons than the documents that look like them: the trees for those
 two cells are what the CLAUSES sentences cite.

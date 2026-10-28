@@ -3760,8 +3760,11 @@ fn a_quiet_bound_map_filter_site_is_read_once_and_never_re_walked() -> Result<()
 /// (the fifth row pins that, with the rule's status: the spec is selected and the clause passes). The
 /// second spec keeps its scalar and is mixed: its sub-maps hold the key, so the slot refuses the filter
 /// where the literal does and tests the spec as one object otherwise, and the notice returns for it at
-/// the same classification, with the same zero cost. The filter sits inside a type block that matches twelve buckets, so the clause is
-/// evaluated twelve times. The predicates:
+/// the same classification, with the same zero cost; what the slot itself pays on a mixed map is the
+/// quiet run of the literal filter that decides whether it refuses (`the_literal_reading`), once per
+/// evaluation, counted apart as the fifth count (`LITERAL_READING_CHECKS`: twelve for the two mixed rows,
+/// none for every other shape). The filter sits inside a type block that matches twelve buckets, so the
+/// clause is evaluated twelve times. The predicates:
 /// - `%s[ securityContext exists ] empty` does not hold on the object and can hold on no field of it
 ///   either, since `exists` never holds by absence, so nothing can have been gained: the probe stops it
 ///   before the object test, no entry is read, no re-walk is paid, and the quiet verdict is recorded
@@ -3774,16 +3777,18 @@ fn a_quiet_bound_map_filter_site_is_read_once_and_never_re_walked() -> Result<()
 /// - `%s[ securityContext !exists ] empty` over a `spec` that carries a `securityContext` and whose
 ///   map-valued fields each carry one too, with a scalar `replicas` beside them: a mixed map, refused
 ///   where the literal is and one object otherwise. The notice returns at the classification, so
-///   nothing is probed, re-walked or announced on any of the twelve evaluations: (0, 0, 0, 0).
+///   nothing is probed, re-walked or announced on any of the twelve evaluations, and the literal filter
+///   is run quietly once per evaluation: (0, 0, 0, 0, 12).
 /// - `%s[ securityContext !exists ] !empty` over a `spec` of `replicas`, `selector` and `template`, no
-///   sub-map holding the key: one object, tested whole and selected (the rule PASSes), and the same
-///   (0, 0, 0, 0).
+///   sub-map holding the key: one object, tested whole and selected (the rule PASSes), and
+///   (0, 0, 0, 0, 0): a one-object map never asks the literal.
 /// - `%s[ securityContext !exists ] !empty` over the first `spec`, held by absence on the object and
 ///   announced as a lost selection: one probe, one re-walk, one notice, the control, as before.
 #[test]
 fn an_object_the_predicate_did_not_hold_on_is_re_walked_once_or_not_at_all() -> Result<()> {
     use crate::rules::eval_context::{
         BOUND_MAP_ENTRY_PROBES, BOUND_MAP_FILTER_PROBES, BOUND_MAP_FILTER_REWALKS,
+        LITERAL_READING_CHECKS,
     };
 
     let mut buckets = String::from("Resources:\n");
@@ -3804,57 +3809,58 @@ fn an_object_the_predicate_did_not_hold_on_is_re_walked_once_or_not_at_all() -> 
         "{buckets}spec:\n  replicas: 3\n  selector:\n    matchLabels:\n      app: a\n  template:\n    \
          metadata:\n      labels:\n        app: a\n"
     );
-    // (probes, re-walks, entry probes, notices) over the twelve evaluations, and the rule's status where
-    // the row's silence is a selection (`None` where only the counts are the row's point).
-    type Counts = (usize, usize, usize, usize);
+    // (probes, re-walks, entry probes, notices, quiet runs of the literal filter) over the twelve
+    // evaluations, and the rule's status where the row's silence is a selection (`None` where only the
+    // counts are the row's point).
+    type Counts = (usize, usize, usize, usize, usize);
     let rows: [(&str, &str, &str, Counts, Option<Status>); 7] = [
         (
             "a positive predicate that did not hold on the object: one probe, no re-walk, then the recorded quiet verdict on the other eleven evaluations",
             &object,
             "let s = spec\nrule r { AWS::S3::Bucket { %s[ securityContext exists ] empty } }",
-            (1, 0, 0, 0),
+            (1, 0, 0, 0, 0),
             None,
         ),
         (
             "an absence check spelled with a leading `not`, held on the object: announced once as a lost selection, as the `!exists` spelling is",
             &object,
             "let s = spec\nrule r { AWS::S3::Bucket { %s[ not securityContext exists ] !empty } }",
-            (1, 1, 0, 1),
+            (1, 1, 0, 1, 0),
             None,
         ),
         (
-            "the `not` spelling over a mixed spec (a scalar beside sub-maps that hold the key): classified before any probe, nothing probed, re-walked or announced",
+            "the `not` spelling over a mixed spec (a scalar beside sub-maps that hold the key): classified before any probe, nothing probed, re-walked or announced; the literal filter is run quietly once per evaluation",
             &carrying,
             "let s = spec\nrule r { AWS::S3::Bucket { %s[ not securityContext exists ] empty } }",
-            (0, 0, 0, 0),
+            (0, 0, 0, 0, 12),
             None,
         ),
         (
-            "an absence check over the same mixed spec: classified before any probe, nothing probed, re-walked or announced",
+            "an absence check over the same mixed spec: classified before any probe, nothing probed, re-walked or announced; the literal filter is run quietly once per evaluation",
             &carrying,
             "let s = spec\nrule r { AWS::S3::Bucket { %s[ securityContext !exists ] empty } }",
-            (0, 0, 0, 0),
+            (0, 0, 0, 0, 12),
             None,
         ),
         (
-            "an absence check over a one-object spec (a scalar `replicas` beside sub-maps none of which holds the key): tested whole and selected, the rule passes, nothing probed, re-walked or announced",
+            "an absence check over a one-object spec (a scalar `replicas` beside sub-maps none of which holds the key): tested whole and selected, the rule passes, nothing probed, re-walked or announced, the literal never asked",
             &one_object,
             "let s = spec\nrule r { AWS::S3::Bucket { %s[ securityContext !exists ] !empty } }",
-            (0, 0, 0, 0),
+            (0, 0, 0, 0, 0),
             Some(Status::PASS),
         ),
         (
             "the control: an absence check held on the object, announced once as a lost selection",
             &object,
             "let s = spec\nrule r { AWS::S3::Bucket { %s[ securityContext !exists ] !empty } }",
-            (1, 1, 0, 1),
+            (1, 1, 0, 1, 0),
             None,
         ),
         (
             "the common idiom over a collection, `%r[ Type == 'AWS::S3::Bucket' ]` with `let r = Resources`, inside the type block: one probe, then the recorded quiet verdict on the other eleven evaluations",
             &object,
             "let r = Resources\nrule r { AWS::S3::Bucket { %r[ Type == 'AWS::S3::Bucket' ] !empty } }",
-            (1, 0, 0, 0),
+            (1, 0, 0, 0, 0),
             None,
         ),
     ];
@@ -3862,6 +3868,7 @@ fn an_object_the_predicate_did_not_hold_on_is_re_walked_once_or_not_at_all() -> 
         BOUND_MAP_FILTER_PROBES.with(|probes| probes.set(0));
         BOUND_MAP_FILTER_REWALKS.with(|rewalks| rewalks.set(0));
         BOUND_MAP_ENTRY_PROBES.with(|probes| probes.set(0));
+        LITERAL_READING_CHECKS.with(|checks| checks.set(0));
         let rules_file = RulesFile::try_from(rules)?;
         let value =
             PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(doc).unwrap())?;
@@ -3873,11 +3880,12 @@ fn an_object_the_predicate_did_not_hold_on_is_re_walked_once_or_not_at_all() -> 
         let probes = BOUND_MAP_FILTER_PROBES.with(|probes| probes.get());
         let rewalks = BOUND_MAP_FILTER_REWALKS.with(|rewalks| rewalks.get());
         let entry_probes = BOUND_MAP_ENTRY_PROBES.with(|probes| probes.get());
+        let literal_checks = LITERAL_READING_CHECKS.with(|checks| checks.get());
         let notices = scope.deprecations().count();
         assert_eq!(
-            (probes, rewalks, entry_probes, notices),
+            (probes, rewalks, entry_probes, notices, literal_checks),
             expected,
-            "{label}: (probes, re-walks, entry probes, notices) over twelve evaluations"
+            "{label}: (probes, re-walks, entry probes, notices, quiet literal runs) over twelve evaluations"
         );
     }
     Ok(())
@@ -3885,21 +3893,22 @@ fn an_object_the_predicate_did_not_hold_on_is_re_walked_once_or_not_at_all() -> 
 
 /// A binding that holds several maps pays one probe per map, not one per map per evaluation.
 ///
-/// `let props = Resources.*[ Type exists ].Properties` holds three properties maps, each a single
-/// `BucketEncryption` sub-map on which `Tags !exists` holds vacuously: three uniform collections, each
-/// quiet. The clause sits in a type block over the same three buckets, so it is evaluated three times
-/// and the walk reaches every map on each. The quiet verdict is recorded per map at the site, so the
-/// first evaluation probes the three maps and reads their one entry each, and the two evaluations after
-/// it find every map recorded: three probes and three entry reads for nine map visits, no re-walk, and
-/// nothing announced. Recorded by the site alone the first map would have silenced the other two;
-/// recorded by nothing, every evaluation would pay the three probes again (nine).
+/// `let props = Resources.*[ Type exists ].Properties` holds three properties maps, each two sub-maps
+/// sharing `Status` on which `Tags !exists` holds vacuously: three uniform collections, each quiet. (A
+/// properties map holding ONE sub-map is one object to the slot after `%props`, `a_lone_member_map`, and
+/// is never probed.) The clause sits in a type block over the same three buckets, so it is evaluated
+/// three times and the walk reaches every map on each. The quiet verdict is recorded per map at the site,
+/// so the first evaluation probes the three maps and reads their two entries each, and the two
+/// evaluations after it find every map recorded: three probes and six entry reads for nine map visits,
+/// no re-walk, and nothing announced. Recorded by the site alone the first map would have silenced the
+/// other two; recorded by nothing, every evaluation would pay the three probes again (nine).
 #[test]
 fn a_quiet_multi_map_binding_is_read_once_per_map_and_never_per_evaluation() -> Result<()> {
     use crate::rules::eval_context::{
         BOUND_MAP_ENTRY_PROBES, BOUND_MAP_FILTER_PROBES, BOUND_MAP_FILTER_REWALKS,
     };
 
-    const ENCRYPTED: &str = "    Properties:\n      BucketEncryption:\n        ServerSideEncryptionConfiguration:\n          - ServerSideEncryptionByDefault:\n              SSEAlgorithm: AES256\n";
+    const ENCRYPTED: &str = "    Properties:\n      VersioningConfiguration:\n        Status: Enabled\n      AccelerateConfiguration:\n        Status: Enabled\n";
     let template = format!(
         "Resources:\n  b1:\n    Type: AWS::S3::Bucket\n{ENCRYPTED}  b2:\n    Type: AWS::S3::Bucket\n{ENCRYPTED}  b3:\n    Type: AWS::S3::Bucket\n{ENCRYPTED}"
     );
@@ -3922,7 +3931,7 @@ fn a_quiet_multi_map_binding_is_read_once_per_map_and_never_per_evaluation() -> 
     assert_eq!(
         Status::PASS,
         status,
-        "no properties map carries Tags, so the selection is each properties map's `BucketEncryption` entry, three in each evaluation"
+        "no properties map carries Tags, so the selection is each properties map's two sub-maps, six in each evaluation"
     );
     assert!(
         notices.is_empty(),
@@ -3931,8 +3940,8 @@ fn a_quiet_multi_map_binding_is_read_once_per_map_and_never_per_evaluation() -> 
     );
     assert_eq!(
         (probes, entry_probes, rewalks),
-        (3, 3, 0),
-        "one probe and one entry read per map on the first evaluation, then every map's recorded quiet \
+        (3, 6, 0),
+        "one probe and two entry reads per map on the first evaluation, then every map's recorded quiet \
          verdict spares it on the two evaluations after; nine visits, three probes"
     );
     Ok(())
