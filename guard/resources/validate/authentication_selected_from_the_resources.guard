@@ -1,0 +1,10 @@
+#
+# The second rewrite docs/CLAUSES.md gives: bind a collection and filter that. Every resource that
+# carries the block is selected, whatever its type or logical id (the filter has no Type clause, so a
+# launch configuration carrying the block is checked beside the instances): FAIL when any selected
+# block holds a password, PASS when none does. No notice: the filter is on a literal path.
+#
+let auth = Resources.*[ Metadata."AWS::CloudFormation::Authentication" exists ]
+rule authentication_has_no_password when %auth !empty {
+    %auth.Metadata."AWS::CloudFormation::Authentication".*.password !exists
+}

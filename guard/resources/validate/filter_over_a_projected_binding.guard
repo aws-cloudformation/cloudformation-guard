@@ -1,0 +1,57 @@
+# The two bindings below hold the same map. `direct` reaches it by plain key descent; `projected`
+# reaches the isomorphic copy through a wildcard and a filter and then descends the same last key.
+# Neither fact about how they were written changes what either variable HOLDS, so the two rules --
+# identical apart from the variable each reads -- have to reach the same verdict.
+#
+# They did not. `query_projects` answered `true` for `projected` because *some* part of its query
+# projected, which consumed the slot `access_query` reserves in a variable-rooted query and left the
+# filter testing the whole `Nested` map as one subject instead of its entries. The predicate matched
+# nothing, an assertion over an empty selection is not applicable, and so the projected spelling
+# reported SKIP at exit 0 on the violation the direct spelling reported at exit 19.
+#
+# Both rules are asserted, and by the path each names, so that a fix cannot satisfy this fixture by
+# silencing the side that already worked.
+let direct = Outer.Nested
+let projected = Wrapper.*[ Marker == 'selected' ].Nested
+
+rule filter_over_a_direct_binding {
+    %direct[ Type == 'Match' ].Value == 'no-such-value-zzz'
+}
+
+rule filter_over_a_projected_binding {
+    %projected[ Type == 'Match' ].Value == 'no-such-value-zzz'
+}
+
+# The same shape over a map whose entries are SCALARS, which needs its own pair because the two
+# spellings once disagreed in the opposite direction from the pair above.
+#
+# `Config` is `{ Status: Enabled }`. Two facts differ from `Nested` and both matter. A scalar entry is
+# not a member a filter over the map's entries selects among. And `Status` IS a key of `Config`, so
+# the predicate holds when the whole map is tested as one subject.
+#
+# A map whose entries are all scalars is one object. The filter tests the map itself, `Status ==
+# 'Enabled'` holds on it, and the map is the selection, under both spellings, as it is under the
+# author's own `[*]` (the control rule below). Nothing is refused and nothing is announced: the body
+# `.Status == 'no-such-value-zzz'` is a plain comparison against the value "Enabled", so each rule
+# FAILs on that comparison at the key's own path, not on a retrieval error. The literal
+# `Outer.Config[ Status == 'Enabled' ]` is the one spelling that stays refused for its own key.
+#
+# What is asserted is agreement across the three spellings: `%direct_scalars` and
+# `%projected_scalars` hold the same map, so they have to reach the same verdict at the same path as
+# `[*]` does.
+let direct_scalars = Outer.Config
+let projected_scalars = Wrapper.*[ Marker == 'selected' ].Config
+
+rule filter_over_a_direct_scalar_entry_binding {
+    %direct_scalars[ Status == 'Enabled' ].Status == 'no-such-value-zzz'
+}
+
+rule filter_over_a_projected_scalar_entry_binding {
+    %projected_scalars[ Status == 'Enabled' ].Status == 'no-such-value-zzz'
+}
+
+# The author's own `[*]` over the same map: the one-object map is handed on and selected, and the
+# body compares its `Status`. This is the reading the two rules above have to agree with.
+rule control_star_spelling {
+    %direct_scalars[*][ Status == 'Enabled' ].Status == 'no-such-value-zzz'
+}

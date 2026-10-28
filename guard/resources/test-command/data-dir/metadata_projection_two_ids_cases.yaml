@@ -1,0 +1,72 @@
+###
+# Two cases over `resources/validate/filter_through_a_metadata_projection.guard`, each with one
+# instance carrying an authentication block under its `Metadata`, under a DIFFERENT logical id. The
+# filter, `testBasic !exists`, loses its selection in both, so the notice it raises names a different
+# map each time (`/Resources/EC2A/Metadata`, `/Resources/EC2B/Metadata`). One filter site, so one line:
+# the test command keeps the once-per-site reading across cases by site, not by text.
+#
+# The binding holds two maps, the role's and the instance's, neither with a scalar entry. The role's
+# `Metadata` holds one sub-map (`cfn_nag`) that lacks `testBasic`: a map holding one member map that lacks
+# the key an absence predicate names is one object through a variable, so the role's map is selected
+# whole and never walked, with no notice. The instance's `Metadata` holds one sub-map that CARRIES the
+# key, so it is a collection to the slot: the walk keeps nothing from it (the authentication block carries
+# `testBasic`) and the notice goes out. The selection is the role's map, which has no
+# `AWS::CloudFormation::Authentication` entry, so the key read below it passes: both cases expect PASS.
+# cfn-guard 3.2.1 selected both maps whole and FAILED on the instance's block (observed on its binary over
+# the same resources); an engine that kept the authentication block in the instance's map's place would
+# FAIL on the key the block carries; neither meets PASS.
+###
+---
+- name: Instance named EC2A
+  input:
+    Resources:
+      Role:
+        Type: "AWS::IAM::Role"
+        Properties:
+          Path: "/"
+        Metadata:
+          cfn_nag:
+            rules_to_suppress:
+              - id: W11
+                reason: "the role is scoped by its trust policy"
+      EC2A:
+        Type: "AWS::EC2::Instance"
+        Properties:
+          ImageId: "ami-6df1e514"
+          InstanceType: "t2.micro"
+        Metadata:
+          AWS::CloudFormation::Authentication:
+            testBasic:
+              type: "basic"
+              username: "testUsername1"
+              password: "sensitive_password"
+  expectations:
+    rules:
+      FILTER_THROUGH_A_METADATA_PROJECTION: PASS
+
+- name: Instance named EC2B
+  input:
+    Resources:
+      Role:
+        Type: "AWS::IAM::Role"
+        Properties:
+          Path: "/"
+        Metadata:
+          cfn_nag:
+            rules_to_suppress:
+              - id: W11
+                reason: "the role is scoped by its trust policy"
+      EC2B:
+        Type: "AWS::EC2::Instance"
+        Properties:
+          ImageId: "ami-6df1e514"
+          InstanceType: "t2.micro"
+        Metadata:
+          AWS::CloudFormation::Authentication:
+            testBasic:
+              type: "basic"
+              username: "testUsername1"
+              password: "sensitive_password"
+  expectations:
+    rules:
+      FILTER_THROUGH_A_METADATA_PROJECTION: PASS

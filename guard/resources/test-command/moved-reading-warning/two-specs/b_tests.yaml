@@ -1,0 +1,21 @@
+# The other of two spec files run together over `rules.guard`: one case, two maps. Its line carries the
+# count and names this file and this case, and is not swallowed by the first file's line for the same
+# call.
+- name: two maps in file b
+  input:
+    Resources:
+      First:
+        Wanted: beta
+        Map:
+          Wanted: alpha
+          alpha: 1
+          beta: 2
+      Second:
+        Wanted: gamma
+        Map:
+          Wanted: alpha
+          alpha: 1
+          gamma: 2
+  expectations:
+    rules:
+      func_key_per_resource: PASS

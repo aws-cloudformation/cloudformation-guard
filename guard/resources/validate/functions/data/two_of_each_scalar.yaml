@@ -1,0 +1,15 @@
+Resources:
+  R1:
+    Type: X
+    Properties:
+      Name: abcdefgh
+      End: 3
+      Delim: "-"
+      Pattern: abc
+  R2:
+    Type: X
+    Properties:
+      Name: abcdefgh
+      End: 8
+      Delim: "+"
+      Pattern: fgh

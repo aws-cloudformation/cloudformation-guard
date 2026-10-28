@@ -1,0 +1,4 @@
+# One call, two arguments, two maps: `Wanted` moved on the first map and `Pattern` on the second. Each
+# argument's line names the map it moved on and counts no other, because the other map did not move
+# for that argument.
+rule func_key_mixed_arguments { Resources.*.Map[ keys == regex_replace(Wanted, Pattern, 'a') ] == 1 }

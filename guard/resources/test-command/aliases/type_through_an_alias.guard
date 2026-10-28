@@ -1,0 +1,6 @@
+#
+# One rule over a resource's type, for the spec that writes the type once under an anchor and reaches
+# it through an alias. The same document is a template `validate` reads and data the library entry
+# point reads, and all three resolve the alias the same way.
+#
+rule a_type_is_x { Resources.A.Type == "X" }

@@ -1,0 +1,22 @@
+#
+# Two filters whose predicates reach outside the map they filter: one names another rule, one names a
+# variable. The probe that decides whether the previous release's reading would have selected the map
+# re-runs the predicate against the map through a scope that records nothing -- but a named rule or a
+# variable first resolved there would be evaluated by the root scope, with its events and its own
+# notices, so the probe is skipped for these predicates and no notice goes out, whatever the predicate
+# would have said. The named rule is therefore evaluated exactly once, at the top level.
+#
+let m = Outer.Config
+let wanted = Outer.Config.Status
+
+rule inner {
+  Outer.Config.Status == 'Enabled'
+}
+
+rule FILTER_PREDICATE_NAMING_A_RULE {
+  %m[ inner ].Status == 'no-such-value-zzz'
+}
+
+rule FILTER_PREDICATE_NAMING_A_VARIABLE {
+  %m[ Status == %wanted ].Status == 'no-such-value-zzz'
+}

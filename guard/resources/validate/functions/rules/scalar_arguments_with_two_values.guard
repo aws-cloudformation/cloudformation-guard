@@ -1,0 +1,26 @@
+#
+# Each scalar argument (a bound, a delimiter, a pattern) is bound to a query that selects two values.
+#
+# There is no one answer to "substring up to %ends" when %ends is [3, 8]. The functions used to take
+# the first value and say nothing about the second, so each rule below passed with the answer for R1
+# alone. Every call is refused instead, naming the argument and how many values it resolved to.
+#
+let ends = Resources.*.Properties.End
+let delims = Resources.*.Properties.Delim
+let patterns = Resources.*.Properties.Pattern
+let name = Resources.R1.Properties.Name
+let names = Resources.*.Properties.Name
+
+let sub = substring(%name, 0, %ends)
+let joined = join(%names, %delims)
+let replaced = regex_replace(%name, %patterns, "X")
+
+rule SUBSTRING_WITH_TWO_ENDS {
+    %sub == "abc"
+}
+rule JOIN_WITH_TWO_DELIMITERS {
+    %joined == "abcdefgh-abcdefgh"
+}
+rule REGEX_REPLACE_WITH_TWO_PATTERNS {
+    %replaced == "Xdefgh"
+}

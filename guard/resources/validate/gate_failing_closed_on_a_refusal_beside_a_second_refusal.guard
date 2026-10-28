@@ -1,0 +1,20 @@
+# The gate bodies read the compared entry of every `Tags` and compare its `Value`; no body raises a plain
+# error. Over a template where two resources hold a one-object `Tags` with an intrinsic beside the compared
+# entry (a refused selection each), the error that decides the gate is a REFUSAL, and the other refusal is
+# settled beside it, so each gated rule's sentence has a refusal head with a second refusal joined to it.
+# The parameter `p` is unused on purpose: a parameterized rule is run only where a rule calls it, so these
+# two bodies are evaluated as the gate of the rules below and not on their own.
+rule gate_some(p) {
+  some Resources.*.Tags[*][ Key == 'Env' ] {
+    Value == 'prod'
+  }
+}
+
+rule gate_all(p) {
+  Resources.*.Tags[*][ Key == 'Env' ] {
+    Value == 'prod'
+  }
+}
+
+rule opened_by_some when gate_some(1) { Resources exists }
+rule opened_by_all when gate_all(1) { Resources exists }

@@ -99,10 +99,31 @@ impl Display for ValueOnlyDisplay {
     }
 }
 
+/// The `Path=<path> Value=<value>` shape a value quoted from the template takes in a report's
+/// sentence, written from its two parts already rendered: the ONE writer of the shape, so the unbounded
+/// rendering (`PathAwareValue`'s `Display`, through [`write_path_and_value`]) and the bounded one a
+/// refusal's sentence takes (`eval_context::bounded_value_for_refusal`, each part cut and escaped on its
+/// own through `template_path` and `template_part`) cannot part; the cells over
+/// `bounded_value_for_refusal` in `eval_context_tests.rs` read the bounded form against the unbounded.
+pub(crate) struct PathAndValue<P: Display, V: Display>(pub(crate) P, pub(crate) V);
+
+impl<P: Display, V: Display> Display for PathAndValue<P, V> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.write_fmt(format_args!("Path={} Value={}", self.0, self.1))
+    }
+}
+
+/// The unbounded `Path=<path> Value=<value>` rendering of a value: `PathAwareValue`'s `Display` below.
+pub(crate) fn write_path_and_value(
+    f: &mut Formatter<'_>,
+    value: &PathAwareValue,
+) -> std::fmt::Result {
+    PathAndValue(value.self_path(), ValueOnlyDisplay(Rc::new(value.clone()))).fmt(f)
+}
+
 impl std::fmt::Display for PathAwareValue {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        f.write_fmt(format_args!("Path={} Value=", self.self_path()))?;
-        ValueOnlyDisplay(Rc::new(self.clone())).fmt(f)
+        write_path_and_value(f, self)
     }
 }
 
@@ -135,11 +156,11 @@ impl<'value> std::fmt::Display for ClauseCheck<'value> {
                 ))?;
             }
 
-            ClauseCheck::NoValueForEmptyCheck(message) => {
+            ClauseCheck::NoValueForEmptyCheck(check) => {
                 f.write_fmt(format_args!(
                     "GuardClause(Status={}, Empty, {})",
                     Status::FAIL,
-                    message.as_ref().map_or("", |s| s.as_ref())
+                    check.custom_message.as_ref().map_or("", |s| s.as_ref())
                 ))?;
             }
 

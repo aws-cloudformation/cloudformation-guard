@@ -1,0 +1,11 @@
+rule names_hold(names) {
+    Resources.*[ Type == 'Custom::Cfg' ].Properties.Name IN Resources.%names.Properties.BucketName
+}
+
+rule buckets_named(x) when Resources[ buckets | Type == 'AWS::S3::Bucket' ] !empty {
+    names_hold(%buckets)
+}
+
+rule name_is_a_bucket_name {
+    buckets_named("x")
+}

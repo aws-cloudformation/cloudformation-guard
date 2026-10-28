@@ -1,0 +1,14 @@
+#
+# The binding and first filter site of filter_through_two_metadata_sites_one_hit_later.guard, followed
+# by a rule whose `when` opens only on a template that holds `Resources.Trigger` and whose body names a
+# variable no `let` declares. Over two templates that draw the site and then
+# metadata-maps-with-a-trigger-template.yaml, the first two files are evaluated whole and the third stops
+# the run with the rules-file error: the single-line output owes the trailer for the site before that
+# error is reported. The site's clause reads a key below its selection that the sub-maps lack: PASS.
+let blocks = Resources.*[ Metadata exists ].Metadata
+rule AUTHENTICATION_SITE {
+  %blocks[ testBasic !exists ]."AWS::CloudFormation::Authentication" !exists
+}
+rule BROKEN_BEHIND_A_TRIGGER when Resources.Trigger exists {
+  %nosuch == 1
+}

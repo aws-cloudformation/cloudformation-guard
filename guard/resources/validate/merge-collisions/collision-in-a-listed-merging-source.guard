@@ -1,0 +1,9 @@
+#
+# A shared base that itself merges, listed beside another source. `C` merges `*a` and `*b`, so the
+# string `"1"` from `B` collides with the integer `1` held from `A` and the integer's value `a` stands;
+# `C` is walked as a mapping of its own and reports at /C/1. `R` then merges `*c` as one item of a
+# list, beside `{ x: 1 }`: the copy of `C` is taken apart, its held entry moves into `R`, and the
+# record follows it, so /R/1 is reported too. Each notice reads "first at L:1,C:9 and again at L:2,C:9.
+# The first value is the one evaluated." Two notices, C before R.
+#
+rule the_held_value_stands_in_both { C."1" == "a" R."1" == "a" R.x == 1 }

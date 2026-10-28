@@ -1,0 +1,4 @@
+# A `when` condition comparing a resolved value against a capture that holds keys beside a refused walk's
+# marker: `Mode.Ref` equals no key, so the resolved mismatches decide the condition (not applicable) and
+# the refused read is reported on stderr rather than raised.
+rule r when Cfg[ x | Kind == 'k' ] !empty  Cfg[*][ x | Mode exists or Kind == 'k' ].Sub[*][ s | R1 !exists ] !empty or Cfg.Fallback exists  Cfg.Mode.Ref == %x { Cfg.Mode.Ref == 'ModeParam' }

@@ -1,0 +1,19 @@
+#
+# A positive predicate through a variable holding one map with NO scalar entry and no entry named like the
+# predicate's key, where one entry is itself a map carrying the key the predicate names: a collection to
+# the slot, so the filter walks the entries as the literal `Resources.Only[ ... ]` does. The `Wrapper` map
+# carries `Metadata."AWS::CloudFormation::Authentication"`, so the predicate holds on it and it is selected
+# in the map's place; the `Properties` entry lacks the key and is rejected. A `!exists` over the selection
+# fails on the password under the selected entry, naming
+# /Resources/Only/Wrapper/Metadata/AWS::CloudFormation::Authentication/WrappedCreds/password. No notice:
+# the predicate does not hold on the map itself, so the map lost no selection, and an entry selected
+# because it carries what the predicate asks for is the documented reading. A map that held a `Metadata`
+# of its own beside `Wrapper` would hold the predicate's key itself and be one object to the slot instead
+# (filter_through_a_variable_over_an_own_key_a_member_also_holds.guard).
+#
+let m = Resources.Only
+let carrying = %m[ Metadata."AWS::CloudFormation::Authentication" exists ]
+
+rule the_wrapper_entry_is_selected {
+    %carrying.Metadata."AWS::CloudFormation::Authentication".*.password !exists
+}

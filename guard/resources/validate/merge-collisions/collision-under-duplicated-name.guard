@@ -1,0 +1,8 @@
+#
+# The held name is itself written twice. `"1": b` and `"1": c` are an ordinary duplicate pair, the
+# last value wins, and validate reports them ("first at L:3,C:3 and again at L:4,C:3. The last value
+# is the one evaluated."). The merged integer `1` collides with that name, and its notice names the
+# entry whose value actually stands, `c` on line 4, not the first `"1"` ("first at L:2,C:9 and again
+# at L:4,C:3. The last value is the one evaluated."). Two notices, in that order.
+#
+rule last_explicit_value_stands { outer."1" == "c" }

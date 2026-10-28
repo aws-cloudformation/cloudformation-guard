@@ -1,0 +1,2 @@
+# The `!=` twin over the members themselves.
+rule r_members { Resources.*.Map[ keys != to_lower(Wanted) ] == 2 }

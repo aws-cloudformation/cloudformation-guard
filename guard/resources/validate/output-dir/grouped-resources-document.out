@@ -1,0 +1,8 @@
+grouped-resources-document.yaml Status = FAIL
+FAILED rules
+grouped_item_size_is_small.guard/grouped_item_size_is_small    FAIL
+---
+Evaluation of rules grouped_item_size_is_small.guard against data grouped-resources-document.yaml
+--
+Property [/Resources/Group/Item/Size] in data [grouped-resources-document.yaml] is not compliant with [grouped_item_size_is_small] because provided value [2000] did not match expected value [1000]. Error Message []
+--

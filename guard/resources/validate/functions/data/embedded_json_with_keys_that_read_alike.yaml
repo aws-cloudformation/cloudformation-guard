@@ -1,0 +1,11 @@
+Resources:
+  Service:
+    Type: AWS::New::Service
+    Properties:
+      KeysThatReadAlike: '{1: "a", "1": "b"}'
+      EqualValuedDuplicate: '{"1": "a", "1": "b"}'
+      Plain: '{"1": "only"}'
+  Bucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: evaluated-beside-the-refusals

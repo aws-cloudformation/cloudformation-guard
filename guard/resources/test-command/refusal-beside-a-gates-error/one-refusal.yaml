@@ -1,0 +1,15 @@
+###
+# The input of the `test` cell for a rule that fails closed on ONE refusal (`one-refusal.guard`), with nothing
+# joined to its sentence: `M1`'s `Tags` is a scalar, so the one filter read of the rule's `when` is refused
+# and nothing else is. The expectation is PASS, so it is unmet, and the unmet line carries the rule's own
+# refusal sentence as its reason, naming the refused `Tags` once.
+###
+---
+- name: an unmet expectation on a rule that failed closed on one refusal
+  input:
+    Resources:
+      M1:
+        Tags: 'x'
+  expectations:
+    rules:
+      check: PASS

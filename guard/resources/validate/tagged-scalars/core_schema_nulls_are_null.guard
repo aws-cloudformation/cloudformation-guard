@@ -1,0 +1,6 @@
+rule core_schema_nulls_are_null {
+    C is_null
+    D is_null
+    E is_null
+    F is_null
+}

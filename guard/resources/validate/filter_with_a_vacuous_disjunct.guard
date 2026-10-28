@@ -1,0 +1,15 @@
+#
+# A disjunction whose first clause fails and whose second clause passes by a miss at the map's own first
+# key. The `Metadata` resource's `Type` resolves and is not a bucket, and it has no `Properties`, so
+# `Properties.Tags empty` holds over a key the map does not have. The map holds a scalar `Type` beside its
+# authentication sub-map and the predicate names no key the sub-map holds, so it is one object: the filter
+# through the variable tests the map as a whole, as `%m[*][ ... ]` does, the second clause holds on it, and
+# `Metadata` itself is selected. The `when` over the selection applies and the body compares the map's own
+# `Type`, an authentication type and no bucket, so the rule FAILs. Nothing is announced on stderr.
+#
+let m = Resources.Metadata
+let selected = %m[ Type == 'AWS::S3::Bucket' or Properties.Tags empty ]
+
+rule FILTER_WITH_A_VACUOUS_DISJUNCT when %selected !empty {
+  %selected.Type == 'AWS::S3::Bucket'
+}

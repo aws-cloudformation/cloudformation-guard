@@ -1,0 +1,7 @@
+rule first_filter {
+    Items[ Name == 'zzz' ] !empty
+}
+
+rule second_filter {
+    Items[ Name == 'yyy' ] !empty
+}

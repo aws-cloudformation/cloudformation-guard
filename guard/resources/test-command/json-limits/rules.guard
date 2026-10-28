@@ -1,0 +1,8 @@
+#
+# One rule over one property. The paired JSON specs in this directory are valid JSON written in the
+# shapes libyaml's scanner does not accept -- a member name past its simple-key limit, a line break
+# before a member's colon, a raw control character inside a string -- which the reader rewrites
+# before it reads them, so each run is about the document being read as written, and the rule only
+# has to be decidable.
+#
+rule a_is_one { A == 1 }

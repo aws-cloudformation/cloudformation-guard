@@ -1,0 +1,5 @@
+let allowed = Resources.*[ Type == 'Custom::Policy' ].Properties.AllowedTypes
+
+rule allowed_volume_types {
+    Resources.*[ Type == 'AWS::EC2::Volume' ].Properties.VolumeType IN %allowed
+}

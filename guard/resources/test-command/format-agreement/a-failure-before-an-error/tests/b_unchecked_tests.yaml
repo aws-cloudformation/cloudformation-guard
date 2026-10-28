@@ -1,0 +1,12 @@
+# `other_rule` is real and passes. `ghost_rule` is not in the file, so its expectation is never
+# checked -- an expectation that could not be evaluated, which is the error code rather than the
+# failure code.
+- name: An expectation naming a rule that does not exist
+  input:
+    Resources:
+      ExampleS3:
+        Type: AWS::S3::Bucket
+  expectations:
+    rules:
+      other_rule: PASS
+      ghost_rule: PASS

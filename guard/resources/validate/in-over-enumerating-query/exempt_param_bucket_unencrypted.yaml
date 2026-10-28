@@ -1,0 +1,14 @@
+Parameters:
+  ExemptBuckets:
+    Type: CommaDelimitedList
+    Default:
+      - BucketA
+Resources:
+  BucketA:
+    Type: Custom::Bucket
+    Properties:
+      Encrypted: false
+  BucketB:
+    Type: Custom::Bucket
+    Properties:
+      Encrypted: true

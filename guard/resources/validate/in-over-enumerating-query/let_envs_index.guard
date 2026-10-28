@@ -1,0 +1,5 @@
+let envs = Mappings.Allowed.KeyList[*]
+
+rule name_in_first_environment_name {
+    Resources.*.Properties.Name IN Mappings.Names.%envs[0]
+}

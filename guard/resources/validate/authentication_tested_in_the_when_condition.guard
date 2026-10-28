@@ -1,0 +1,10 @@
+#
+# The first rewrite docs/CLAUSES.md gives: the predicate moves into the `when` condition, so the
+# instance the variable holds is tested as a whole. It checks only the instance it names: FAIL when
+# that instance's block holds a password, PASS when it holds none, SKIP on a template that has no
+# WebServer. No notice: the filter through the variable is gone.
+#
+let m = Resources.WebServer
+rule authentication_has_no_password when %m.Metadata."AWS::CloudFormation::Authentication" exists {
+    %m.Metadata."AWS::CloudFormation::Authentication".*.password !exists
+}

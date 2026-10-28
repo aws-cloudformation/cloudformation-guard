@@ -1,0 +1,5 @@
+# `this.Wanted` spells the map-relative reading out: the argument is the map's own `Wanted`, and the
+# document root's `Wanted` is not consulted for the verdict: a map without `Wanted` fails the filter
+# closed rather than reading the root's. The moved-reading warning is still printed when the map's
+# reading differs from what the root would have given, or resolves to nothing where the root has a value.
+rule func_key_this { Resources.Cfg.Map[ keys == to_lower(this.Wanted) ] == 1 }

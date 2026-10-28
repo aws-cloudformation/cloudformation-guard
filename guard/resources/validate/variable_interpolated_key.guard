@@ -1,0 +1,5 @@
+let foo = "bar"
+
+rule r {
+    Resources.*.Properties.%foo == "x"
+}

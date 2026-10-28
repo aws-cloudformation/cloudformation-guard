@@ -1,0 +1,29 @@
+# The role of metadata-maps-authentication-and-init-template.yaml beside a resource named `Trigger` and no
+# instance. Paired with filter_through_a_metadata_site_then_a_gated_undeclared_name.guard: the filter site
+# in that file selects the role's one sub-map here and loses nothing (the role's Metadata map lacks
+# `testBasic`, and no other resource has a Metadata map), so this template draws no notice, and the
+# `when Resources.Trigger exists` gate in the same file opens on this template alone, reaching a name no
+# `let` declares. Last in a run after two templates that drew the site, it is the file whose evaluation
+# error must not lose the trailer those two earned.
+Resources:
+  RootRole:
+    Type: "AWS::IAM::Role"
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: "Allow"
+            Principal:
+              Service:
+                - "ec2.amazonaws.com"
+            Action:
+              - "sts:AssumeRole"
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W11
+            reason: "the role is scoped by its trust policy"
+  Trigger:
+    Type: "AWS::SNS::Topic"
+    Properties:
+      TopicName: "trigger"

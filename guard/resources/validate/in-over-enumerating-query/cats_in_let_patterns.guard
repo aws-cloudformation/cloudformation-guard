@@ -1,0 +1,5 @@
+let pats = ["abc", /(?!x)((a+)+)b/]
+
+rule cats_match_a_pattern {
+    Resources.*.Properties.Cats IN %pats[*]
+}

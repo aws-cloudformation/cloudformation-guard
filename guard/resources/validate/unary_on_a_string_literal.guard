@@ -1,0 +1,5 @@
+# The control: `empty` does answer a string, so this never reached the arm that panicked.
+let stringy = "hello"
+rule unary_on_a_string_literal {
+    %stringy empty
+}

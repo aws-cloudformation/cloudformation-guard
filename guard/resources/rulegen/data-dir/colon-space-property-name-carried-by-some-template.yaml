@@ -1,0 +1,16 @@
+# Two properties on one type, `A` on both resources and `A: B` on one of them. rulegen drops `A: B`
+# because only some resources of the type carry it, and warns `... Properties.A: B: only 1 of the 2
+# resources ...`; `A` is written. The round-trip test counts only properties every resource carries,
+# so `A: B` is not expected and not listed, and the warning about it must not be read as a warning
+# about `A`: the warning's name is matched against every property name the type's resources hold,
+# longest first, not only against the counted ones.
+Resources:
+  One:
+    Type: AWS::EC2::Volume
+    Properties:
+      A: 1
+      "A: B": true
+  Two:
+    Type: AWS::EC2::Volume
+    Properties:
+      A: 1

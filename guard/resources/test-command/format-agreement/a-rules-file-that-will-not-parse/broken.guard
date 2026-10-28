@@ -1,0 +1,7 @@
+# A rules file that will not parse: the rule block is opened and never closed.
+#
+# Under `single-line-summary` a directory walk answered this with TEST_COMMAND_FAILURE (7) while the
+# three structured walks answered INCORRECT_STATUS_ERROR (1) -- and `guard/README.md` gives those two
+# codes different meanings, 7 for an expectation that was not met and 1 for one that could not be
+# evaluated. A file that will not parse is the second.
+rule a {

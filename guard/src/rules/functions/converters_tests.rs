@@ -4,9 +4,17 @@ use crate::rules::{
     eval_context::eval_context_tests::BasicQueryTesting,
     exprs::AccessQuery,
     functions::converters::{parse_bool, parse_char, parse_float, parse_int, parse_str},
-    path_value::PathAwareValue,
+    path_value::{Path, PathAwareValue},
     EvalContext, QueryResult,
 };
+
+/// One value in, one answer out, for a converter that takes a single argument.
+fn convert_one(
+    f: fn(&[QueryResult]) -> crate::rules::Result<Vec<Option<PathAwareValue>>>,
+    value: PathAwareValue,
+) -> crate::rules::Result<Vec<Option<PathAwareValue>>> {
+    f(&[QueryResult::Resolved(Rc::new(value))])
+}
 
 #[test]
 fn test_parse_int() -> crate::rules::Result<()> {
@@ -29,6 +37,7 @@ fn test_parse_int() -> crate::rules::Result<()> {
     let mut eval = BasicQueryTesting {
         root: Rc::new(value),
         recorder: None,
+        refusal_frames: crate::rules::eval_context::RefusalFrames::default(),
     };
 
     let string_query = AccessQuery::try_from(
@@ -137,6 +146,7 @@ fn test_parse_float() -> crate::rules::Result<()> {
     let mut eval = BasicQueryTesting {
         root: Rc::new(value),
         recorder: None,
+        refusal_frames: crate::rules::eval_context::RefusalFrames::default(),
     };
 
     let string_query = AccessQuery::try_from(
@@ -192,8 +202,20 @@ fn test_parse_float() -> crate::rules::Result<()> {
         _ => unreachable!(),
     }
 
-    let float = parse_int(&results);
-    assert!(float.is_err());
+    // The function under test, not `parse_int`: calling `parse_int` on the bad value errors because the
+    // text is not an integer either, so `parse_float`'s own refusal of an unparsable string would go
+    // unexercised and removing that arm would leave this test green.
+    match parse_float(&results) {
+        Err(crate::Error::Unevaluatable(message)) => assert!(
+            message.contains("into a float"),
+            "parse_float should refuse the string as a float; got {:?}",
+            message
+        ),
+        other => panic!(
+            "parse_float of an unparsable string should be refused; got {:?}",
+            other
+        ),
+    }
     Ok(())
 }
 
@@ -215,6 +237,7 @@ fn test_parse_boolean() -> crate::rules::Result<()> {
     let mut eval = BasicQueryTesting {
         root: Rc::new(value),
         recorder: None,
+        refusal_frames: crate::rules::eval_context::RefusalFrames::default(),
     };
 
     let string_query = AccessQuery::try_from(
@@ -261,8 +284,20 @@ fn test_parse_boolean() -> crate::rules::Result<()> {
         _ => unreachable!(),
     }
 
-    let float = parse_int(&results);
-    assert!(float.is_err());
+    // The function under test, not `parse_int`. Same shape as the end of `test_parse_float`: calling
+    // `parse_int` here errored for its own reasons and pinned nothing about `parse_bool`, so a
+    // `parse_bool` that silently accepted "false fkdskljfl" passed this test.
+    match parse_bool(&results) {
+        Err(crate::Error::Unevaluatable(message)) => assert!(
+            message.contains("into a boolean"),
+            "parse_bool should refuse the string as a boolean; got {:?}",
+            message
+        ),
+        other => panic!(
+            "parse_bool of an unparsable string should be refused; got {:?}",
+            other
+        ),
+    }
     Ok(())
 }
 
@@ -285,6 +320,7 @@ fn test_parse_string() -> crate::rules::Result<()> {
     let mut eval = BasicQueryTesting {
         root: Rc::new(value),
         recorder: None,
+        refusal_frames: crate::rules::eval_context::RefusalFrames::default(),
     };
 
     let string_query = AccessQuery::try_from(
@@ -356,6 +392,7 @@ fn test_parse_char() -> crate::rules::Result<()> {
     let mut eval = BasicQueryTesting {
         root: Rc::new(value),
         recorder: None,
+        refusal_frames: crate::rules::eval_context::RefusalFrames::default(),
     };
 
     let string_query = AccessQuery::try_from(
@@ -423,6 +460,417 @@ fn test_parse_char() -> crate::rules::Result<()> {
     }
 
     assert!(parse_char(&results).is_err());
+
+    Ok(())
+}
+
+/// `parse_int` refuses a float that does not fit in an `i64` rather than clamping it to the nearest end.
+///
+/// `*val as i64` saturates in Rust and reports nothing. Without the bound check `1.0e30` and `1.0e40`, ten
+/// orders of magnitude apart, both come back as 9223372036854775807, so a rule asserting the two are equal
+/// passes and a rule asserting they differ fails. The passing direction is the damaging one: two numbers
+/// that do not match are reported as matching, at exit 0.
+///
+/// Truncation toward zero stays, because `docs/FUNCTIONS.md:362` promises it -- what it does not promise
+/// is that a value too large to represent becomes `i64::MAX`. The same document says the conversion errors
+/// on input it cannot convert, and a value that does not fit is exactly that.
+///
+/// The two bounds are not symmetric, and the boundary rows are here to pin it. `-2^63` is exactly
+/// representable as an `f64`, so the low end is inclusive. `i64::MAX` is `2^63 - 1`, which is *not*
+/// representable, so `i64::MAX as f64` rounds up to `2^63` and the high end has to be exclusive. Getting
+/// that backwards would let `2^63` through to saturate again.
+#[test]
+fn parse_int_does_not_saturate_a_float_that_does_not_fit() -> crate::rules::Result<()> {
+    // The largest f64 below 2^63. Values in [2^62, 2^63) step by 1024, so this is 2^63 - 1024.
+    const LARGEST_BELOW_2_POW_63: f64 = 9223372036854774784.0;
+
+    let allowed: [(f64, i64); 7] = [
+        // Truncation toward zero, which is the documented behaviour.
+        (5.0, 5),
+        (1.9, 1),
+        (-1.9, -1),
+        (0.0, 0),
+        (-0.5, 0),
+        // Both ends of the representable range.
+        (LARGEST_BELOW_2_POW_63, 9223372036854774784),
+        (-9223372036854775808.0, i64::MIN),
+    ];
+
+    for (input, expected) in allowed {
+        match convert_one(parse_int, PathAwareValue::Float((Path::root(), input)))?
+            .first()
+            .cloned()
+            .flatten()
+        {
+            Some(PathAwareValue::Int((_, got))) => {
+                assert_eq!(got, expected, "parse_int({:?})", input)
+            }
+            other => panic!(
+                "parse_int({:?}) gave {:?}, expected {:?}",
+                input, other, expected
+            ),
+        }
+    }
+
+    let refused: [f64; 7] = [
+        1.0e30,
+        1.0e40,
+        -1.0e40,
+        // 2^63 itself, one step past the top of the range. This is what `i64::MAX as f64` rounds to.
+        9223372036854775808.0,
+        // The first f64 below -2^63. Not -2^63-1: that is not representable and rounds back to -2^63,
+        // which is in range, so it is no test of anything. Magnitudes in [2^63, 2^64) step by 2048.
+        -9223372036854777856.0,
+        f64::INFINITY,
+        f64::NEG_INFINITY,
+    ];
+
+    for input in refused {
+        let outcome = convert_one(parse_int, PathAwareValue::Float((Path::root(), input)));
+        match outcome {
+            Err(crate::Error::Unevaluatable(message)) => assert!(
+                message.contains("does not fit"),
+                "parse_int({:?}) should say the value does not fit; got {:?}",
+                input,
+                message
+            ),
+            other => panic!("parse_int({:?}) should be refused; got {:?}", input, other),
+        }
+    }
+
+    // NaN cast to i64 was 0, which is a number the input never denoted.
+    match convert_one(parse_int, PathAwareValue::Float((Path::root(), f64::NAN))) {
+        Err(crate::Error::Unevaluatable(_)) => {}
+        other => panic!("parse_int(NaN) should be refused; got {:?}", other),
+    }
+
+    Ok(())
+}
+
+/// `parse_float` refuses a numeric literal too large to represent rather than answering infinity.
+///
+/// `val.parse::<f64>()` returns `Ok(inf)` for an overflowing literal rather than `Err`, so `"1e400"` and
+/// `"9e999"` both became `inf` and compared equal. Same shape as the `parse_int` saturation above, and the
+/// same passing direction: a rule asserting the two are equal is satisfied.
+///
+/// `"NaN"` and `"inf"` spelled out in the data are refused too. Their verdict does not change -- a NaN
+/// already failed every comparison it reached, with `[Float values are not comparable]` -- but the
+/// diagnostic now names the property instead of surfacing as a comparison failure further down. A value
+/// that cannot take part in a comparison is not a float a rule can use.
+#[test]
+fn parse_float_does_not_turn_an_overflowing_literal_into_infinity() -> crate::rules::Result<()> {
+    let allowed: [(&str, f64); 5] = [
+        ("2.5", 2.5),
+        ("-2.5", -2.5),
+        ("0", 0.0),
+        ("2456", 2456.0),
+        // Close to the top of the f64 range and still finite.
+        ("1e308", 1e308),
+    ];
+
+    for (input, expected) in allowed {
+        match convert_one(
+            parse_float,
+            PathAwareValue::String((Path::root(), String::from(input))),
+        )?
+        .first()
+        .cloned()
+        .flatten()
+        {
+            Some(PathAwareValue::Float((_, got))) => {
+                assert_eq!(got, expected, "parse_float({:?})", input)
+            }
+            other => panic!(
+                "parse_float({:?}) gave {:?}, expected {:?}",
+                input, other, expected
+            ),
+        }
+    }
+
+    // Overflowing literals, and the two non-finite spellings.
+    for input in ["1e400", "9e999", "-1e400", "NaN", "nan", "inf", "-inf"] {
+        let outcome = convert_one(
+            parse_float,
+            PathAwareValue::String((Path::root(), String::from(input))),
+        );
+        match outcome {
+            Err(crate::Error::Unevaluatable(_)) => {}
+            other => panic!(
+                "parse_float({:?}) should be refused; got {:?}",
+                input, other
+            ),
+        }
+    }
+
+    Ok(())
+}
+
+/// `parse_string` renders an integral float with its decimal point, so `2.0` becomes `"2.0"`.
+///
+/// The Float arm used `f64::to_string()`, which is Rust's `Display` and drops the fractional part
+/// when it is zero: `2.0_f64.to_string()` is `"2"`. So a template field `Version: 2.0` converted to
+/// `"2"`, a rule written against the template's own spelling (`== "2.0"`) failed, and the Int `2` and
+/// the Float `2.0` were indistinguishable after conversion. The documented example (`1.5` -> `"1.5"`)
+/// has a fractional part and never showed it.
+///
+/// An integral float now renders as its `Display` text with `.0` appended. Everything else goes
+/// through `Display` as before, so `1.5`, `0.1` and `0.0000001` render as they did, and a float that
+/// is not integral never rounds.
+///
+/// `Display` digits, not a fixed-precision `{:.1}`. `{:.1}` prints the exact binary expansion, so `1e23`
+/// -- which `Display` renders as `100000000000000000000000`, the shortest text that reads back as the
+/// same float -- would have become `99999999999999991611392.0`, and a template value would stop
+/// matching its own spelling for every magnitude above about 2^53. The rows past that limit pin it.
+#[test]
+fn parse_string_keeps_the_decimal_point_of_an_integral_float() -> crate::rules::Result<()> {
+    let floats: [(f64, &str); 11] = [
+        // The defect: these rendered without the decimal point.
+        (2.0, "2.0"),
+        (1.0, "1.0"),
+        (0.0, "0.0"),
+        (-3.0, "-3.0"),
+        (100000000000000000000.0, "100000000000000000000.0"),
+        // Values whose exact binary expansion differs from the shortest round-trip digits: `{:.1}`
+        // prints 99999999999999991611392.0 and 5000000000000000452984832.0 for these two.
+        (1e23, "100000000000000000000000.0"),
+        (5e24, "5000000000000000000000000.0"),
+        // Negative zero is a float too, and keeps its sign.
+        (-0.0, "-0.0"),
+        // Unchanged: a fractional part is rendered as before, and never rounded away.
+        (1.5, "1.5"),
+        (0.1, "0.1"),
+        (0.0000001, "0.0000001"),
+    ];
+
+    for (input, expected) in floats {
+        match convert_one(parse_str, PathAwareValue::Float((Path::root(), input)))?
+            .first()
+            .cloned()
+            .flatten()
+        {
+            Some(PathAwareValue::String((_, got))) => {
+                assert_eq!(got, expected, "parse_string({:?})", input)
+            }
+            other => panic!(
+                "parse_string({:?}) gave {:?}, expected {:?}",
+                input, other, expected
+            ),
+        }
+    }
+
+    // An Int still renders without a decimal point, which is what tells the two apart.
+    match convert_one(parse_str, PathAwareValue::Int((Path::root(), 2)))?
+        .first()
+        .cloned()
+        .flatten()
+    {
+        Some(PathAwareValue::String((_, got))) => assert_eq!(got, "2", "parse_string(Int 2)"),
+        other => panic!("parse_string(Int 2) gave {:?}, expected \"2\"", other),
+    }
+
+    Ok(())
+}
+
+/// `parse_string`, the libyaml loader and the serde-backed loader render a float as the same text.
+///
+/// A float mapping key becomes a string key, and the two loaders each had their own renderer for it,
+/// both formatting an integral float with `{:.1}` -- the exact binary expansion, which above 2^53 is
+/// not the text the author wrote. `parse_string` rendered a float a third way. All three now go
+/// through one function, and this cell loads a document with float keys through both loaders and
+/// asks `parse_string` for the same floats: the key names and the converted strings have to agree,
+/// or `Mappings.%name` written from a `parse_string` result would miss the key.
+#[test]
+fn parse_string_and_both_loaders_render_a_float_the_same() -> crate::rules::Result<()> {
+    let document = r#"
+Mappings:
+  1.0: whole
+  2.5: fractional
+  1e23: past two_to_the_fifty_three
+  5e24: further_past
+"#;
+    let floats: [f64; 4] = [1.0, 2.5, 1e23, 5e24];
+
+    let via_libyaml = PathAwareValue::try_from(crate::rules::values::read_from(document)?)?;
+    let via_serde = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(document)?)?;
+
+    let key_names = |root: &PathAwareValue| -> Vec<String> {
+        match root {
+            PathAwareValue::Map((_, top)) => match top.values.get("Mappings") {
+                Some(PathAwareValue::Map((_, mappings))) => {
+                    mappings.values.keys().cloned().collect()
+                }
+                other => panic!("Mappings should be a map, got {:?}", other),
+            },
+            other => panic!("the document should be a map, got {:?}", other),
+        }
+    };
+
+    let mut converted = Vec::new();
+    for float in floats {
+        match convert_one(parse_str, PathAwareValue::Float((Path::root(), float)))?
+            .first()
+            .cloned()
+            .flatten()
+        {
+            Some(PathAwareValue::String((_, text))) => converted.push(text),
+            other => panic!("parse_string({:?}) gave {:?}", float, other),
+        }
+    }
+
+    assert_eq!(
+        key_names(&via_libyaml),
+        converted,
+        "the libyaml loader names a float key differently from parse_string"
+    );
+    assert_eq!(
+        key_names(&via_serde),
+        converted,
+        "the serde-backed loader names a float key differently from parse_string"
+    );
+
+    Ok(())
+}
+
+/// `parse_char` accepts a single character that is not ASCII.
+///
+/// The length guard was `val.len() > 1`, and `String::len()` counts bytes, so `"é"` -- one character, two
+/// bytes -- was refused as too long, and so was any emoji. The line immediately after it already read the
+/// value with `val.chars().next()`, so the function extracted by character and only its guard was in
+/// bytes. `substring` carries a comment about having fixed exactly this confusion; the fix was applied
+/// there and not here.
+///
+/// It fails closed, so this is a wrong rejection rather than a wrong pass, and the message compounded it
+/// by reporting a failed conversion when what happened is that the test used the wrong unit.
+///
+/// Characters here means Unicode scalar values, which is what `chars()` yields and what `substring`
+/// already indexes by. An `e` followed by a combining acute accent is two of those and is still refused,
+/// even though it draws as one glyph -- the two functions agree, which matters more than either answer.
+#[test]
+fn parse_char_measures_length_in_characters_not_bytes() -> crate::rules::Result<()> {
+    // (input, expected character, how many bytes it occupies)
+    let accepted: [(&str, char, usize); 5] = [
+        ("a", 'a', 1),
+        // Two bytes. This is the rejection.
+        ("é", 'é', 2),
+        // Three bytes.
+        ("日", '日', 3),
+        // Four bytes.
+        ("😀", '😀', 4),
+        ("7", '7', 1),
+    ];
+
+    for (input, expected, bytes) in accepted {
+        assert_eq!(input.len(), bytes, "{:?} should be {} bytes", input, bytes);
+        assert_eq!(input.chars().count(), 1, "{:?} should be one char", input);
+
+        match convert_one(
+            parse_char,
+            PathAwareValue::String((Path::root(), String::from(input))),
+        )?
+        .first()
+        .cloned()
+        .flatten()
+        {
+            Some(PathAwareValue::Char((_, got))) => {
+                assert_eq!(got, expected, "parse_char({:?})", input)
+            }
+            other => panic!(
+                "parse_char({:?}) gave {:?}, expected the char {:?}",
+                input, other, expected
+            ),
+        }
+    }
+
+    // More than one character is still refused, whatever the byte count.
+    for input in ["ab", "aé", "éé", "e\u{0301}"] {
+        assert!(
+            input.chars().count() > 1,
+            "{:?} is supposed to be several characters",
+            input
+        );
+        match convert_one(
+            parse_char,
+            PathAwareValue::String((Path::root(), String::from(input))),
+        ) {
+            Err(crate::Error::Unevaluatable(_)) => {}
+            other => panic!("parse_char({:?}) should be refused; got {:?}", input, other),
+        }
+    }
+
+    // The empty string keeps answering with no value rather than erroring, as it did before.
+    match convert_one(
+        parse_char,
+        PathAwareValue::String((Path::root(), String::new())),
+    )?
+    .first()
+    {
+        Some(None) => {}
+        other => panic!("parse_char(\"\") should yield no value; got {:?}", other),
+    }
+
+    Ok(())
+}
+
+/// `parse_char` given a Char answers a Char, so calling it twice gives what calling it once gives.
+///
+/// That arm pushed a `String`. Its body is character-for-character the same as `parse_str`'s Char arm, which
+/// is where it came from, and every other arm of `parse_char` pushes a `Char`. So the function's output type
+/// depended on its input type, which is the one thing a converter must not do.
+///
+/// It was unexecuted by the suite, which is how it survived. `test_parse_char` looks like it covers it -- it
+/// queries a field declared `Char: '1'` -- but the test itself asserts that the queried value is a
+/// `PathAwareValue::String`, because that is what the YAML `'1'` loads as. The query never produces a Char,
+/// so the call goes down the String arm. Reaching this arm at all takes a Char that did not come from the
+/// document, which is what nesting the call does and what this test does directly.
+#[test]
+fn parse_char_given_a_char_answers_a_char() -> crate::rules::Result<()> {
+    for input in ['a', '1', 'é', '😀'] {
+        let once = convert_one(parse_char, PathAwareValue::Char((Path::root(), input)))?
+            .first()
+            .cloned()
+            .flatten();
+
+        match once {
+            Some(PathAwareValue::Char((_, got))) => assert_eq!(
+                got, input,
+                "parse_char of the char {:?} should be that char",
+                input
+            ),
+            other => panic!(
+                "parse_char of the char {:?} gave {:?}, expected a Char",
+                input, other
+            ),
+        }
+    }
+
+    // Idempotent: the answer to parse_char(parse_char(x)) is the answer to parse_char(x). Before, the
+    // second call turned the first call's Char into a String, so nesting changed the type and a comparison
+    // against a string literal passed where a Char could not have.
+    let from_string = convert_one(
+        parse_char,
+        PathAwareValue::String((Path::root(), String::from("a"))),
+    )?
+    .first()
+    .cloned()
+    .flatten()
+    .expect("a one-character string converts");
+
+    let nested = convert_one(parse_char, from_string.clone())?
+        .first()
+        .cloned()
+        .flatten()
+        .expect("a char converts");
+
+    assert!(
+        matches!(from_string, PathAwareValue::Char((_, 'a'))),
+        "one call should give a Char, got {:?}",
+        from_string
+    );
+    assert!(
+        matches!(nested, PathAwareValue::Char((_, 'a'))),
+        "two calls should give the same Char, got {:?}",
+        nested
+    );
 
     Ok(())
 }

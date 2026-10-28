@@ -1,0 +1,4 @@
+# Two query arguments in one call. Each is read from the map, and each differs from the enclosing
+# scope's value, so each is its own moved reading: two warning lines for the one call, one naming
+# `Wanted` and one naming `Pattern`.
+rule func_key_two_arguments { Resources.Cfg.Map[ keys == regex_replace(Wanted, Pattern, 'a') ] == 1 }

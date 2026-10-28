@@ -1,0 +1,5 @@
+# `empty` has no answer for a number, so this clause fails. Reporting that failure is what panicked.
+let numeric = 5
+rule unary_on_a_numeric_literal {
+    %numeric empty
+}

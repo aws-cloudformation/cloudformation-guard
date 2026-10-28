@@ -1,0 +1,15 @@
+- name: non-finite float spellings keep their text
+  input:
+    A: .Inf
+    B: .INF
+    C: .NaN
+    D: +.inf
+    E: .inf
+    F: .NAN
+    G: -.Inf
+  expectations:
+    rules:
+      VERBATIM_SPELLINGS: PASS
+      CANONICAL_SPELLINGS: FAIL
+      CONTROL_LOWER_INF: PASS
+      CONTROL_IS_STRING: PASS

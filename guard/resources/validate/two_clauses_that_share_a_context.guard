@@ -1,0 +1,16 @@
+# Two clauses in one rule whose rendered text is byte-identical: one inside a resource block, which
+# resolves to a value with a path, and one at document scope, which resolves to the root and has none.
+#
+# Both fail, and they are separate report nodes -- only the text they render as collides. The rendered set
+# was keyed on that text, so the placed clause made the pathless one count as already shown and it was
+# dropped from the console entirely, while the JSON carried its reason.
+#
+# Kept out of data-dir/ and rules-dir/ on purpose, as bucket-with-no-kms-keys-template.yaml is:
+# test_updated_summary_output runs every rules file in rules-dir/ against every data file in data-dir/
+# and compares the result to a checked-in golden output.
+rule tags_required {
+    Resources.*[ Type == 'AWS::S3::Bucket' ] {
+        Properties.Tags exists
+    }
+    Properties.Tags exists
+}

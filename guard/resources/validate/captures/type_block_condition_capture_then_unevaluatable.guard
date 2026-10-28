@@ -1,0 +1,10 @@
+# The first condition clause captures `cfg`; the second has no answer (`!empty` on a boolean), so
+# the type block fails closed for the resource. The capture is still handed up: the clause after
+# the block reads it.
+rule r {
+  AWS::S3::Bucket when Properties.Config[ cfg | Enabled == true ] !empty
+                       Properties.Flag !empty {
+    Properties exists
+  }
+  %cfg !empty
+}

@@ -1,0 +1,14 @@
+# Two warnings around a deprecation notice, so that the three lines have an order to keep.
+rule early_argument {
+    Resources.B1.Properties.Tags[ keys == to_lower(Wanted) ] exists
+}
+# A deprecation notice between the two warnings.
+rule filter_after_a_scalar { Resources.B1.Properties.Scalar[ this == 'x' ] !exists }
+# Filler, so that the second clause sits on a two-digit line: sorted by text, "line:13" comes before
+# "line:3", while the evaluator reaches line 3 first.
+#
+#
+#
+rule late_argument {
+    Resources.B1.Properties.Tags[ keys == to_lower(Wanted) ] exists
+}

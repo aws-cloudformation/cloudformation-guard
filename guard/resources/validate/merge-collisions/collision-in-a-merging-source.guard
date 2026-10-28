@@ -1,0 +1,8 @@
+#
+# The merge source under `R` is itself a mapping that merges: its own `<<` brings the integer `1`
+# and then the string `"1"`, a collision inside the source, with the integer's value `a` standing.
+# The enclosing merge then takes the source apart and copies its one entry into `R`, so the source
+# is never walked as a mapping of its own; the notice follows the entry into `R` and is printed at
+# /R/1 ("first at L:3,C:12 and again at L:3,C:22. The first value is the one evaluated."). One notice.
+#
+rule the_held_value_stands_under_r { R."1" == "a" }

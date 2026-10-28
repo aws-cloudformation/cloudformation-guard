@@ -32,7 +32,7 @@ const VALUE_STR: &str = r#"
 #[case(r#"BadValue"#, 1723507200, true)]
 fn test_parse_epoch(
     #[case] query_str: &str,
-    #[case] _expected_epoch: i64,
+    #[case] expected_epoch: i64,
     #[case] should_error: bool,
 ) -> crate::rules::Result<()> {
     let value = PathAwareValue::try_from(serde_json::from_str::<serde_json::Value>(VALUE_STR)?)?;
@@ -40,6 +40,7 @@ fn test_parse_epoch(
     let mut eval = BasicQueryTesting {
         root: Rc::new(value),
         recorder: None,
+        refusal_frames: crate::rules::eval_context::RefusalFrames::default(),
     };
     let root_query =
         format!(r#"Resources[ Type == 'AWS::Lambda::Function' ].Properties.{query_str}"#,);
@@ -59,10 +60,17 @@ fn test_parse_epoch(
         assert!(epoch_values.is_ok());
         let epoch_values = epoch_values.unwrap();
         assert_eq!(epoch_values.len(), 1);
-        assert!(matches!(
-            epoch_values[0].as_ref().unwrap(),
-            PathAwareValue::Int((_, _expected_epoch))
-        ));
+        // A comparison, not a pattern. This was `matches!(.., PathAwareValue::Int((_, _expected_epoch)))`,
+        // and an identifier in a pattern is a fresh binding rather than the variable in scope, so it
+        // matched every `Int` and the case's epoch was never checked: `parse_epoch` answering 0 for
+        // every timestamp passed all three cases.
+        match epoch_values[0].as_ref().unwrap() {
+            PathAwareValue::Int((_, got)) => assert_eq!(*got, expected_epoch, "{query_str}"),
+            other => panic!(
+                "parse_epoch({}) should give an Int; got {:?}",
+                query_str, other
+            ),
+        }
     }
 
     Ok(())

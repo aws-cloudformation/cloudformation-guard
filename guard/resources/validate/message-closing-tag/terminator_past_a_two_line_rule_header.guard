@@ -1,0 +1,13 @@
+rule one {
+    Resources.A.Type == "x" << closing tag forgotten
+}
+rule two
+    when Resources.B exists
+{
+    Resources.B.Properties.Encrypted == true
+    # see the runbook for escalation
+    >>
+}
+rule three {
+    Resources.A.Type == "x"
+}

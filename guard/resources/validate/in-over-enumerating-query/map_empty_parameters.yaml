@@ -1,0 +1,6 @@
+Parameters: {}
+Resources:
+  Cfg:
+    Map:
+      alpha: 2
+      x: 2

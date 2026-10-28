@@ -1,0 +1,11 @@
+Wanted:
+  - gamma
+Resources:
+  Cfg:
+    Map:
+      Wanted:
+        - alpha
+        - beta
+      alpha: 1
+      beta: 1
+      gamma: 2

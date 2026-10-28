@@ -1,0 +1,15 @@
+# Two resources: `R1.Cfg` holds two member maps sharing `cpu`, and its own key `Limits` names a member
+# while `Other` holds no `Limits` of its own, so `Cfg[*].Limits exists` is refused for that map; `R2.Cfg`
+# holds a scalar entry (`Tier`) and is one object, whose `Limits` the same read resolves.
+Resources:
+  R1:
+    Cfg:
+      Limits:
+        cpu: '1'
+      Other:
+        cpu: '2'
+  R2:
+    Cfg:
+      Limits:
+        cpu: '1'
+      Tier: gold

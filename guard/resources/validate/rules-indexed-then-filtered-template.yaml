@@ -1,0 +1,27 @@
+Resources:
+  B1:
+    Type: AWS::S3::Bucket
+    Properties:
+      Kind: bucket
+      Encrypted: false
+      Rules:
+        - Action: allow
+          Name: first
+        - Action: deny
+          Name: second
+      Names: [a, b]
+      Scalar: x
+      Tags:
+        Name: alpha
+        Nick: beta
+        Owner: bob
+      Statement:
+        Effect: Allow
+        Action: "s3:*"
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+  Q1:
+    Type: AWS::SQS::Queue
+    Properties: {}

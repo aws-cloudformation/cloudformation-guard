@@ -1,0 +1,17 @@
+# A resource whose type cannot be a rule name, beside a bucket that can.
+#
+# rulegen keys a rule on the type's name with `::` as `_` and lowercased, written bare, so it has to
+# be one ASCII letter followed by letters, digits and underscores. `Custom::My-Thing` is not: the
+# hyphen would end the rule name early and take the whole file's parse with it, so rulegen drops the
+# resource as a whole with one warning about the resource, and writes the bucket rule alone. The
+# round-trip test's model asks rulegen's own question before counting a type, so it expects the
+# bucket rule and nothing for the custom type; the two are held together on this template.
+Resources:
+  Thing:
+    Type: Custom::My-Thing
+    Properties:
+      Setting: enabled
+  Bucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: logs

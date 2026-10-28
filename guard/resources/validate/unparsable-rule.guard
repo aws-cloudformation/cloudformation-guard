@@ -1,0 +1,6 @@
+rule bucket_versioning_enabled {
+    Resources.*[ Type == 'AWS::S3::Bucket' ] {
+        Properties.VersioningConfiguration.Status == 'Enabled'
+        <<the closing marker for this message is missing, so the file will not parse
+    }
+}

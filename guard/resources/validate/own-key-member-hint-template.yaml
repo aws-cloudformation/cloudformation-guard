@@ -1,0 +1,9 @@
+# A `Resources` map with a bare key beside a bucket: the null entry keeps the own-key reading for a filter
+# that names `BucketA`, and `BucketA` is a member named like the key, so the refusal offers the member
+# spellings before the path.
+Resources:
+  BucketA:
+    Type: AWS::S3::Bucket
+    Properties:
+      Public: true
+  Placeholder:

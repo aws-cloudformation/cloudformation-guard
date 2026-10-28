@@ -1,0 +1,9 @@
+#
+# Four probes on one value. Against two distinct integers wider than u64, `validate` answers FAIL,
+# FAIL (a refused comparison), PASS, FAIL: the digits are kept as text. The paired specs expect
+# those answers from `test`.
+#
+rule eq { A == B }
+rule gt { A > 0 }
+rule is_str { A is_string }
+rule is_flt { A is_float }

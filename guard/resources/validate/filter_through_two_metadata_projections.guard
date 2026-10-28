@@ -1,0 +1,13 @@
+#
+# The binding of filter_through_a_metadata_projection.guard, filtered at two sites: two rules read the
+# same filter text at two lines. Each site loses its selection on a template whose instance holds an
+# authentication block (it carries `testBasic` and is no member) beside another block, so one template
+# draws two notices, one per site. Over two such templates the single-line output keeps one line per
+# site, two lines. Both rules read a key below the selection the sub-maps lack and the map holds: PASS.
+let blocks = Resources.*[ Metadata exists ].Metadata
+rule FIRST_SITE {
+  %blocks[ testBasic !exists ]."AWS::CloudFormation::Authentication" !exists
+}
+rule SECOND_SITE {
+  %blocks[ testBasic !exists ]."AWS::CloudFormation::Authentication" !exists
+}

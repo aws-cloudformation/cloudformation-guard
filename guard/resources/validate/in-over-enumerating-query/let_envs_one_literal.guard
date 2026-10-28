@@ -1,0 +1,5 @@
+let envs = ["prod"]
+
+rule name_is_an_environment_name {
+    Resources.*.Properties.Name IN Mappings.Names.%envs
+}

@@ -1,0 +1,7 @@
+rule r {
+    Resources.A.Type == "x" << Violation: expected
+    {"a": 1
+    }
+    then redeploy >>
+    Resources.B.Properties.Encrypted == true
+}

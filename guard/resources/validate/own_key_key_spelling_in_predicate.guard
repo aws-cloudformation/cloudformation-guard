@@ -1,0 +1,7 @@
+#
+# The key spelling after the wildcard INSIDE a filter predicate: `Cfg[*].Limits exists` over `R1.Cfg`,
+# whose own key `Limits` names a member `Other` lacks, is refused for that map, the predicate cannot decide
+# `R1`, and the outer `!empty` fails closed on it. The refusal, remedy included, is printed whole on the
+# console and carried by the JSON report, with nothing of the entry's value in the sentence.
+#
+rule r { Resources[ Cfg[*].Limits exists ] !empty }

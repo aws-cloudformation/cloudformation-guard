@@ -1,0 +1,9 @@
+#
+# The anchor `&shared` is declared where it is first merged, on a mapping that itself merges `*a`
+# and `*b`: the integer `1` from `A` and the string `"1"` from `B` collide inside it, and the integer's
+# value `a` stands. `R` merges that mapping directly and `S` merges a copy of it through `*shared`;
+# each takes the source apart and copies the held entry into itself, so the source is never walked as
+# a mapping of its own, and the notice follows the entry into both: /R/1 and /S/1, each "first at
+# L:1,C:9 and again at L:2,C:9. The first value is the one evaluated." Two notices, R before S.
+#
+rule the_held_value_stands_in_both { R."1" == "a" S."1" == "a" }

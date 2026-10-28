@@ -1,0 +1,18 @@
+# The second case's mapping has an alias beside its fields, where a key should be, and no node
+# before it anchors `nope`. A key the loader cannot read makes the whole case mapping unreadable, and
+# a case that is not a mapping has no `input:` to run, so the file is refused; the message names the
+# case and carries the alias's refusal. The same alias inside `input:` costs only its case.
+- name: an ordinary case
+  input:
+    A: 1
+  expectations:
+    rules:
+      a_is_one: PASS
+
+- *nope: 1
+  name: a case with an unreadable alias for a key
+  input:
+    A: 1
+  expectations:
+    rules:
+      a_is_one: PASS

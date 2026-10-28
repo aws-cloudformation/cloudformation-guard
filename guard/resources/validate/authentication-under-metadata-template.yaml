@@ -1,0 +1,44 @@
+# Three resources carrying a CloudFormation authentication block where a template writes one: under
+# the resource's `Metadata`. `AWS::CloudFormation::Authentication` is a Metadata key, not a resource
+# type, and any resource type may carry it. The first instance's block is `basic` and holds a
+# password; the second instance's is `S3` and holds none; the launch configuration's is `basic` and
+# holds a password, so a rule over every resource carrying the block fails on it too.
+Resources:
+  WebServer:
+    Type: AWS::EC2::Instance
+    Metadata:
+      AWS::CloudFormation::Authentication:
+        WebCreds:
+          type: basic
+          username: deploy
+          password: sensitive_password
+          uris:
+            - http://www.example.com/artifacts
+    Properties:
+      ImageId: ami-6df1e514
+      InstanceType: t2.micro
+  Worker:
+    Type: AWS::EC2::Instance
+    Metadata:
+      AWS::CloudFormation::Authentication:
+        S3AccessCreds:
+          type: S3
+          roleName: WorkerRole
+          buckets:
+            - worker-artifacts
+    Properties:
+      ImageId: ami-6df1e514
+      InstanceType: t2.micro
+  LaunchConfig:
+    Type: AWS::AutoScaling::LaunchConfiguration
+    Metadata:
+      AWS::CloudFormation::Authentication:
+        FleetCreds:
+          type: basic
+          username: deploy
+          password: sensitive_password
+          uris:
+            - http://www.example.com/fleet
+    Properties:
+      ImageId: ami-6df1e514
+      InstanceType: t2.micro

@@ -1,0 +1,13 @@
+# A parameterized rule's own `when` capture, read bare on the right of `IN`: the keys the filter bound
+# are one entry set, so `Prefix IN %buckets` holds when the prefix is one of the bucket keys and fails
+# when it is not, a prefix of a key included. The caller binds and reads an enumerating `let buckets`
+# first, so the test tells the capture's keys from that `let`'s values.
+rule prefix_in_keys(x) when Resources[ buckets | Type == 'AWS::S3::Bucket' ] !empty {
+    Resources.*[ Type == 'Custom::Cfg' ].Properties.Prefix IN %buckets
+}
+
+rule prefix_is_one_of_the_bucket_keys {
+    let buckets = Resources.*.Type
+    %buckets !empty
+    prefix_in_keys("x")
+}

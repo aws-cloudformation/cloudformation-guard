@@ -1,0 +1,69 @@
+# A key filter nobody can decide -- its right-hand side a key the template lacks, or a regex the engine
+# ran out of budget on -- marks the map it ran over undecidable. Every operator downstream fails closed on
+# that marker: a `when` gate fails its rule rather than reporting it not applicable, a comparison fails
+# rather than reading the marker as an absent property, and a `some` binding keeps the marker rather than
+# dropping it, so `empty` over the binding fails. Inside a filter predicate the marker is read the same
+# way, whether the filter is evaluated there or bound outside and read through a `let`: the predicate's
+# clause raises, nothing is deselected on a selection nobody could decide, and the enclosing clause fails
+# closed in either polarity (a positive `!empty`/`exists` predicate used to deselect every entry and let
+# `empty` pass; a negated `empty`/`!exists` predicate used to hold and select every entry). A decided
+# list beside them keeps a predicate decided. The two decided rules beside them keep their verdicts. The
+# block form of the selection, `Cfg[ keys == %missing ] { ... }`, fails closed as a gate too, whether the
+# rule holding it is referenced from a `when` plainly or under `not`, or called as a parameterized rule
+# plainly or under `not`; those gate bodies hold on this template, so an opened gate would read PASS and a
+# gate closed on a decided no would read SKIP.
+let missing = Mappings.Nope.List[*]
+
+rule gate_over_a_missing_rhs when Resources.Cfg[ keys == %missing ].Enabled == true {
+    Resources.Cfg.MustBeTrue == true
+}
+
+rule gate_over_a_spent_regex when Resources.Cfg[ keys == /(?!x)((a+)+)b/ ].Enabled == true {
+    Resources.Cfg.MustBeTrue == true
+}
+
+rule predicate_over_a_missing_rhs {
+    Resources.*[ Properties.Cfg[ keys == %missing ].x == 1 ].Type == 'Y'
+}
+
+rule predicate_positive_not_empty { Resources.*[ Properties.Cfg[ keys NOT IN %missing ] !empty ] empty }
+rule predicate_positive_exists { Resources.*[ Properties.Cfg[ keys NOT IN %missing ] exists ] empty }
+rule predicate_negated_empty { Resources.*[ Properties.Cfg[ keys IN %missing ] empty ].Type == 'Y' }
+rule predicate_negated_not_exists { Resources.*[ Properties.Cfg[ keys IN %missing ] !exists ].Type == 'Y' }
+
+let present = Mappings.Exempt.Names[*]
+rule predicate_with_a_present_list { Resources.*[ Properties.Cfg[ keys NOT IN %present ] !empty ].Type == 'X' }
+
+rule rhs_over_a_missing_rhs {
+    Resources.Cfg.Enabled == Resources.Cfg[ keys == %missing ].Enabled
+}
+
+let cfg = Resources.Cfg[ keys NOT IN %missing ]
+rule let_carried_into_a_predicate_exists { Resources.*[ %cfg exists ].Type == 'X' }
+rule let_carried_into_a_predicate_not_exists { Resources.*[ %cfg !exists ].Type == 'X' }
+rule let_carried_into_a_predicate_in { Resources.*[ Type IN %cfg ].Type == 'X' }
+
+let kept = some Resources.Cfg[ keys NOT IN %missing ]
+rule some_binding_is_not_empty { %kept empty }
+rule some_binding_is_compared { %kept == 1 }
+
+rule decided_beside_them { Resources.Cfg.Enabled == true }
+rule decided_beside_them_too { Resources.Other.Type == 'X' }
+
+rule block_over_a_missing_rhs { Resources.Cfg[ keys == %missing ] { Enabled exists } }
+rule block_gate_over_a_missing_rhs when block_over_a_missing_rhs { Resources.Cfg.Enabled == true }
+rule block_negated_gate_over_a_missing_rhs when not block_over_a_missing_rhs { Resources.Cfg.Enabled == true }
+rule block_over_a_missing_rhs_in(target) { %target[ keys == %missing ] { Enabled exists } }
+rule block_parameterized_gate_over_a_missing_rhs when block_over_a_missing_rhs_in(Resources.Cfg) { Resources.Cfg.Enabled == true }
+rule block_negated_parameterized_gate_over_a_missing_rhs when not block_over_a_missing_rhs_in(Resources.Cfg) { Resources.Cfg.Enabled == true }
+
+# A block over a property the template lacks is the decided no it always was, not the marker: asserted it
+# fails, as a gate it reads its rule not applicable, and under `not` it opens the body, which holds here.
+# The parameterized spelling reads the same, so each gate path the marker rows take has its decided-no
+# control beside it.
+rule block_over_an_absent_property { Resources.Cfg.Nope { Enabled exists } }
+rule block_gate_over_an_absent_property when block_over_an_absent_property { Resources.Cfg.Enabled == true }
+rule block_negated_gate_over_an_absent_property when not block_over_an_absent_property { Resources.Cfg.Enabled == true }
+rule block_over_an_absent_property_in(target) { %target.Nope { Enabled exists } }
+rule block_parameterized_gate_over_an_absent_property when block_over_an_absent_property_in(Resources.Cfg) { Resources.Cfg.Enabled == true }
+rule block_negated_parameterized_gate_over_an_absent_property when not block_over_an_absent_property_in(Resources.Cfg) { Resources.Cfg.Enabled == true }

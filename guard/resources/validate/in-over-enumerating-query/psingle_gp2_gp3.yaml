@@ -1,0 +1,13 @@
+Resources:
+  Policy1:
+    Type: Custom::Policy
+    Properties:
+      AllowedTypes: [gp2]
+  Policy2:
+    Type: Custom::Policy
+    Properties:
+      AllowedTypes: [gp3]
+  V:
+    Type: AWS::EC2::Volume
+    Properties:
+      VolumeTypes: [gp2, gp3]

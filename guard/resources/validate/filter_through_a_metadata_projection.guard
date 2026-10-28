@@ -1,0 +1,14 @@
+#
+# A binding whose query projects in the middle and ends in a key, `Resources.*[ Metadata exists ].Metadata`,
+# holds one `Metadata` map per resource that has one, several maps. No map holds a scalar entry, and
+# `testBasic` is not a key any of them holds itself. The role's map holds one sub-map, which lacks `testBasic`:
+# a map holding one member map that lacks the key an absence predicate names is one object through a variable,
+# so the role's map is selected whole, never walked, and draws no notice. The instance's map holds an
+# authentication sub-map that carries `testBasic` and is no member, beside an init sub-map that lacks it: a
+# collection to the slot, walked; the predicate held on the map by absence and the selection moved, so one
+# notice names that map. The clause reads a key below the selection that the role's map and the init block lack
+# and the instance's map holds: PASS (exit 0), FAIL were the instance's map selected whole. See the _as_one_object twin.
+let blocks = Resources.*[ Metadata exists ].Metadata
+rule FILTER_THROUGH_A_METADATA_PROJECTION {
+  %blocks[ testBasic !exists ]."AWS::CloudFormation::Authentication" !exists
+}

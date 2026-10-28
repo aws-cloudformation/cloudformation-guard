@@ -1,0 +1,5 @@
+Resources:
+  Bucket:
+    !!merge <<: { Type: AWS::S3::Bucket }
+    Properties:
+      BucketName: example

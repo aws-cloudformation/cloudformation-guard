@@ -1,0 +1,8 @@
+#
+# The same constant as ports_not_in_five.guard, spelled through a function. The two files must reach
+# the same verdict: a constant is a constant whether or not a function computed it.
+#
+rule ports_not_five {
+    let five = parse_int("5")
+    Resources.*.Properties.Ports not in %five
+}

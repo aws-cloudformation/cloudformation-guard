@@ -1,0 +1,13 @@
+# `Db` carries `PubliclyAccessible` as a present null (the key is written, with no value); `Other` has
+# no `PubliclyAccessible` at all. The two are different inputs to a comparison and the rules beside this
+# file pin that they stay different: a present null decides `!=` and `==` against a literal, an absent
+# key fails both.
+Resources:
+  Db:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      PubliclyAccessible:
+  Other:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      Engine: postgres

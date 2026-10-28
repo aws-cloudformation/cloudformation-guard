@@ -1,0 +1,5 @@
+let allowed = Mappings.Allowed.Types[*]
+
+rule allowed_volume_types {
+    Resources.*.Properties.VolumeType IN %allowed
+}

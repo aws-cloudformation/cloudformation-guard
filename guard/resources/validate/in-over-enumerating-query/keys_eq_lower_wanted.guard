@@ -1,0 +1,2 @@
+# `to_lower` handed the `Wanted` members themselves, maps or a number, not strings.
+rule r_members { Resources.*.Map[ keys == to_lower(Wanted) ] == 2 }

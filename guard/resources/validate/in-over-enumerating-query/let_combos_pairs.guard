@@ -1,0 +1,5 @@
+let pairs = Mappings.Combos.*.Pair
+
+rule allowed_pair {
+    Resources.*.Properties.Pair IN %pairs
+}

@@ -1,0 +1,7 @@
+{
+    "Mappings": { "Wanted": { "Keys": [ "Env" ] } },
+    "Resources": {
+        "B": { "Type": "AWS::S3::Bucket", "Properties": { "Tags": [ { "Key": "Env", "Value": "allowed" } ] } },
+        "M": { "Type": "AWS::Serverless::Function", "Properties": { "Handler": "index.handler", "Tags": { "Env": "x" } } }
+    }
+}

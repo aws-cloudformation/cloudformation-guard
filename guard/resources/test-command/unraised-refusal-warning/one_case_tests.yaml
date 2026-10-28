@@ -1,0 +1,24 @@
+# One case, for the two-rules spec: both rules PASS by the absence, each writing its own line.
+- name: the one case
+  input:
+    Mappings:
+      Wanted:
+        Keys:
+          - Env
+    Resources:
+      B:
+        Type: AWS::S3::Bucket
+        Properties:
+          Tags:
+            - Key: Env
+              Value: allowed
+      M:
+        Type: AWS::Serverless::Function
+        Properties:
+          Handler: index.handler
+          Tags:
+            Env: x
+  expectations:
+    rules:
+      owner_unset_one: PASS
+      owner_unset_two: PASS

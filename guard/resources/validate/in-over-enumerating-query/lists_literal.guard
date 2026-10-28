@@ -1,0 +1,3 @@
+rule allowed_volume_types {
+    Resources.*.Properties.VolumeTypes IN ["gp2", "gp3"]
+}

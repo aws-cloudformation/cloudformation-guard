@@ -1,0 +1,8 @@
+[
+  {
+    "name"
+      : "a line break between a member name and its colon, which JSON allows and the YAML reader does not",
+    "input": {"A": 1},
+    "expectations": {"rules": {"a_is_one": "PASS"}}
+  }
+]

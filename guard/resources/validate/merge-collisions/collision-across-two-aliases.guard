@@ -1,0 +1,14 @@
+#
+# Two anchored one-key mappings whose keys read as one name in different kinds: `"8080"` written as a
+# string under `A`, `8080` as an integer under `B`. `R` merges both, so the integer key from `*b`
+# collides with the string key held from `*a`, and the held value `web` stands ("first at L:3,C:5 and
+# again at L:5,C:5. The first value is the one evaluated."). `A` is a one-key mapping with nothing to
+# collide, and `S` merges `*a` alone; both hold the key at the anchor's position L:3,C:5 and neither
+# merged anything that collided, so neither is reported. One notice, at /Resources/R/8080.
+#
+rule held_value_stands_under_r { Resources.R."8080" == "web" }
+rule the_copies_and_anchors_are_untouched {
+    Resources.S."8080" == "web"
+    Defaults.A."8080" == "web"
+    Defaults.B."8080" == "api"
+}
