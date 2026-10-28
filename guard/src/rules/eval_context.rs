@@ -8268,9 +8268,11 @@ fn filter_next_over_a_non_collection(
 ///   predicate asks for (`%m[ Metadata."AWS::CloudFormation::Authentication" exists ]` selecting the
 ///   `Wrapper` entry that holds the path) is the documented reading of a positive predicate through an
 ///   instance binding and is not announced. The slot the reader inserts after a `%variable` never
-///   reaches this arm: a map with no scalar entry that holds the checked key is one object to it
-///   (`map_under_the_slot`), whether a member holds the key too or none does, so `%s[ securityContext
-///   !exists ]` over that `spec` selects nothing, as the released evaluator did, and is quiet. The
+///   reaches this arm below the top-level sections: a map with no scalar entry that holds the checked
+///   key is one object to it there (`map_under_the_slot`), whether a member holds the key too or none
+///   does, so `%s[ securityContext !exists ]` over that `spec` selects nothing, as the released
+///   evaluator did, and is quiet; under the population alias (`let r = Resources`) such a map is walked
+///   like any collection and reaches this arm. The
 ///   common idiom whose predicate does not hold, `%r[ Type == 'X' ]` over resources that share `Type`,
 ///   is a collection and ends at the probe as before; an object over whose fields nothing was selected
 ///   is quiet, both readings agreeing.
@@ -8314,12 +8316,12 @@ fn filter_next_over_a_non_collection(
 /// either, so both would select the map, and both walk its entries. A map with a non-null scalar entry
 /// that the predicate does not read as a member key is one object under both spellings
 /// (`MapUnderAWildcardFilter::OneObject`): the slot arm tests the predicate on it and hands it on
-/// before the walk. Under the reader's slot a map with no scalar entry whose own key the predicate
-/// names is one object too (`OwnKeyNamed`), and a mixed map is refused where the literal `K[ f ]`
-/// refuses it and one object otherwise (`Mixed`, `the_literal_reading`). This function reads
-/// the slot's own routing first (`map_under_the_slot`) and returns for every one of them before any
-/// probe, so nothing is announced for them: what it announces is a collection's lost or gained
-/// selection.
+/// before the walk. Under the reader's slot, below the top-level sections, a map with no scalar entry
+/// whose own key the predicate names is one object too (`OwnKeyNamed`), and a mixed map is refused
+/// where the literal `K[ f ]` refuses it and one object otherwise (`Mixed`, `the_literal_reading`).
+/// This function reads the slot's own routing first (`map_under_the_slot`) and returns for every one
+/// of them before any probe, so nothing is announced for them: what it announces is a collection's
+/// lost or gained selection, the population alias's walked map among them.
 ///
 /// Deposited through `record_deprecation_once`, keyed by the filter's position, so it is one line on
 /// stderr per filter site however many maps the binding held and however many test cases evaluate the
@@ -8351,19 +8353,19 @@ fn announce_a_filter_that_lost_its_map<'value, 'loc: 'value>(
     // which (`map_under_the_slot`, the one answer the arm and this notice share, so the two never
     // disagree by hand). A map with a non-null scalar entry whose keys the predicate does not read as
     // member keys is one object under both spellings of the slot; under the slot the reader inserts, a
-    // map with no scalar entry that holds a key the predicate names is one object too, whether a member
-    // holds that key as well or none does, and a mixed map is refused where the literal `K[ f ]` refuses
-    // it and one object otherwise, so nothing of it is ever walked and nothing moves down. None of them
-    // is probed: the classification is a read of the map's keys, where the probe below runs the
-    // predicate. Only a map the arm walks or enumerates goes on.
+    // map with no scalar entry that holds a key the predicate names is one object too below the
+    // top-level sections, whether a member holds that key as well or none does, and a mixed map is
+    // refused where the literal `K[ f ]` refuses it and one object otherwise, so nothing of it is ever
+    // walked and nothing moves down. None of them is probed: the classification is a read of the map's
+    // keys, where the probe below runs the predicate. Only a map the arm walks or enumerates goes on,
+    // the population alias's map (`Walked`) among them.
     if let PathAwareValue::Map((_, map)) = &**site.value {
         let reader_slot = reads_the_reader_slot(site.query, site.query_index + 1);
         match map_under_the_slot(reader_slot, map, conjunctions, || {
-            is_a_top_level_section_path(site.value.self_path())
-                && resolver.is_top_level_alias(site.variable_name, MergedKeys::Visible)
+            is_the_population_alias(site.variable_name, site.value.self_path(), resolver)
         }) {
             MapUnderTheSlot::OneObject | MapUnderTheSlot::RefusedOrOneObject => return,
-            MapUnderTheSlot::AsTheWildcardReads(_) => {}
+            MapUnderTheSlot::Walked | MapUnderTheSlot::AsTheWildcardReads(_) => {}
         }
     }
     // The same position rule as the scalar-key notice: the first clause's, and for a `when` block its
@@ -18333,9 +18335,10 @@ enum WildcardMapOwnKey<'k> {
     /// keeps such a key off `Named`): a `Metadata` holding `AWS::CloudFormation::Authentication` beside a
     /// `Wrapper` entry that holds the same key, under `[ "AWS::CloudFormation::Authentication" exists ]`.
     /// The wildcard arms enumerate such a map as the exemption says; the slot the reader inserts after a
-    /// `%variable` reads it as one object (`map_under_the_slot`), the released evaluator's reading of a
-    /// map that holds the key, since the literal `K[ f ]` never refuses a no-scalar map whose key a member
-    /// holds (its own-key refusal is the exemption's, and its pass-over refusals need a scalar passed over).
+    /// `%variable` reads it as one object below the top-level sections (`map_under_the_slot`; under the
+    /// population alias it walks it), the released evaluator's reading of a map that holds the key, since
+    /// the literal `K[ f ]` never refuses a no-scalar map whose key a member holds (its own-key refusal is
+    /// the exemption's, and its pass-over refusals need a scalar passed over).
     /// `no_member_holds_a_named_key` is true when the predicate names at least one key and no map-valued
     /// entry holds any of them (the map holds none either, or the key would be `Named`, the exempted
     /// member's name or `own_key_a_member_holds`): no entry can be told from the map by any key the
@@ -18561,26 +18564,33 @@ fn map_under_a_wildcard_filter<'m, 'value, 'loc: 'value>(
 /// `Metadata`, as the release did, where the walk kept the init block in its place and said nothing, the
 /// one entry being a population of one; the walk keeps that member for want of the key and the one-object
 /// reading holds on the map for the same want, so the two agree on the entry and differ only in what is
-/// selected). Those three readings (a key the map holds beside a member that holds it too, a member named
-/// like the key, the one member map lacking an absence predicate's key) hold below the top-level sections
-/// only (and for a top-level key that is no section of the template, a Kubernetes `spec`): under the
-/// population alias, a `let` that names one of the template's top-level sections (`let r = Resources`,
-/// `let p = Parameters`; `slot_follows_the_population_alias`), the walk stays, so
+/// selected). Every one of the no-scalar one-object readings (a key the map holds alone, a key the map
+/// holds beside a member that holds it too, a member named like the key, the one member map lacking an
+/// absence predicate's key) holds below the top-level sections only (and for a top-level key that is no
+/// section of the template, a Kubernetes `spec`): under the population alias, a `let` that names one of
+/// the template's top-level sections (`let r = Resources`, `let p = Parameters`;
+/// `slot_follows_the_population_alias`), the walk stays whatever the member count (`Walked`), so
 /// `%r[ DeletionPolicy !exists ]` selects among the resources over a template of one as of two, `%p[ Type
-/// == 'X' ]` selects among the parameters though one is named `Type`, and `%r[ BucketA exists ]` over two
-/// resources selects none of them and is announced; the released evaluator read the section as one value
-/// in each (observed on the 3.2.1 binary), and the walk under the alias is the documented reading of the
+/// == 'X' ]` selects among the parameters though one is named `Type`, and `%r[ BucketA exists ]` selects
+/// none of the members over `BucketA` alone (the map's own key) as over `BucketA` beside `TableC` (a
+/// member's name) and is announced; the released evaluator read the section as one value in each
+/// (observed on the 3.2.1 binary), and the walk under the alias is the documented reading of the
 /// spelling. The author's `[*]` takes every classification as `map_under_a_wildcard_filter` read it.
 enum MapUnderTheSlot<'m, 'k> {
     /// Handed on whole and tested as one object: a map with a non-null scalar entry whose keys the
-    /// predicate does not read as member keys under either slot, and under the reader's slot a map with
-    /// no scalar entry that holds a key the predicate names (alone; or, below a top-level section, beside
-    /// a member that holds it too or as the name of a member among members sharing a key) or, below a
-    /// top-level section, a map holding one member map that lacks the key an absence predicate names.
+    /// predicate does not read as member keys under either slot, and under the reader's slot, below a
+    /// top-level section, a map with no scalar entry that holds a key the predicate names (alone, beside a
+    /// member that holds it too, or as the name of a member among members sharing a key) or a map holding
+    /// one member map that lacks the key an absence predicate names.
     OneObject,
     /// A mixed map under the reader's slot: refused where the literal `K[ f ]` is refused
     /// (`the_literal_reading`), one object otherwise. Never walked.
     RefusedOrOneObject,
+    /// Walked under the reader's slot as every collection is, with the bound-map notice: a map with no
+    /// scalar entry that would be one object below a section (`OneObject`) but is bound by the population
+    /// alias, whatever its classification under the author's `[*]`. The author's `[*]` never reads this
+    /// answer.
+    Walked,
     /// Read as the author's `[*]` reads the classification: a collection under either slot (walked, the
     /// bound-map notice's subject under the reader's slot), and under the author's `[*]` an own-key map
     /// (the own-key enumeration) or a mixed map (refused outright).
@@ -18601,23 +18611,33 @@ fn map_under_the_slot<'m, 'value, 'loc: 'value>(
         };
     }
     match classified {
-        MapUnderAWildcardFilter::OneObject | MapUnderAWildcardFilter::OwnKeyNamed { .. } => {
-            MapUnderTheSlot::OneObject
-        }
+        MapUnderAWildcardFilter::OneObject => MapUnderTheSlot::OneObject,
         MapUnderAWildcardFilter::Mixed { .. } => MapUnderTheSlot::RefusedOrOneObject,
-        // The three readings below hold for a map the author named below a top-level section, and for a
+        // The four readings below hold for a map the author named below a top-level section, and for a
         // top-level key that is no section of the template (a Kubernetes `spec`). Under the population
         // alias (`let r = Resources`, `let p = Parameters`: a `let` that names one of the template's
-        // top-level sections, `slot_follows_the_population_alias`) the walk stays:
-        // `%r[ DeletionPolicy !exists ]` selects among the resources whether the template holds one of
-        // them or two, `%p[ Type == 'X' ]` selects among the parameters though one of them is named
-        // `Type`, and a predicate naming a logical id (`%r[ Bucket.Type == 'X' or Properties.Tags empty ]`)
-        // selects nothing over compliant resources rather than the whole section. The released evaluator
-        // read the section as one value in each of those shapes (observed on the 3.2.1 binary); the walk
-        // under the alias is the documented reading of this spelling, and under a uniform population it is
-        // quiet by the notice's listed limit, so the alias is read here once and only for the three
-        // shapes that would otherwise take the one-object reading.
-        MapUnderAWildcardFilter::Collection {
+        // top-level sections, `slot_follows_the_population_alias`) the walk stays, whatever the map's
+        // member count: `%r[ DeletionPolicy !exists ]` selects among the resources whether the template
+        // holds one of them or two, `%p[ Type == 'X' ]` selects among the parameters though one of them is
+        // named `Type`, a predicate naming a logical id (`%r[ Bucket.Type == 'X' or Properties.Tags empty ]`)
+        // selects nothing over compliant resources rather than the whole section over a template of one
+        // resource as of two, and `%r[ BucketA exists ]` selects none of the members over the one member
+        // `BucketA` as over `BucketA` beside `TableC`. The own-key shape is read here with the three
+        // collection shapes because the classification of one predicate moves between them with the
+        // member count alone: over `BucketA` beside `TableC` the key `BucketA` is a member's name among
+        // members sharing a key (`Collection` with `member_named_like_the_key`), over `BucketA` alone it is
+        // the map's own key (`OwnKeyNamed`), and a reading that kept the second as one object under the
+        // alias made the verdict depend on how many resources the template holds, the dependence the
+        // alias walk is there to remove. The released evaluator read the section as one value in each of
+        // those shapes (observed on the 3.2.1 binary); the walk under the alias is the documented reading
+        // of this spelling, and under a uniform population it is quiet by the notice's listed limit, so
+        // the alias is read here once and only for the four shapes that would otherwise take the
+        // one-object reading. The walk is the plain one the reader's slot gives every collection
+        // (`Walked`), not the author's `[*]` own-key enumeration: that enumeration is written for a map the
+        // author chose to enumerate and refuses one that kept no entry through a resolving clause, where a
+        // section the alias names is a population to select among, over one member as over two.
+        MapUnderAWildcardFilter::OwnKeyNamed { .. }
+        | MapUnderAWildcardFilter::Collection {
             own_key_a_member_holds: Some(_),
             ..
         }
@@ -18626,7 +18646,7 @@ fn map_under_the_slot<'m, 'value, 'loc: 'value>(
             ..
         } => {
             if population_alias() {
-                MapUnderTheSlot::AsTheWildcardReads(classified)
+                MapUnderTheSlot::Walked
             } else {
                 MapUnderTheSlot::OneObject
             }
@@ -18636,7 +18656,7 @@ fn map_under_the_slot<'m, 'value, 'loc: 'value>(
             ..
         } if predicate_can_hold_by_absence(conjunctions) && a_lone_member_map(map) => {
             if population_alias() {
-                MapUnderTheSlot::AsTheWildcardReads(classified)
+                MapUnderTheSlot::Walked
             } else {
                 MapUnderTheSlot::OneObject
             }
@@ -18653,8 +18673,10 @@ fn map_under_the_slot<'m, 'value, 'loc: 'value>(
 /// keeps the one-object readings the slot gives a map below a section: the released evaluator read such a
 /// map whole, and walking it instead would be a divergence from 3.2.1 that the project admits only where
 /// announced or refused, where the walk under a section is the documented reading of this spelling. Asked
-/// by `map_under_the_slot` through a closure, so the binding walk is paid only for the three collection
-/// shapes it decides.
+/// by `map_under_the_slot` through a closure, so the binding walk is paid only for the four no-scalar
+/// shapes it decides. The slot arm asks it of the variable the query names before the slot; the bound-map
+/// notice asks the same question of the variable its site names (`is_the_population_alias`), so the two
+/// never disagree by hand.
 fn slot_follows_the_population_alias<'value, 'loc: 'value>(
     query: &[QueryPart<'_>],
     query_index: usize,
@@ -18663,11 +18685,21 @@ fn slot_follows_the_population_alias<'value, 'loc: 'value>(
 ) -> bool {
     match query_index.checked_sub(1).and_then(|at| query.get(at)) {
         Some(QueryPart::Variable(variable_name)) => {
-            is_a_top_level_section_path(map_path)
-                && resolver.is_top_level_alias(variable_name, MergedKeys::Visible)
+            is_the_population_alias(variable_name, map_path, resolver)
         }
         _ => false,
     }
+}
+
+/// Whether `variable_name`, bound to the map at `map_path`, is the population alias: the map is one of
+/// the template's top-level sections and the variable a `let` of one top-level key, or a chain of such.
+fn is_the_population_alias<'value, 'loc: 'value>(
+    variable_name: &str,
+    map_path: &Path,
+    resolver: &dyn EvalContext<'value, 'loc>,
+) -> bool {
+    is_a_top_level_section_path(map_path)
+        && resolver.is_top_level_alias(variable_name, MergedKeys::Visible)
 }
 
 /// Whether `path` is one of the template's top-level sections, the maps the population alias binds: one
@@ -23180,12 +23212,13 @@ fn query_retrieval_with_converter<'value, 'loc: 'value>(
                     // `%v` root reads the map the variable holds by the same classification, with two
                     // readings of its own, each the one the released evaluator gave `%v[ f ]`, which
                     // tested the bound map as one value. A map with a non-null scalar entry whose keys
-                    // the predicate does not read as member keys is one object, as under `[*]`; so is a
-                    // map with no scalar entry whose own key the predicate names
-                    // (`MapUnderAWildcardFilter::OwnKeyNamed`): `%md[ "AWS::CloudFormation::Authentication"
-                    // exists ]` over a `Metadata` map holding only the authentication and init blocks
-                    // tests the predicate on the map, holds, and selects it, where the author's `[*]`
-                    // runs the own-key enumeration and the literal `K[ f ]` is refused. Read apart, the
+                    // the predicate does not read as member keys is one object, as under `[*]`; so is,
+                    // below the top-level sections, a map with no scalar entry whose own key the
+                    // predicate names (`MapUnderAWildcardFilter::OwnKeyNamed`): `%md[
+                    // "AWS::CloudFormation::Authentication" exists ]` over a `Metadata` map holding only
+                    // the authentication and init blocks tests the predicate on the map, holds, and
+                    // selects it, where the author's `[*]` runs the own-key enumeration and the literal
+                    // `K[ f ]` is refused. Read apart, the
                     // variable spelling walked the one map's entries where the released evaluator tested
                     // the map itself, and a published rule written as `%v[ <own key> exists ]` over one
                     // resource reported SKIP at exit 0, with a notice, where the release reported FAIL on
@@ -23214,13 +23247,17 @@ fn query_retrieval_with_converter<'value, 'loc: 'value>(
                     // init block selects the map, where the walk kept the block in its place and said
                     // nothing, a population of one: the walk keeps that member for want of the key and
                     // the one-object reading holds on the map for the same want, so the two agree on
-                    // the entry and differ only in what is selected). Those three readings hold below
-                    // the top-level sections only; through the population alias (`let r = Resources`)
-                    // the map keeps the walk in every one of those shapes, as every other collection
-                    // does: a map with no scalar entry whose own key the predicate does not name keeps
-                    // the walk in the `else` arm below, with the bound-map notice, so `let r =
-                    // Resources` then `%r[ Type == 'AWS::S3::Bucket' ]` still selects among the
-                    // resources, and so does `%r[ DeletionPolicy !exists ]` over a template of one.
+                    // the entry and differ only in what is selected). Every one of those no-scalar
+                    // readings, the own-key one included, holds below the top-level sections only;
+                    // through the population alias (`let r = Resources`) the map keeps the walk in every
+                    // one of those shapes (`MapUnderTheSlot::Walked`), as every other collection does: a
+                    // map with no scalar entry whose own key the predicate does not name keeps the walk
+                    // in the `else` arm below, with the bound-map notice, so `let r = Resources` then
+                    // `%r[ Type == 'AWS::S3::Bucket' ]` still selects among the resources, so does `%r[
+                    // DeletionPolicy !exists ]` over a template of one, and `%r[ BucketA exists ]`
+                    // selects none of the members over the one member `BucketA` (the map's own key) as
+                    // over `BucketA` beside `TableC` (a member's name), so the verdict does not depend
+                    // on how many resources the template holds.
                     //
                     // An EMPTY map at the population with a selection still ahead is the empty
                     // selection, as `Resources: {}` is under `Resources.*.Properties.Tags[ f ]`
@@ -23342,7 +23379,9 @@ fn query_retrieval_with_converter<'value, 'loc: 'value>(
                                         MapUnderAWildcardFilter::OneObject,
                                     ))
                                 }
-                                // The reader's slot over a collection: the walk, in the `else` arm.
+                                // The reader's slot over a collection, and over a map the population
+                                // alias binds whatever its classification: the walk, in the `else` arm.
+                                MapUnderTheSlot::Walked => None,
                                 MapUnderTheSlot::AsTheWildcardReads(
                                     MapUnderAWildcardFilter::Collection { .. },
                                 ) if reader_slot => None,

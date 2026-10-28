@@ -48,9 +48,9 @@ beside a member that holds the key too, or where the key is the name of a member
 key; a map holding one member map that lacks the key an absence predicate names is one object; and a
 mixed map is one object unless the literal path refuses the filter over it, when it is refused the same
 way (where the literal keeps an entry instead, one `Warning:` line per filter site says the two spellings
-disagree). The second, third and fourth of those readings hold below the top-level sections only: through
-a binding of a section itself (`let r = Resources`, `let p = Parameters`) the walk stays, as this file's
-rows over `%r[ ... ]` show. So a variable holding a map of scalars is tested as one object (the
+disagree). The first two of those readings hold below the top-level sections only: through a binding of
+a section itself (`let r = Resources`, `let p = Parameters`) the walk stays whatever the member count, as
+this file's rows over `%r[ ... ]` show. So a variable holding a map of scalars is tested as one object (the
 `tags_absent_not_empty_through_a_variable_bound_to_properties.guard` row) and a variable holding a scalar beside a
 sub-map that carries the checked key is refused (the `tag_specifications_absent_gate_through_a_variable.guard`
 row). Map-shaped tags under a predicate that reads only `Key` and `Value`

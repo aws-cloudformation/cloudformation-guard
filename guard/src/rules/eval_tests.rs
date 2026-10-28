@@ -86318,12 +86318,13 @@ fn a_filter_through_a_variable_over_a_map_whose_own_key_names_a_member_is_one_ob
     Ok(())
 }
 
-/// The three one-object readings the slot after a variable gives a map with no scalar entry (a key the
-/// map holds beside a member that holds it too, a member named like the key, and one member map lacking
-/// the key an absence predicate names) do not apply to the population alias, a `let` that names one
-/// top-level section of the document: there the walk stays, the documented reading of this spelling.
+/// The one-object readings the slot after a variable gives a map with no scalar entry (a key the map holds
+/// alone, a key the map holds beside a member that holds it too, a member named like the key, and one
+/// member map lacking the key an absence predicate names) do not apply to the population alias, a `let`
+/// that names one top-level section of the document: there the walk stays whatever the member count, the
+/// documented reading of this spelling.
 ///
-/// Three shapes, each run on the cfn-guard 3.2.1 binary, which read the section as one value in all of
+/// Four shapes, each run on the cfn-guard 3.2.1 binary, which read the section as one value in all of
 /// them. `let r = Resources` then `%r[ DeletionPolicy !exists ].Properties.PubliclyAccessible !exists`
 /// over one `AWS::RDS::DBInstance` with `PubliclyAccessible: true` and no `DeletionPolicy`: the walk
 /// selects the instance and the check FAILs, as it does over two resources, where 3.2.1 selected
@@ -86339,8 +86340,18 @@ fn a_filter_through_a_variable_over_a_map_whose_own_key_names_a_member_is_one_ob
 /// take the one-object readings: the one-resource `Resources` under the absence predicate is one object
 /// and the check PASSes, as 3.2.1 read it, and the `Parameters` that holds `Type` beside a parameter
 /// holding `Type` is one object, the comparison fails on it, nothing is selected and the check is SKIP, as
-/// 3.2.1 read it; neither writes a notice. The third shape, a predicate naming a logical id over the
-/// alias, is `the_population_probe_reads_each_clause_on_its_own`.
+/// 3.2.1 read it; neither writes a notice. The third shape is the own key: `%r[ BucketA exists ]` through
+/// `let r = Resources` over the one resource `BucketA` names the map's own key (over `BucketA` beside
+/// `TableC` it is a member's name, the shape
+/// `a_filter_through_a_variable_over_a_map_whose_own_key_names_a_member_is_one_object_below_a_section`
+/// pins), and the walk selects none of the members: `!empty` FAILs and `empty` PASSes, as over two
+/// resources, where 3.2.1 selected `Resources` (`!empty` PASS, `empty` FAIL, over one member as over two,
+/// with or without a `Type` on the member); the predicate holds on the map by the key it names, a pass
+/// anchored in the map, so the bound-map notice says once per site that the whole-map selection is lost,
+/// over one member as over two, `Type` or no `Type` (the notice's uniform-population limit is for a pass
+/// anchored by nothing). The same one-member map one level down (`let r = Stack.Resources`) is one object
+/// and selects the map, as 3.2.1 read it (`!empty` PASS), with no notice. The fourth shape, a predicate
+/// naming a logical id over the alias, is `the_population_probe_reads_each_clause_on_its_own`.
 ///
 /// The alias is a `let` of one of the template's seven top-level sections (`is_a_top_level_section_path`).
 /// The other five, each holding ONE member map that lacks `Foo`: `%m[ Foo !exists ]` through `let m =
@@ -86371,102 +86382,173 @@ fn the_one_object_readings_do_not_apply_to_a_top_level_section_alias() -> Result
         "Resources": {"B": {"Type": "AWS::S3::Bucket"}}
     }"#;
     const SPEC_WITH_A_SECURITY_CONTEXT_THAT_A_FIELD_HOLDS_TOO: &str = r#"{"spec": {"securityContext": {"runAsNonRoot": true}, "selector": {"matchLabels": {"app": "web"}}, "template": {"securityContext": {"fsGroup": 1}, "metadata": {"labels": {"app": "web"}}}}}"#;
+    const ONE_MEMBER_NAMED_LIKE_THE_KEY: &str =
+        r#"{"Resources": {"BucketA": {"Type": "AWS::S3::Bucket"}}}"#;
+    const ONE_MEMBER_NAMED_LIKE_THE_KEY_WITHOUT_A_TYPE: &str =
+        r#"{"Resources": {"BucketA": {"Properties": {"BucketName": "b"}}}}"#;
+    const ONE_MEMBER_NAMED_LIKE_THE_KEY_BELOW_A_SECTION: &str =
+        r#"{"Stack": {"Resources": {"BucketA": {"Type": "AWS::S3::Bucket"}}}}"#;
     let mut cells = CellFailures::default();
-    for (label, rules, doc, expected) in [
+    for (label, rules, doc, expected, bound_map_notices) in [
         (
             "the alias over one resource: the walk selects the instance, the check fails (3.2.1 PASS, the section selected)",
             format!("let r = Resources\nrule r {{ %r{PUBLIC} }}"),
             ONE_DB,
             Status::FAIL,
+            0usize,
         ),
         (
             "the alias over two resources: the walk selects both, the check fails on the instance (3.2.1 PASS)",
             format!("let r = Resources\nrule r {{ %r{PUBLIC} }}"),
             DB_AND_QUEUE,
             Status::FAIL,
+            0,
         ),
         (
             "the literal over one resource: the walk, the check fails",
             format!("rule r {{ Resources{PUBLIC} }}"),
             ONE_DB,
             Status::FAIL,
+            0,
         ),
         (
             "control: the same one-resource map one level down is one object under the absence predicate, `Properties` is not found below the selection, the check passes (3.2.1 PASS)",
             format!("let r = Stack.Resources\nrule r {{ %r{PUBLIC} }}"),
             ONE_DB_BELOW_A_SECTION,
             Status::PASS,
+            0,
         ),
         (
             "the alias over parameters one of which is named `Type`: the walk selects the `KeyName` parameter, the check fails on its missing pattern (3.2.1 SKIP, nothing selected)",
             format!("let p = Parameters\nrule r {{ %p{PATTERN} }}"),
             A_PARAMETER_NAMED_TYPE,
             Status::FAIL,
+            0,
         ),
         (
             "the literal over the same parameters: the walk, the check fails",
             format!("rule r {{ Parameters{PATTERN} }}"),
             A_PARAMETER_NAMED_TYPE,
             Status::FAIL,
+            0,
         ),
         (
             "control: the same parameters one level down are one object (the map holds `Type` beside a parameter that holds it), the comparison fails on the map, nothing is selected, SKIP (3.2.1 SKIP)",
             format!("let p = Stack.Parameters\nrule r {{ %p{PATTERN} }}"),
             A_PARAMETER_NAMED_TYPE_BELOW_A_SECTION,
             Status::SKIP,
+            0,
+        ),
+        (
+            "the alias over the one resource named like the key, the map's own key: the walk selects no member, `!empty` fails, announced once (3.2.1 PASS, the section selected)",
+            "let r = Resources\nrule r { %r[ BucketA exists ] !empty }".to_string(),
+            ONE_MEMBER_NAMED_LIKE_THE_KEY,
+            Status::FAIL,
+            1,
+        ),
+        (
+            "the alias over the one resource named like the key: the walk selects no member, `empty` passes, announced once (3.2.1 FAIL)",
+            "let r = Resources\nrule r { %r[ BucketA exists ] empty }".to_string(),
+            ONE_MEMBER_NAMED_LIKE_THE_KEY,
+            Status::PASS,
+            1,
+        ),
+        (
+            "the alias over the one resource named like the key, with no `Type`: the walk selects no member, `!empty` fails, announced once (3.2.1 PASS)",
+            "let r = Resources\nrule r { %r[ BucketA exists ] !empty }".to_string(),
+            ONE_MEMBER_NAMED_LIKE_THE_KEY_WITHOUT_A_TYPE,
+            Status::FAIL,
+            1,
+        ),
+        (
+            "the alias over the one resource named like the key: a key of the section read below the selection is not applicable, nothing selected (3.2.1 FAIL on the section, which lacks `Type`)",
+            "let r = Resources\nrule r { %r[ BucketA exists ].Type exists }".to_string(),
+            ONE_MEMBER_NAMED_LIKE_THE_KEY,
+            Status::SKIP,
+            1,
+        ),
+        (
+            "control: the same one-member map one level down is one object (the map's own key), the map is selected, `!empty` passes (3.2.1 PASS)",
+            "let r = Stack.Resources\nrule r { %r[ BucketA exists ] !empty }".to_string(),
+            ONE_MEMBER_NAMED_LIKE_THE_KEY_BELOW_A_SECTION,
+            Status::PASS,
+            0,
         ),
         (
             "the Mappings alias over one map lacking `Foo`: the walk selects the map, `!empty` passes (3.2.1 PASS, the section selected)",
             "let m = Mappings\nrule r { %m[ Foo !exists ] !empty }".to_string(),
             ONE_MEMBER_PER_SECTION,
             Status::PASS,
+            0,
         ),
         (
             "the Mappings alias: a key of the section read below the selection fails on the member (3.2.1 PASS on the section)",
             "let m = Mappings\nrule r { %m[ Foo !exists ].RegionMap exists }".to_string(),
             ONE_MEMBER_PER_SECTION,
             Status::FAIL,
+            0,
         ),
         (
             "the Conditions alias: the key below fails on the member (3.2.1 PASS); the one condition is an intrinsic map, no plain member, so the walk is the reading under either slot",
             "let c = Conditions\nrule r { %c[ Foo !exists ].IsProd exists }".to_string(),
             ONE_MEMBER_PER_SECTION,
             Status::FAIL,
+            0,
         ),
         (
             "the top-level Metadata alias: the key below fails on the member (3.2.1 PASS)",
             "let md = Metadata\nrule r { %md[ Foo !exists ].\"AWS::CloudFormation::Interface\" exists }".to_string(),
             ONE_MEMBER_PER_SECTION,
             Status::FAIL,
+            0,
         ),
         (
             "the Rules alias: the key below fails on the member (3.2.1 PASS)",
             "let ru = Rules\nrule r { %ru[ Foo !exists ].OnlyProd exists }".to_string(),
             ONE_MEMBER_PER_SECTION,
             Status::FAIL,
+            0,
         ),
         (
             "the Outputs alias: the key below fails on the member (3.2.1 PASS)",
             "let o = Outputs\nrule r { %o[ Foo !exists ].Name exists }".to_string(),
             ONE_MEMBER_PER_SECTION,
             Status::FAIL,
+            0,
         ),
         (
             "control: a top-level key that is no section, a Deployment `spec` holding `securityContext` beside a `template` that holds one too, keeps the one-object reading: nothing selected, `empty` passes (3.2.1 PASS)",
             "let s = spec\nrule r { %s[ securityContext !exists ] empty }".to_string(),
             SPEC_WITH_A_SECURITY_CONTEXT_THAT_A_FIELD_HOLDS_TOO,
             Status::PASS,
+            0,
         ),
     ] {
         let (status, refused, notices) = deprecations_and_refusal_for_rules(&rules, doc)?;
         cells.check(&format!("{label}: status"), expected, status);
         cells.check(&format!("{label}: not refused"), false, refused);
         cells.check(
-            &format!("{label}: no notice (a uniform population is quiet; one object is never walked) {notices:?}"),
-            0usize,
+            &format!("{label}: notices (a uniform population under a pass anchored by nothing is quiet; one object is never walked; a pass anchored in the map is announced) {notices:?}"),
+            bound_map_notices,
             notices.len(),
         );
     }
+    // The author's `[*]` over the one member named like the key runs the own-key enumeration, which keeps
+    // no entry and is refused: the alias walk above is not that enumeration.
+    let (status, refused, _) = deprecations_and_refusal_for_rules(
+        "rule r { Resources[*][ BucketA exists ] !empty }",
+        ONE_MEMBER_NAMED_LIKE_THE_KEY,
+    )?;
+    cells.check(
+        "the author's `[*]` over the one member named like the key: the own-key enumeration kept nothing, refused: status",
+        Status::FAIL,
+        status,
+    );
+    cells.check(
+        "the author's `[*]` over the one member named like the key: refused",
+        true,
+        refused,
+    );
     cells.assert_all_agreed();
     Ok(())
 }
@@ -100261,19 +100343,20 @@ fn an_alias_chain_leaving_a_nested_block_is_judged_where_it_ends() -> Result<()>
 /// probe asks the same question of every map; on a named map the reset is equally in force, and a pass
 /// anchored by nothing is then decided from the map's entries by the caller.
 ///
-/// `r` is the population alias (`let r = Resources`), so the member-named-like-the-key reading the slot
-/// gives a map below a top-level section does not apply (`map_under_the_slot`): over the two-resource
-/// documents the walk stays, the untagged bucket is selected and the body fails on its `Type`, and over
-/// the compliant tagged resources nothing is selected and the gate stays closed, SKIP, with no notice
-/// either way. cfn-guard 3.2.1 read the section as one value in both (observed on its binary: the gate
-/// opened on `Resources` and the body failed on the `Type` it lacks), the whole-section reading the walk
-/// under the alias replaces. The tagged two-resource row is the one row that goes red when the per-clause
-/// reset in `probe_predicate` is removed: the walk selects nothing, SKIP, and the reset keeps the failing
-/// disjunct's lookup from grounding the vacuous pass. The one-resource documents are another shape: with
-/// one member the key `Bucket` is the map's own key and the name of no member among members sharing a
-/// key, so the slot reads the map as one object whatever bound it (the own-key reading, which the alias
-/// does not exempt), the predicate holds by the vacuous disjunct, the gate opens and the body fails on the
-/// `Type` the map lacks, tagged or not, as 3.2.1 did; no probe runs, so nothing is announced.
+/// `r` is the population alias (`let r = Resources`), so neither the member-named-like-the-key reading
+/// nor the own-key reading the slot gives a map below a top-level section applies (`map_under_the_slot`):
+/// the walk stays over two resources, where the key `Bucket` is a member's name among members sharing a
+/// key, and over one, where it is the map's own key. The untagged bucket is selected and the body fails
+/// on its `Type`, over one resource as over two; over the compliant tagged resources nothing is selected
+/// and the gate stays closed, SKIP, over one as over two; no notice either way (a uniform population).
+/// cfn-guard 3.2.1 read the section as one value in all four (observed on its binary: the gate opened on
+/// `Resources` and the body failed on the `Type` it lacks), the whole-section reading the walk under the
+/// alias replaces. Before the own-key reading was exempted under the alias, the one tagged resource read
+/// FAIL (the map's own key, one object, the gate opened) where two tagged resources read SKIP: the
+/// verdict depended on how many resources the template held, the dependence the alias walk is there to
+/// remove. The two tagged rows are the rows that go red when the per-clause reset in `probe_predicate`
+/// is removed: the walk selects nothing, SKIP, and the reset keeps the failing disjunct's lookup from
+/// grounding the vacuous pass.
 #[test]
 fn the_population_probe_reads_each_clause_on_its_own() -> Result<()> {
     const UNTAGGED: &str = r#"{
@@ -100313,14 +100396,14 @@ fn the_population_probe_reads_each_clause_on_its_own() -> Result<()> {
             Status::SKIP,
         ),
         (
-            "the one untagged resource named like the key: the map's own key, tested itself whatever bound it, selected, and the body fails on its missing `Type` (3.2.1 FAIL)",
+            "the one untagged resource named like the key through the population alias: the walk selects the untagged bucket and the body fails on its `Type`, as over two (3.2.1 FAIL on the section's missing `Type`)",
             ONE_UNTAGGED,
             Status::FAIL,
         ),
         (
-            "the one tagged resource named like the key: the map's own key, tested itself, selected by the vacuous disjunct, and the body fails (3.2.1 FAIL)",
+            "the one tagged resource named like the key through the population alias: the walk selects nothing, SKIP, as over two (3.2.1 FAIL, the section read as one value); the other row that reaches the per-clause reset",
             ONE_TAGGED,
-            Status::FAIL,
+            Status::SKIP,
         ),
     ] {
         let (status, notices) = deprecations_for_rules(RULES, doc)?;
