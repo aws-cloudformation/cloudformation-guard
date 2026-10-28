@@ -3154,7 +3154,10 @@ fn raised_refusal_record_fields(error: &Error) -> (Option<String>, bool) {
 /// unregistered reason (`(1) <refusal> (2) <budget>`, raised under the refusal's token; the whole text is
 /// nobody's registered sentence and the budget has no read of its own), else the error's own text as one
 /// read (a raise known by its token alone). Read by `note_refusal_raise` and `basis_of_error` alike, so
-/// the refused-read line and the fail-closed `not` record name the same reads for one raise.
+/// the refused-read line and the fail-closed `not` record name the same reads for one raise. The
+/// registered-parts step is pinned by
+/// `an_absorbed_raise_is_reported_at_its_own_clause_whatever_entry_or_depth_raised_it`, which is red
+/// when that step is taken out.
 fn refusal_reads_of(error: &Error) -> Vec<String> {
     let text = error_text_of(error);
     let mut reads = crate::rules::eval_context::registered_refusal_texts(&text);
@@ -7884,7 +7887,9 @@ fn judged_binary_operation<'value, 'loc: 'value>(
         // ranks the refusal's reason over the engine's (a tokened refusal displaces a token-less reason),
         // so the engine's is read back from the evidence (`own_reason`); the token stays the refusal's,
         // so the record is flagged by the bit. Not inside a predicate, where the raised text becomes the
-        // entry's marker reason and every part of it has to be a registered refusal.
+        // entry's marker reason and every part of it has to be a registered refusal. The `refused_reads`
+        // guard (the engine's own reason leads only beside a refused read) has no test of its own yet:
+        // with it removed, every lib test holds, so the no-refusal case is unpinned.
         let reason = match own_reason {
             Some(own) if !a_predicates_text && own != reason && !refused_reads.is_empty() => own,
             _ => reason,
@@ -12774,7 +12779,9 @@ fn eval_guard_block_values<'value, 'loc: 'value>(
             // and the enclosing condition site names the reason again as the rule's.
             // The error the block returns below, so the record and the condition that reads the
             // error name one raise: a value's body that raised a plain registered refusal beside a
-            // sibling's tokened one is handed up as that plain error, and the record says the same.
+            // sibling's tokened one is handed up as that plain error, and the record says the same
+            // (`a_scalar_filter_inside_a_predicate_announces_the_reading_it_replaces_once` is red when
+            // the record ignores `plain_body_raise`).
             let raised = match plain_body_raise {
                 Some(text) => Error::Unevaluatable(text),
                 None => error,
@@ -13963,8 +13970,8 @@ impl<'eval, 'value, 'loc: 'value> EvalContext<'value, 'loc>
     /// re-read in the callee's scope, where its names mean something else.
     ///
     /// Then the called rule's own captures, in the order `resolve_variable` reads the stores: a key its
-    /// `when` condition captured, or (when `Visible`) one its body handed up, names its value, as a
-    /// capture does in every other scope. Handing these names to the parent paired the capture's keys
+    /// `when` condition captured, or (when `Visible`) one its body handed up, is the one entry set of
+    /// the keys the filter bound (`LastPart`), as a capture is in every other scope. Handing these names to the parent paired the capture's keys
     /// with whatever the caller had bound under the name -- a `let`'s recorded shape, or nothing -- so
     /// the values came from one binding and the shape from another. Any other name is the parent's to
     /// answer.

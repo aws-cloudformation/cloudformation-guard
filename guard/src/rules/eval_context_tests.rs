@@ -3757,9 +3757,10 @@ fn a_quiet_bound_map_filter_site_is_read_once_and_never_re_walked() -> Result<()
 /// one object to the slot after `%s`, which tests the predicate on the spec itself as `spec[*][ f ]`
 /// does; the notice classifies the map from its keys before it probes anything, so a one-object spec
 /// pays no probe, no re-walk and no entry read on any of the twelve evaluations, and no notice goes out
-/// (the last row pins that). The second spec keeps its scalar and is mixed: its sub-maps hold the key, so
-/// the slot takes the literal's reading and the notice returns for it at the same classification, with
-/// the same zero cost. The filter sits inside a type block that matches twelve buckets, so the clause is
+/// (the fifth row pins that, with the rule's status: the spec is selected and the clause passes). The
+/// second spec keeps its scalar and is mixed: its sub-maps hold the key, so the slot refuses the filter
+/// where the literal does and tests the spec as one object otherwise, and the notice returns for it at
+/// the same classification, with the same zero cost. The filter sits inside a type block that matches twelve buckets, so the clause is
 /// evaluated twelve times. The predicates:
 /// - `%s[ securityContext exists ] empty` does not hold on the object and can hold on no field of it
 ///   either, since `exists` never holds by absence, so nothing can have been gained: the probe stops it
@@ -3771,11 +3772,12 @@ fn a_quiet_bound_map_filter_site_is_read_once_and_never_re_walked() -> Result<()
 ///   which the evaluator applies as it applies `!exists`: held by absence on the object and announced
 ///   once, as the `!exists` control below is.
 /// - `%s[ securityContext !exists ] empty` over a `spec` that carries a `securityContext` and whose
-///   map-valued fields each carry one too, with a scalar `replicas` beside them: a mixed map, which the
-///   slot reads as the literal does. The notice returns at the classification, so nothing is probed,
-///   re-walked or announced on any of the twelve evaluations: (0, 0, 0, 0).
+///   map-valued fields each carry one too, with a scalar `replicas` beside them: a mixed map, refused
+///   where the literal is and one object otherwise. The notice returns at the classification, so
+///   nothing is probed, re-walked or announced on any of the twelve evaluations: (0, 0, 0, 0).
 /// - `%s[ securityContext !exists ] !empty` over a `spec` of `replicas`, `selector` and `template`, no
-///   sub-map holding the key: one object, tested whole, selected, and the same (0, 0, 0, 0).
+///   sub-map holding the key: one object, tested whole and selected (the rule PASSes), and the same
+///   (0, 0, 0, 0).
 /// - `%s[ securityContext !exists ] !empty` over the first `spec`, held by absence on the object and
 ///   announced as a lost selection: one probe, one re-walk, one notice, the control, as before.
 #[test]
@@ -3802,53 +3804,61 @@ fn an_object_the_predicate_did_not_hold_on_is_re_walked_once_or_not_at_all() -> 
         "{buckets}spec:\n  replicas: 3\n  selector:\n    matchLabels:\n      app: a\n  template:\n    \
          metadata:\n      labels:\n        app: a\n"
     );
-    // (probes, re-walks, entry probes, notices) over the twelve evaluations.
+    // (probes, re-walks, entry probes, notices) over the twelve evaluations, and the rule's status where
+    // the row's silence is a selection (`None` where only the counts are the row's point).
     type Counts = (usize, usize, usize, usize);
-    let rows: [(&str, &str, &str, Counts); 7] = [
+    let rows: [(&str, &str, &str, Counts, Option<Status>); 7] = [
         (
             "a positive predicate that did not hold on the object: one probe, no re-walk, then the recorded quiet verdict on the other eleven evaluations",
             &object,
             "let s = spec\nrule r { AWS::S3::Bucket { %s[ securityContext exists ] empty } }",
             (1, 0, 0, 0),
+            None,
         ),
         (
             "an absence check spelled with a leading `not`, held on the object: announced once as a lost selection, as the `!exists` spelling is",
             &object,
             "let s = spec\nrule r { AWS::S3::Bucket { %s[ not securityContext exists ] !empty } }",
             (1, 1, 0, 1),
+            None,
         ),
         (
             "the `not` spelling over a mixed spec (a scalar beside sub-maps that hold the key): classified before any probe, nothing probed, re-walked or announced",
             &carrying,
             "let s = spec\nrule r { AWS::S3::Bucket { %s[ not securityContext exists ] empty } }",
             (0, 0, 0, 0),
+            None,
         ),
         (
             "an absence check over the same mixed spec: classified before any probe, nothing probed, re-walked or announced",
             &carrying,
             "let s = spec\nrule r { AWS::S3::Bucket { %s[ securityContext !exists ] empty } }",
             (0, 0, 0, 0),
+            None,
         ),
         (
-            "an absence check over a one-object spec (a scalar `replicas` beside sub-maps none of which holds the key): tested whole and selected, nothing probed, re-walked or announced",
+            "an absence check over a one-object spec (a scalar `replicas` beside sub-maps none of which holds the key): tested whole and selected, the rule passes, nothing probed, re-walked or announced",
             &one_object,
             "let s = spec\nrule r { AWS::S3::Bucket { %s[ securityContext !exists ] !empty } }",
             (0, 0, 0, 0),
+            Some(Status::PASS),
         ),
         (
             "the control: an absence check held on the object, announced once as a lost selection",
             &object,
             "let s = spec\nrule r { AWS::S3::Bucket { %s[ securityContext !exists ] !empty } }",
             (1, 1, 0, 1),
+            None,
         ),
         (
             "the common idiom over a collection, `%r[ Type == 'AWS::S3::Bucket' ]` with `let r = Resources`, inside the type block: one probe, then the recorded quiet verdict on the other eleven evaluations",
             &object,
             "let r = Resources\nrule r { AWS::S3::Bucket { %r[ Type == 'AWS::S3::Bucket' ] !empty } }",
             (1, 0, 0, 0),
+            None,
         ),
     ];
-    for (label, doc, rules, expected) in rows {
+    for (label, doc, rules, expected, expected_status) in rows {
         BOUND_MAP_FILTER_PROBES.with(|probes| probes.set(0));
         BOUND_MAP_FILTER_REWALKS.with(|rewalks| rewalks.set(0));
         BOUND_MAP_ENTRY_PROBES.with(|probes| probes.set(0));
@@ -3856,7 +3866,10 @@ fn an_object_the_predicate_did_not_hold_on_is_re_walked_once_or_not_at_all() -> 
         let value =
             PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(doc).unwrap())?;
         let mut scope = root_scope(&rules_file, Rc::new(value));
-        let _ = crate::rules::eval::eval_rules_file(&rules_file, &mut scope, None)?;
+        let status = crate::rules::eval::eval_rules_file(&rules_file, &mut scope, None)?;
+        if let Some(expected_status) = expected_status {
+            assert_eq!(expected_status, status, "{label}: the rule's status");
+        }
         let probes = BOUND_MAP_FILTER_PROBES.with(|probes| probes.get());
         let rewalks = BOUND_MAP_FILTER_REWALKS.with(|rewalks| rewalks.get());
         let entry_probes = BOUND_MAP_ENTRY_PROBES.with(|probes| probes.get());

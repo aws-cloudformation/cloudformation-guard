@@ -2696,7 +2696,7 @@ fn every_pinned_by_cell_of_the_clause_tables_names_a_test_and_a_case_it_has() {
         // a citation by fn alone
         format!("eval_tests.rs:{}", REMEDY_TEST),
         // the rule body as written, whole
-        "eval_tests.rs:a_bound_map_filter_that_left_only_undecidable_entries_says_so (case \"let m = Resources.Only\\nrule r { %m[ Type exists or M[ keys == Tags[ Key == 'Env' ].Value ] !empty ] empty }\")".to_string(),
+        "eval_tests.rs:a_bound_map_filter_that_left_only_undecidable_entries_says_so (case \"let m = Resources.Only\\nrule r { %m[ Tags !exists or M[ keys == Tags[ Key == 'Env' ].Value ] !empty ] empty }\")".to_string(),
         // a rendering of a format template
         "eval_tests.rs:a_filter_after_a_key_over_null_reads_as_absent_and_over_a_scalar_is_refused (case \"plain spelling, predicate `this[ Type == 'X' ]` over an entry that is `null`\")".to_string(),
         // a label holding a quote, written `\"` as a plain literal writes it

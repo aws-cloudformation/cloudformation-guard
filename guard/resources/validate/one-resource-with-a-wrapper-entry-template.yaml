@@ -1,7 +1,8 @@
 # One resource one of whose entries, `Wrapper`, is itself a map carrying a `Metadata` map with an
-# `AWS::CloudFormation::Authentication` block. A positive predicate on that path, walked through a variable
-# holding the resource, holds on the `Wrapper` entry alone: the resource's own `Metadata` map has no
-# `Metadata` key, `Properties` has none, and the `Type` string is not a value the predicate applies to.
+# `AWS::CloudFormation::Authentication` block, beside the resource's `Type` string: a mixed map. A
+# positive predicate on that path through a variable holding the resource is tested on the resource
+# itself, as cfn-guard 3.2.1 tested it: its own `Metadata` has no such block, so nothing is selected.
+# The literal `Resources.Only[ ... ]` walks the entries and selects `Wrapper`.
 Resources:
   Only:
     Type: AWS::EC2::Instance

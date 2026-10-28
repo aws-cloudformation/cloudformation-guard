@@ -382,8 +382,11 @@ jq -r '[.[] | .test_cases[]?
         | .failed_rules[]?
         | "\($case.name // "<unnamed case>"): rule \(.name), expected \(.expected), evaluated \(.evaluated | join(", "))"]
        | .[]' "$report" \
-    | tr -d '\r' | LC_ALL=C sort >"$work/actual/failed-rules.txt"
+    | tr -d '\r' | unindent | LC_ALL=C sort >"$work/actual/failed-rules.txt"
 
+# Both sides unindented: a case name that starts with blanks would otherwise be stripped on the expected
+# side alone, and condition 3 could never be made to pass for it (the corpus does carry a file name
+# that starts with a space; see condition 4 below).
 strip_comments "$expected_failed" | unindent | LC_ALL=C sort >"$work/expected/failed-rules.txt"
 
 if ! cmp -s "$work/expected/failed-rules.txt" "$work/actual/failed-rules.txt"; then

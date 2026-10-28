@@ -1,0 +1,36 @@
+#
+# A filter through a variable over a MIXED map: `%p` holds one map with a scalar entry (`Name`) beside
+# an `Inner` entry that is itself a map, and `Name` is also a key of `Inner`. The literal
+# `Properties[ Name exists ]` walks the entries, passes the scalar over and selects `Inner`; the filter
+# through the variable does what cfn-guard 3.2.1 did with every filter through a variable over one map
+# (observed on its binary): it tests the predicate on the map itself. `Name exists` holds on the map, the
+# map is selected, and what the rules below compare is the map's own `Name`, `a`:
+#
+# - `.Tags exists`: the map has no `Tags`, so the clause fails (FAIL).
+# - `.Name == 'b'`: the map's `Name` is `a`, so the clause fails (FAIL; 3.2.1 FAIL). The literal selects
+#   `Inner` and compares `b`, PASS: the one spelling that parts from the release here.
+# - `.Name == 'a'`: the map's own `Name`, PASS (3.2.1 PASS).
+#
+# No notice is written for any site: a mixed map is never walked through a variable, so no selection
+# moves down. The literal does not refuse this filter (the predicate holds by presence, not by absence),
+# which is why the map is read as one object rather than refused; a mixed map the literal refuses
+# (`%c[ Owner !exists ]` over `{ Mode: fast, A: { Owner: o } }`) is refused through the variable too.
+#
+let p = Resources.B.Properties
+
+rule ONE_OBJECT_TAGS {
+  %p[ Name exists ].Tags exists
+}
+
+rule ONE_OBJECT_NAME_IS_B {
+  %p[ Name exists ].Name == 'b'
+}
+
+rule ONE_OBJECT_NAME_IS_A {
+  %p[ Name exists ].Name == 'a'
+}
+
+# Over two-level-properties-template.yaml the verdicts are ONE_OBJECT_NAME_IS_A PASS, ONE_OBJECT_NAME_IS_B
+# FAIL and ONE_OBJECT_TAGS FAIL, with no notice; the test over this file asserts them and that the value
+# compared is the map's own `Name`, not `Inner`'s. The note sits after the rules so the rules' line
+# numbers stay where they were.

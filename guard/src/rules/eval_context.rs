@@ -8228,8 +8228,9 @@ fn filter_next_over_a_non_collection(
 ///   it, and never the map, since a map the slot arm hands on whole returns from this function at its
 ///   classification, before any probe (`kept_the_map` guards the walk's output all the same). How
 ///   many entries were selected in the map's place
-///   goes into the text -- none, or the one or more the predicate held on
-///   (`a_filter_whose_selection_moved_down_is_announced`).
+///   goes into the text -- none, or the one or more the predicate held on (the directive rows of
+///   `a_lone_loop_is_passed_over_anywhere_and_a_lone_transform_at_a_section_only`: "it selected 2 of the
+///   map's entries in its place" over an ingress of a directive and two members).
 /// - Or the predicate does not hold on this map, the map is an object of fields rather than a
 ///   collection (`map_is_an_object_of_fields`: an entry that is neither a map nor null under a key that
 ///   is no `Fn::` directive, or two or more sub-maps that share no key name; null entries, empty-map
@@ -8287,10 +8288,11 @@ fn filter_next_over_a_non_collection(
 /// that the predicate does not read as a member key is one object under both spellings
 /// (`MapUnderAWildcardFilter::OneObject`): the slot arm tests the predicate on it and hands it on
 /// before the walk. Under the reader's slot a map with no scalar entry whose own key the predicate
-/// names is one object too (`OwnKeyNamed`), and a mixed map is refused or selects the members it holds
-/// on, as the literal does (`Mixed`, `filter_over_a_named_map`). This function reads the same
-/// classification first and returns for every one of them before any probe, so nothing is announced
-/// for them: what it announces is a collection's lost or gained selection.
+/// names is one object too (`OwnKeyNamed`), and a mixed map is refused where the literal `K[ f ]`
+/// refuses it and one object otherwise (`Mixed`, `the_literal_reading_refuses`). This function reads
+/// the slot's own routing first (`map_under_the_slot`) and returns for every one of them before any
+/// probe, so nothing is announced for them: what it announces is a collection's lost or gained
+/// selection.
 ///
 /// Deposited through `record_deprecation_once`, keyed by the filter's position, so it is one line on
 /// stderr per filter site however many maps the binding held and however many test cases evaluate the
@@ -8318,27 +8320,19 @@ fn announce_a_filter_that_lost_its_map<'value, 'loc: 'value>(
         Some(QueryPart::Filter(own, conjunctions)) => (own.as_deref(), conjunctions),
         _ => return,
     };
-    // A map the slot arm hands on whole is no lost selection, and a map the slot arm refuses or reads
-    // as the literal reads it is answered by its verdict: a map with a non-null scalar entry whose keys
-    // the predicate does not read as member keys is one object under both spellings of the slot
-    // (`MapUnderAWildcardFilter::OneObject`); under the slot the reader inserts, a map with no scalar
-    // entry whose own key the predicate names is one object too, and a mixed map takes the literal's
-    // reading (`filter_over_a_named_map`), refused where it passed a scalar over under a predicate that
-    // holds on the map and selecting the members it holds on otherwise. None of them is probed: the
-    // classification is a read of the map's keys, where the probe below runs the predicate.
+    // A map the slot arm hands on whole, or refuses, is no lost selection: the arm's own routing says
+    // which (`map_under_the_slot`, the one answer the arm and this notice share, so the two never
+    // disagree by hand). A map with a non-null scalar entry whose keys the predicate does not read as
+    // member keys is one object under both spellings of the slot; under the slot the reader inserts, a
+    // map with no scalar entry whose own key the predicate names is one object too, and a mixed map is
+    // refused where the literal `K[ f ]` refuses it and one object otherwise, so nothing of it is ever
+    // walked and nothing moves down. None of them is probed: the classification is a read of the map's
+    // keys, where the probe below runs the predicate. Only a map the arm walks or enumerates goes on.
     if let PathAwareValue::Map((_, map)) = &**site.value {
-        let reader_slot = matches!(
-            site.query.get(site.query_index + 1),
-            Some(QueryPart::AllIndices(None))
-        );
-        match map_under_a_wildcard_filter(map, conjunctions) {
-            MapUnderAWildcardFilter::OneObject => return,
-            MapUnderAWildcardFilter::OwnKeyNamed { .. } | MapUnderAWildcardFilter::Mixed { .. }
-                if reader_slot =>
-            {
-                return
-            }
-            _ => {}
+        let reader_slot = reads_the_reader_slot(site.query, site.query_index + 1);
+        match map_under_the_slot(reader_slot, map, conjunctions) {
+            MapUnderTheSlot::OneObject | MapUnderTheSlot::RefusedOrOneObject => return,
+            MapUnderTheSlot::AsTheWildcardReads(_) => {}
         }
     }
     // The same position rule as the scalar-key notice: the first clause's, and for a `when` block its
@@ -8486,8 +8480,10 @@ fn announce_a_filter_that_lost_its_map<'value, 'loc: 'value>(
     // here as before, and only an object goes on to the re-walk below, which announces when it
     // selected at least one entry, every one of them held by absence, and returns when it selected
     // none (the previous reading and this one agree there) or when a selected entry carries what the
-    // predicate asks for (the documented reading of a positive predicate through an instance
-    // binding, `a_positive_predicate_through_an_instance_binding_selects_the_entry_carrying_the_key`).
+    // predicate asks for (the documented reading of a positive predicate through a binding to a
+    // collection, `a_positive_predicate_through_a_binding_to_a_collection_selects_the_entry_carrying_the_key`;
+    // a resource with a `Type` string beside such an entry is a mixed map and is one object to the
+    // slot, never walked).
     let (anchored, gained) = match probe {
         Probe::DidNotHold { .. } => {
             // Only a clause that holds by absence (`!exists`, `empty`) can select a field of an object
@@ -8602,8 +8598,10 @@ fn announce_a_filter_that_lost_its_map<'value, 'loc: 'value>(
     // own output and not the end of the whole query, because a selection that moved down a level --
     // `%p[ Name exists ]` selecting `Inner` rather than `p` itself -- still resolves the parts
     // after it, and reading those said "selected" when the map was lost and "nothing" when a later
-    // key happened to be missing from the entry. `a_filter_whose_selection_moved_down_is_announced`
-    // holds both cases. Run once a lost selection is going out, where its count is part of the text
+    // key happened to be missing from the entry (a mixed map, whose selection could move down a level,
+    // is one object to the reader's slot now and never reaches here; the count is the collection's,
+    // read by the directive rows of `a_lone_loop_is_passed_over_anywhere_and_a_lone_transform_at_a_section_only`).
+    // Run once a lost selection is going out, where its count is part of the text
     // and nothing else, and for an object the predicate did not hold on, where the count decides:
     // a selection gained over the object's fields is announced, and none gained is nothing to say.
     count_bound_map_filter_rewalk();
@@ -14912,6 +14910,53 @@ fn filter_over_a_named_map<'value, 'loc: 'value>(
     Ok(selected)
 }
 
+/// Whether the literal reading of the filter after the reader's slot, `K[ f ]` over the map in hand
+/// (`filter_over_a_named_map`), refuses it. Asked of a mixed map alone (`MapUnderTheSlot::RefusedOrOneObject`):
+/// the released evaluator tested such a map as one object, and the slot keeps that reading except where
+/// the literal refuses the filter, so this answer is all the slot takes from the literal. The literal is
+/// run through a [`QuietScope`] rooted at the map, which records no event, files no capture and raises
+/// no notice, so the run is an observation about the filter and not part of the evaluation; where it
+/// refuses, the caller runs the literal again for real, so the refusal is raised and recorded as the
+/// literal raises it, and where it does not, the walk's selection among the members is dropped and the
+/// map is tested as one object. The fallback is taken as the one-object probe takes it
+/// (`the_one_object_reading_holds`): a key filter's function argument the map lacks is read beside the
+/// map from the scope the slot arm hands on. An error that is no refusal (a rules-file mistake inside
+/// the predicate) answers `true` too, so the real run raises it, as the literal would.
+#[allow(clippy::too_many_arguments)]
+fn the_literal_reading_refuses<'value, 'loc: 'value>(
+    name: &'value Option<String>,
+    conjunctions: &'value Conjunctions<GuardClause<'loc>>,
+    query_index: usize,
+    query: &'value [QueryPart<'loc>],
+    current: &Rc<PathAwareValue>,
+    resolver: &mut dyn EvalContext<'value, 'loc>,
+    start: QueryStart,
+    in_predicate: bool,
+    converter: Option<&dyn Fn(&str) -> String>,
+) -> bool {
+    let mut quiet = QuietScope {
+        root: Rc::clone(current),
+        parent: resolver,
+        grounded: false,
+        takes_the_fallback: true,
+        cache: None,
+    };
+    filter_over_a_named_map(
+        map_named_by_the_query_before(query, query_index),
+        name,
+        conjunctions,
+        query_index + 1,
+        query,
+        Rc::clone(current),
+        &mut quiet,
+        start,
+        in_predicate,
+        converter,
+        &mut ShapeNotes::default(),
+    )
+    .is_err()
+}
+
 /// Whether the filter's predicate holds on `map` read as ONE OBJECT, the reading `X[*][ ... ]` gives a
 /// map with a scalar entry: the disagreement test of the pass-over refusal (`filter_over_a_named_map`).
 /// A key filter that passed a scalar over is refused only where this reading and the entries reading
@@ -18246,6 +18291,49 @@ fn map_under_a_wildcard_filter<'m, 'value, 'loc: 'value>(
             member_key,
         },
         None => MapUnderAWildcardFilter::OneObject,
+    }
+}
+
+/// What the slot before a filter does with one map, read from the map's classification and from which
+/// slot it is: the author's `[*]` or the one the reader inserts after a `%variable` root. The one answer
+/// the `[*]` arm, which acts on it, and the bound-map notice, which returns for every map the arm does
+/// not walk, share; the two matched the classification by hand before, each in its own `match`, and a
+/// new arm in one would have left the other disagreeing with no error.
+///
+/// Under the reader's slot the two readings of its own are the released evaluator's, which tested the
+/// bound map as one object: a map with no scalar entry whose own key the predicate names is one object
+/// (`OwnKeyNamed`), and a mixed map, a scalar beside a member that holds a key the predicate names, is
+/// one object as well unless the literal `K[ f ]` refuses the filter over it, when it is refused the same
+/// way (the released evaluator's pass over such a map is a silent pass the literal refuses: `%c[ Owner
+/// !exists ] !empty` over `{ Mode: fast, A: { Owner: o }, B: { Owner: p } }` passed a check its members
+/// fail; `%p[ Name exists ].Name == 'b'` over `{ Name: a, Inner: { Name: b } }` is not refused by the
+/// literal, so it compares the map's own `a` and fails, as the release did, where selecting `Inner` in
+/// the map's place would pass it with no notice). The author's `[*]` takes every classification as
+/// `map_under_a_wildcard_filter` read it.
+enum MapUnderTheSlot<'m, 'k> {
+    /// Handed on whole and tested as one object: a map with a non-null scalar entry whose keys the
+    /// predicate does not read as member keys under either slot, and under the reader's slot a map with
+    /// no scalar entry whose own key the predicate names.
+    OneObject,
+    /// A mixed map under the reader's slot: refused where the literal `K[ f ]` is refused
+    /// (`the_literal_reading_refuses`), one object otherwise. Never walked.
+    RefusedOrOneObject,
+    /// Read as the author's `[*]` reads the classification: a collection under either slot (walked, the
+    /// bound-map notice's subject under the reader's slot), and under the author's `[*]` an own-key map
+    /// (the own-key enumeration) or a mixed map (refused outright).
+    AsTheWildcardReads(MapUnderAWildcardFilter<'m, 'k>),
+}
+
+fn map_under_the_slot<'m, 'value, 'loc: 'value>(
+    reader_slot: bool,
+    map: &'m MapValue,
+    conjunctions: &'value Conjunctions<GuardClause<'loc>>,
+) -> MapUnderTheSlot<'m, 'value> {
+    match (reader_slot, map_under_a_wildcard_filter(map, conjunctions)) {
+        (_, MapUnderAWildcardFilter::OneObject) => MapUnderTheSlot::OneObject,
+        (true, MapUnderAWildcardFilter::OwnKeyNamed { .. }) => MapUnderTheSlot::OneObject,
+        (true, MapUnderAWildcardFilter::Mixed { .. }) => MapUnderTheSlot::RefusedOrOneObject,
+        (_, classified) => MapUnderTheSlot::AsTheWildcardReads(classified),
     }
 }
 
@@ -21610,7 +21698,9 @@ fn query_retrieval_with_converter<'value, 'loc: 'value>(
         // Where the binding itself enumerated, as the retrieval that produced `retrieved` reported it,
         // folded into this query's record before its values are walked: `let allowed = Types[*]` read as
         // `%allowed` is the set `Types[*]` is, and read as `%allowed.X` that enumeration is an earlier
-        // part. A binding to a literal or a capture names its value and leaves no mark. A projecting
+        // part. A binding to a literal names its value and leaves no mark; a capture is the one entry
+        // set of the keys or members its filter kept (`LastPart` from `variable_shape`), so `%x` after
+        // `IN` is membership in that set and `%x.Value` carries the enumeration as an earlier part. A projecting
         // binding whose `[*]` met a map and handed it on whole (`let r = Resources[*]` over the
         // `Resources` map) carries that map in its `PassedOn` record, which the resolved arm below reads
         // per value to judge a key read after the binding. Read after the
@@ -22724,13 +22814,18 @@ fn query_retrieval_with_converter<'value, 'loc: 'value>(
                     // the password the map held; a map whose entries are all scalars under a predicate
                     // naming its own key (`%m[ Status == 'Enabled' ]` over `{ Status: Enabled }`) was
                     // refused where the release decided it on the map. A mixed map, a scalar entry
-                    // beside members that hold a key the predicate names, takes the literal's reading
-                    // (`filter_over_a_named_map`): refused in both polarities where the walk passed the
-                    // scalar over under a predicate that holds on the map read as one object (`%c[ Owner
-                    // !exists ]` over `{ Mode: fast, A: { Owner }, B: { Owner } }`, where the release
-                    // selected the map and passed a check its members fail), and selecting the members
-                    // it holds on otherwise (`%m[ Metadata."..." exists ]` selecting the `Wrapper` entry
-                    // that carries the path), which the author's `[*]` refuses outright. A collection,
+                    // beside members that hold a key the predicate names, is one object as well, the
+                    // release's reading, except where the literal `K[ f ]` refuses the filter over it
+                    // (`the_literal_reading_refuses`, `filter_over_a_named_map`): refused in both
+                    // polarities where the walk passed the scalar over under a predicate that holds on
+                    // the map read as one object (`%c[ Owner !exists ]` over `{ Mode: fast, A: { Owner
+                    // }, B: { Owner } }`, where the release selected the map and passed a check its
+                    // members fail, a silent pass the literal refuses); where the literal is not
+                    // refused, the map is tested as one object and the members are not selected in
+                    // its place (`%p[ Name exists ].Name == 'b'` over `{ Name: a, Inner: { Name: b } }`
+                    // compares the map's own `a` and fails, as the release did, where the literal
+                    // selects `Inner` and passes). The author's `[*]` refuses every mixed map
+                    // outright. A collection,
                     // a map with no scalar entry whose own key the predicate does not name, keeps the
                     // walk in the `else` arm below, with the bound-map notice, so `let r = Resources` then
                     // `%r[ Type == 'AWS::S3::Bucket' ]` still selects among the resources.
@@ -22776,38 +22871,60 @@ fn query_retrieval_with_converter<'value, 'loc: 'value>(
                     // keeps its own-key refusal (`filter_over_a_named_map`).
                     let under_a_filter = match query.get(query_index + 1) {
                         Some(QueryPart::Filter(filter_name, conjunctions)) => {
-                            let classified = map_under_a_wildcard_filter(map, conjunctions);
-                            match (reader_slot, classified) {
-                                // The reader's slot reads a map whose own key the predicate names as
-                                // one object (see above).
-                                (true, MapUnderAWildcardFilter::OwnKeyNamed { .. }) => Some((
+                            // The slot's routing of the map, shared with the bound-map notice
+                            // (`map_under_the_slot`).
+                            match map_under_the_slot(reader_slot, map, conjunctions) {
+                                MapUnderTheSlot::OneObject => Some((
                                     filter_name,
                                     conjunctions,
                                     MapUnderAWildcardFilter::OneObject,
                                 )),
-                                // The reader's slot over a mixed map takes the literal's reading (see
-                                // above): refused where `K[ f ]` is refused, selecting what it selects
-                                // otherwise. The slot is marked as the walk marks it, so `IN` reads the
-                                // selection as the entries it is.
-                                (true, MapUnderAWildcardFilter::Mixed { .. }) => {
-                                    shape.note(query_index + 1 >= query.len());
-                                    return filter_over_a_named_map(
-                                        map_named_by_the_query_before(query, query_index),
+                                // The reader's slot over a mixed map (see above): the literal's reading
+                                // decides only whether the filter is refused, asked quietly first; where
+                                // it refuses, the literal is run again for real, so the refusal is
+                                // raised and recorded as `K[ f ]` raises it. Where it does not, the map
+                                // is one object, the reading the released evaluator gave it, and what
+                                // the walk would select among the members is not taken.
+                                MapUnderTheSlot::RefusedOrOneObject => {
+                                    if the_literal_reading_refuses(
                                         filter_name,
                                         conjunctions,
-                                        query_index + 1,
+                                        query_index,
                                         query,
-                                        Rc::clone(&current),
+                                        &current,
                                         resolver,
                                         start,
                                         in_predicate,
                                         converter,
-                                        shape,
-                                    );
+                                    ) {
+                                        shape.note(query_index + 1 >= query.len());
+                                        return filter_over_a_named_map(
+                                            map_named_by_the_query_before(query, query_index),
+                                            filter_name,
+                                            conjunctions,
+                                            query_index + 1,
+                                            query,
+                                            Rc::clone(&current),
+                                            resolver,
+                                            start,
+                                            in_predicate,
+                                            converter,
+                                            shape,
+                                        );
+                                    }
+                                    Some((
+                                        filter_name,
+                                        conjunctions,
+                                        MapUnderAWildcardFilter::OneObject,
+                                    ))
                                 }
                                 // The reader's slot over a collection: the walk, in the `else` arm.
-                                (true, MapUnderAWildcardFilter::Collection { .. }) => None,
-                                (_, classified) => Some((filter_name, conjunctions, classified)),
+                                MapUnderTheSlot::AsTheWildcardReads(
+                                    MapUnderAWildcardFilter::Collection { .. },
+                                ) if reader_slot => None,
+                                MapUnderTheSlot::AsTheWildcardReads(classified) => {
+                                    Some((filter_name, conjunctions, classified))
+                                }
                             }
                         }
                         _ => None,
@@ -24793,6 +24910,8 @@ fn query_retrieval_with_converter<'value, 'loc: 'value>(
                         Err(Error::UndecidableComparison(reason, refusal)) => {
                             let ranking =
                                 crate::rules::eval::ranking_under(resolver.refusal_frames());
+                            // The token recovery here has no test of its own yet: with the `or_else`
+                            // removed, every lib test holds.
                             let refusal =
                                 refusal.or_else(|| token_of_registered(&reason, &ranking));
                             let undecided = rhs_undecided(reason, refusal);
@@ -27238,7 +27357,9 @@ impl<'value, 'loc: 'value> EvalContext<'value, 'loc> for RootScope<'value, 'loc>
     /// captures, its merged keys under the `Visible` reading, and the keys a file-level assignment's
     /// filter bound), under the same `merged` reading, reached through `let` aliases of a bare variable
     /// (`let names = %buckets`) the way `variable_binding_query` follows them; a literal, or a `let`
-    /// bound to anything but a bare variable, names its value even when that value is a list of keys.
+    /// bound to anything but a bare variable, lists no keys even when its value is a list of keys (a
+    /// capture, by contrast, is one entry set of the keys it bound: `variable_shape` answers `LastPart`
+    /// for it).
     /// Asked after the resolution that produced the values, so the declared-but-unbound names in
     /// `capture_sources` are not consulted here.
     fn variable_lists_keys(&self, variable_name: &str, merged: MergedKeys) -> bool {
@@ -30807,8 +30928,9 @@ impl<'value, 'loc: 'value, 'eval> EvalContext<'value, 'loc> for BlockScope<'valu
     }
 
     /// Where this block's binding for `variable_name` enumerated, as its retrieval reported, read in the
-    /// block's own lookup order and never by resolving: a block-level literal, capture or (when
-    /// `Visible`) merged key names its value and wins over a shadowed outer `let`, a block-level `let`
+    /// block's own lookup order and never by resolving: a block-level literal names its value, a
+    /// capture or (when `Visible`) a merged key is the one entry set of the keys it bound (`LastPart`),
+    /// and each wins over a shadowed outer `let`; a block-level `let`
     /// bound to a query or a call answers from the shape `lookup` recorded beside its values, and a name
     /// this block does not bind is the parent's to answer under the `Hidden` reading the lookup deferred
     /// with -- so a file-level `let allowed = Types[*]` read from a block that merged a key named

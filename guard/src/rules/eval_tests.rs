@@ -35553,15 +35553,18 @@ const CFG_HOLDING_A_LONE_LOOP: &str = r#"
         }
     }
     "#;
-// The same map with a scalar `Mode` beside the loop and `Extra`: `Extra` holds the key the predicate names,
-// so the map is mixed and takes the literal's reading, refused where it passes the scalar over, keeps
-// nothing and the predicate holds on the map read as one object.
+// The same map, nested the same way, with a scalar `Mode` beside the loop and `Extra`: `Extra` holds the key
+// the predicate names, so the map is mixed, and the literal refuses the filter over it (the scalar passed
+// over, nothing kept, the predicate holding on the map read as one object), so the slot refuses it too. The
+// scalar is the one difference from `CFG_HOLDING_A_LONE_LOOP`.
 const CFG_HOLDING_A_LONE_LOOP_AND_A_SCALAR_BESIDE_A_MEMBER: &str = r#"
     {
-        Cfg: {
-            'Fn::ForEach::Items': [ 'I', [ 'a', 'b' ], { 'Item${I}': { Type: 'T' } } ],
-            Mode: 'fast',
-            Extra: { Owner: 'o' }
+        Wrapper: {
+            Cfg: {
+                'Fn::ForEach::Items': [ 'I', [ 'a', 'b' ], { 'Item${I}': { Type: 'T' } } ],
+                Mode: 'fast',
+                Extra: { Owner: 'o' }
+            }
         }
     }
     "#;
@@ -83546,6 +83549,18 @@ fn a_directive_is_read_the_same_at_a_nested_map_and_beside_any_sibling() -> Resu
                 "nothing selected, the clause passes",
             ),
         ] {
+            // Through the variable the include beside `BucketName` is a mixed map (the directive holds
+            // `Name`, the key the predicate names, beside the scalar): the literal does not refuse a
+            // positive predicate, so the slot tests the map as one object, which has no `Name` of its
+            // own, nothing is selected and `empty` passes, as cfn-guard 3.2.1 read it. The two literal
+            // spellings hand the directive on and fail.
+            let (expected, reading) = match (spelling, fixture) {
+                ("alias", "an include beside `BucketName`") => (
+                    Status::PASS,
+                    "a mixed map tested as one object: `Name` is no key of the map, nothing selected, the clause passes",
+                ),
+                _ => (expected, reading),
+            };
             cells.check(
                 &format!("{fixture}, {spelling}: `[ Name == 'AWS::Include' ] empty` at the nested map: {reading}"),
                 expected,
@@ -84640,10 +84655,10 @@ fn a_lone_loop_is_passed_over_anywhere_and_a_lone_transform_at_a_section_only() 
         Status::FAIL,
         status,
     );
-    // The same ingress with a scalar entry beside the members is a mixed map: the literal's reading, the
-    // scalar passed over, the predicate holding on the map read as one object, the filter refused (the
-    // clause fails) and no notice.
-    let (mixed_status, mixed_notices) = deprecations_for_rules(
+    // The same ingress with a scalar entry beside the members is a mixed map: the literal refuses the
+    // filter (the scalar passed over, the predicate holding on the map read as one object), so the slot
+    // refuses it too, the clause fails on the refusal's sentence and no notice is written.
+    let (mixed_status, mixed_refused, mixed_notices) = deprecations_and_refusal_for_rules(
         "let ing = Resources.SG.Properties.SecurityGroupIngress\nrule r { %ing[ Description !exists ] empty }",
         INGRESS_WITH_A_DIRECTIVE_TWO_MEMBERS_AND_A_SCALAR,
     )?;
@@ -84651,6 +84666,11 @@ fn a_lone_loop_is_passed_over_anywhere_and_a_lone_transform_at_a_section_only() 
         "the variable spelling over a directive beside two members and a scalar (a mixed map): refused, the clause fails",
         Status::FAIL,
         mixed_status,
+    );
+    cells.check(
+        "the variable spelling over a directive beside two members and a scalar: the record carries the refusal",
+        true,
+        mixed_refused,
     );
     cells.check(
         &format!("the variable spelling over a directive beside two members and a scalar: no notice {mixed_notices:?}"),
@@ -84726,16 +84746,22 @@ fn a_lone_loop_is_passed_over_anywhere_and_a_lone_transform_at_a_section_only() 
             })
             .count(),
     );
-    // The same map with a scalar `Mode` is mixed (`Extra` holds `Owner`): refused, so the clause fails
-    // where it passed, and no notice is written.
-    let (status, notices) = deprecations_for_rules(
-        "let c = Cfg\nrule r { %c[ Owner !exists ] empty }",
+    // The same map with a scalar `Mode` is mixed (`Extra` holds `Owner`), bound the same way (one key
+    // below the root): the literal refuses it, so the slot does, the clause fails on the refusal where
+    // it passed, and no notice is written.
+    let (status, refused, notices) = deprecations_and_refusal_for_rules(
+        "let c = Wrapper.Cfg\nrule r { %c[ Owner !exists ] empty }",
         CFG_HOLDING_A_LONE_LOOP_AND_A_SCALAR_BESIDE_A_MEMBER,
     )?;
     cells.check(
         "the variable spelling over a lone loop beside a scalar and a member that holds the key (a mixed map): refused, the clause fails",
         Status::FAIL,
         status,
+    );
+    cells.check(
+        "the variable spelling over a lone loop beside a scalar and a member that holds the key: the record carries the refusal",
+        true,
+        refused,
     );
     cells.check(
         &format!("the variable spelling over a lone loop beside a scalar and a member that holds the key: no notice {notices:?}"),
@@ -84853,7 +84879,7 @@ fn a_lone_loop_is_passed_over_anywhere_and_a_lone_transform_at_a_section_only() 
             .iter()
             .any(|notice| notice.contains("did not select the map at /Resources/SG/Properties, which")),
     );
-    let (mixed_status, mixed_notices) = deprecations_for_rules(
+    let (mixed_status, mixed_refused, mixed_notices) = deprecations_and_refusal_for_rules(
         "let p = Resources.SG.Properties\nrule r { %p[ Tags !exists ] empty }",
         PROPERTIES_OBJECT_WITH_A_SCALAR_THE_INGRESS_AND_A_TAGGED_SUB_MAP,
     )?;
@@ -84861,6 +84887,11 @@ fn a_lone_loop_is_passed_over_anywhere_and_a_lone_transform_at_a_section_only() 
         "the variable spelling over the `Properties` object with a scalar beside the ingress and a sub-map that holds `Tags` (a mixed map): refused, the clause fails",
         Status::FAIL,
         mixed_status,
+    );
+    cells.check(
+        "the variable spelling over the `Properties` object with a scalar: the record carries the refusal",
+        true,
+        mixed_refused,
     );
     cells.check(
         &format!("the variable spelling over the `Properties` object with a scalar: no notice {mixed_notices:?}"),
@@ -85916,6 +85947,26 @@ fn deprecations_for_rules(rules: &str, input: &str) -> Result<(Status, Vec<Strin
     Ok((status, notices))
 }
 
+/// The same, with whether the record carries a filter refusal: the pass-over sentence ("refused in both
+/// polarities", `filter_passing_over_scalars_refusal`) or the own-key sentence ("a key of the map
+/// itself", `filter_over_a_member_map_refusal`). A cell over a mixed map needs it: a refusal and the
+/// one-object reading both FAIL `empty` over a map that lacks the key, so the status alone cannot tell a
+/// map the slot refused from one it tested whole.
+fn deprecations_and_refusal_for_rules(
+    rules: &str,
+    input: &str,
+) -> Result<(Status, bool, Vec<String>)> {
+    let rules_file = RulesFile::try_from(rules)?;
+    let value = PathAwareValue::try_from(input)?;
+    let mut root = root_scope(&rules_file, Rc::new(value));
+    let status = eval_rules_file(&rules_file, &mut root, None)?;
+    let notices = root.deprecations().cloned().collect();
+    let record = format!("{:?}", root.reset_recorder().extract());
+    let refused =
+        record.contains("refused in both polarities") || record.contains("a key of the map itself");
+    Ok((status, refused, notices))
+}
+
 /// The filter notice names only a binding the author can read back as the one that held the map.
 ///
 /// A filter capture may shadow a file-level `let` of the same name (the parser allows it): in
@@ -86030,11 +86081,16 @@ fn a_parameter_bound_to_a_function_result_that_is_not_a_collection_draws_no_noti
         let slot = format!("rule check(p) {{ %p[ Statement !exists ] {polarity} }}{CALL}");
         let star = format!("rule check(p) {{ %p[*][ Statement !exists ] {polarity} }}{CALL}");
 
-        let (status, notices) = deprecations_for_rules(&slot, MIXED)?;
+        let (status, refused, notices) = deprecations_and_refusal_for_rules(&slot, MIXED)?;
         cells.check(
             &format!("a mixed policy under `{polarity}`: refused, the rule fails"),
             Status::FAIL,
             status,
+        );
+        cells.check(
+            &format!("a mixed policy under `{polarity}`: the record carries the refusal"),
+            true,
+            refused,
         );
         cells.check(
             &format!("a mixed policy under `{polarity}`: no notice {notices:?}"),
@@ -86042,12 +86098,24 @@ fn a_parameter_bound_to_a_function_result_that_is_not_a_collection_draws_no_noti
             notices.len(),
         );
 
+        // The one-object policy holds `Statement`, so `Statement !exists` does not hold on it and nothing
+        // is selected: `!empty` fails, and `!exists` over a selection of nothing is not applicable. Both
+        // spellings read it so.
+        let expected = match polarity {
+            "!empty" => Status::FAIL,
+            _ => Status::SKIP,
+        };
         let (slot_status, slot_notices) = deprecations_for_rules(&slot, ONE_OBJECT)?;
         let (star_status, _) = deprecations_for_rules(&star, ONE_OBJECT)?;
         cells.check(
-            &format!("a one-object policy under `{polarity}`: the slot spelling gives the `[*]` spelling's verdict"),
-            star_status,
+            &format!("a one-object policy under `{polarity}`: the slot spelling's verdict"),
+            expected,
             slot_status,
+        );
+        cells.check(
+            &format!("a one-object policy under `{polarity}`: the `[*]` spelling's verdict"),
+            expected,
+            star_status,
         );
         cells.check(
             &format!("a one-object policy under `{polarity}`: no notice {slot_notices:?}"),
@@ -97389,10 +97457,16 @@ fn a_filter_through_a_single_map_binding_whose_absence_check_reached_into_the_ma
             }
         }
     }"#;
-    // The bucket with no scalar entry: `MyBucket` holds `Properties` itself and so does its `Wrapper`
-    // (the key is no key of the map alone, so the map is a collection of fields, not one object), and
-    // `Properties` holds two sub-maps that share no key name, one of which carries `Tags`. Every bound
-    // map in the announced rows is a collection, so the walk and the notice stand.
+    // The bucket with no scalar entry, a SYNTHETIC resource (every CloudFormation resource holds a `Type`
+    // string, which makes it one object to the slot, so the notice never fires for `let b =
+    // Resources.<Id>` over a real template): `MyBucket` holds `Properties` itself and so does its
+    // `Wrapper` (a key the map shares with a member is no key of the map alone, the shared-key exception
+    // of the own-key rule, so the map is a collection of fields, not one object), and `Properties` holds
+    // two sub-maps that share no key name, one of which carries `Tags`. Every bound map in the announced
+    // rows is a collection, so the walk and the notice stand. The `when` row below names `Extra`, a key
+    // of `Properties` alone, inside the `when` BODY: the own-key rule reads a `when` block by its
+    // conditions only (`predicate_keys`), so a body key makes no map one object, and that row is a
+    // collection walked and announced like the bare `Tags !exists` row.
     const DOC_COLLECTION: &str = r#"{
         "Resources": {
             "MyBucket": {
@@ -97419,7 +97493,7 @@ fn a_filter_through_a_single_map_binding_whose_absence_check_reached_into_the_ma
             "/Resources/MyBucket/Properties",
         ),
         (
-            "the two-key tags check the docs describe, on a bucket with properties and no tags",
+            "the two-key tags check the docs describe, on a synthetic bucket with properties, no tags and no `Type` (a collection to the slot)",
             "let b = Resources.MyBucket\nrule r { %b[ Properties.Tags !exists ] !empty }",
             DOC_COLLECTION,
             Some("let b = Resources.MyBucket"),
@@ -97440,7 +97514,7 @@ fn a_filter_through_a_single_map_binding_whose_absence_check_reached_into_the_ma
             "/Resources",
         ),
         (
-            "a predicate that opens with a `when` block whose condition is the one-key absence check",
+            "a predicate that opens with a `when` block whose condition is the one-key absence check (its body names `Extra`, a key of the map alone, which the own-key rule does not read: a collection, walked and announced)",
             "let p = Resources.MyBucket.Properties\nrule r { %p[ when Tags !exists { Extra exists } ] !empty }",
             DOC_COLLECTION,
             Some("let p = Resources.MyBucket.Properties"),
@@ -97515,7 +97589,8 @@ fn a_filter_through_a_single_map_binding_whose_absence_check_reached_into_the_ma
             }
         }
     }"#;
-    // The nested bucket with the shape `DOC_COLLECTION` gives it (no scalar entry), for the announced rows.
+    // The nested bucket with the shape `DOC_COLLECTION` gives it (no scalar entry, a synthetic resource
+    // with no `Type`), for the announced rows.
     const NESTED_COLLECTION: &str = r#"{
         "Template": {
             "Resources": {
@@ -97704,23 +97779,27 @@ fn a_filter_through_a_single_map_binding_whose_absence_check_reached_into_the_ma
 /// or nested block is not refused whole; its conditions and clauses are walked, so each kind of
 /// reach has to be found inside one. Each row below holds one, inside a block head the probe would
 /// otherwise run on, and asserts that the probe never ran (the count the probe keeps stays at zero) and
-/// no notice was written. The bound map `{ BucketName: b }` holds a scalar entry and no sub-map, so
-/// the slot after `%p` reads it as one object, as `[*]` does: the predicate is tested on the map, the
-/// map is selected, and neither the probe nor the notice runs for it. The first row pins that for the
-/// bare clause; `a_bound_map_filter_predicate_over_a_collection_is_probed_once_and_announced` below is
-/// the control that makes the count move, over a map of sub-maps. The `let` row's `let` is read by
-/// no clause, so that the `let` arm is the only thing keeping the probe off it: a `let` a clause reads
+/// no notice was written. The bound maps are COLLECTIONS to the slot, so the probe would run but for the
+/// reach: `Properties` holds two sub-maps `A` and `B` that share their keys and no scalar entry, and the
+/// predicates name keys (`Tags`, `BucketName`) that are no key of `Properties` itself; `MyBucket` has no
+/// `Type` and holds `Properties` beside an `Other` that holds `Properties` too (the shared-key exception),
+/// so a predicate opening with `Properties { ... }` names no key of the map alone. The first row is the
+/// control: a bare absence clause over `Properties`, probed once (the count moves to 1), quiet because
+/// every entry is a map the predicate held on for want of the key. Over a map with a scalar entry the
+/// slot reads one object and neither the probe nor the notice runs whatever the predicate holds, so
+/// such a map could not tell a guarded row from an unguarded one. The `let` row's `let` is read by no
+/// clause, so that the `let` arm is the only thing keeping the probe off it: a `let` a clause reads
 /// through `%n` is caught by the variable arm as well, and a row like that proved nothing about the
-/// `let` arm when it was deleted. Measured with the `let` arm deleted from `block_reaches_outside`: the
-/// `let` row runs the probe (count 1) and every other row holds, so the row is the arm's.
+/// `let` arm when it was deleted. With the `let` arm deleted from `block_reaches_outside`, the two `let`
+/// rows run the probe (count 1) and every other row holds, so the rows are the arm's.
 #[rstest::rstest]
-#[case::a_bare_clause_over_a_one_object_map_is_neither_probed_nor_announced(
+#[case::control_a_bare_absence_clause_over_a_collection_is_probed_once_and_quiet(
     "let p = Resources.MyBucket.Properties\nrule r { %p[ Tags !exists ] !empty }",
-    0,
+    1,
     0
 )]
 #[case::a_variable_inside_a_nested_block(
-    "let b = Resources.MyBucket\nlet x = Resources.MyBucket.Type\nrule r { %b[ Properties { %x exists } ] !empty }",
+    "let b = Resources.MyBucket\nlet x = Resources.MyBucket.Other.Properties.A.x\nrule r { %b[ Properties { %x exists } ] !empty }",
     0,
     0
 )]
@@ -97735,7 +97814,7 @@ fn a_filter_through_a_single_map_binding_whose_absence_check_reached_into_the_ma
     0
 )]
 #[case::a_let_declared_by_a_nested_block_that_no_clause_reads(
-    "let b = Resources.MyBucket\nlet x = Resources.MyBucket.Type\nrule r { %b[ Properties { let n = %x\n BucketName exists } ] !empty }",
+    "let b = Resources.MyBucket\nlet x = Resources.MyBucket.Other.Properties.A.x\nrule r { %b[ Properties { let n = %x\n BucketName exists } ] !empty }",
     0,
     0
 )]
@@ -97745,7 +97824,7 @@ fn a_filter_through_a_single_map_binding_whose_absence_check_reached_into_the_ma
     0
 )]
 #[case::a_variable_in_a_when_condition(
-    "let p = Resources.MyBucket.Properties\nlet x = Resources.MyBucket.Type\nrule r { %p[ when %x exists { BucketName exists } ] !empty }",
+    "let p = Resources.MyBucket.Properties\nlet x = Resources.MyBucket.Other.Properties.A.x\nrule r { %p[ when %x exists { BucketName exists } ] !empty }",
     0,
     0
 )]
@@ -97760,7 +97839,7 @@ fn a_filter_through_a_single_map_binding_whose_absence_check_reached_into_the_ma
     0
 )]
 #[case::a_let_declared_by_a_when_body_that_no_clause_reads(
-    "let p = Resources.MyBucket.Properties\nlet x = Resources.MyBucket.Type\nrule r { %p[ when Tags !exists { let n = %x\n BucketName exists } ] !empty }",
+    "let p = Resources.MyBucket.Properties\nlet x = Resources.MyBucket.Other.Properties.A.x\nrule r { %p[ when Tags !exists { let n = %x\n BucketName exists } ] !empty }",
     0,
     0
 )]
@@ -97773,7 +97852,10 @@ fn a_bound_map_filter_predicate_reaching_outside_from_inside_a_block_is_not_prob
 
     const DOC: &str = r#"{
         "Resources": {
-            "MyBucket": { "Type": "AWS::S3::Bucket", "Properties": { "BucketName": "b" } }
+            "MyBucket": {
+                "Properties": { "A": { "x": 1, "BucketName": "a" }, "B": { "x": 2, "BucketName": "b" } },
+                "Other": { "Properties": { "A": { "x": 3 } } }
+            }
         }
     }"#;
 
@@ -98294,7 +98376,7 @@ fn the_bound_map_filter_notice_is_quiet_on_a_uniform_collection_whatever_the_bin
             "/spec",
         ),
         (
-            "a mixed map the predicate does not hold on, a scalar beside one sub-map that lacks the checked key and one that carries it: `metadata` carries `name`, `labels` does not, `owner` does; the slot takes the literal's reading, which selects `labels` and refuses nothing, and never announces (without `owner` the map is one object to the slot after `%md`: tested whole, nothing selected, no notice)",
+            "a mixed map the predicate does not hold on, a scalar beside one sub-map that lacks the checked key and one that carries it: `metadata` carries `name`, `labels` does not, `owner` does; the literal selects `labels` and refuses nothing, so the slot tests the map as one object, which holds `name`: nothing is selected, `empty` passes (the status block below pins it), and nothing is announced",
             "let md = metadata\nrule r { %md[ name !exists ] empty }",
             r#"{"metadata": {"name": "web", "labels": {"app": "web"}, "owner": {"name": "o"}}}"#,
             None,
@@ -98570,6 +98652,50 @@ fn a_named_map_of_null_entries_only_closes_its_gate_and_is_announced() -> Result
     Ok(())
 }
 
+/// The quiet-table rows above whose silence is a mixed map's are pinned by their status too, since "no
+/// notice" alone is what a regression to "selects nothing, no notice" would also pass: the launch template
+/// with its scalar name and the one with a null beside the scalar are refused (the literal refuses them:
+/// the scalar passed over, the predicate holding on the map read as one object), so the gate's rule FAILs
+/// on the refusal; the `metadata` map that carries `name` is one object the predicate does not hold on,
+/// so nothing is selected, `empty` passes and nothing is refused.
+#[test]
+fn the_quiet_mixed_map_rows_are_refused_or_tested_whole() -> Result<()> {
+    const LAUNCH_TEMPLATE_WITH_A_NAME: &str = r#"{ "Resources": { "LT": { "Type": "AWS::EC2::LaunchTemplate", "Properties": { "LaunchTemplateName": "x", "LaunchTemplateData": { "TagSpecifications": [ { "ResourceType": "instance" } ] } } } } }"#;
+    const LAUNCH_TEMPLATE_WITH_A_NULL_BESIDE_THE_NAME: &str = r#"{ "Resources": { "LT": { "Type": "AWS::EC2::LaunchTemplate", "Properties": { "LaunchTemplateName": "x", "Reserved": null, "LaunchTemplateData": { "TagSpecifications": [ { "ResourceType": "instance" } ] } } } } }"#;
+    const GATE: &str = "let p = Resources.LT.Properties\nrule r when %p[ TagSpecifications !exists ] !empty { %p.LaunchTemplateName exists }";
+    let mut cells = CellFailures::default();
+    for (label, rules, doc, expected_status, expected_refused) in [
+        (
+            "the launch template with its scalar name: refused, the gate's rule fails",
+            GATE,
+            LAUNCH_TEMPLATE_WITH_A_NAME,
+            Status::FAIL,
+            true,
+        ),
+        (
+            "a null beside the scalar name: still refused",
+            GATE,
+            LAUNCH_TEMPLATE_WITH_A_NULL_BESIDE_THE_NAME,
+            Status::FAIL,
+            true,
+        ),
+        (
+            "the `metadata` map that carries `name`: one object the predicate does not hold on, nothing selected, `empty` passes, not refused",
+            "let md = metadata\nrule r { %md[ name !exists ] empty }",
+            r#"{"metadata": {"name": "web", "labels": {"app": "web"}, "owner": {"name": "o"}}}"#,
+            Status::PASS,
+            false,
+        ),
+    ] {
+        let (status, refused, notices) = deprecations_and_refusal_for_rules(rules, doc)?;
+        cells.check(&format!("{label}: status"), expected_status, status);
+        cells.check(&format!("{label}: refused"), expected_refused, refused);
+        cells.check(&format!("{label}: notices {notices:?}"), 0usize, notices.len());
+    }
+    cells.assert_all_agreed();
+    Ok(())
+}
+
 /// A sub-map that carries the very key the author checked absent is not evidence of a collection when the
 /// binding names a map: the lost selection is announced, in the notice's own documented example.
 ///
@@ -98579,23 +98705,31 @@ fn a_named_map_of_null_entries_only_closes_its_gate_and_is_announced() -> Result
 /// !exists` holds on `Properties` only for want of the key, and the one entry carries it. The released
 /// engine selected the map, the gate opened and the body FAILed on the missing name; the walk selects no
 /// entry, the gate closes and the rule is SKIP. Reading the entry's resolution of the key as the mark of a
-/// collection would keep this site quiet, so the notice would go out for the template that passes either
-/// way (the scalar `LaunchTemplateName` beside the sub-map, the control) and stay quiet for the one whose
-/// verdict moved. Under a binding that is not the population alias, an entry the predicate held on is a
-/// member (through a key the entry carries, or for want of the key: a sub-map that merely lacks it keeps
-/// the map quiet, the listed limit); the sub-map carrying the very key the author checked absent makes
-/// the map an object: announced. The population alias keeps the collection reading (`%r[ DeletionPolicy
-/// !exists ]` over resources one of which carries the key is the idiom, pinned above). Cells:
+/// collection would keep this site quiet, so the notice would go out for the template the release passed
+/// (the scalar `LaunchTemplateName` beside the sub-map, the control, which this evaluator refuses) and
+/// stay quiet for the one whose verdict moved. Under a binding that is not the population alias, an
+/// entry the predicate held on is a member (through a key the entry carries, or for want of the key: a
+/// sub-map that merely lacks it keeps the map quiet, the listed limit); the sub-map carrying the very
+/// key the author checked absent makes the map an object: announced. The population alias keeps the
+/// collection reading (`%r[ DeletionPolicy !exists ]` over resources one of which carries the key is the
+/// idiom, pinned above). Cells:
 /// - the example: SKIP, one notice naming the binding and the map;
-/// - the control, the scalar beside the sub-map: the map is mixed (the sub-map holds the checked key), so
-///   the slot takes the literal's reading, which passes the scalar over and finds the predicate holding
-///   on the map read as one object. The filter is refused in the gate's condition: the rule FAILs and
-///   no notice is written, where the literal `Resources.LT2.Properties[ TagSpecifications !exists ]`
-///   is refused the same way;
+/// - the control, the scalar beside the sub-map: the map is mixed (the sub-map holds the checked key),
+///   and the literal `Resources.LT2.Properties[ TagSpecifications !exists ]` refuses the filter (the
+///   scalar passed over, the predicate holding on the map read as one object), so the slot refuses it
+///   too, in the gate's condition: the rule FAILs on the refusal and no notice is written. cfn-guard
+///   3.2.1 tested the bound map as one value, opened the gate and PASSed the rule (observed on its
+///   binary; its literal walked the entries, kept the scalar by the absence and passed too), a silent
+///   pass the literal of this evaluator refuses, which is why the refusal stands;
 /// - the two properties maps at one filter site through `let props = Resources.*[ Type exists
 ///   ].Properties`, in both resource orders. The example first: its map is announced (one notice naming
 ///   it) and the next map's refusal fails the rule. The control first: its refusal ends the evaluation
-///   before the example's map is reached, so the rule FAILs with no notice.
+///   before the example's map is reached, so the rule FAILs with no notice. The notice at a site whose
+///   binding holds a refused map and an announced one thus depends on the maps' order, a known
+///   limitation (recorded in the filter-through-a-variable item of docs/KNOWN_ISSUES.md): the refusal
+///   is a raise, and a raise ends the clause before the maps after it are read. cfn-guard 3.2.1 FAILed
+///   the rule over both orders (the gate opened on each map read as one value and the body failed on
+///   the missing name; observed on its binary).
 #[test]
 fn a_sub_map_carrying_the_checked_key_under_a_named_binding_is_announced() -> Result<()> {
     const WITHOUT_NAME: &str = r#""LT": { "Type": "AWS::EC2::LaunchTemplate", "Properties": { "LaunchTemplateData": { "TagSpecifications": [ { "ResourceType": "instance" } ] } } }"#;
@@ -98615,7 +98749,7 @@ fn a_sub_map_carrying_the_checked_key_under_a_named_binding_is_announced() -> Re
             Some("/Resources/LT/Properties"),
         ),
         (
-            "control: the scalar beside the sub-map is a mixed map, refused in the gate's condition as the literal is: FAIL, no notice",
+            "control: the scalar beside the sub-map is a mixed map the literal refuses, refused in the gate's condition (the refusal is asserted by the_quiet_mixed_map_rows_are_refused_or_tested_whole): FAIL, no notice",
             ONE_NAMED,
             format!(r#"{{ "Resources": {{ {WITH_NAME} }} }}"#),
             Status::FAIL,
@@ -106377,8 +106511,10 @@ const METADATA_RESOURCE_WITH_AN_AUTHENTICATION_PASSWORD: &str = r#"
 // The same resource with a `Tags` sub-map beside the authentication block, itself carrying an empty
 // `testBasic`: a key of the map that is read below a selection of nothing. Both entries carry
 // `testBasic`, so a filter that asks for its absence rejects both and the map keeps the walk (no
-// scalar entry here either).
-const METADATA_RESOURCE_WITH_AN_EMPTY_TAGS_ENTRY: &str = r#"
+// scalar entry here either). The `Tags` entry is a sub-map, not an empty value: an empty `Tags: []`
+// would be a list entry the walk hands to the predicate, and the rows that read `.Tags` below the
+// selection are about a key the map holds, whatever it holds there.
+const METADATA_RESOURCE_WITH_A_TAGS_ENTRY_HOLDING_AN_EMPTY_TEST_BASIC: &str = r#"
     {
         Resources: {
             EC2I4LBA1: {
@@ -106886,14 +107022,23 @@ fn a_bound_map_filter_that_left_only_undecidable_entries_says_so() -> Result<()>
         RESOURCES_ONLY_WITH_AN_UNDECIDABLE_INNER,
     )?;
     let mut cells = CellFailures::default();
-    let (mixed_status, mixed_notices) = deprecations_for_rules(
-        "let m = Resources.Only\nrule r { %m[ Type exists or M[ keys == Tags[ Key == 'Env' ].Value ] !empty ] empty }",
+    // The same predicate over the same map with a scalar `Type` beside `Inner`: a mixed map (`Inner`
+    // holds `Tags` and `M`). The literal walks `Inner`, which `Tags !exists` rejects and the key filter
+    // leaves undecidable, and refuses nothing (an undecided entry is no refusal), so the slot tests the
+    // map as one object: `Tags !exists` holds on it, the map is selected, `empty` fails, and no notice.
+    let (mixed_status, mixed_refused, mixed_notices) = deprecations_and_refusal_for_rules(
+        "let m = Resources.Only\nrule r { %m[ Tags !exists or M[ keys == Tags[ Key == 'Env' ].Value ] !empty ] empty }",
         RESOURCES_ONLY_WITH_A_SCALAR_BESIDE_AN_UNDECIDABLE_INNER,
     )?;
     cells.check(
-        "a scalar beside the undecidable entry: the mixed map fails the clause",
+        "a scalar beside the undecidable entry: the map is one object, selected by the absence, so `empty` fails",
         Status::FAIL,
         mixed_status,
+    );
+    cells.check(
+        "a scalar beside the undecidable entry: not a refusal",
+        false,
+        mixed_refused,
     );
     cells.check(
         &format!("a scalar beside the undecidable entry: no notice {mixed_notices:?}"),
@@ -107041,16 +107186,23 @@ fn the_bound_map_notice_reads_the_same_over_both_empty_map_spellings_and_names_a
         "let m = Resources.Only\nrule r { %m[ Tags !exists or M[ keys == Tags[ Key == 'Env' ].Value ] !empty ] empty }",
         RESOURCES_ONLY_WITH_A_KEPT_AND_AN_UNDECIDABLE_ENTRY,
     )?;
-    // The old shape: a scalar `Type` beside the entries makes the map mixed (`Inner` and `Other` hold
-    // `M`, a key the predicate names), which takes the literal's reading and writes no bound-map notice.
-    let (mixed_status, mixed_notices) = deprecations_for_rules(
-        "let m = Resources.Only\nrule r { %m[ Type exists or M[ keys == Tags[ Key == 'Env' ].Value ] !empty ] empty }",
+    // The same predicate over the same map with a scalar `Type` beside the entries: a mixed map (`Inner`
+    // and `Other` hold `M`, a key the predicate names). The literal keeps `Other` and refuses nothing,
+    // so the slot tests the map as one object: `Tags !exists` holds on it, the map is selected, `empty`
+    // fails, and no bound-map notice is written.
+    let (mixed_status, mixed_refused, mixed_notices) = deprecations_and_refusal_for_rules(
+        "let m = Resources.Only\nrule r { %m[ Tags !exists or M[ keys == Tags[ Key == 'Env' ].Value ] !empty ] empty }",
         RESOURCES_ONLY_WITH_A_SCALAR_BESIDE_A_KEPT_AND_AN_UNDECIDABLE_ENTRY,
     )?;
     cells.check(
-        "a scalar beside a kept and an undecidable entry (a mixed map): status",
+        "a scalar beside a kept and an undecidable entry (a mixed map): one object, selected by the absence, `empty` fails",
         Status::FAIL,
         mixed_status,
+    );
+    cells.check(
+        "a scalar beside a kept and an undecidable entry (a mixed map): not a refusal",
+        false,
+        mixed_refused,
     );
     cells.check(
         &format!(
@@ -107264,8 +107416,13 @@ fn the_bound_map_notice_names_kept_and_undecidable_entries_together_and_the_publ
 /// document), where a `when ... !empty` or `when ... exists` gate closes and the rule is SKIP; `exists`,
 /// `!exists` and a comparison on the selection itself are not applicable (SKIP); and a key read below
 /// the selection is not applicable under EVERY operator, `empty` and `!empty` included, whether the map
-/// lacks the key, holds it with an empty value (`Tags: []`) or holds it below further held keys (the
-/// published rule over a compliant template, `!exists` on a `Missing` below `testBasic`). Every value
+/// lacks the key, holds it as a sub-map (`Tags: { testBasic: {} }`, a `Tags` entry that itself carries
+/// the key the filter asks absent, so the walk rejects it with the block and the map stays a collection
+/// to the slot) or holds it below further held keys (the published rule's clause shape over a compliant
+/// template, `!exists` on a `Missing` below `testBasic`). The filter in every row is `%m[ testBasic
+/// !exists ]`, a predicate the map's entries decide, not the published rule's own predicate, which names
+/// the map's own key and is one object to the slot (`a_filter_through_a_variable_naming_the_maps_own_key_tests_the_map_itself`);
+/// the rows read "the published rule's shape" for the shape of the clause below the selection. Every value
 /// was read on the engine before it was written here (`.Missing empty` and `.Tags empty` are SKIP, not
 /// PASS). The old half of a row is of two kinds, and the notes say
 /// which: the rows on the operators applied directly to the selection (`exists`, `!exists`, a
@@ -107282,7 +107439,7 @@ fn a_clause_over_a_bound_maps_lost_selection_is_decided_by_its_operator() -> Res
     let mut cells = CellFailures::default();
     for (label, clause, input, expected) in [
         (
-            "the published rule's shape, `!exists` on the entries below the selection",
+            "the published rule's clause shape under the entry-deciding filter, `!exists` on the entries below the selection",
             format!("rule r {{ {FILTER}.\"AWS::CloudFormation::Authentication\".*.password !exists }}"),
             METADATA_RESOURCE_WITH_AN_AUTHENTICATION_PASSWORD,
             Status::SKIP,
@@ -107330,7 +107487,7 @@ fn a_clause_over_a_bound_maps_lost_selection_is_decided_by_its_operator() -> Res
             Status::FAIL,
         ),
         (
-            "the compliant-template shape, `!exists` on a key missing below held keys",
+            "the compliant-template clause shape under the entry-deciding filter, `!exists` on a key missing below held keys",
             format!(
                 "rule r {{ {FILTER}.\"AWS::CloudFormation::Authentication\".testBasic.Missing !exists }}"
             ),
@@ -107394,19 +107551,19 @@ fn a_clause_over_a_bound_maps_lost_selection_is_decided_by_its_operator() -> Res
         (
             "`empty` on a key the map holds (its `Tags` entry): not applicable below a selection of nothing",
             format!("rule r {{ {FILTER}.Tags empty }}"),
-            METADATA_RESOURCE_WITH_AN_EMPTY_TAGS_ENTRY,
+            METADATA_RESOURCE_WITH_A_TAGS_ENTRY_HOLDING_AN_EMPTY_TEST_BASIC,
             Status::SKIP,
         ),
         (
             "`!empty` on a key the map holds (its `Tags` entry): not applicable below a selection of nothing",
             format!("rule r {{ {FILTER}.Tags !empty }}"),
-            METADATA_RESOURCE_WITH_AN_EMPTY_TAGS_ENTRY,
+            METADATA_RESOURCE_WITH_A_TAGS_ENTRY_HOLDING_AN_EMPTY_TEST_BASIC,
             Status::SKIP,
         ),
         (
             "`exists` on a key the map holds (its `Tags` entry): not applicable",
             format!("rule r {{ {FILTER}.Tags exists }}"),
-            METADATA_RESOURCE_WITH_AN_EMPTY_TAGS_ENTRY,
+            METADATA_RESOURCE_WITH_A_TAGS_ENTRY_HOLDING_AN_EMPTY_TEST_BASIC,
             Status::SKIP,
         ),
         (
@@ -107499,7 +107656,11 @@ fn a_clause_over_a_bound_maps_lost_selection_is_decided_by_its_operator() -> Res
 
 /// A filter through a variable that names a key the bound map holds itself, over a map with no scalar
 /// entry, tests the predicate on the map: the map is selected when the predicate holds, and nothing is
-/// announced.
+/// announced. The rule has one exception, the shared-key one: a key the map holds that one of its
+/// map-valued entries holds as well is no key of the map alone (`Resources` whose resources each carry
+/// `Type` beside a resource named `Type`; `MyBucket` holding `Properties` beside a `Wrapper` that holds
+/// `Properties`), and such a map stays a collection the walk selects among. The own-key rule reads a
+/// `when` block inside the predicate by its conditions, not its body (`predicate_keys`).
 ///
 /// `let m = Resources.Metadata` holds a map whose one entry is the authentication block and whose own key
 /// is that block's name, which no entry holds. `%m[ "AWS::CloudFormation::Authentication" exists ]` asks
@@ -107599,6 +107760,175 @@ fn a_filter_through_a_variable_naming_the_maps_own_key_tests_the_map_itself() ->
     Ok(())
 }
 
+/// A query rooted at a filter capture carries the capture's enumeration (`variable_shape` answers
+/// `LastPart` for a capture, which `ShapeNotes::absorb` folds into every query rooted at it), so `IN`
+/// reads the values the query names as a set, as it reads the inline query the capture stands for:
+///
+/// - `%lit IN %t.Value` with `let lit = 'prod'` and `Tags[ t | Key == 'Env' ]` over the list `[{Key: Env,
+///   Value: production}]` is membership in the `Value`s the capture's maps hold, FAIL for `prod` and PASS
+///   for `production`, as the inline `Tags[ Key == 'Env' ].Value` reads; a document value on the left
+///   reads the same. A BARE string literal on the left of `IN` against a query (`'production' IN
+///   %t.Value`, `'production' IN Tags[*].Value`) is read as a key path and fails on the missing property
+///   ("property [production] to compare from is missing"), the reading every query-shaped right-hand side
+///   has and the one cfn-guard 3.2.1 gives a bare literal there; only a bare `%capture` on the right
+///   reads a bare literal on the left as a value (`'prod' IN %x`, the cell beside
+///   `a_literal_left_operand_beside_a_refusals_marker_reads_as_its_document_left_twin`). 3.2.1 binds no
+///   capture on a filter over a list (exit 255, "Could not resolve variable by name t across scopes",
+///   observed on its binary), so it has no reading of the `%t.Value` shapes to match, and the inline
+///   spelling's is the one kept (containment, `prod` in `production`, was the reading before the capture
+///   carried its enumeration).
+/// - `Cfg[ keys IN %t ]` with the same capture holding tag MAPS: a key filter compares each key with the
+///   capture's members, maps, and no key equals a map, so nothing is selected (`!empty` FAIL, `empty`
+///   PASS over any `Cfg`); a capture holding KEYS, `Resources[ r | Type == 'AWS::IAM::Policy' ]`, is
+///   membership in those keys (`Cfg3: { P: 1 }` PASS, `Cfg2: { Zzz: 4 }` FAIL), as 3.2.1 reads it
+///   (observed on its binary: PASS and FAIL). The one-object statement bound by `Statement[ s | Effect
+///   == 'Allow' ]` is the literal key filter over a map of scalars that names the map's own key, refused
+///   in both polarities, so the `when` gate fails closed and nothing is bound (3.2.1 walked the statement's
+///   string entries, selected nothing, and reported SKIP: a silent pass this evaluator's literal refuses).
+/// - `IN %v[ Kind exists ].Type` over a one-object `%v` (`{ Kind: k, Type: gp2 }`): the slot marks the
+///   enumeration as `[*]` does, so a literal or a document value on the left is membership in the one
+///   `Type`, FAIL for `gp` (never a substring test) and PASS for `gp2`, under both spellings, the verdicts
+///   3.2.1 gives (observed on its binary: FAIL for `gp`, PASS for `gp2`, both spellings).
+#[test]
+fn a_query_rooted_at_a_capture_reads_as_the_inline_query_under_in() -> Result<()> {
+    const TAGS: &str = r#"{"Resources": {"X": {"Type": "AWS::S3::Bucket", "Properties": {"Short": "prod", "Full": "production", "Tags": [{"Key": "Env", "Value": "production"}, {"Key": "Team", "Value": "a"}]}}}, "Cfg": {"Key": 1, "Value": 2, "Env": 3, "Zzz": 4}, "Cfg2": {"Zzz": 4}}"#;
+    const STATEMENT: &str = r#"{"Resources": {"P": {"Type": "AWS::IAM::Policy", "Properties": {"PolicyDocument": {"Version": "2012-10-17", "Statement": {"Effect": "Allow", "Action": "*", "Resource": "*"}}}}}, "Cfg": {"Effect": 1, "Zzz": 2}, "Cfg2": {"Zzz": 4}, "Cfg3": {"P": 1}}"#;
+    const KIND_TYPE: &str = r#"{"Resources": {"V": {"Properties": {"Kind": "k", "Type": "gp2"}}, "W": {"Properties": {"Short": "gp", "Full": "gp2"}}}}"#;
+    const WHEN_TAGS: &str = "when Resources.X.Properties.Tags[ t | Key == 'Env' ] !empty";
+    const WHEN_STATEMENT: &str =
+        "when Resources.P.Properties.PolicyDocument.Statement[ s | Effect == 'Allow' ] !empty";
+
+    let mut cells = CellFailures::default();
+    for (label, rules, doc, expected) in [
+        (
+            "a bare literal on the left against the capture's `Value` is a key path the document lacks: FAIL",
+            format!("rule r {WHEN_TAGS} {{ 'prod' IN %t.Value }}"),
+            TAGS,
+            Status::FAIL,
+        ),
+        (
+            "a bare literal equal to the value is a key path too, as 3.2.1 reads it: FAIL",
+            format!("rule r {WHEN_TAGS} {{ 'production' IN %t.Value }}"),
+            TAGS,
+            Status::FAIL,
+        ),
+        (
+            "the inline twin of the bare literal: a key path, FAIL",
+            "rule r { 'production' IN Resources.X.Properties.Tags[ Key == 'Env' ].Value }".to_string(),
+            TAGS,
+            Status::FAIL,
+        ),
+        (
+            "a `let`-bound literal equal to the value: membership, PASS",
+            format!("let full = 'production'\nrule r {WHEN_TAGS} {{ %full IN %t.Value }}"),
+            TAGS,
+            Status::PASS,
+        ),
+        (
+            "a `let`-bound literal against the capture's `Value`: membership, FAIL",
+            format!("let lit = 'prod'\nrule r {WHEN_TAGS} {{ %lit IN %t.Value }}"),
+            TAGS,
+            Status::FAIL,
+        ),
+        (
+            "a document value on the left, a substring of the value: FAIL",
+            format!("rule r {WHEN_TAGS} {{ Resources.X.Properties.Short IN %t.Value }}"),
+            TAGS,
+            Status::FAIL,
+        ),
+        (
+            "a document value on the left equal to the value: PASS",
+            format!("rule r {WHEN_TAGS} {{ Resources.X.Properties.Full IN %t.Value }}"),
+            TAGS,
+            Status::PASS,
+        ),
+        (
+            "the inline twin of the substring case: FAIL, the same reading",
+            "rule r { Resources.X.Properties.Short IN Resources.X.Properties.Tags[ Key == 'Env' ].Value }".to_string(),
+            TAGS,
+            Status::FAIL,
+        ),
+        (
+            "`keys IN %t` over a capture holding maps: no key equals a map, nothing selected, `!empty` FAILs",
+            format!("rule r {WHEN_TAGS} {{ Cfg[ keys IN %t ] !empty }}"),
+            TAGS,
+            Status::FAIL,
+        ),
+        (
+            "`keys IN %t` over a capture holding maps, `empty`: PASS",
+            format!("rule r {WHEN_TAGS} {{ Cfg[ keys IN %t ] empty }}"),
+            TAGS,
+            Status::PASS,
+        ),
+        (
+            "`keys IN %r` over a capture holding keys, a key among them: PASS, as 3.2.1 reads it",
+            "rule r when Resources[ r | Type == 'AWS::IAM::Policy' ] !empty { Cfg3[ keys IN %r ] !empty }".to_string(),
+            STATEMENT,
+            Status::PASS,
+        ),
+        (
+            "`keys IN %r` over a capture holding keys, no key among them: FAIL, as 3.2.1 reads it",
+            "rule r when Resources[ r | Type == 'AWS::IAM::Policy' ] !empty { Cfg2[ keys IN %r ] !empty }".to_string(),
+            STATEMENT,
+            Status::FAIL,
+        ),
+        (
+            "a capture on a one-object statement: the literal key filter names the map's own key and is refused, the gate fails closed",
+            format!("rule r {WHEN_STATEMENT} {{ Cfg[ keys IN %s ] !empty }}"),
+            STATEMENT,
+            Status::FAIL,
+        ),
+        (
+            "`IN %v[ Kind exists ].Type`, a `let`-bound `gp`: membership, FAIL",
+            "let v = Resources.V.Properties\nlet lit = 'gp'\nrule r { %lit IN %v[ Kind exists ].Type }".to_string(),
+            KIND_TYPE,
+            Status::FAIL,
+        ),
+        (
+            "`IN %v[*][ Kind exists ].Type`, the same literal: FAIL, both spellings agree",
+            "let v = Resources.V.Properties\nlet lit = 'gp'\nrule r { %lit IN %v[*][ Kind exists ].Type }".to_string(),
+            KIND_TYPE,
+            Status::FAIL,
+        ),
+        (
+            "`IN %v[ Kind exists ].Type`, a `let`-bound `gp2`: PASS",
+            "let v = Resources.V.Properties\nlet full = 'gp2'\nrule r { %full IN %v[ Kind exists ].Type }".to_string(),
+            KIND_TYPE,
+            Status::PASS,
+        ),
+        (
+            "`IN %v[*][ Kind exists ].Type`, `gp2`: PASS",
+            "let v = Resources.V.Properties\nlet full = 'gp2'\nrule r { %full IN %v[*][ Kind exists ].Type }".to_string(),
+            KIND_TYPE,
+            Status::PASS,
+        ),
+        (
+            "a bare literal `gp` against the slot spelling is a key path the document lacks: FAIL",
+            "let v = Resources.V.Properties\nrule r { 'gp' IN %v[ Kind exists ].Type }".to_string(),
+            KIND_TYPE,
+            Status::FAIL,
+        ),
+        (
+            "a document value `gp` against both spellings: FAIL under the slot",
+            "let v = Resources.V.Properties\nrule r { Resources.W.Properties.Short IN %v[ Kind exists ].Type }".to_string(),
+            KIND_TYPE,
+            Status::FAIL,
+        ),
+        (
+            "a document value `gp` against the `[*]` spelling: FAIL",
+            "let v = Resources.V.Properties\nrule r { Resources.W.Properties.Short IN %v[*][ Kind exists ].Type }".to_string(),
+            KIND_TYPE,
+            Status::FAIL,
+        ),
+    ] {
+        let (status, notices) = deprecations_for_rules(&rules, doc)?;
+        cells.check(&format!("{label}: status"), expected, status);
+        cells.check(&format!("{label}: notices {notices:?}"), 0usize, notices.len());
+    }
+    cells.assert_all_agreed();
+    Ok(())
+}
+
 /// A filter through a variable over an all-scalar map that names the map's own key tests the map itself:
 /// the map is selected when the predicate holds, with no refusal and no notice, as the author's `[*]` does.
 ///
@@ -107614,7 +107944,12 @@ fn a_filter_through_a_variable_naming_the_maps_own_key_tests_the_map_itself() ->
 fn a_filter_through_a_variable_over_an_all_scalar_map_tests_the_map_itself() -> Result<()> {
     const DOC: &str = r#"{"Cfg": {"Status": "Enabled"}}"#;
     const NO_SUCH_VALUE: &str = "no-such-value-zzz";
+    // The two refusal sentences a filter over this map could draw, each a fragment of the text the engine
+    // writes: the own-key refusal (`filter_over_a_member_map_refusal`, "`Key` is `<key>`, a key of the
+    // map itself") and the `[*]` one-object refusal (`one_object_read_refusal_text`, "...; refused in
+    // both polarities").
     const OWN_KEY_REFUSAL: &str = "`Key` is `Status`, a key of the map itself";
+    const ONE_OBJECT_REFUSAL: &str = "refused in both polarities";
 
     fn run(rules: &str) -> Result<(Option<Status>, String, usize)> {
         let rules_file = RulesFile::try_from(rules)?;
@@ -107656,9 +107991,9 @@ fn a_filter_through_a_variable_over_an_all_scalar_map_tests_the_map_itself() -> 
                 status,
             );
             cells.check(
-                &format!("{spelling}, {label}: no own-key refusal in the record"),
+                &format!("{spelling}, {label}: no own-key or one-object refusal in the record"),
                 false,
-                record.contains(OWN_KEY_REFUSAL) || record.contains("refused in both polarities"),
+                record.contains(OWN_KEY_REFUSAL) || record.contains(ONE_OBJECT_REFUSAL),
             );
             cells.check(&format!("{spelling}, {label}: no notice"), 0usize, notices);
         }
@@ -107684,11 +108019,17 @@ fn a_filter_through_a_variable_over_an_all_scalar_map_tests_the_map_itself() -> 
             ),
         ] {
             let (status, record, _) = run(&format!("let m = Cfg\nrule r {{ {clause} }}"))?;
-            cells.check(&format!("{label}: status"), Some(expected), status);
             cells.check(
-                &format!("{label}: no own-key refusal in the record"),
+                &format!("{spelling_disabled}, {label}: status"),
+                Some(expected),
+                status,
+            );
+            cells.check(
+                &format!(
+                    "{spelling_disabled}, {label}: no own-key or one-object refusal in the record"
+                ),
                 false,
-                record.contains(OWN_KEY_REFUSAL),
+                record.contains(OWN_KEY_REFUSAL) || record.contains(ONE_OBJECT_REFUSAL),
             );
         }
     }
@@ -107811,37 +108152,39 @@ fn a_capture_on_the_reader_slot_binds_what_the_slot_enumerated() -> Result<()> {
     Ok(())
 }
 
-/// A positive filter through a variable over a mixed map selects the member that holds the path, as it
-/// did before the mixed map took the literal's reading, and writes no notice.
+/// A positive filter through a variable over a mixed map tests the map as one object, the reading
+/// cfn-guard 3.2.1 gave it, and writes no notice.
 ///
 /// `let m = Resources.Only` over `Only: { Type: ..., Wrapper: { Metadata: { "AWS::CloudFormation::
 /// Authentication": ... } } }` has a scalar `Type` beside a `Wrapper` that holds the `Metadata` the
-/// predicate names: a mixed map. The slot passes `Type` over and tests `Wrapper`, which holds the path, so
-/// `Wrapper` is the selection: `!empty` passes, `empty` fails, and `.Metadata exists` passes (the map
-/// itself has no `Metadata`, so a map selected whole would fail it). A positive predicate cannot hold by
-/// absence, so the literal's refusal does not apply and none is raised; the literal
-/// `Resources.Only[ ... ]` selects the same member.
+/// predicate names: a mixed map. The literal `Resources.Only[ ... ]` passes `Type` over and selects
+/// `Wrapper`; it does not refuse the filter (a positive predicate cannot hold by absence), so the slot
+/// keeps the release's reading and tests the predicate on the map itself, which has no `Metadata` of its
+/// own: nothing is selected, `!empty` fails, `empty` passes, and `.Metadata exists` over a selection of
+/// nothing is not applicable (3.2.1, observed on its binary over the same shape: `!empty` FAIL, `empty`
+/// PASS, a key read below the selection SKIP). Before this the slot took the literal's reading and the
+/// three cells read PASS, FAIL, PASS, a move from the release with no notice. The literal selects `Wrapper`.
 #[test]
-fn a_positive_filter_through_a_variable_over_a_mixed_map_selects_the_member_that_holds_the_path(
-) -> Result<()> {
+fn a_positive_filter_through_a_variable_over_a_mixed_map_tests_the_map_as_one_object() -> Result<()>
+{
     const DOC: &str = r#"{"Resources": {"Only": {"Type": "AWS::CloudFormation::Authentication", "Wrapper": {"Metadata": {"AWS::CloudFormation::Authentication": {"testBasic": {"type": "basic", "password": "p"}}}}}}}"#;
     const PATH: &str = r#"Metadata."AWS::CloudFormation::Authentication" exists"#;
     let mut cells = CellFailures::default();
     for (label, rules, expected) in [
         (
-            "`!empty`: the member that holds the path is selected",
+            "`!empty`: the map itself lacks the path, nothing is selected",
             format!("let m = Resources.Only\nrule r {{ %m[ {PATH} ] !empty }}"),
-            Status::PASS,
-        ),
-        (
-            "`empty`: the selection is not empty",
-            format!("let m = Resources.Only\nrule r {{ %m[ {PATH} ] empty }}"),
             Status::FAIL,
         ),
         (
-            "`.Metadata exists`: read below the selected member, not the map",
-            format!("let m = Resources.Only\nrule r {{ %m[ {PATH} ].Metadata exists }}"),
+            "`empty`: the selection is empty",
+            format!("let m = Resources.Only\nrule r {{ %m[ {PATH} ] empty }}"),
             Status::PASS,
+        ),
+        (
+            "`.Metadata exists`: not applicable over a selection of nothing",
+            format!("let m = Resources.Only\nrule r {{ %m[ {PATH} ].Metadata exists }}"),
+            Status::SKIP,
         ),
         (
             "the literal `Resources.Only[ ... ]` selects the same member",

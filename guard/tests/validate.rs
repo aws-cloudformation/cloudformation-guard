@@ -15864,34 +15864,48 @@ mod validate_tests {
         );
     }
 
-    /// A filter whose selection is one level DOWN from the map rather than nothing: `%p` holds one map
-    /// with a scalar entry (`Name`) beside an `Inner` entry that is a map, and `Name` is also a key of
-    /// `Inner`. The map is mixed (a scalar beside a map that holds the predicate's key), so the filter
-    /// walks the entries as the literal `Properties[ Name exists ]` does: the scalar is passed over,
-    /// `Inner` is selected, and `%p[ Name exists ]` selects `Inner`, not the map. Both rules read past
-    /// the filter, so both compare `Inner` and not the map: `.Tags exists` fails on `Inner` (as it
-    /// would on the map); `.Name == 'b'` compares `Inner`'s `b` alone, the map's `Name` string being a
-    /// scalar entry the filter passes over, so it passes. The predicate holds by presence, not by
-    /// absence, so the literal spelling is not refused either, and the walk's selection stands with
-    /// no notice. Before the mixed shape took the literal reading, each filter was announced once as
-    /// having not selected the map and having selected one entry in its place; neither is now. The
-    /// cells below assert that no notice is written.
+    /// A filter through a variable over a MIXED map tests the map as one object, as cfn-guard 3.2.1 did:
+    /// `%p` holds one map with a scalar entry (`Name`) beside an `Inner` entry that is a map, and `Name`
+    /// is also a key of `Inner`. The literal `Properties[ Name exists ]` walks the entries, passes the
+    /// scalar over and selects `Inner`; 3.2.1 tested the bound map itself (observed on its binary:
+    /// `.Name == 'b'` FAIL, `.Name == 'a'` PASS, `.Tags exists` FAIL), and so does the variable, since
+    /// the literal does not refuse this filter (the predicate holds by presence, not by absence). The
+    /// three rules read past the filter and compare the map's own `Name`, `a`: `.Tags exists` fails
+    /// (the map has no `Tags`), `.Name == 'b'` fails and `.Name == 'a'` passes, and the value the
+    /// failing comparison names is `/Resources/B/Properties/Name`, never `Inner`'s. Before this, the
+    /// slot took the literal's reading here and `.Name == 'b'` passed on `Inner`'s `b` with no notice,
+    /// a verdict that moved from the release's FAIL with nothing said. No notice is written: a mixed
+    /// map is never walked through a variable, so no selection moves down.
     #[test]
-    fn a_filter_whose_selection_moved_down_is_announced() {
+    fn a_filter_through_a_variable_over_a_mixed_map_tests_the_map_as_one_object() {
         let (status_code, stdout, stderr) = validate_both_streams(
-            "filter_moved_down_to_an_entry.guard",
+            "filter_through_a_variable_over_a_mixed_map.guard",
             "two-level-properties-template.yaml",
         );
         assert_eq!(
             StatusCode::VALIDATION_ERROR,
             status_code,
-            "the Tags rule fails on Inner; stdout {:?}",
+            "the Tags rule and the `== 'b'` rule fail on the map; stdout {:?}",
+            stdout
+        );
+        assert_eq!(
+            (
+                Some("FAIL".to_string()),
+                Some("FAIL".to_string()),
+                Some("PASS".to_string())
+            ),
+            (
+                rule_status_line(&stdout, "ONE_OBJECT_TAGS"),
+                rule_status_line(&stdout, "ONE_OBJECT_NAME_IS_B"),
+                rule_status_line(&stdout, "ONE_OBJECT_NAME_IS_A")
+            ),
+            "the map is selected and its own `Name` compared: Tags FAIL, == 'b' FAIL, == 'a' PASS; got {:?}",
             stdout
         );
         assert!(
-            stdout.contains("MOVED_DOWN_TAGS    FAIL")
-                && stdout.contains("MOVED_DOWN_NAME    PASS"),
-            "the Tags rule fails on Inner, the Name rule passes on Inner's `b` with the Name string passed over; got {:?}",
+            stdout.contains("Property [/Resources/B/Properties/Name]")
+                && !stdout.contains("/Resources/B/Properties/Inner/Name"),
+            "the failing comparison names the map's own Name, not Inner's; got {:?}",
             stdout
         );
         let notices: Vec<&str> = stderr
@@ -15901,7 +15915,7 @@ mod validate_tests {
         assert_eq!(
             0,
             notices.len(),
-            "the mixed shape is never announced; got {:?} from stderr {:?}",
+            "the mixed map is never walked, so nothing is announced; got {:?} from stderr {:?}",
             notices,
             stderr
         );
@@ -18569,18 +18583,69 @@ mod validate_tests {
         );
     }
 
-    /// `docs/CLAUSES.md` says a positive predicate through a variable holding one resource holds on an
-    /// entry that is itself a map carrying the key. `let m = Resources.Only` then
-    /// `%m[ Metadata."AWS::CloudFormation::Authentication" exists ]` on a resource whose `Wrapper` entry
-    /// carries that path: the `Wrapper` map is selected in the resource's place, so a `!exists` over the
-    /// selection's passwords fails on the one under `Wrapper`, naming its path, while the resource's own
-    /// `Metadata` and `Properties` maps are rejected and its `Type` string is read as absent. No notice:
-    /// the predicate does not hold on the resource itself, so the resource lost no selection.
+    /// A positive predicate through a variable holding one resource whose `Wrapper` entry carries the key
+    /// the predicate names, beside the resource's `Type` string: a mixed map, tested as one object, the
+    /// reading cfn-guard 3.2.1 gave it (observed on its binary: `empty` PASS, `!empty` FAIL, the
+    /// password check SKIP). `let m = Resources.Only` then
+    /// `%m[ Metadata."AWS::CloudFormation::Authentication" exists ]`: the resource's own `Metadata`
+    /// has no such block, so the predicate does not hold on it, nothing is selected, `empty` passes and
+    /// the `!exists` over the selection's passwords is not applicable. The literal `Resources.Only[ ... ]`
+    /// selects `Wrapper` and does not refuse the filter (the predicate holds by presence), so the
+    /// variable keeps the release's reading rather than refusing. Before this, the slot took the
+    /// literal's reading and the password check FAILed on `Wrapper`'s password, where the release was
+    /// not applicable. No notice: a mixed map is never walked through a variable. The collection twin,
+    /// the same resource with no `Type`, is the test below.
     #[test]
-    fn a_positive_predicate_through_an_instance_binding_selects_the_entry_carrying_the_key() {
+    fn a_positive_predicate_through_a_binding_over_a_mixed_resource_tests_the_resource_itself() {
         let (status_code, stdout, stderr) = validate_both_streams(
-            "positive_predicate_through_an_instance_binding_selects_a_wrapper_entry.guard",
+            "positive_predicate_through_a_binding_over_a_mixed_resource.guard",
             "one-resource-with-a-wrapper-entry-template.yaml",
+        );
+
+        assert_eq!(
+            StatusCode::SUCCESS,
+            status_code,
+            "nothing is selected: `empty` passes and the password check is not applicable; stdout {:?}",
+            stdout
+        );
+        assert_eq!(
+            Some("PASS".to_string()),
+            rule_status_line(&stdout, "the_resource_lacks_the_block_at_its_own_level"),
+            "stdout {:?}",
+            stdout
+        );
+        assert_eq!(
+            Some("SKIP".to_string()),
+            rule_status_line(&stdout, "the_password_check_is_not_applicable"),
+            "stdout {:?}",
+            stdout
+        );
+        assert!(
+            !stdout.contains("/Resources/Only/Wrapper/"),
+            "the Wrapper entry is not selected in the resource's place; got stdout {:?}",
+            stdout
+        );
+        assert!(
+            !stderr.contains("DEPRECATION") && !stdout.contains("Could not be evaluated"),
+            "the mixed map is neither walked nor refused; got stderr {:?} stdout {:?}",
+            stderr,
+            stdout
+        );
+    }
+
+    /// `docs/CLAUSES.md` says a positive predicate through a variable holding one map with no scalar
+    /// entry holds on an entry that is itself a map carrying the key. `let m = Resources.Only` then
+    /// `%m[ Metadata."AWS::CloudFormation::Authentication" exists ]` on a map with no `Type` whose
+    /// `Wrapper` entry carries that path: a collection to the slot, so the walk stands, the `Wrapper`
+    /// map is selected in the map's place, and a `!exists` over the selection's passwords fails on the
+    /// one under `Wrapper`, naming its path, while the map's own `Metadata` and `Properties` entries are
+    /// rejected. No notice: the predicate does not hold on the map itself, so the map lost no selection,
+    /// and an entry selected because it carries what the predicate asks for is the documented reading.
+    #[test]
+    fn a_positive_predicate_through_a_binding_to_a_collection_selects_the_entry_carrying_the_key() {
+        let (status_code, stdout, stderr) = validate_both_streams(
+            "positive_predicate_through_a_binding_over_a_collection.guard",
+            "one-map-without-a-type-with-a-wrapper-entry-template.yaml",
         );
 
         assert_eq!(
@@ -18595,22 +18660,18 @@ mod validate_tests {
             "stdout {:?}",
             stdout
         );
+        // The map has no `Type`, so the report is the generic one, not the CloudFormation reporter's
+        // resource block: the failing property is named in a `Property [...]` line.
         assert!(
-            reports_resource(&stdout, "Only")
-                && stdout.contains(
-                    "PropertyPath    = /Resources/Only/Wrapper/Metadata/AWS::CloudFormation::Authentication/WrappedCreds/password["
-                ),
+            stdout.contains(
+                "Property [/Resources/Only/Wrapper/Metadata/AWS::CloudFormation::Authentication/WrappedCreds/password]"
+            ),
             "the failure names the password under the Wrapper entry the filter selected, got stdout {:?}",
             stdout
         );
         assert!(
-            !stdout.contains("/Resources/Only/Type["),
-            "the Type string is read as absent by `!exists`, not reported; got stdout {:?}",
-            stdout
-        );
-        assert!(
             !stderr.contains("DEPRECATION"),
-            "the predicate does not hold on the resource itself, so no selection was lost; got stderr {:?}",
+            "the predicate does not hold on the map itself, so no selection was lost; got stderr {:?}",
             stderr
         );
     }
