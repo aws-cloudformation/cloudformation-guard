@@ -1,0 +1,18 @@
+#
+# Two rules that both do not apply, each for a reason the evaluator can state.
+#
+# One rule is not enough to catch the defect this pins: junit wrote each reason as its own adjacent
+# text event, and adjacent text events are concatenated with nothing between them, so two reasons came
+# out as one run-together string. With a single skipped rule there is nothing to run together.
+#
+rule volume_encrypted {
+    AWS::EC2::Volume {
+        Properties.Encrypted == true
+    }
+}
+
+rule bucket_named {
+    AWS::S3::Bucket {
+        Properties.BucketName == 'expected'
+    }
+}

@@ -1,0 +1,35 @@
+###
+# Three cases over the same two clauses, all passing. The rules file is
+# `resources/validate/vacuous_and_incomparable_clauses.guard`, shared with the validate-side notice
+# test so one fixture describes the hazard.
+#
+# Three rather than one on purpose: a rule file is evaluated once per case, so a reporter that wrote
+# each notice as it was produced would print the same two notices six times. The test asserts two.
+###
+---
+- name: Empty list and a string, first case
+  input:
+    Sizes: []
+    Name: "50"
+  expectations:
+    rules:
+      vacuous_comparison: PASS
+      incomparable_membership: PASS
+
+- name: Empty list and a string, second case
+  input:
+    Sizes: []
+    Name: "50"
+  expectations:
+    rules:
+      vacuous_comparison: PASS
+      incomparable_membership: PASS
+
+- name: Empty list and a different string, third case
+  input:
+    Sizes: []
+    Name: "not-a-number"
+  expectations:
+    rules:
+      vacuous_comparison: PASS
+      incomparable_membership: PASS

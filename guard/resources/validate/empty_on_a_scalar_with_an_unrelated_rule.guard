@@ -1,0 +1,18 @@
+#
+# Two rules, one of which asks an unanswerable question.
+#
+# `Size` is an integer, and EMPTY on an integer cannot be answered: an int is not empty, but calling
+# it non-empty implies the question made sense. That used to return an error which propagated out of
+# the rule and aborted the whole file, so `unrelated_violation` -- a genuine, reported finding with
+# nothing to do with the second rule -- was discarded and the run exited 255 instead of 19.
+#
+# The unrelated rule comes first deliberately: it has already been decided by the time the second
+# rule is evaluated, so its loss is purely the abort discarding work that was complete.
+#
+rule unrelated_violation {
+    Region == 'no-such-region-zzz'
+}
+
+rule empty_on_a_scalar {
+    Resources.*[ Type == 'AWS::EC2::Volume' ].Properties.Size EMPTY
+}

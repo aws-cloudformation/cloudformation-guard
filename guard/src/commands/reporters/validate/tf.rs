@@ -1,8 +1,8 @@
 use crate::commands::tracker::StatusContext;
 use crate::commands::validate::{OutputFormatType, Reporter};
 use crate::rules::eval_context::{
-    simplified_json_from_root, BinaryComparison, ClauseReport, EventRecord, FileReport,
-    InComparison, RuleReport, UnaryComparison,
+    BinaryComparison, ClauseReport, EventRecord, FileReport, InComparison, RuleReport,
+    UnaryComparison,
 };
 use crate::rules::path_value::traversal::{Node, Traversal, TraversalResult};
 use crate::rules::Status;
@@ -11,6 +11,8 @@ use lazy_static::lazy_static;
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::io::Write;
 use std::rc::Rc;
+
+use super::common::FileReportWithReasons;
 
 #[derive(Debug)]
 pub(crate) struct TfAware<'reporter> {
@@ -52,13 +54,18 @@ impl<'reporter> Reporter for TfAware<'reporter> {
     ) -> crate::rules::Result<()> {
         let root = data.root().unwrap();
         if data.at("/resource_changes", root).is_ok() {
-            let failure_report = simplified_json_from_root(root_record)?;
+            let failure_report = FileReportWithReasons::from_record(root_record)?;
             match output_type {
                 OutputFormatType::YAML => serde_yaml::to_writer(write, &failure_report)?,
                 OutputFormatType::JSON => serde_json::to_writer_pretty(write, &failure_report)?,
-                OutputFormatType::SingleLineSummary => {
-                    single_line(write, data_file, rules_file, data, root, failure_report)?
-                }
+                OutputFormatType::SingleLineSummary => single_line(
+                    write,
+                    data_file,
+                    rules_file,
+                    data,
+                    root,
+                    failure_report.report,
+                )?,
                 OutputFormatType::Junit => unreachable!(),
                 OutputFormatType::Sarif => unreachable!(),
             };

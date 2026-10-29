@@ -1,0 +1,18 @@
+#
+# Two clauses that pass today and are documented to change in a later release. Both are here so one
+# fixture covers the deprecation notices, and both pass, so the notice is the only observable output.
+#
+# `Sizes` is an empty list, so the comparison expands to nothing and passes without comparing anything.
+# QUERY_AND_FILTERING.md lists `Tags: []` with a missing key and an empty map as retrieval errors and
+# says all retrieval errors are failures -- the other two do fail, so this one is the outlier.
+#
+# `Name` is a string and the list holds integers, so nothing in the list can be compared with it.
+# `NOT IN` reads that as "not a member" and passes, while `!=` on the same operands fails closed.
+#
+rule vacuous_comparison {
+    Sizes == 50
+}
+
+rule incomparable_membership {
+    Name not IN [10, 50, 100]
+}

@@ -1,0 +1,18 @@
+Test Case #1
+Name: All five properties set, every rule passes
+  PASS Rules:
+    S3_BUCKET_NAME_SET: Expected = PASS
+    S3_ENCRYPTION_SET: Expected = PASS
+    S3_LOGGING_ENABLED: Expected = PASS
+    S3_PUBLIC_ACCESS_BLOCKED: Expected = PASS
+    S3_VERSIONING_ENABLED: Expected = PASS
+
+Test Case #2
+Name: No bucket, every rule skips
+  PASS Rules:
+    S3_BUCKET_NAME_SET: Expected = SKIP
+    S3_ENCRYPTION_SET: Expected = SKIP
+    S3_LOGGING_ENABLED: Expected = SKIP
+    S3_PUBLIC_ACCESS_BLOCKED: Expected = SKIP
+    S3_VERSIONING_ENABLED: Expected = SKIP
+

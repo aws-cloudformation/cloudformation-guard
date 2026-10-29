@@ -1,0 +1,18 @@
+#
+# The mirror of denied_names_from_empty_reference.guard: the empty selection is on the LEFT.
+#
+# `3f8466e` closed the right-hand case -- `Name != %denied` where `%denied` resolved to nothing -- and
+# left this one open, so `%x == 'abc'` exited 0 having compared nothing. Same bypass, other operand.
+#
+# The unrelated rule is here because a fail-closed answer is only correct if it does not also take the
+# rest of the file with it.
+#
+let selected = Items[ Kind == 'denied' ].Value
+
+rule unrelated_violation {
+    Name == 'no-such-name-zzz'
+}
+
+rule left_side_is_empty {
+    %selected == 'abc'
+}

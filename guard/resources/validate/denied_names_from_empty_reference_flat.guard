@@ -1,0 +1,19 @@
+#
+# The flat-document counterpart of denied_names_from_empty_reference.guard.
+#
+# Same defect, different reporter. That file queries Resources.*, so its data is a CloudFormation
+# template and the CloudFormation-aware reporter renders the failure. This one queries top-level keys,
+# so the report goes through the generic reporter instead -- which walked past the block record
+# carrying the explanation and printed a violation section with nothing in it.
+#
+# %denied resolves to no values because the filter matches no entry in Items, and the rule carries no
+# other check, so the whole verdict rests on a comparison that could not be performed.
+#
+# Kept out of rules-dir/ for the same reason as its sibling: test_updated_summary_output runs every
+# rules file there against every data file in data-dir/ and compares against checked-in output.
+#
+let denied = Items[ Kind == 'denied' ].Value
+
+rule name_is_not_denied {
+    Name != %denied
+}

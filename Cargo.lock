@@ -219,7 +219,7 @@ checksum = "baf1de4339761588bc0619e3cbc0120ee582ebb74b53b4efbf79117bd2da40fd"
 
 [[package]]
 name = "cfn-guard"
-version = "3.2.0"
+version = "3.2.1"
 dependencies = [
  "chrono",
  "clap",
@@ -257,7 +257,7 @@ dependencies = [
 
 [[package]]
 name = "cfn-guard-ffi"
-version = "3.2.0"
+version = "3.2.1"
 dependencies = [
  "cfn-guard",
  "ffi-support",
@@ -265,7 +265,7 @@ dependencies = [
 
 [[package]]
 name = "cfn-guard-lambda"
-version = "3.2.0"
+version = "3.2.1"
 dependencies = [
  "cfn-guard",
  "lambda_runtime",
@@ -341,7 +341,7 @@ checksum = "f46ad14479a25103f283c0f10005961cf086d8dc42205bb44c46ac563475dca6"
 
 [[package]]
 name = "cloudformation-guard-lang"
-version = "1.0.0"
+version = "1.1.0"
 dependencies = [
  "chrono",
  "colored",
@@ -351,6 +351,7 @@ dependencies = [
  "grep-regex",
  "grep-searcher",
  "indexmap 1.9.3",
+ "indexmap 2.7.1",
  "indoc",
  "lazy_static",
  "nom",

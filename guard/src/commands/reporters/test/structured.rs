@@ -1,6 +1,8 @@
 use std::{convert::TryFrom, path::PathBuf, rc::Rc, time::Instant};
 
-use crate::commands::reporters::test::{get_by_rules, get_status_result};
+use crate::commands::reporters::test::{
+    get_by_rules, get_status_result, unmatched_expectations, Diagnostics,
+};
 use crate::commands::reporters::{
     FailingTestCase, TestCase as JunitTestCase, TestCaseStatus, TestSuite,
 };
@@ -28,6 +30,8 @@ pub struct StructuredTestReporter<'reporter> {
     pub data_test_files: &'reporter [PathBuf],
     pub output: OutputFormatType,
     pub rules: ContextAwareRule<'reporter>,
+    /// Filled while the cases run and read by the caller, which owns the writer.
+    pub diagnostics: Diagnostics,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -211,6 +215,9 @@ impl<'reporter> StructuredTestReporter<'reporter> {
     pub fn evaluate(&mut self) -> crate::rules::Result<TestResult> {
         let ContextAwareRule { rule, name: file } = &self.rules;
         let now = Instant::now();
+        // Local rather than the field directly: `rule` and `file` borrow `self` for the body of
+        // this loop, so the field is filled once at the end instead.
+        let mut diagnostics = Diagnostics::new();
         let mut result = TestResult::Ok(Ok {
             rule_file: file.to_owned(),
             test_cases: vec![],
@@ -249,9 +256,17 @@ impl<'reporter> StructuredTestReporter<'reporter> {
 
                         eval_rules_file(rule, &mut root_scope, None)?;
 
+                        // Read before `reset_recorder` consumes the scope, as in `validate`.
+                        diagnostics.extend(root_scope.deprecations().cloned());
+
                         let top = root_scope.reset_recorder().extract();
 
                         let by_rules = get_by_rules(&top);
+                        diagnostics.extend(unmatched_expectations(
+                            &each.expectations.rules,
+                            &by_rules.keys().copied().collect(),
+                        ));
+
                         let mut test_case = TestCase {
                             name: each.name.to_string(),
                             ..Default::default()
@@ -297,6 +312,8 @@ impl<'reporter> StructuredTestReporter<'reporter> {
                 }
             }
         }
+
+        self.diagnostics = diagnostics;
 
         Ok(result)
     }

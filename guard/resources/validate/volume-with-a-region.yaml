@@ -1,0 +1,8 @@
+# A volume whose Size is an integer, plus a Region key for the unrelated rule to fail on.
+# Both are needed: the abort is only observable when a second rule has a verdict to lose.
+Region: us-east-1
+Resources:
+  V:
+    Type: AWS::EC2::Volume
+    Properties:
+      Size: 50

@@ -1,0 +1,11 @@
+# A type block whose `when` condition exempts small volumes.
+#
+# Fixture for a_skipped_type_block_explains_itself_in_the_output. The point is the two ways this
+# rule can decline to check anything: no volumes in the template at all, or volumes that the
+# condition exempts. Both report SKIP and exit 0, and without an explanation neither is
+# distinguishable from a rule that ran and passed.
+rule large_volumes_are_encrypted {
+    AWS::EC2::Volume when Properties.Size > 10 {
+        Properties.Encrypted == true
+    }
+}

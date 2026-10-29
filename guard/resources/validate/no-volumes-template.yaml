@@ -1,0 +1,7 @@
+# No EC2 volumes at all, so the type block's query matches nothing. This is the ordinary and
+# correct reason for a rule not to apply, and the explanation should say which of the two it is.
+Resources:
+  Queue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: a-queue

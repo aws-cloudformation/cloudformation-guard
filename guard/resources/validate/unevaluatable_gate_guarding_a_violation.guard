@@ -1,0 +1,21 @@
+#
+# A gate that cannot be answered, guarding a body that would fail.
+#
+# `Enabled` is a boolean, so `!EMPTY` has no answer: a boolean is not empty, but reporting it
+# non-empty accepts a clause that checked nothing. The question is what that does to the *body*.
+#
+# Reported by a reviewer against the first version of this fix. That version answered SKIP for an
+# unevaluatable gate, on the reasoning that declining lets a gate's remaining conditions decide. With
+# a single condition there are no remaining conditions: `eval_rule` maps every non-PASS condition to a
+# rule-level SKIP, so the guarded body never ran and the file exited 0 while a violation sat inside it.
+#
+# The second rule exists so the file has a verdict to lose. An earlier form of this defect aborted the
+# whole file, and the two failure modes look identical from outside unless something else is reported.
+#
+rule unrelated_violation {
+    Region == 'no-such-region-zzz'
+}
+
+rule guarded when Enabled !EMPTY {
+    MustBeTrue == true
+}

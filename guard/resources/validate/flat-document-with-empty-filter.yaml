@@ -1,0 +1,11 @@
+# Not a CloudFormation template, and that is the whole point: with no /Resources key the
+# CloudFormation-aware reporter delegates to the generic one, which is the reporter that used to
+# discard a block-level explanation.
+#
+# Items exists and has an entry, so a filter over it resolves to zero values rather than failing to
+# resolve. That distinction matters: an absent key is UnResolved and reports a retrieval error, while
+# an empty filter result is the case docs/CLAUSES.md describes and the case this fixture exercises.
+Name: anything
+Items:
+  - Kind: other
+    Value: v1

@@ -1,0 +1,13 @@
+#
+# One S3 bucket and deliberately no KMS keys, so a denylist query selecting
+# AWS::KMS::Key resolves to no values.
+#
+# Kept out of data-dir/ on purpose: test_updated_summary_output runs every rules file in
+# rules-dir/ against every data file in data-dir/ and compares the result to the checked-in
+# golden output, so anything added there changes that cross product.
+#
+Resources:
+  S3Bucket:
+    Type: "AWS::S3::Bucket"
+    Properties:
+      BucketName: "my-service-bucket"

@@ -31,7 +31,7 @@ jobs:
     outputs:
       version: ${{ steps.version.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Validate branch and semver
         id: version
@@ -68,7 +68,7 @@ jobs:
     env:
       VERSION: ${{ needs.validate.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
 
@@ -165,7 +165,7 @@ jobs:
     env:
       VERSION: ${{ needs.validate.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.validate.outputs.version }}
 
@@ -205,7 +205,7 @@ jobs:
           done
 
       - name: Upload artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: ${{ matrix.asset_name }}
           path: "*.tar.gz"
@@ -223,11 +223,11 @@ jobs:
     env:
       VERSION: ${{ needs.validate.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.validate.outputs.version }}
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         with:
           path: artifacts
           merge-multiple: true
@@ -246,13 +246,43 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Generate release notes
+        if: ${{ !inputs.dry_run && steps.check.outputs.exists == 'false' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          PREVIOUS_TAG="$(gh release list \
+            --repo "${{ github.repository }}" \
+            --exclude-drafts \
+            --limit 1 \
+            --json tagName \
+            --jq '.[0].tagName')"
+          if [[ -z "$PREVIOUS_TAG" ]]; then
+            echo "::error::No previous published release found"
+            exit 1
+          fi
+
+          echo "Generating release notes from $PREVIOUS_TAG to $VERSION"
+          gh api --method POST \
+            "repos/${{ github.repository }}/releases/generate-notes" \
+            -f tag_name="$VERSION" \
+            -f previous_tag_name="$PREVIOUS_TAG" \
+            --jq '.body' > release-notes.md
+
       - name: Create release
-        if: ${{ !inputs.dry_run }}
-        uses: softprops/action-gh-release@v2
+        if: ${{ !inputs.dry_run && steps.check.outputs.exists == 'false' }}
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ env.VERSION }}
           name: v${{ env.VERSION }}
-          generate_release_notes: ${{ steps.check.outputs.exists == 'false' }}
+          body_path: release-notes.md
+          files: artifacts/*.tar.gz
+
+      - name: Update existing release assets
+        if: ${{ !inputs.dry_run && steps.check.outputs.exists == 'true' }}
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ env.VERSION }}
           files: artifacts/*.tar.gz
 
   # ---------------------------------------------------------------------------
@@ -263,15 +293,54 @@ jobs:
     needs: [validate, version-bump, github-release]
     if: ${{ !inputs.dry_run && !inputs.skip_crates }}
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
     env:
       VERSION: ${{ needs.validate.outputs.version }}
       CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.validate.outputs.version }}
 
       - uses: actions-rust-lang/setup-rust-toolchain@v1
+
+      - name: Publish cloudformation-guard-lang
+        working-directory: guard-lang
+        run: |
+          set -o pipefail
+          cargo publish 2>&1 | tee /tmp/publish-guard-lang.log || {
+            if grep -q "already uploaded" /tmp/publish-guard-lang.log; then
+              echo "::warning::cloudformation-guard-lang already published, verifying registry availability"
+            else
+              exit 1
+            fi
+          }
+
+      - name: Wait for cloudformation-guard-lang on crates.io
+        run: |
+          LANG_VERSION="$(cargo metadata --no-deps --format-version 1 \
+            | jq -r '.packages[] | select(.name == "cloudformation-guard-lang") | .version')"
+          if [[ -z "$LANG_VERSION" || "$LANG_VERSION" == "null" ]]; then
+            echo "::error::Unable to determine cloudformation-guard-lang version"
+            exit 1
+          fi
+          is_available=false
+          for _ in {1..12}; do
+            index_entry="$(curl -fsSL \
+              -A "cloudformation-guard-release-workflow" \
+              "https://index.crates.io/cl/ou/cloudformation-guard-lang" || true)"
+            if grep -Fq "\"vers\":\"${LANG_VERSION}\"" <<< "$index_entry"; then
+              is_available=true
+              break
+            fi
+            sleep 10
+          done
+          if [[ "$is_available" != "true" ]]; then
+            echo "::error::cloudformation-guard-lang ${LANG_VERSION} is not available in the crates.io index"
+            exit 1
+          fi
 
       - name: Publish cfn-guard
         run: |
@@ -283,9 +352,6 @@ jobs:
               exit 1
             fi
           }
-
-      - name: Wait for crates.io index
-        run: sleep 30
 
       - name: Publish cfn-guard-lambda
         run: |
@@ -309,6 +375,33 @@ jobs:
             fi
           }
 
+      - name: Verify crates.io
+        run: |
+          LANG_VERSION="$(cargo metadata --no-deps --format-version 1 \
+            | jq -r '.packages[] | select(.name == "cloudformation-guard-lang") | .version')"
+          for crate_and_version in \
+            "cloudformation-guard-lang:${LANG_VERSION}" \
+            "cfn-guard:${VERSION}" \
+            "cfn-guard-lambda:${VERSION}" \
+            "cfn-guard-ffi:${VERSION}"; do
+            IFS=: read -r crate crate_version <<< "$crate_and_version"
+            code=""
+            for _ in {1..6}; do
+              code="$(curl -s -o /dev/null -w '%{http_code}' \
+                -A "cloudformation-guard-release-workflow" \
+                "https://crates.io/api/v1/crates/${crate}/${crate_version}" || true)"
+              if [[ "$code" == "200" ]]; then
+                break
+              fi
+              sleep 10
+            done
+            if [[ "$code" != "200" ]]; then
+              echo "::error::${crate} ${crate_version} not found on crates.io (HTTP ${code})"
+              exit 1
+            fi
+            echo "${crate} ${crate_version} is on crates.io"
+          done
+
   # ---------------------------------------------------------------------------
   # 6. Publish Docker to ECR Public
   # ---------------------------------------------------------------------------
@@ -323,12 +416,12 @@ jobs:
     env:
       VERSION: ${{ needs.validate.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.validate.outputs.version }}
 
       - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@v6
         with:
           aws-region: ${{ secrets.AWS_REGION }}
           role-to-assume: ${{ secrets.PUBLISHER_ROLE_NAME }}

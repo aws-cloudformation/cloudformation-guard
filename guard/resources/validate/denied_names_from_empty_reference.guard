@@ -1,0 +1,17 @@
+#
+# The denylist is derived from a resource type the input does not contain, so %denied
+# resolves to no values and the comparison has nothing to compare against.
+#
+# The rule carries no other check. If that comparison is skipped rather than failed, the
+# run exits 0 having enforced nothing, and at a CI gate that is indistinguishable from a
+# genuine pass.
+#
+# Kept out of rules-dir/ on purpose: test_updated_summary_output runs every rules file in
+# rules-dir/ against every data file in data-dir/ and compares the result to the checked-in
+# golden output, so anything added there changes that cross product.
+#
+let denied = Resources.*[ Type == 'AWS::KMS::Key' ].Properties.KeyId
+
+rule bucket_name_is_not_denied {
+    Resources.*[ Type == 'AWS::S3::Bucket' ].Properties.BucketName != %denied
+}

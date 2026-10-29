@@ -1,12 +1,13 @@
 use std::rc::Rc;
 
+use crate::commands::reporters::validate::common::FileReportWithReasons;
 use crate::commands::reporters::validate::sarif::SarifReport;
 use crate::commands::reporters::JunitReporter;
 use crate::commands::validate::{parse_rules, DataFile, OutputFormatType, RuleFileInfo};
 use crate::commands::{ERROR_STATUS_CODE, FAILURE_STATUS_CODE};
 use crate::rules;
 use crate::rules::eval::eval_rules_file;
-use crate::rules::eval_context::{root_scope, simplified_json_from_root, FileReport};
+use crate::rules::eval_context::root_scope;
 use crate::rules::exprs::RulesFile;
 use crate::rules::path_value::PathAwareValue;
 use crate::rules::Status;
@@ -99,10 +100,7 @@ impl<'reporter> StructuredReporter for CommonStructuredReporter<'reporter> {
     fn report(&mut self) -> rules::Result<i32> {
         let mut records = vec![];
         for each in &self.data {
-            let mut file_report: FileReport = FileReport {
-                name: &each.name,
-                ..Default::default()
-            };
+            let mut file_report = FileReportWithReasons::empty(&each.name);
 
             for (rule, _) in &self.rules {
                 let mut root_scope = root_scope(rule, Rc::new(each.path_value.clone()));
@@ -112,7 +110,7 @@ impl<'reporter> StructuredReporter for CommonStructuredReporter<'reporter> {
                 }
 
                 let root_record = root_scope.reset_recorder().extract();
-                let report = simplified_json_from_root(&root_record)?;
+                let report = FileReportWithReasons::from_record(&root_record)?;
                 file_report.combine(report);
             }
 
@@ -123,7 +121,11 @@ impl<'reporter> StructuredReporter for CommonStructuredReporter<'reporter> {
             OutputFormatType::YAML => serde_yaml::to_writer(&mut self.writer, &records)?,
             OutputFormatType::JSON => serde_json::to_writer_pretty(&mut self.writer, &records)?,
             OutputFormatType::Sarif => {
-                let report = SarifReport::new(&records);
+                let file_reports = records
+                    .iter()
+                    .map(|record| record.report.clone())
+                    .collect::<Vec<_>>();
+                let report = SarifReport::new(&file_reports);
                 serde_json::to_writer_pretty(&mut self.writer, &report)?
             }
             _ => unreachable!(),

@@ -1,15 +1,19 @@
 [package]
 name = "cloudformation-guard-lang"
-version = "1.0.0"
+version = "1.1.0"
 edition = "2018"
+rust-version = "1.77.2"
 description = "Parser, AST, and evaluation types for the AWS CloudFormation Guard DSL"
 license = "Apache-2.0"
 repository = "https://github.com/aws-cloudformation/cloudformation-guard"
+readme = "README.md"
 
 [dependencies]
 nom = "7.0.0"
 nom_locate = "4.0.0"
 indexmap = { version = "1.6.0", features = ["serde-1"] }
+# Constrain serde_json and serde_yaml's IndexMap 2 dependency to the Rust 1.77-compatible version.
+indexmap-v2 = { package = "indexmap", version = "=2.7.1" }
 serde = { version = "1.0", features = ["derive", "rc"] }
 serde_json = { version = "1.0.85", features = ["preserve_order"] }
 serde_yaml = "0.9.10"

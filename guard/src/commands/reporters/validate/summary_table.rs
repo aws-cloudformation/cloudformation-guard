@@ -1,7 +1,7 @@
 use crate::commands::reporters::validate::common::colored_string;
 use crate::commands::tracker::StatusContext;
 use crate::commands::validate::{OutputFormatType, Reporter};
-use crate::rules::eval_context::EventRecord;
+use crate::rules::eval_context::{find_skip_reason, EventRecord};
 use crate::rules::parser::get_rule_name;
 use crate::rules::path_value::traversal::Traversal;
 use crate::rules::RecordType;
@@ -161,6 +161,10 @@ impl<'r> Reporter for SummaryTable<'r> {
     ) -> crate::rules::Result<()> {
         let mut passed = indexmap::IndexMap::with_capacity(_root_record.children.len());
         let mut skipped = indexmap::IndexMap::with_capacity(_root_record.children.len());
+        // Why each skipped rule did not apply, for the ones the evaluator can explain. A rule that
+        // reports "not applicable" and nothing else is indistinguishable from one that ran and
+        // passed, and both exit 0.
+        let mut skip_reasons: indexmap::IndexMap<&str, String> = indexmap::IndexMap::new();
         let mut failed = indexmap::IndexMap::with_capacity(_root_record.children.len());
         let mut longest = 0;
         for each_rule in &_root_record.children {
@@ -170,7 +174,12 @@ impl<'r> Reporter for SummaryTable<'r> {
                 match status {
                     Status::PASS => passed.insert(*name, *status),
                     Status::FAIL => failed.insert(*name, *status),
-                    Status::SKIP => skipped.insert(*name, *status),
+                    Status::SKIP => {
+                        if let Some(reason) = find_skip_reason(each_rule) {
+                            skip_reasons.insert(*name, reason);
+                        }
+                        skipped.insert(*name, *status)
+                    }
                 };
                 let child_rule_name_length = get_rule_name(_rules_file, name).len(); //get_rule_name(_rules_file, name).len();
                 if longest < child_rule_name_length {
@@ -180,6 +189,7 @@ impl<'r> Reporter for SummaryTable<'r> {
         }
 
         skipped.retain(|key, _| !(passed.contains_key(key) || failed.contains_key(key)));
+        skip_reasons.retain(|key, _| skipped.contains_key(key));
 
         let mut wrote_header_line = false;
         if self.summary_type.contains(SummaryType::SKIP) && !skipped.is_empty() {
@@ -192,6 +202,13 @@ impl<'r> Reporter for SummaryTable<'r> {
             wrote_header_line = true;
             writeln!(_write, "{}", "SKIP rules".bold())?;
             print_summary(_write, _rules_file, longest, &skipped)?;
+            for (rule_name, reason) in skip_reasons.iter() {
+                writeln!(
+                    _write,
+                    "  {rule}: {reason}",
+                    rule = get_rule_name(_rules_file, rule_name)
+                )?;
+            }
         }
 
         if self.summary_type.contains(SummaryType::PASS) && !passed.is_empty() {

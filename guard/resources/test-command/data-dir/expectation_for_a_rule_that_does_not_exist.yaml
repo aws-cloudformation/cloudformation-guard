@@ -1,0 +1,44 @@
+###
+# Expectations naming rules the rules file does not contain, next to one that it does.
+#
+# `S3_BUCKET_SERVER_SIDE_ENCRYPTION_ENABLE` is the real name with the final D dropped, which is what
+# this actually looks like in a rule suite. `S3_BUCKET_ENCRYPTED` is a plausible-but-wrong name. Both
+# assert FAIL on a rule that passes, so if either were checked the run would fail; it exits 0, which
+# is the point.
+#
+# Two cases, so that the report says it once rather than twice.
+###
+---
+- name: One real expectation and two that name nothing, first case
+  input:
+    Resources:
+      ExampleS3:
+        Type: AWS::S3::Bucket
+        Properties:
+          BucketName: my-bucket
+          BucketEncryption:
+            ServerSideEncryptionConfiguration:
+              - ServerSideEncryptionByDefault:
+                  SSEAlgorithm: AES256
+  expectations:
+    rules:
+      S3_BUCKET_SERVER_SIDE_ENCRYPTION_ENABLED: PASS
+      S3_BUCKET_SERVER_SIDE_ENCRYPTION_ENABLE: FAIL
+      S3_BUCKET_ENCRYPTED: FAIL
+
+- name: One real expectation and two that name nothing, second case
+  input:
+    Resources:
+      ExampleS3:
+        Type: AWS::S3::Bucket
+        Properties:
+          BucketName: my-bucket
+          BucketEncryption:
+            ServerSideEncryptionConfiguration:
+              - ServerSideEncryptionByDefault:
+                  SSEAlgorithm: AES256
+  expectations:
+    rules:
+      S3_BUCKET_SERVER_SIDE_ENCRYPTION_ENABLED: PASS
+      S3_BUCKET_SERVER_SIDE_ENCRYPTION_ENABLE: FAIL
+      S3_BUCKET_ENCRYPTED: FAIL

@@ -6,7 +6,8 @@ use fancy_regex::Regex;
 use lazy_static::*;
 
 use crate::commands::reporters::validate::common::{
-    find_all_failing_clauses, GenericReporter, NameInfo, StructureType, StructuredSummary,
+    find_all_failing_clauses, GenericReporter, NameInfo, SkippedRules, StructureType,
+    StructuredSummary,
 };
 use crate::commands::tracker::StatusContext;
 use crate::commands::validate::{OutputFormatType, Reporter};
@@ -111,10 +112,13 @@ impl Reporter for CfnReporter {
                 Some(Status::SKIP) => true,
                 _ => false,
             });
+        // The StatusContext path carries no record tree, so there is nothing to mine a reason
+        // from: every skip here is reported without one. This is the pre-record reporting path;
+        // the record-based path in `common::report_from_events` is where reasons come from.
         let skipped = skipped
             .iter()
-            .map(|s| s.context.clone())
-            .collect::<HashSet<String>>();
+            .map(|s| (s.context.clone(), None))
+            .collect::<SkippedRules>();
         let passed = passed
             .iter()
             .map(|s| s.context.clone())
@@ -175,7 +179,7 @@ impl super::common::GenericReporter for SingleLineReporter {
         data_file_name: &str,
         by_resource_name: HashMap<String, Vec<NameInfo<'_>>>,
         passed: HashSet<String>,
-        skipped: HashSet<String>,
+        skipped: SkippedRules,
         longest_rule_len: usize,
     ) -> crate::rules::Result<()> {
         writeln!(
@@ -233,6 +237,8 @@ impl super::common::GenericReporter for SingleLineReporter {
                 },
             )?;
         }
+        // This reporter does not surface skip reasons, so the names are all it needs.
+        let skipped = skipped.into_keys().collect::<HashSet<String>>();
         super::common::print_compliant_skipped_info(
             writer,
             &passed,

@@ -1,4 +1,5 @@
 #![allow(deprecated)]
+#![doc = include_str!("../README.md")]
 pub mod display;
 pub mod errors;
 pub mod eval;
@@ -6,15 +7,30 @@ pub mod eval_context;
 pub mod evaluate;
 pub mod exprs;
 pub mod functions;
+#[doc(hidden)]
+#[deprecated(
+    since = "1.1.0",
+    note = "internal YAML implementation; use PathAwareValue conversion instead"
+)]
 pub mod libyaml;
 pub mod parser;
 pub mod path_value;
 pub mod values;
 
-use errors::Error;
+pub use eval::eval_rules_file;
+pub use eval_context::{
+    not_applicable_reasons, root_scope, simplified_json_from_root, BinaryCheck, BinaryComparison,
+    ClauseReport, DisjunctionsReport, EventRecord, FileReport, GuardBlockReport, GuardClauseReport,
+    InComparison, Messages, Metadata, RecordTracker, RootScope, RuleReport, UnaryCheck,
+    UnaryComparison, ValueUnResolved,
+};
+pub use exprs::{Block, GuardClause, Rule, RuleClause, RulesFile};
+pub use parser::{rules_file, Span};
+
+pub use errors::Error;
 
 use crate::exprs::{ParameterizedRule, QueryPart};
-use crate::path_value::PathAwareValue;
+pub use crate::path_value::{Path, PathAwareValue};
 use crate::values::CmpOperator;
 use colored::*;
 use lazy_static::lazy_static;
@@ -368,6 +384,21 @@ pub trait EvalContext<'value, 'loc: 'value>: RecordTracer<'value> {
     ) -> Result<&'value ParameterizedRule<'loc>>;
     fn root(&mut self) -> Rc<PathAwareValue>;
     fn rule_status(&mut self, rule_name: &'value str) -> Result<Status>;
+
+    /// Resolve a named rule for an assertion or a `when` gate.
+    ///
+    /// The default preserves the 1.0 `EvalContext` contract for external implementations. Guard's
+    /// scopes override this method so their cache and unevaluatable-clause behavior account for
+    /// the reference role.
+    #[doc(hidden)]
+    fn rule_status_with_role(
+        &mut self,
+        rule_name: &'value str,
+        _role: eval::ClauseRole,
+    ) -> Result<Status> {
+        self.rule_status(rule_name)
+    }
+
     fn resolve_variable(&mut self, variable_name: &'value str) -> Result<Vec<QueryResult>>;
     fn add_variable_capture_key(
         &mut self,
@@ -377,6 +408,10 @@ pub trait EvalContext<'value, 'loc: 'value>: RecordTracer<'value> {
     fn add_variable_capture_index(&mut self, _: &str, _: Rc<PathAwareValue>) -> Result<()> {
         Ok(())
     }
+
+    /// Record a compatibility notice without changing the evaluation result.
+    #[doc(hidden)]
+    fn record_deprecation(&mut self, _notice: String) {}
 }
 
 pub trait EvaluationContext {

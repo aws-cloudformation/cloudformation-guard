@@ -1,0 +1,18 @@
+# Three rules that all fail, named out of alphabetical order on purpose.
+#
+# Fixture for the_report_orders_failing_rules_deterministically. The failing set reaches the console
+# reporter as a HashMap, so iterating it directly emitted these three in whatever order the hasher
+# produced: twenty runs of the same binary over this input produced five distinct reports. One
+# failing rule cannot detect that, which is why there are three and why their names do not match
+# their declaration order.
+rule c_third {
+    Region == "no-such-region"
+}
+
+rule a_first {
+    Account == "no-such-account"
+}
+
+rule b_second {
+    Partition == "no-such-partition"
+}

@@ -1,0 +1,24 @@
+#
+# The named-rule spelling of `undecidable_nested_gate.guard`, which behaved differently from the
+# parameterized one and was worse.
+#
+# `inner_gate` is a plain rule, so it is also a top-level rule and is evaluated on its own. Its
+# nested `when` condition cannot be answered, so as an assertion it fails -- and that failure exits
+# the file 19 whatever happens to `guarded`. The exit code therefore says nothing here, which is why
+# the test asserts on `guarded` itself.
+#
+# What happened before the rule-status cache was keyed on the reference's role: `inner_gate` was
+# evaluated once, as an assertion, and cached under its name alone. The gate reference read that
+# cached FAIL rather than re-evaluating with gate semantics, `eval_rule` read a non-PASS condition as
+# "rule does not apply", and `guarded` was reported SKIP with `Encrypted` unchecked. The merge-base
+# reports `guarded` FAIL here, so this was a regression the exit code hid.
+#
+rule inner_gate {
+    when Enabled !EMPTY {
+        Enabled == true
+    }
+}
+
+rule guarded when inner_gate {
+    MustBeTrue == true
+}
