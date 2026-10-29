@@ -17,9 +17,8 @@ path = "src/lib.rs"
 crate-type = ["rlib", "cdylib"]
 
 [dependencies]
-guard-lang = { package = "cloudformation-guard-lang", version = "1.1.0", path = "../guard-lang", features = ["junit"] }
+guard-lang = { package = "cloudformation-guard-lang", version = "3.2.1", path = "../guard-lang", features = ["junit"] }
 nom = "7.0.0"
-nom_locate = "4.0.0"
 indexmap = { version = "1.6.0", features = ["serde-1"] }
 clap_complete = "4.1.2"
 clap = { version = "4.5.0", features = ["derive"] }
@@ -34,18 +33,10 @@ itertools = "0.4.7"
 string-builder = "0.2.0"
 enumflags2 = "0.7.7"
 enumflags2_derive = "0.7.7"
-cruet = "0.14.0"
-urlencoding = "2.1.0"
-grep-searcher = "0.1.8"
-grep-matcher = "0.1.5"
-grep-regex = "0.1.9"
-unsafe-libyaml = "0.2.10"
 rstest = "0.24.0"
 fancy-regex = "0.13.0"
 indoc = "1.0.8"
-thiserror = "1.0.38"
 quick-xml = "0.30.0"
-chrono = "0.4.38"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen = "0.2.92"

@@ -8,10 +8,7 @@ pub mod evaluate;
 pub mod exprs;
 pub mod functions;
 #[doc(hidden)]
-#[deprecated(
-    since = "1.1.0",
-    note = "internal YAML implementation; use PathAwareValue conversion instead"
-)]
+#[deprecated(note = "internal YAML implementation; use PathAwareValue conversion instead")]
 pub mod libyaml;
 pub mod parser;
 pub mod path_value;
@@ -19,10 +16,10 @@ pub mod values;
 
 pub use eval::eval_rules_file;
 pub use eval_context::{
-    not_applicable_reasons, root_scope, simplified_json_from_root, BinaryCheck, BinaryComparison,
-    ClauseReport, DisjunctionsReport, EventRecord, FileReport, GuardBlockReport, GuardClauseReport,
-    InComparison, Messages, Metadata, RecordTracker, RootScope, RuleReport, UnaryCheck,
-    UnaryComparison, ValueUnResolved,
+    root_scope, simplified_json_from_root, BinaryCheck, BinaryComparison, ClauseReport,
+    DisjunctionsReport, EventRecord, FileReport, GuardBlockReport, GuardClauseReport, InComparison,
+    Messages, Metadata, RecordTracker, RootScope, RuleReport, UnaryCheck, UnaryComparison,
+    ValueUnResolved,
 };
 pub use exprs::{Block, GuardClause, Rule, RuleClause, RulesFile};
 pub use parser::{rules_file, Span};
@@ -389,7 +386,7 @@ pub trait EvalContext<'value, 'loc: 'value>: RecordTracer<'value> {
     ///
     /// The default preserves the 1.0 `EvalContext` contract for external implementations. Guard's
     /// scopes override this method so their cache and unevaluatable-clause behavior account for
-    /// the reference role.
+    /// the reference role. Implementations that cache results must key by `(rule_name, role)`.
     #[doc(hidden)]
     fn rule_status_with_role(
         &mut self,

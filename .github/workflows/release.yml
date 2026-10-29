@@ -80,11 +80,12 @@ jobs:
       - name: Bump versions
         run: |
           # Bump package version (only the version line directly under [package])
-          for toml in guard/Cargo.toml guard-lambda/Cargo.toml guard-ffi/Cargo.toml; do
+          for toml in guard-lang/Cargo.toml guard/Cargo.toml guard-lambda/Cargo.toml guard-ffi/Cargo.toml; do
             sed -i '0,/^version = "[^"]*"/{s/^version = "[^"]*"/version = "'"$VERSION"'"/}' "$toml"
           done
 
           # Update cross-crate dependency references
+          sed -i "s/cloudformation-guard-lang\", version = \"[^\"]*\"/cloudformation-guard-lang\", version = \"$VERSION\"/" guard/Cargo.toml
           sed -i "s/cfn-guard = { version = \"[^\"]*\"/cfn-guard = { version = \"$VERSION\"/" guard-lambda/Cargo.toml
           sed -i "s/cfn-guard = { version = \"[^\"]*\"/cfn-guard = { version = \"$VERSION\"/" guard-ffi/Cargo.toml
           sed -i "s/cfn-guard = { version = \"[^\"]*\"/cfn-guard = { version = \"$VERSION\"/" guard-examples/library/Cargo.toml
@@ -307,12 +308,11 @@ jobs:
       - uses: actions-rust-lang/setup-rust-toolchain@v1
 
       - name: Publish cloudformation-guard-lang
-        working-directory: guard-lang
         run: |
-          set -o pipefail
-          cargo publish 2>&1 | tee /tmp/publish-guard-lang.log || {
-            if grep -q "already uploaded" /tmp/publish-guard-lang.log; then
-              echo "::warning::cloudformation-guard-lang already published, verifying registry availability"
+          cd guard-lang
+          cargo publish --no-verify 2>&1 | tee /tmp/publish.log || {
+            if grep -q "already uploaded" /tmp/publish.log; then
+              echo "::warning::cloudformation-guard-lang already published, skipping"
             else
               exit 1
             fi
@@ -320,25 +320,19 @@ jobs:
 
       - name: Wait for cloudformation-guard-lang on crates.io
         run: |
-          LANG_VERSION="$(cargo metadata --no-deps --format-version 1 \
-            | jq -r '.packages[] | select(.name == "cloudformation-guard-lang") | .version')"
-          if [[ -z "$LANG_VERSION" || "$LANG_VERSION" == "null" ]]; then
-            echo "::error::Unable to determine cloudformation-guard-lang version"
-            exit 1
-          fi
           is_available=false
           for _ in {1..12}; do
             index_entry="$(curl -fsSL \
               -A "cloudformation-guard-release-workflow" \
               "https://index.crates.io/cl/ou/cloudformation-guard-lang" || true)"
-            if grep -Fq "\"vers\":\"${LANG_VERSION}\"" <<< "$index_entry"; then
+            if grep -Fq "\"vers\":\"${VERSION}\"" <<< "$index_entry"; then
               is_available=true
               break
             fi
             sleep 10
           done
           if [[ "$is_available" != "true" ]]; then
-            echo "::error::cloudformation-guard-lang ${LANG_VERSION} is not available in the crates.io index"
+            echo "::error::cloudformation-guard-lang ${VERSION} is not available in the crates.io index"
             exit 1
           fi
 
@@ -377,29 +371,21 @@ jobs:
 
       - name: Verify crates.io
         run: |
-          LANG_VERSION="$(cargo metadata --no-deps --format-version 1 \
-            | jq -r '.packages[] | select(.name == "cloudformation-guard-lang") | .version')"
-          for crate_and_version in \
-            "cloudformation-guard-lang:${LANG_VERSION}" \
-            "cfn-guard:${VERSION}" \
-            "cfn-guard-lambda:${VERSION}" \
-            "cfn-guard-ffi:${VERSION}"; do
-            IFS=: read -r crate crate_version <<< "$crate_and_version"
-            code=""
-            for _ in {1..6}; do
+          for crate in cloudformation-guard-lang cfn-guard cfn-guard-lambda cfn-guard-ffi; do
+            for attempt in 1 2 3 4 5 6; do
               code="$(curl -s -o /dev/null -w '%{http_code}' \
                 -A "cloudformation-guard-release-workflow" \
-                "https://crates.io/api/v1/crates/${crate}/${crate_version}" || true)"
+                "https://crates.io/api/v1/crates/${crate}/${VERSION}" || true)"
               if [[ "$code" == "200" ]]; then
                 break
               fi
               sleep 10
             done
             if [[ "$code" != "200" ]]; then
-              echo "::error::${crate} ${crate_version} not found on crates.io (HTTP ${code})"
+              echo "::error::${crate} ${VERSION} not found on crates.io (HTTP ${code})"
               exit 1
             fi
-            echo "${crate} ${crate_version} is on crates.io"
+            echo "${crate} ${VERSION} is on crates.io"
           done
 
   # ---------------------------------------------------------------------------

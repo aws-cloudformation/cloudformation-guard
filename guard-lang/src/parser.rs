@@ -212,7 +212,7 @@ fn keyword<'a>(word: &'static str) -> impl Fn(Span<'a>) -> IResult<'a, Span<'a>,
 }
 
 #[doc(hidden)]
-#[deprecated(since = "1.1.0", note = "use rules_file to parse Guard source")]
+#[deprecated(note = "use rules_file to parse Guard source")]
 pub fn parse_int_value(input: Span) -> IResult<Span, Value> {
     let negative = map_res(preceded(tag("-"), digit1), |s: Span| {
         s.fragment().parse::<i64>().map(|i| Value::Int(-i))
@@ -821,19 +821,28 @@ fn predicate_filter_clauses(input: Span) -> IResult<Span, QueryPart> {
     Ok((input, QueryPart::Filter(var, filters)))
 }
 
+fn query_index(input: Span) -> IResult<Span, QueryPart> {
+    let (remaining, value) = parse_int_value(input)?;
+    let Value::Int(index) = value else {
+        unreachable!()
+    };
+    match i32::try_from(index) {
+        Ok(index) => Ok((remaining, QueryPart::Index(index))),
+        Err(_) => Err(nom::Err::Failure(ParserError {
+            context: "array index is outside the supported i32 range".to_string(),
+            kind: ErrorKind::Digit,
+            span: input,
+        })),
+    }
+}
+
 fn dotted_property(input: Span) -> IResult<Span, QueryPart> {
     preceded(
         zero_or_more_ws_or_comment,
         preceded(
             char('.'),
             alt((
-                map(parse_int_value, |idx| {
-                    let idx = match idx {
-                        Value::Int(i) => i,
-                        _ => unreachable!(),
-                    };
-                    QueryPart::Index(idx)
-                }),
+                query_index,
                 map(property_name, QueryPart::Key),
                 map(var_name_access_inclusive, QueryPart::Key),
                 value(QueryPart::AllValues(None), char('*')),
@@ -864,16 +873,7 @@ fn all_indices(input: Span) -> IResult<Span, QueryPart> {
 }
 
 fn array_index(input: Span) -> IResult<Span, QueryPart> {
-    map(
-        delimited(open_array, parse_int_value, cut(close_array)),
-        |idx| {
-            let idx = match idx {
-                Value::Int(i) => i,
-                _ => unreachable!(),
-            };
-            QueryPart::Index(idx)
-        },
-    )(input)
+    delimited(open_array, query_index, cut(close_array))(input)
 }
 
 fn map_key_lookup(input: Span) -> IResult<Span, QueryPart> {

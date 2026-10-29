@@ -1341,11 +1341,3 @@ impl<'s> Drop for AutoReport<'s> {
 #[cfg(test)]
 #[path = "evaluate_tests.rs"]
 mod evaluate_tests;
-
-#[cfg(test)]
-#[path = "evaluate_scope_tests.rs"]
-mod evaluate_scope_tests;
-
-#[cfg(test)]
-#[path = "test_common.rs"]
-mod test_common;

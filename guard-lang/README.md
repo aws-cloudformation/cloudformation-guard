@@ -31,10 +31,10 @@ let status = eval_rules_file(&rules, &mut scope, Some("template.json")).unwrap()
 assert_eq!(status, Status::PASS);
 ```
 
-The existing module paths remain available throughout the 1.x series for compatibility with 1.0.0. The crate-root exports define the preferred surface for new integrations and prepare consumers for a narrower next major version.
+The module paths published in 1.0.0 remain available for compatibility. New consumers should use the crate-root exports.
 
 ## Compatibility
 
-Version 1.1 keeps the source API published in 1.0.0 and adds stricter policy-enforcement behavior from `cfn-guard` 3.2.1. Rules that previously passed or skipped when a comparison could not be evaluated may now fail closed. Consumers pinned to `=1.0.0` must opt in to `1.1.0` to receive these fixes.
+The manually published 1.0.0 is a bootstrap release. Subsequent versions are assigned by the coordinated `cfn-guard` release workflow. The next release preserves the 1.0 source API and includes stricter policy-enforcement behavior from `cfn-guard` 3.2.1. Rules that previously passed or skipped when a comparison could not be evaluated may now fail closed. Consumers pinned to `=1.0.0` must update to receive these fixes.
 
 The `junit` feature enables JUnit report support. It is disabled by default.

@@ -125,10 +125,6 @@ fn retrieve_index(
     elements: &Vec<PathAwareValue>,
     query: &[QueryPart<'_>],
 ) -> QueryResult {
-    // `index_offset` rather than arithmetic here, for two reasons it records: negating `i64::MIN` is
-    // not representable, which used to panic in a debug build and wrap in release, and a negative index
-    // counts from the end rather than being its own magnitude. Pinned by
-    // `an_out_of_range_index_does_not_panic` and `a_negative_index_counts_back_from_the_end`.
     if let Some(check) = index_offset(index, elements.len()) {
         QueryResult::Resolved(Rc::new(elements[check].clone()))
     } else {
@@ -446,7 +442,9 @@ fn query_retrieval_with_converter<'value, 'loc: 'value>(
                                     QueryPart::AllIndices(_) | QueryPart::Key(_) => (keys, query_index + 1),
                                     QueryPart::Index(index) => {
                                         // See `index_offset` for why this is not arithmetic.
-                                        if let Some(check) = index_offset(*index, keys.len()) {
+                                        if let Some(check) =
+                                            index_offset(i64::from(*index), keys.len())
+                                        {
                                             (vec![keys[check].clone()], query_index + 2)
                                         } else {
                                             return to_unresolved_result(
@@ -607,7 +605,7 @@ fn query_retrieval_with_converter<'value, 'loc: 'value>(
         QueryPart::Index(index) => match &*current {
             PathAwareValue::List((_, list)) => map_resolved(
                 &current,
-                retrieve_index(Rc::clone(&current), *index, list, query),
+                retrieve_index(Rc::clone(&current), i64::from(*index), list, query),
                 |val| {
                     query_retrieval_with_converter(query_index + 1, query, val, resolver, converter)
                 },

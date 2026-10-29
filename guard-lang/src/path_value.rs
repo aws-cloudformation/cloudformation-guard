@@ -657,7 +657,7 @@ impl QueryResolver for PathAwareValue {
             QueryPart::This => self.select(all, &query[1..], resolver),
 
             QueryPart::Key(key) => {
-                match key.parse::<i64>() {
+                match key.parse::<i32>() {
                     Ok(index) => match self {
                         PathAwareValue::List((_, list)) => {
                             PathAwareValue::retrieve_index(self, index, list, query).map_or_else(
@@ -682,7 +682,7 @@ impl QueryResolver for PathAwareValue {
                                     match query[1] {
                                         QueryPart::AllIndices(_) | QueryPart::Key(_) => keys,
                                         QueryPart::Index(index) => {
-                                            match index_offset(index, keys.len()) {
+                                            match index_offset(i64::from(index), keys.len()) {
                                                 Some(check) => vec![keys[check]],
                                                 None => self.map_some_or_error_all(all, query)?,
                                             }
@@ -1045,11 +1045,11 @@ impl PathAwareValue {
 
     pub fn retrieve_index<'v>(
         parent: &PathAwareValue,
-        index: i64,
+        index: i32,
         list: &'v Vec<PathAwareValue>,
         query: &[QueryPart<'_>],
     ) -> Result<&'v PathAwareValue, Error> {
-        if let Some(check) = index_offset(index, list.len()) {
+        if let Some(check) = index_offset(i64::from(index), list.len()) {
             Ok(&list[check])
         } else {
             Err(Error::
@@ -1172,9 +1172,7 @@ fn compare_int_to_float(i: i64, f: f64) -> Option<Ordering> {
 /// off by one at the same time. Nothing asserted it in either direction, and the behaviour is
 /// undocumented, which is how it survived -- `docs/CLAUSES.md` now describes it.
 ///
-/// `try_from` rather than `as usize`, because the index is an `i64`: on a 32-bit target the cast would
-/// truncate and could land back inside the collection, turning an out-of-range index into a wrong
-/// element rather than a rejection.
+/// Checked conversion prevents an out-of-range index from wrapping to a valid slot.
 pub(crate) fn index_offset(index: i64, len: usize) -> Option<usize> {
     let magnitude = usize::try_from(index.unsigned_abs()).ok()?;
     let offset = match index < 0 {

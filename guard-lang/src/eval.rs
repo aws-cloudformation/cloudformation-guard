@@ -357,12 +357,7 @@ pub enum ClauseRole {
     Gate,
 }
 
-/// An error meaning the clause could not be evaluated at all, as opposed to the evaluation
-/// machinery having gone wrong.
-///
-/// Only `EMPTY` against a type that cannot be empty produces this today. It is matched rather than
-/// propagated because the two are answered differently: an unevaluatable clause is a verdict about
-/// that clause, while a genuine failure of the machinery should still stop the run.
+/// Maps `IncompatibleError` to clause verdicts; all other error categories still abort.
 fn is_unevaluatable(e: &Error) -> bool {
     matches!(e, Error::IncompatibleError(_))
 }
@@ -1394,12 +1389,8 @@ pub(super) fn real_binary_operation<'value, 'loc: 'value>(
     eval_context: &mut dyn EvalContext<'value, 'loc>,
 ) -> Result<EvaluationResult> {
     let mut statues: Vec<(QueryResult, Status)> = Vec::with_capacity(lhs.len());
-
-    let cmp = if rhs.len() > 1 && cmp.0 == CmpOperator::Eq {
-        (CmpOperator::In, cmp.1)
-    } else {
-        cmp
-    };
+    let cmp = MapKeyComparator::try_from(cmp)?.widened_for(rhs.len());
+    let recorded_cmp = cmp.as_cmp_operator();
 
     for each in lhs.iter() {
         match each {
@@ -1411,7 +1402,7 @@ pub(super) fn real_binary_operation<'value, 'loc: 'value>(
                         status: Status::FAIL,
                         message: None,
                         custom_message: custom_message.clone(),
-                        comparison: cmp,
+                        comparison: recorded_cmp,
                         from: each.clone(),
                         to: None,
                     })),
@@ -1421,57 +1412,38 @@ pub(super) fn real_binary_operation<'value, 'loc: 'value>(
 
             QueryResult::Literal(l) | QueryResult::Resolved(l) => {
                 let results = match cmp {
-                    (CmpOperator::Eq, is_negated) => each_lhs_compare(
-                        not_compare(crate::path_value::compare_eq, is_negated),
+                    MapKeyComparator::Eq | MapKeyComparator::NotEq => each_lhs_compare(
+                        not_compare(
+                            crate::path_value::compare_eq,
+                            cmp == MapKeyComparator::NotEq,
+                        ),
                         Rc::clone(l),
                         rhs,
                     )?,
-                    (CmpOperator::Ge, is_negated) => each_lhs_compare(
-                        not_compare(crate::path_value::compare_ge, is_negated),
-                        Rc::clone(l),
-                        rhs,
-                    )?,
-                    (CmpOperator::Gt, is_negated) => each_lhs_compare(
-                        not_compare(crate::path_value::compare_gt, is_negated),
-                        Rc::clone(l),
-                        rhs,
-                    )?,
-                    (CmpOperator::Lt, is_negated) => each_lhs_compare(
-                        not_compare(crate::path_value::compare_lt, is_negated),
-                        Rc::clone(l),
-                        rhs,
-                    )?,
-                    (CmpOperator::Le, is_negated) => each_lhs_compare(
-                        not_compare(crate::path_value::compare_le, is_negated),
-                        Rc::clone(l),
-                        rhs,
-                    )?,
-                    (CmpOperator::In, is_negated) => {
-                        each_lhs_compare(in_cmp(is_negated), Rc::clone(l), rhs)?
-                    }
-                    (operator, _) => {
-                        return Err(Error::IncompatibleError(format!(
-                            "operator {operator} is not valid in a map-key filter"
-                        )))
+                    MapKeyComparator::In | MapKeyComparator::NotIn => {
+                        each_lhs_compare(in_cmp(cmp == MapKeyComparator::NotIn), Rc::clone(l), rhs)?
                     }
                 };
 
-                if cmp.0 == CmpOperator::In {
-                    statues.extend(report_at_least_one(
-                        results,
-                        cmp,
-                        context.clone(),
-                        custom_message.clone(),
-                        eval_context,
-                    )?);
-                } else {
-                    statues.extend(report_all_values(
-                        results,
-                        cmp,
-                        context.clone(),
-                        custom_message.clone(),
-                        eval_context,
-                    )?);
+                match cmp {
+                    MapKeyComparator::In | MapKeyComparator::NotIn => {
+                        statues.extend(report_at_least_one(
+                            results,
+                            recorded_cmp,
+                            context.clone(),
+                            custom_message.clone(),
+                            eval_context,
+                        )?);
+                    }
+                    MapKeyComparator::Eq | MapKeyComparator::NotEq => {
+                        statues.extend(report_all_values(
+                            results,
+                            recorded_cmp,
+                            context.clone(),
+                            custom_message.clone(),
+                            eval_context,
+                        )?);
+                    }
                 }
             }
         };
@@ -2116,6 +2088,10 @@ struct ResolvedParameterContext<'eval, 'value, 'loc: 'value> {
 impl<'eval, 'value, 'loc: 'value> EvalContext<'value, 'loc>
     for ResolvedParameterContext<'eval, 'value, 'loc>
 {
+    fn record_deprecation(&mut self, notice: String) {
+        self.parent.record_deprecation(notice)
+    }
+
     fn query(&mut self, query: &'value [QueryPart<'loc>]) -> Result<Vec<QueryResult>> {
         self.parent.query(query)
     }
@@ -2812,7 +2788,7 @@ pub(crate) fn eval_rule_with_role<'value, 'loc: 'value>(
 
 /// Evaluates one access clause with assertion semantics.
 #[doc(hidden)]
-#[deprecated(since = "1.1.0", note = "use eval_rules_file instead")]
+#[deprecated(note = "use eval_rules_file instead")]
 pub fn eval_guard_access_clause<'value, 'loc: 'value>(
     clause: &'value GuardAccessClause<'loc>,
     resolver: &mut dyn EvalContext<'value, 'loc>,
@@ -2822,7 +2798,7 @@ pub fn eval_guard_access_clause<'value, 'loc: 'value>(
 
 /// Evaluates one named-rule clause with assertion semantics.
 #[doc(hidden)]
-#[deprecated(since = "1.1.0", note = "use eval_rules_file instead")]
+#[deprecated(note = "use eval_rules_file instead")]
 pub fn eval_guard_named_clause<'value, 'loc: 'value>(
     clause: &'value GuardNamedRuleClause<'loc>,
     resolver: &mut dyn EvalContext<'value, 'loc>,
@@ -2832,7 +2808,7 @@ pub fn eval_guard_named_clause<'value, 'loc: 'value>(
 
 /// Evaluates one block clause with assertion semantics.
 #[doc(hidden)]
-#[deprecated(since = "1.1.0", note = "use eval_rules_file instead")]
+#[deprecated(note = "use eval_rules_file instead")]
 pub fn eval_guard_block_clause<'value, 'loc: 'value>(
     clause: &'value BlockGuardClause<'loc>,
     resolver: &mut dyn EvalContext<'value, 'loc>,
@@ -2842,7 +2818,7 @@ pub fn eval_guard_block_clause<'value, 'loc: 'value>(
 
 /// Evaluates one parameterized rule call with assertion semantics.
 #[doc(hidden)]
-#[deprecated(since = "1.1.0", note = "use eval_rules_file instead")]
+#[deprecated(note = "use eval_rules_file instead")]
 pub fn eval_parameterized_rule_call<'value, 'loc: 'value>(
     call: &'value ParameterizedNamedRuleClause<'loc>,
     resolver: &mut dyn EvalContext<'value, 'loc>,
@@ -2852,7 +2828,7 @@ pub fn eval_parameterized_rule_call<'value, 'loc: 'value>(
 
 /// Evaluates one guard clause with assertion semantics.
 #[doc(hidden)]
-#[deprecated(since = "1.1.0", note = "use eval_rules_file instead")]
+#[deprecated(note = "use eval_rules_file instead")]
 pub fn eval_guard_clause<'value, 'loc: 'value>(
     clause: &'value GuardClause<'loc>,
     resolver: &mut dyn EvalContext<'value, 'loc>,
@@ -2862,7 +2838,7 @@ pub fn eval_guard_clause<'value, 'loc: 'value>(
 
 /// Evaluates one type-block clause with assertion semantics.
 #[doc(hidden)]
-#[deprecated(since = "1.1.0", note = "use eval_rules_file instead")]
+#[deprecated(note = "use eval_rules_file instead")]
 pub fn eval_type_block_clause<'value, 'loc: 'value>(
     clause: &'value TypeBlock<'loc>,
     resolver: &mut dyn EvalContext<'value, 'loc>,
@@ -2872,7 +2848,7 @@ pub fn eval_type_block_clause<'value, 'loc: 'value>(
 
 /// Evaluates one rule clause with assertion semantics.
 #[doc(hidden)]
-#[deprecated(since = "1.1.0", note = "use eval_rules_file instead")]
+#[deprecated(note = "use eval_rules_file instead")]
 pub fn eval_rule_clause<'value, 'loc: 'value>(
     clause: &'value RuleClause<'loc>,
     resolver: &mut dyn EvalContext<'value, 'loc>,
@@ -2882,7 +2858,7 @@ pub fn eval_rule_clause<'value, 'loc: 'value>(
 
 /// Evaluates one rule with assertion semantics.
 #[doc(hidden)]
-#[deprecated(since = "1.1.0", note = "use eval_rules_file instead")]
+#[deprecated(note = "use eval_rules_file instead")]
 pub fn eval_rule<'value, 'loc: 'value>(
     rule: &'value Rule<'loc>,
     resolver: &mut dyn EvalContext<'value, 'loc>,
@@ -2953,17 +2929,15 @@ pub fn eval_rules_file<'value, 'loc: 'value>(
     Ok(overall)
 }
 
-/// Returns a stable logical type name for verbose disjunction output.
-///
-/// Rust module paths and generic formatting are compiler and crate-layout details. The output uses
-/// only the final type segment so extracting this evaluator does not change existing reports.
-fn disjunction_type_name<T>() -> &'static str {
+/// Keeps verbose record contexts stable after moving expression types to guard-lang.
+fn disjunction_type_name<T>() -> String {
     let full_name = std::any::type_name::<T>();
     let without_generics = full_name.split('<').next().unwrap_or(full_name);
-    without_generics
+    let type_name = without_generics
         .rsplit("::")
         .next()
-        .unwrap_or(without_generics)
+        .unwrap_or(without_generics);
+    format!("cfn_guard::rules::exprs::{type_name}")
 }
 
 #[allow(clippy::never_loop)]

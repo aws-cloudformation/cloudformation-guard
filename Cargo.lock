@@ -221,25 +221,19 @@ checksum = "baf1de4339761588bc0619e3cbc0120ee582ebb74b53b4efbf79117bd2da40fd"
 name = "cfn-guard"
 version = "3.2.1"
 dependencies = [
- "chrono",
  "clap",
  "clap_complete",
  "cloudformation-guard-lang",
  "colored",
- "cruet",
  "enumflags2",
  "enumflags2_derive",
  "fancy-regex",
- "grep-matcher",
- "grep-regex",
- "grep-searcher",
  "heck 0.3.3",
  "indexmap 1.9.3",
  "indoc",
  "itertools",
  "lazy_static",
  "nom",
- "nom_locate",
  "pretty_assertions",
  "quick-xml",
  "rstest",
@@ -248,9 +242,6 @@ dependencies = [
  "serde_yaml",
  "string-builder",
  "strip-ansi-escapes",
- "thiserror",
- "unsafe-libyaml",
- "urlencoding",
  "walkdir",
  "wasm-bindgen",
 ]
@@ -341,7 +332,7 @@ checksum = "f46ad14479a25103f283c0f10005961cf086d8dc42205bb44c46ac563475dca6"
 
 [[package]]
 name = "cloudformation-guard-lang"
-version = "1.1.0"
+version = "3.2.1"
 dependencies = [
  "chrono",
  "colored",
@@ -351,7 +342,6 @@ dependencies = [
  "grep-regex",
  "grep-searcher",
  "indexmap 1.9.3",
- "indexmap 2.7.1",
  "indoc",
  "lazy_static",
  "nom",

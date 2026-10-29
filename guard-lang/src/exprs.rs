@@ -3,6 +3,7 @@ use crate::values::*;
 use crate::display::ValueOnlyDisplay;
 use crate::path_value::PathAwareValue;
 use serde::{Deserialize, Serialize};
+use std::convert::TryFrom;
 use std::fmt::Formatter;
 use std::hash::Hash;
 use std::rc::Rc;
@@ -68,13 +69,7 @@ pub enum QueryPart<'loc> {
     MapKeyFilter(Option<String>, MapKeyFilterClause<'loc>),
     AllValues(Option<String>),
     AllIndices(Option<String>),
-    /// An array index as written in the rule, kept at the width the parser reads.
-    ///
-    /// `i32` before, narrowed with `as i32` at both parse sites, which wrapped instead of rejecting:
-    /// `Items[4294967296]` became `Items[0]` and the clause then compared the wrong element and
-    /// passed. Retrieval already reports an out-of-range index as unresolved, so widening is all that
-    /// is needed -- the bounds check does the rejecting.
-    Index(i64),
+    Index(i32),
     Filter(Option<String>, Conjunctions<GuardClause<'loc>>),
 }
 
@@ -188,8 +183,64 @@ pub struct GuardAccessClause<'loc> {
 
 #[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize, Hash)]
 pub struct MapKeyFilterClause<'loc> {
+    #[serde(serialize_with = "serialize_map_key_comparator")]
     pub comparator: (CmpOperator, bool),
     pub compare_with: LetValue<'loc>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub(crate) enum MapKeyComparator {
+    Eq,
+    NotEq,
+    In,
+    NotIn,
+}
+
+impl TryFrom<(CmpOperator, bool)> for MapKeyComparator {
+    type Error = crate::Error;
+
+    fn try_from(comparator: (CmpOperator, bool)) -> crate::Result<Self> {
+        match comparator {
+            (CmpOperator::Eq, false) => Ok(Self::Eq),
+            (CmpOperator::Eq, true) => Ok(Self::NotEq),
+            (CmpOperator::In, false) => Ok(Self::In),
+            (CmpOperator::In, true) => Ok(Self::NotIn),
+            (operator, is_negated) => Err(crate::Error::IncompatibleError(format!(
+                "operator {operator} with negation={is_negated} is not valid in a map-key filter"
+            ))),
+        }
+    }
+}
+
+impl MapKeyComparator {
+    pub(crate) fn as_cmp_operator(self) -> (CmpOperator, bool) {
+        match self {
+            Self::Eq => (CmpOperator::Eq, false),
+            Self::NotEq => (CmpOperator::Eq, true),
+            Self::In => (CmpOperator::In, false),
+            Self::NotIn => (CmpOperator::In, true),
+        }
+    }
+
+    pub(crate) fn widened_for(self, rhs_count: usize) -> Self {
+        match self {
+            Self::Eq if rhs_count > 1 => Self::In,
+            Self::NotEq if rhs_count > 1 => Self::NotIn,
+            unchanged => unchanged,
+        }
+    }
+}
+
+fn serialize_map_key_comparator<S>(
+    comparator: &(CmpOperator, bool),
+    serializer: S,
+) -> std::result::Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    MapKeyComparator::try_from(*comparator)
+        .map_err(serde::ser::Error::custom)?
+        .serialize(serializer)
 }
 
 #[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize, Hash)]
