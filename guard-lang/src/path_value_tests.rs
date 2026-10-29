@@ -830,7 +830,7 @@ fn a_range_is_equal_to_itself() {
 
 #[test]
 fn index_offset_returns_only_valid_collection_positions() {
-    let cases: [(i64, usize, Option<usize>); 12] = [
+    let cases: [(i64, usize, Option<usize>); 16] = [
         (0, 3, Some(0)),
         (1, 3, Some(1)),
         (2, 3, Some(2)),
@@ -839,6 +839,10 @@ fn index_offset_returns_only_valid_collection_positions() {
         (-2, 3, Some(1)),
         (-3, 3, Some(0)),
         (-4, 3, None),
+        (4_294_967_295, 2, None),
+        (4_294_967_296, 2, None),
+        (4_294_967_297, 2, None),
+        (-4_294_967_296, 2, None),
         (i64::MAX, 2, None),
         (i64::MIN, 2, None),
         (0, 0, None),

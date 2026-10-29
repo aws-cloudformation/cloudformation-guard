@@ -1,15 +1,64 @@
+#![allow(deprecated)]
+
 use cloudformation_guard_lang as guard_lang;
-use guard_lang::eval::eval_rules_file;
+use guard_lang::eval::{eval_guard_clause, eval_rule, eval_rules_file};
 use guard_lang::eval_context::{
-    root_scope, simplified_json_from_root, BinaryCheck, ClauseReport, GuardClauseReport, Messages,
-    UnaryCheck,
+    root_scope, simplified_json_from_root, BinaryCheck, ClauseReport, FileReport,
+    GuardClauseReport, Messages, UnaryCheck,
 };
-use guard_lang::exprs::{Block, GuardClause, Rule, RuleClause, RulesFile};
+use guard_lang::exprs::{
+    Block, GuardClause, ParameterizedRule, QueryPart, Rule, RuleClause, RulesFile,
+};
 use guard_lang::parser::{rules_file, Span};
 use guard_lang::path_value::{Path as GuardPath, PathAwareValue};
-use guard_lang::{Status, UnResolved};
+use guard_lang::{EvalContext, QueryResult, RecordTracer, RecordType, Result, Status, UnResolved};
 use std::convert::TryFrom;
 use std::rc::Rc;
+
+struct LegacyEvalContext;
+
+impl<'value> RecordTracer<'value> for LegacyEvalContext {
+    fn start_record(&mut self, _context: &str) -> Result<()> {
+        Ok(())
+    }
+
+    fn end_record(&mut self, _context: &str, _record: RecordType<'value>) -> Result<()> {
+        Ok(())
+    }
+}
+
+impl<'value, 'loc: 'value> EvalContext<'value, 'loc> for LegacyEvalContext {
+    fn query(&mut self, _query: &'value [QueryPart<'loc>]) -> Result<Vec<QueryResult>> {
+        Ok(Vec::new())
+    }
+
+    fn find_parameterized_rule(
+        &mut self,
+        _rule_name: &str,
+    ) -> Result<&'value ParameterizedRule<'loc>> {
+        unimplemented!()
+    }
+
+    fn root(&mut self) -> Rc<PathAwareValue> {
+        unimplemented!()
+    }
+
+    fn rule_status(&mut self, _rule_name: &'value str) -> Result<Status> {
+        Ok(Status::SKIP)
+    }
+
+    fn resolve_variable(&mut self, _variable_name: &'value str) -> Result<Vec<QueryResult>> {
+        Ok(Vec::new())
+    }
+
+    fn add_variable_capture_key(
+        &mut self,
+        _variable_name: &'value str,
+        _key: Rc<PathAwareValue>,
+    ) -> Result<()> {
+        Ok(())
+    }
+}
 
 #[test]
 fn validate_consumer_can_parse_evaluate_and_read_failure_report() {
@@ -44,6 +93,47 @@ fn validate_consumer_can_parse_evaluate_and_read_failure_report() {
         failure.custom_message.as_deref(),
         Some("Region must be us-east-1")
     );
+}
+
+#[test]
+fn version_1_low_level_api_shapes_remain_usable() {
+    let _legacy_context = LegacyEvalContext;
+    let rules = parse_rules(
+        r#"rule expected_region { Region == "us-east-1" }"#,
+        "regions.guard",
+    );
+    let template = serde_json::json!({ "Region": "us-east-1" });
+    let root = PathAwareValue::try_from((&template, GuardPath::root())).unwrap();
+    let mut scope = root_scope(&rules, Rc::new(root));
+    assert_eq!(
+        eval_rule(&rules.guard_rules[0], &mut scope).unwrap(),
+        Status::PASS
+    );
+
+    let RuleClause::Clause(clause) = &rules.guard_rules[0].block.conjunctions[0][0] else {
+        panic!("expected a guard clause")
+    };
+    let root = PathAwareValue::try_from((&template, GuardPath::root())).unwrap();
+    let mut scope = root_scope(&rules, Rc::new(root));
+    assert_eq!(eval_guard_clause(clause, &mut scope).unwrap(), Status::PASS);
+
+    let report = FileReport {
+        name: "template.json",
+        metadata: Default::default(),
+        status: Status::PASS,
+        not_compliant: Vec::new(),
+        not_applicable: Default::default(),
+        compliant: Default::default(),
+    };
+    assert_eq!(report.status, Status::PASS);
+
+    let query = QueryPart::Index(1_i32);
+    let list_json = serde_json::json!(["zero", "one"]);
+    let list = PathAwareValue::try_from((&list_json, GuardPath::root())).unwrap();
+    let PathAwareValue::List((_, values)) = &list else {
+        panic!("expected a list")
+    };
+    assert!(PathAwareValue::retrieve_index(&list, 1, values, &[query]).is_ok());
 }
 
 fn parse_rules<'source>(source: &'source str, name: &'source str) -> RulesFile<'source> {

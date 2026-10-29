@@ -35,6 +35,6 @@ The module paths published in 1.0.0 remain available for compatibility. New cons
 
 ## Compatibility
 
-The manually published 1.0.0 is a bootstrap release. Subsequent versions are assigned by the coordinated `cfn-guard` release workflow. The next release preserves the 1.0 source API and includes stricter policy-enforcement behavior from `cfn-guard` 3.2.1. Rules that previously passed or skipped when a comparison could not be evaluated may now fail closed. Consumers pinned to `=1.0.0` must update to receive these fixes.
+The manually published 1.0.0 is a bootstrap release. Subsequent versions are assigned by the coordinated `cfn-guard` release workflow. The next release preserves the 1.0 source API and includes stricter policy-enforcement behavior from `cfn-guard` 3.2.1. Rules that previously passed or skipped when a comparison could not be evaluated may now fail closed. Consumers using a 1.x version requirement must update it to the coordinated Guard version to receive these fixes.
 
 The `junit` feature enables JUnit report support. It is disabled by default.

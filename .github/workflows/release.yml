@@ -318,24 +318,6 @@ jobs:
             fi
           }
 
-      - name: Wait for cloudformation-guard-lang on crates.io
-        run: |
-          is_available=false
-          for _ in {1..12}; do
-            index_entry="$(curl -fsSL \
-              -A "cloudformation-guard-release-workflow" \
-              "https://index.crates.io/cl/ou/cloudformation-guard-lang" || true)"
-            if grep -Fq "\"vers\":\"${VERSION}\"" <<< "$index_entry"; then
-              is_available=true
-              break
-            fi
-            sleep 10
-          done
-          if [[ "$is_available" != "true" ]]; then
-            echo "::error::cloudformation-guard-lang ${VERSION} is not available in the crates.io index"
-            exit 1
-          fi
-
       - name: Publish cfn-guard
         run: |
           cd guard

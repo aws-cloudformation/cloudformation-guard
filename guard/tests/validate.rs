@@ -1020,8 +1020,8 @@ mod validate_tests {
     /// branch. A message was written onto the skip record and it went nowhere: a skipped rule
     /// reached the reporters as a bare name, so the explanation was constructed and discarded --
     /// the same defect that had five other message-bearing record variants rendering nothing.
-    /// Making it reachable meant the skip set had to carry reasons, which changed the shape of
-    /// `FileReport` and of the `GenericReporter::report` signature.
+    /// Making it reachable required skip reporting to carry reasons without changing the public
+    /// `FileReport` shape.
     ///
     /// Both skip causes are asserted, because telling them apart is the whole value. "No volumes
     /// in the template" is the ordinary reason for a rule not to apply. "Every volume was exempted

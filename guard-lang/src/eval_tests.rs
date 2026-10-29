@@ -6287,7 +6287,11 @@ fn an_unresolved_type_block_query_skips_without_aborting_the_file() -> Result<()
 
 #[test]
 fn array_indexes_preserve_i32_ast_and_reject_overflow() -> Result<()> {
-    for query in ["Items[2147483648]", "Items[-2147483649]"] {
+    for query in [
+        "Items[2147483648]",
+        "Items[4294967296]",
+        "Items[-2147483649]",
+    ] {
         let rules = format!("rule r {{\n    {} == \"zero\"\n}}\n", query);
         assert!(
             RulesFile::try_from(rules.as_str()).is_err(),
@@ -6301,6 +6305,7 @@ fn array_indexes_preserve_i32_ast_and_reject_overflow() -> Result<()> {
         ("Items[0]", Status::PASS),
         ("Items[1]", Status::FAIL),
         ("Items[-1]", Status::FAIL),
+        ("Items[-2147483648]", Status::FAIL),
     ] {
         let rules = format!("rule r {{\n    {} == \"zero\"\n}}\n", query);
         let rules_file = RulesFile::try_from(rules.as_str())?;

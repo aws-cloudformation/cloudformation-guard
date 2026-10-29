@@ -183,17 +183,27 @@ pub struct GuardAccessClause<'loc> {
 
 #[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize, Hash)]
 pub struct MapKeyFilterClause<'loc> {
-    #[serde(serialize_with = "serialize_map_key_comparator")]
+    #[serde(
+        serialize_with = "serialize_map_key_comparator",
+        deserialize_with = "deserialize_map_key_comparator"
+    )]
     pub comparator: (CmpOperator, bool),
     pub compare_with: LetValue<'loc>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) enum MapKeyComparator {
     Eq,
     NotEq,
     In,
     NotIn,
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum MapKeyComparatorRepresentation {
+    Named(MapKeyComparator),
+    Pair((CmpOperator, bool)),
 }
 
 impl TryFrom<(CmpOperator, bool)> for MapKeyComparator {
@@ -238,9 +248,24 @@ fn serialize_map_key_comparator<S>(
 where
     S: serde::Serializer,
 {
-    MapKeyComparator::try_from(*comparator)
-        .map_err(serde::ser::Error::custom)?
-        .serialize(serializer)
+    match MapKeyComparator::try_from(*comparator) {
+        Ok(comparator) => comparator.serialize(serializer),
+        Err(_) => comparator.serialize(serializer),
+    }
+}
+
+fn deserialize_map_key_comparator<'de, D>(
+    deserializer: D,
+) -> std::result::Result<(CmpOperator, bool), D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Ok(
+        match MapKeyComparatorRepresentation::deserialize(deserializer)? {
+            MapKeyComparatorRepresentation::Named(comparator) => comparator.as_cmp_operator(),
+            MapKeyComparatorRepresentation::Pair(comparator) => comparator,
+        },
+    )
 }
 
 #[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize, Hash)]
@@ -447,4 +472,46 @@ impl<'loc> std::fmt::Display for LetValue<'loc> {
 pub fn display_comparator(cmp: (CmpOperator, bool)) -> String {
     let (op, not) = cmp;
     format!("{}{} ", if not { "not " } else { "" }, op)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[derive(Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+    struct ComparatorRepresentation {
+        #[serde(
+            serialize_with = "serialize_map_key_comparator",
+            deserialize_with = "deserialize_map_key_comparator"
+        )]
+        comparator: (CmpOperator, bool),
+    }
+
+    #[test]
+    fn map_key_comparator_serialization_accepts_current_and_legacy_forms() {
+        let expected = ComparatorRepresentation {
+            comparator: (CmpOperator::Eq, false),
+        };
+        let serialized = serde_json::to_string(&expected).unwrap();
+        assert_eq!(serialized, r#"{"comparator":"Eq"}"#);
+        assert_eq!(
+            serde_json::from_str::<ComparatorRepresentation>(&serialized).unwrap(),
+            expected
+        );
+        assert_eq!(
+            serde_json::from_str::<ComparatorRepresentation>(r#"{"comparator":["Eq",false]}"#)
+                .unwrap(),
+            expected
+        );
+
+        let legacy = ComparatorRepresentation {
+            comparator: (CmpOperator::Gt, false),
+        };
+        let serialized = serde_json::to_string(&legacy).unwrap();
+        assert_eq!(serialized, r#"{"comparator":["Gt",false]}"#);
+        assert_eq!(
+            serde_json::from_str::<ComparatorRepresentation>(&serialized).unwrap(),
+            legacy
+        );
+    }
 }
