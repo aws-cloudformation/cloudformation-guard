@@ -1,0 +1,212 @@
+use crate::path_value::{Path, PathAwareValue};
+use crate::QueryResult;
+
+use crate::errors::Error;
+use fancy_regex::Regex;
+use std::convert::TryFrom;
+
+pub(crate) fn url_decode(args: &[QueryResult]) -> crate::Result<Vec<Option<PathAwareValue>>> {
+    let mut aggr = Vec::with_capacity(args.len());
+    for entry in args.iter() {
+        match entry {
+            QueryResult::Literal(val) | QueryResult::Resolved(val) => match &**val {
+                PathAwareValue::String((path, val)) => {
+                    if let Ok(aggr_str) = urlencoding::decode(val.as_str()) {
+                        aggr.push(Some(PathAwareValue::String((
+                            path.clone(),
+                            aggr_str.into_owned(),
+                        ))));
+                    } else {
+                        aggr.push(None);
+                    }
+                }
+                _ => {
+                    aggr.push(None);
+                }
+            },
+            _ => {
+                aggr.push(None);
+            }
+        }
+    }
+    Ok(aggr)
+}
+
+pub(crate) fn json_parse(args: &[QueryResult]) -> crate::Result<Vec<Option<PathAwareValue>>> {
+    let mut aggr = Vec::with_capacity(args.len());
+    for entry in args.iter() {
+        match entry {
+            QueryResult::Literal(v) | QueryResult::Resolved(v) => {
+                if let PathAwareValue::String((path, val)) = &**v {
+                    let value = serde_yaml::from_str::<serde_yaml::Value>(val)?;
+                    aggr.push(Some(PathAwareValue::try_from((&value, path.clone()))?));
+                } else {
+                    aggr.push(None);
+                }
+            }
+            _ => aggr.push(None),
+        }
+    }
+    Ok(aggr)
+}
+
+pub(crate) fn regex_replace(
+    args: &[QueryResult],
+    extract_expr: &str,
+    replace_expr: &str,
+) -> crate::Result<Vec<Option<PathAwareValue>>> {
+    let mut aggr = Vec::with_capacity(args.len());
+    for entry in args.iter() {
+        match entry {
+            QueryResult::Literal(v) | QueryResult::Resolved(v) => {
+                if let PathAwareValue::String((path, val)) = &**v {
+                    let regex = Regex::try_from(extract_expr).map_err(Box::new)?;
+                    let mut replaced = String::with_capacity(replace_expr.len() * 2);
+                    for cap in regex.captures_iter(val) {
+                        cap.map_err(Box::new)?.expand(replace_expr, &mut replaced);
+                    }
+                    aggr.push(Some(PathAwareValue::String((path.clone(), replaced))));
+                } else {
+                    aggr.push(None);
+                }
+            }
+            _ => {
+                aggr.push(None);
+            }
+        }
+    }
+    Ok(aggr)
+}
+
+pub(crate) fn substring(
+    args: &[QueryResult],
+    from: usize,
+    to: usize,
+) -> crate::Result<Vec<Option<PathAwareValue>>> {
+    let mut aggr = Vec::with_capacity(args.len());
+    for entry in args.iter() {
+        match entry {
+            QueryResult::Literal(v) | QueryResult::Resolved(v) => {
+                if let PathAwareValue::String((path, val)) = &**v {
+                    // Character indices, not byte indices.
+                    //
+                    // The bounds were checked against `val.len()`, which counts bytes, and the slice
+                    // that followed panics unless both ends land on a character boundary. So
+                    // `substring(x, 0, 3)` on `naïve` aborted the process: byte 3 is inside the two
+                    // bytes of `ï`. Not a clean error -- a Rust panic and exit 101, with a stack
+                    // trace instead of a diagnostic, which in CI reads as the tool breaking rather
+                    // than the policy failing.
+                    //
+                    // Characters rather than a boundary check that returns nothing, because
+                    // `docs/FUNCTIONS.md` calls these a "starting index" and an "ending index" into a
+                    // string, and a rule author counting a prefix counts characters. For ASCII -- the
+                    // ARNs and resource names these are written against, including the example in
+                    // that document -- the two readings are identical, so this changes no working
+                    // rule. It replaces a crash on the rules that are not ASCII.
+                    let length = val.chars().count();
+                    if !val.is_empty() && from < to && from <= length && to <= length {
+                        let sub: String = val.chars().skip(from).take(to - from).collect();
+                        aggr.push(Some(PathAwareValue::String((path.clone(), sub))));
+                    } else {
+                        aggr.push(None);
+                    }
+                } else {
+                    aggr.push(None);
+                }
+            }
+            _ => {
+                aggr.push(None);
+            }
+        }
+    }
+    Ok(aggr)
+}
+
+pub(crate) fn to_upper(args: &[QueryResult]) -> crate::Result<Vec<Option<PathAwareValue>>> {
+    let mut aggr = Vec::with_capacity(args.len());
+    for entry in args.iter() {
+        match entry {
+            QueryResult::Literal(v) | QueryResult::Resolved(v) => {
+                if let PathAwareValue::String((path, val)) = &**v {
+                    aggr.push(Some(PathAwareValue::String((
+                        path.clone(),
+                        val.to_uppercase(),
+                    ))));
+                } else {
+                    aggr.push(None);
+                }
+            }
+            _ => {
+                aggr.push(None);
+            }
+        }
+    }
+    Ok(aggr)
+}
+
+pub(crate) fn to_lower(args: &[QueryResult]) -> crate::Result<Vec<Option<PathAwareValue>>> {
+    let mut aggr = Vec::with_capacity(args.len());
+    for entry in args.iter() {
+        match entry {
+            QueryResult::Literal(v) | QueryResult::Resolved(v) => {
+                if let PathAwareValue::String((path, val)) = &**v {
+                    aggr.push(Some(PathAwareValue::String((
+                        path.clone(),
+                        val.to_lowercase(),
+                    ))));
+                } else {
+                    aggr.push(None);
+                }
+            }
+            _ => {
+                aggr.push(None);
+            }
+        }
+    }
+    Ok(aggr)
+}
+
+pub(crate) fn join(args: &[QueryResult], delimiter: &str) -> crate::Result<PathAwareValue> {
+    let mut aggr = String::with_capacity(512);
+    let total = args.len();
+
+    for (index, entry) in args.iter().enumerate() {
+        match entry {
+            QueryResult::Resolved(v) | QueryResult::Literal(v) => {
+                if let PathAwareValue::String((_, val)) = &**v {
+                    aggr.push_str(val);
+
+                    if total - 1 > index {
+                        aggr.push_str(delimiter);
+                    }
+                } else {
+                    return Err(Error::IncompatibleError(format!(
+                        "Joining non string values {}",
+                        v
+                    )));
+                }
+            }
+            QueryResult::UnResolved(ur) => {
+                return Err(Error::IncompatibleError(format!(
+                    "Joining unresolved values is not allowed {}, unsatisfied part {}",
+                    ur.traversed_to, ur.remaining_query
+                )));
+            }
+        }
+    }
+
+    match args.is_empty() {
+        true => Ok(PathAwareValue::String((Path::root(), aggr))),
+        false => {
+            let path = match &args[0] {
+                QueryResult::Literal(val) | QueryResult::Resolved(val) => val.self_path().clone(),
+                QueryResult::UnResolved(val) => val.traversed_to.self_path().clone(),
+            };
+            Ok(PathAwareValue::String((path, aggr)))
+        }
+    }
+}
+
+#[cfg(test)]
+#[path = "strings_tests.rs"]
+mod strings_tests;

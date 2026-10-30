@@ -617,11 +617,13 @@ pub(crate) fn validate_path(base: &str) -> Result<()> {
     }
 }
 
+#[cfg(target_arch = "wasm32")]
 #[wasm_bindgen]
 extern "C" {
     type Buffer;
 }
 
+#[cfg(target_arch = "wasm32")]
 #[wasm_bindgen(module = "fs")]
 extern "C" {
     #[wasm_bindgen(js_name = existsSync, catch)]
@@ -630,6 +632,7 @@ extern "C" {
     fn read_dir(path: &str) -> Result<String>;
 }
 
+#[cfg(target_arch = "wasm32")]
 #[wasm_bindgen(module = "path")]
 extern "C" {
     #[wasm_bindgen(js_name = resolve, catch)]

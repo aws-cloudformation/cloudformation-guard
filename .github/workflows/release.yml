@@ -80,11 +80,12 @@ jobs:
       - name: Bump versions
         run: |
           # Bump package version (only the version line directly under [package])
-          for toml in guard/Cargo.toml guard-lambda/Cargo.toml guard-ffi/Cargo.toml; do
+          for toml in guard-lang/Cargo.toml guard/Cargo.toml guard-lambda/Cargo.toml guard-ffi/Cargo.toml; do
             sed -i '0,/^version = "[^"]*"/{s/^version = "[^"]*"/version = "'"$VERSION"'"/}' "$toml"
           done
 
           # Update cross-crate dependency references
+          sed -i "s/cloudformation-guard-lang\", version = \"[^\"]*\"/cloudformation-guard-lang\", version = \"$VERSION\"/" guard/Cargo.toml
           sed -i "s/cfn-guard = { version = \"[^\"]*\"/cfn-guard = { version = \"$VERSION\"/" guard-lambda/Cargo.toml
           sed -i "s/cfn-guard = { version = \"[^\"]*\"/cfn-guard = { version = \"$VERSION\"/" guard-ffi/Cargo.toml
           sed -i "s/cfn-guard = { version = \"[^\"]*\"/cfn-guard = { version = \"$VERSION\"/" guard-examples/library/Cargo.toml
@@ -306,6 +307,17 @@ jobs:
 
       - uses: actions-rust-lang/setup-rust-toolchain@v1
 
+      - name: Publish cloudformation-guard-lang
+        run: |
+          cd guard-lang
+          cargo publish --no-verify 2>&1 | tee /tmp/publish.log || {
+            if grep -q "already uploaded" /tmp/publish.log; then
+              echo "::warning::cloudformation-guard-lang already published, skipping"
+            else
+              exit 1
+            fi
+          }
+
       - name: Publish cfn-guard
         run: |
           cd guard
@@ -341,7 +353,7 @@ jobs:
 
       - name: Verify crates.io
         run: |
-          for crate in cfn-guard cfn-guard-lambda cfn-guard-ffi; do
+          for crate in cloudformation-guard-lang cfn-guard cfn-guard-lambda cfn-guard-ffi; do
             for attempt in 1 2 3 4 5 6; do
               code="$(curl -s -o /dev/null -w '%{http_code}' \
                 -A "cloudformation-guard-release-workflow" \
