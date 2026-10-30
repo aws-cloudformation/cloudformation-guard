@@ -4,7 +4,7 @@ use std::{borrow::Cow, fmt, fmt::Debug, ptr::NonNull, slice};
 use unsafe_libyaml as sys;
 
 #[derive(Debug)]
-pub enum Event<'input> {
+pub(crate) enum Event<'input> {
     StreamStart,
     StreamEnd,
     DocumentStart,
@@ -19,7 +19,7 @@ pub enum Event<'input> {
     MappingEnd,
 }
 
-pub unsafe fn convert_event<'input>(
+pub(crate) unsafe fn convert_event<'input>(
     sys: &sys::yaml_event_t,
     input: &Cow<'input, [u8]>,
 ) -> Event<'input> {
@@ -65,7 +65,7 @@ pub unsafe fn convert_event<'input>(
 }
 
 #[allow(dead_code)]
-pub struct Scalar<'input> {
+pub(crate) struct Scalar<'input> {
     pub anchor: Option<Anchor>,
     pub tag: Option<Tag>,
     pub value: Box<[u8]>,
@@ -75,23 +75,23 @@ pub struct Scalar<'input> {
 
 #[derive(Debug)]
 #[allow(dead_code)]
-pub struct SequenceStart {
+pub(crate) struct SequenceStart {
     pub anchor: Option<Anchor>,
     pub tag: Option<Tag>,
 }
 
 #[derive(Debug)]
 #[allow(dead_code)]
-pub struct MappingStart {
+pub(crate) struct MappingStart {
     pub anchor: Option<Anchor>,
     pub tag: Option<Tag>,
 }
 
 #[derive(Ord, PartialOrd, Eq, PartialEq)]
-pub struct Anchor(Box<[u8]>);
+pub(crate) struct Anchor(Box<[u8]>);
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
-pub enum ScalarStyle {
+pub(crate) enum ScalarStyle {
     Plain,
     SingleQuoted,
     DoubleQuoted,

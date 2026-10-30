@@ -342,12 +342,12 @@ fn empty_lhs_message() -> String {
 // `eval_context.rs`. Keying that cache on the rule name alone is what previously made a
 // named rule's status role-blind: the first reference to reach it decided the cached
 // value, and every later reference reused it whatever role it was in.
-// This type is public only because the backward-compatible default method on the 1.0
-// `EvalContext` trait accepts it. Most consumers should use `eval_rules_file` instead.
-#[doc(hidden)]
-#[non_exhaustive]
+// `pub(crate)`, not `pub(super)`: `EvalContext::rule_status` takes a `ClauseRole` and that
+// trait is `pub(crate)`, so a narrower visibility here makes the trait method expose a more
+// private type than itself. `cargo clippy -- -D warnings` rejects that as
+// `private_interfaces`, once for the trait and once per implementor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum ClauseRole {
+pub(crate) enum ClauseRole {
     /// The clause is an assertion in a rule body. An unevaluatable clause is a
     /// failure: the rule claimed something it could not establish.
     Assertion,
@@ -357,7 +357,12 @@ pub enum ClauseRole {
     Gate,
 }
 
-/// Maps `IncompatibleError` to clause verdicts; all other error categories still abort.
+/// An error meaning the clause could not be evaluated at all, as opposed to the evaluation
+/// machinery having gone wrong.
+///
+/// Only `EMPTY` against a type that cannot be empty produces this today. It is matched rather than
+/// propagated because the two are answered differently: an unevaluatable clause is a verdict about
+/// that clause, while a genuine failure of the machinery should still stop the run.
 fn is_unevaluatable(e: &Error) -> bool {
     matches!(e, Error::IncompatibleError(_))
 }
@@ -1380,16 +1385,22 @@ fn binary_operation<'value, 'loc: 'value>(
 }
 
 /// Compares the keys of a map against a right-hand side, for `[ keys <op> ... ]` filters.
+///
+/// The narrowed `MapKeyComparator` rather than a `(CmpOperator, bool)` pair: this function's only
+/// caller is `QueryPart::MapKeyFilter`, the parser admits four comparators there, and the wider
+/// type left four arms here that nothing could reach. See the type's own comment for why that
+/// mattered.
 pub(super) fn real_binary_operation<'value, 'loc: 'value>(
     lhs: &[QueryResult],
     rhs: &[QueryResult],
-    cmp: (CmpOperator, bool),
+    cmp: MapKeyComparator,
     context: String,
     custom_message: Option<String>,
     eval_context: &mut dyn EvalContext<'value, 'loc>,
 ) -> Result<EvaluationResult> {
     let mut statues: Vec<(QueryResult, Status)> = Vec::with_capacity(lhs.len());
-    let cmp = MapKeyComparator::try_from(cmp)?.widened_for(rhs.len());
+
+    let cmp = cmp.widened_for(rhs.len());
     let recorded_cmp = cmp.as_cmp_operator();
 
     for each in lhs.iter() {
@@ -1411,7 +1422,7 @@ pub(super) fn real_binary_operation<'value, 'loc: 'value>(
             }
 
             QueryResult::Literal(l) | QueryResult::Resolved(l) => {
-                let results = match cmp {
+                let r = match cmp {
                     MapKeyComparator::Eq | MapKeyComparator::NotEq => each_lhs_compare(
                         not_compare(
                             crate::path_value::compare_eq,
@@ -1420,29 +1431,33 @@ pub(super) fn real_binary_operation<'value, 'loc: 'value>(
                         Rc::clone(l),
                         rhs,
                     )?,
+
                     MapKeyComparator::In | MapKeyComparator::NotIn => {
                         each_lhs_compare(in_cmp(cmp == MapKeyComparator::NotIn), Rc::clone(l), rhs)?
                     }
                 };
 
                 match cmp {
+                    // Membership is satisfied by one match, so the report folds that way.
                     MapKeyComparator::In | MapKeyComparator::NotIn => {
                         statues.extend(report_at_least_one(
-                            results,
+                            r,
                             recorded_cmp,
                             context.clone(),
                             custom_message.clone(),
                             eval_context,
                         )?);
                     }
+
                     MapKeyComparator::Eq | MapKeyComparator::NotEq => {
-                        statues.extend(report_all_values(
-                            results,
+                        let status = report_all_values(
+                            r,
                             recorded_cmp,
                             context.clone(),
                             custom_message.clone(),
                             eval_context,
-                        )?);
+                        )?;
+                        statues.extend(status);
                     }
                 }
             }
@@ -1454,7 +1469,7 @@ pub(super) fn real_binary_operation<'value, 'loc: 'value>(
 #[allow(clippy::never_loop)]
 /// `role` is [`ClauseRole::Gate`] when this clause is a `when` condition; see
 /// [`binary_operation`].
-pub(crate) fn eval_guard_access_clause_with_role<'value, 'loc: 'value>(
+pub(crate) fn eval_guard_access_clause<'value, 'loc: 'value>(
     gac: &'value GuardAccessClause<'loc>,
     resolver: &mut dyn EvalContext<'value, 'loc>,
     role: ClauseRole,
@@ -1679,7 +1694,7 @@ pub(crate) fn eval_guard_access_clause_with_role<'value, 'loc: 'value>(
 ///   what stops `not <rule>` from reporting compliance for a check that never ran.
 /// - [`ClauseRole::Gate`] -- the reference is a `when` condition, where gating on a
 ///   rule that did not apply is deliberate and covered by existing tests.
-pub(crate) fn eval_guard_named_clause_with_role<'value, 'loc: 'value>(
+pub(crate) fn eval_guard_named_clause<'value, 'loc: 'value>(
     gnc: &'value GuardNamedRuleClause<'loc>,
     resolver: &mut dyn EvalContext<'value, 'loc>,
     role: ClauseRole,
@@ -1687,7 +1702,7 @@ pub(crate) fn eval_guard_named_clause_with_role<'value, 'loc: 'value>(
     let context = format!("{}", gnc);
     resolver.start_record(&context)?;
 
-    match resolver.rule_status_with_role(&gnc.dependent_rule, role) {
+    match resolver.rule_status(&gnc.dependent_rule, role) {
         Ok(status) => {
             let status = match status {
                 Status::PASS => {
@@ -1804,7 +1819,7 @@ pub(crate) fn eval_guard_named_clause_with_role<'value, 'loc: 'value>(
     }
 }
 
-pub fn eval_general_block_clause<'value, 'loc: 'value, T, E>(
+pub(crate) fn eval_general_block_clause<'value, 'loc: 'value, T, E>(
     block: &'value Block<'loc, T>,
     resolver: &mut dyn EvalContext<'value, 'loc>,
     eval_fn: E,
@@ -1818,7 +1833,7 @@ where
 
 /// `role` is inherited from the enclosing clause; a block clause is not itself a
 /// gate or an assertion, it just groups the clauses inside it.
-pub(crate) fn eval_guard_block_clause_with_role<'value, 'loc: 'value>(
+pub(crate) fn eval_guard_block_clause<'value, 'loc: 'value>(
     block_clause: &'value BlockGuardClause<'loc>,
     resolver: &mut dyn EvalContext<'value, 'loc>,
     role: ClauseRole,
@@ -1885,7 +1900,7 @@ pub(crate) fn eval_guard_block_clause_with_role<'value, 'loc: 'value>(
                     parent: resolver,
                 };
                 match eval_general_block_clause(&block_clause.block, &mut val_resolver, |gc, r| {
-                    eval_guard_clause_with_role(gc, r, role)
+                    eval_guard_clause(gc, r, role)
                 }) {
                     Ok(status) => match status {
                         Status::PASS => {
@@ -2046,9 +2061,7 @@ fn eval_when_condition_block<'value, 'loc: 'value>(
         // what `eval_when_clause` does and it is unconditional -- but the body is only assertions
         // when the enclosing context is one. See this function's doc comment for what assuming
         // otherwise cost.
-        match eval_general_block_clause(block, resolver, |gc, r| {
-            eval_guard_clause_with_role(gc, r, role)
-        }) {
+        match eval_general_block_clause(block, resolver, |gc, r| eval_guard_clause(gc, r, role)) {
             Ok(status) => {
                 resolver.end_record(
                     &context,
@@ -2088,10 +2101,6 @@ struct ResolvedParameterContext<'eval, 'value, 'loc: 'value> {
 impl<'eval, 'value, 'loc: 'value> EvalContext<'value, 'loc>
     for ResolvedParameterContext<'eval, 'value, 'loc>
 {
-    fn record_deprecation(&mut self, notice: String) {
-        self.parent.record_deprecation(notice)
-    }
-
     fn query(&mut self, query: &'value [QueryPart<'loc>]) -> Result<Vec<QueryResult>> {
         self.parent.query(query)
     }
@@ -2107,16 +2116,8 @@ impl<'eval, 'value, 'loc: 'value> EvalContext<'value, 'loc>
         self.parent.root()
     }
 
-    fn rule_status(&mut self, rule_name: &'value str) -> Result<Status> {
-        self.parent.rule_status(rule_name)
-    }
-
-    fn rule_status_with_role(
-        &mut self,
-        rule_name: &'value str,
-        role: ClauseRole,
-    ) -> Result<Status> {
-        self.parent.rule_status_with_role(rule_name, role)
+    fn rule_status(&mut self, rule_name: &'value str, role: ClauseRole) -> Result<Status> {
+        self.parent.rule_status(rule_name, role)
     }
 
     fn resolve_variable(&mut self, variable_name: &'value str) -> Result<Vec<QueryResult>> {
@@ -2165,7 +2166,7 @@ impl<'eval, 'value, 'loc: 'value> RecordTracer<'value>
 /// A parameterized rule invoked from a `when` condition is a gate, so its body must
 /// evaluate with gate semantics: an unevaluatable clause inside it makes the gate
 /// inapplicable rather than failed, which leaves the guarded block enforced.
-pub(crate) fn eval_parameterized_rule_call_with_role<'value, 'loc: 'value>(
+pub(crate) fn eval_parameterized_rule_call<'value, 'loc: 'value>(
     call_rule: &'value ParameterizedNamedRuleClause<'loc>,
     resolver: &mut dyn EvalContext<'value, 'loc>,
     role: ClauseRole,
@@ -2212,7 +2213,7 @@ pub(crate) fn eval_parameterized_rule_call_with_role<'value, 'loc: 'value>(
     // Propagate the call site's role: a parameterized rule used as a `when` gate
     // must evaluate its body with gate semantics, or an unevaluatable clause inside
     // it fails the gate and silently disarms the block it guards.
-    let status = eval_rule_with_role(&param_rule.rule, &mut eval, role)?;
+    let status = eval_rule(&param_rule.rule, &mut eval, role)?;
 
     // Apply the clause-level negation of the *call*. The parser accepts and stores a
     // leading `not` on a parameterized invocation (`not is_relevant("x")`) exactly as
@@ -2274,15 +2275,15 @@ pub(crate) fn eval_parameterized_rule_call_with_role<'value, 'loc: 'value>(
 /// `role` propagates the assertion-vs-gate distinction to the leaf clauses. Callers
 /// evaluating a rule body pass [`ClauseRole::Assertion`]; callers evaluating the
 /// conditions of a `when` block or a parameterized gate pass [`ClauseRole::Gate`].
-pub(crate) fn eval_guard_clause_with_role<'value, 'loc: 'value>(
+pub(crate) fn eval_guard_clause<'value, 'loc: 'value>(
     gc: &'value GuardClause<'loc>,
     resolver: &mut dyn EvalContext<'value, 'loc>,
     role: ClauseRole,
 ) -> Result<Status> {
     match gc {
-        GuardClause::Clause(gac) => eval_guard_access_clause_with_role(gac, resolver, role),
-        GuardClause::NamedRule(gnc) => eval_guard_named_clause_with_role(gnc, resolver, role),
-        GuardClause::BlockClause(bc) => eval_guard_block_clause_with_role(bc, resolver, role),
+        GuardClause::Clause(gac) => eval_guard_access_clause(gac, resolver, role),
+        GuardClause::NamedRule(gnc) => eval_guard_named_clause(gnc, resolver, role),
+        GuardClause::BlockClause(bc) => eval_guard_block_clause(bc, resolver, role),
         GuardClause::WhenBlock(conditions, block) => eval_when_condition_block(
             "GuardConditionClause".to_string(),
             conditions,
@@ -2291,12 +2292,12 @@ pub(crate) fn eval_guard_clause_with_role<'value, 'loc: 'value>(
             role,
         ),
         GuardClause::ParameterizedNamedRule(prc) => {
-            eval_parameterized_rule_call_with_role(prc, resolver, role)
+            eval_parameterized_rule_call(prc, resolver, role)
         }
     }
 }
 
-pub fn eval_when_clause<'value, 'loc: 'value>(
+pub(crate) fn eval_when_clause<'value, 'loc: 'value>(
     when_clause: &'value WhenGuardClause<'loc>,
     resolver: &mut dyn EvalContext<'value, 'loc>,
 ) -> Result<Status> {
@@ -2311,21 +2312,17 @@ pub fn eval_when_clause<'value, 'loc: 'value>(
         // everything downstream defaulted to assertion strictness, so a parameterized
         // rule used as a gate failed instead of skipping and silently disarmed the
         // block it guarded.
-        WhenGuardClause::Clause(gac) => {
-            eval_guard_access_clause_with_role(gac, resolver, ClauseRole::Gate)
-        }
-        WhenGuardClause::NamedRule(gnr) => {
-            eval_guard_named_clause_with_role(gnr, resolver, ClauseRole::Gate)
-        }
+        WhenGuardClause::Clause(gac) => eval_guard_access_clause(gac, resolver, ClauseRole::Gate),
+        WhenGuardClause::NamedRule(gnr) => eval_guard_named_clause(gnr, resolver, ClauseRole::Gate),
         WhenGuardClause::ParameterizedNamedRule(prc) => {
-            eval_parameterized_rule_call_with_role(prc, resolver, ClauseRole::Gate)
+            eval_parameterized_rule_call(prc, resolver, ClauseRole::Gate)
         }
     }
 }
 
 /// `role` is inherited by the clauses in the type block's body. Its own `when`
 /// conditions are always evaluated as [`ClauseRole::Gate`].
-pub(crate) fn eval_type_block_clause_with_role<'value, 'loc: 'value>(
+pub(crate) fn eval_type_block_clause<'value, 'loc: 'value>(
     type_block: &'value TypeBlock<'loc>,
     resolver: &mut dyn EvalContext<'value, 'loc>,
     role: ClauseRole,
@@ -2525,7 +2522,7 @@ pub(crate) fn eval_type_block_clause_with_role<'value, 'loc: 'value>(
                 }
 
                 match eval_general_block_clause(block, &mut val_resolver, |gc, r| {
-                    eval_guard_clause_with_role(gc, r, role)
+                    eval_guard_clause(gc, r, role)
                 }) {
                     Ok(status) => {
                         match status {
@@ -2662,14 +2659,14 @@ pub(crate) fn eval_type_block_clause_with_role<'value, 'loc: 'value>(
 }
 
 /// `role` is inherited by the clauses of this rule clause.
-pub(crate) fn eval_rule_clause_with_role<'value, 'loc: 'value>(
+pub(crate) fn eval_rule_clause<'value, 'loc: 'value>(
     rule_clause: &'value RuleClause<'loc>,
     resolver: &mut dyn EvalContext<'value, 'loc>,
     role: ClauseRole,
 ) -> Result<Status> {
     match rule_clause {
-        RuleClause::Clause(gc) => eval_guard_clause_with_role(gc, resolver, role),
-        RuleClause::TypeBlock(tb) => eval_type_block_clause_with_role(tb, resolver, role),
+        RuleClause::Clause(gc) => eval_guard_clause(gc, resolver, role),
+        RuleClause::TypeBlock(tb) => eval_type_block_clause(tb, resolver, role),
         RuleClause::WhenBlock(conditions, block) => {
             eval_when_condition_block("RuleClause".to_string(), conditions, block, resolver, role)
         }
@@ -2687,7 +2684,7 @@ pub(crate) fn eval_rule_clause_with_role<'value, 'loc: 'value>(
 /// [`ClauseRole::Gate`]. Its clauses must then SKIP rather than FAIL when they cannot
 /// be evaluated, because a failing gate makes the guarded block inapplicable and
 /// silently drops every check inside it.
-pub(crate) fn eval_rule_with_role<'value, 'loc: 'value>(
+pub(crate) fn eval_rule<'value, 'loc: 'value>(
     rule: &'value Rule<'loc>,
     resolver: &mut dyn EvalContext<'value, 'loc>,
     role: ClauseRole,
@@ -2757,9 +2754,7 @@ pub(crate) fn eval_rule_with_role<'value, 'loc: 'value>(
         &rule.block
     };
 
-    match eval_general_block_clause(block, resolver, |rc, r| {
-        eval_rule_clause_with_role(rc, r, role)
-    }) {
+    match eval_general_block_clause(block, resolver, |rc, r| eval_rule_clause(rc, r, role)) {
         Ok(status) => {
             resolver.end_record(
                 &context,
@@ -2786,86 +2781,6 @@ pub(crate) fn eval_rule_with_role<'value, 'loc: 'value>(
     }
 }
 
-/// Evaluates one access clause with assertion semantics.
-#[doc(hidden)]
-#[deprecated(note = "use eval_rules_file instead")]
-pub fn eval_guard_access_clause<'value, 'loc: 'value>(
-    clause: &'value GuardAccessClause<'loc>,
-    resolver: &mut dyn EvalContext<'value, 'loc>,
-) -> Result<Status> {
-    eval_guard_access_clause_with_role(clause, resolver, ClauseRole::Assertion)
-}
-
-/// Evaluates one named-rule clause with assertion semantics.
-#[doc(hidden)]
-#[deprecated(note = "use eval_rules_file instead")]
-pub fn eval_guard_named_clause<'value, 'loc: 'value>(
-    clause: &'value GuardNamedRuleClause<'loc>,
-    resolver: &mut dyn EvalContext<'value, 'loc>,
-) -> Result<Status> {
-    eval_guard_named_clause_with_role(clause, resolver, ClauseRole::Assertion)
-}
-
-/// Evaluates one block clause with assertion semantics.
-#[doc(hidden)]
-#[deprecated(note = "use eval_rules_file instead")]
-pub fn eval_guard_block_clause<'value, 'loc: 'value>(
-    clause: &'value BlockGuardClause<'loc>,
-    resolver: &mut dyn EvalContext<'value, 'loc>,
-) -> Result<Status> {
-    eval_guard_block_clause_with_role(clause, resolver, ClauseRole::Assertion)
-}
-
-/// Evaluates one parameterized rule call with assertion semantics.
-#[doc(hidden)]
-#[deprecated(note = "use eval_rules_file instead")]
-pub fn eval_parameterized_rule_call<'value, 'loc: 'value>(
-    call: &'value ParameterizedNamedRuleClause<'loc>,
-    resolver: &mut dyn EvalContext<'value, 'loc>,
-) -> Result<Status> {
-    eval_parameterized_rule_call_with_role(call, resolver, ClauseRole::Assertion)
-}
-
-/// Evaluates one guard clause with assertion semantics.
-#[doc(hidden)]
-#[deprecated(note = "use eval_rules_file instead")]
-pub fn eval_guard_clause<'value, 'loc: 'value>(
-    clause: &'value GuardClause<'loc>,
-    resolver: &mut dyn EvalContext<'value, 'loc>,
-) -> Result<Status> {
-    eval_guard_clause_with_role(clause, resolver, ClauseRole::Assertion)
-}
-
-/// Evaluates one type-block clause with assertion semantics.
-#[doc(hidden)]
-#[deprecated(note = "use eval_rules_file instead")]
-pub fn eval_type_block_clause<'value, 'loc: 'value>(
-    clause: &'value TypeBlock<'loc>,
-    resolver: &mut dyn EvalContext<'value, 'loc>,
-) -> Result<Status> {
-    eval_type_block_clause_with_role(clause, resolver, ClauseRole::Assertion)
-}
-
-/// Evaluates one rule clause with assertion semantics.
-#[doc(hidden)]
-#[deprecated(note = "use eval_rules_file instead")]
-pub fn eval_rule_clause<'value, 'loc: 'value>(
-    clause: &'value RuleClause<'loc>,
-    resolver: &mut dyn EvalContext<'value, 'loc>,
-) -> Result<Status> {
-    eval_rule_clause_with_role(clause, resolver, ClauseRole::Assertion)
-}
-
-/// Evaluates one rule with assertion semantics.
-#[doc(hidden)]
-#[deprecated(note = "use eval_rules_file instead")]
-pub fn eval_rule<'value, 'loc: 'value>(
-    rule: &'value Rule<'loc>,
-    resolver: &mut dyn EvalContext<'value, 'loc>,
-) -> Result<Status> {
-    eval_rule_with_role(rule, resolver, ClauseRole::Assertion)
-}
-
 impl<'loc> std::fmt::Display for RulesFile<'loc> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         f.write_fmt(format_args!("File(rules={})", self.guard_rules.len()))?;
@@ -2875,7 +2790,7 @@ impl<'loc> std::fmt::Display for RulesFile<'loc> {
 
 pub fn eval_rules_file<'value, 'loc: 'value>(
     rule: &'value RulesFile<'loc>,
-    resolver: &mut dyn EvalContext<'value, 'loc>,
+    resolver: &mut RootScope<'value, 'loc>,
     data_file_name: Option<&'value str>,
 ) -> Result<Status> {
     let context = format!("{}", rule);
@@ -2884,7 +2799,7 @@ pub fn eval_rules_file<'value, 'loc: 'value>(
     let mut passes = 0;
     for each_rule in &rule.guard_rules {
         // Top-level rule in a rules file: its clauses are assertions.
-        match eval_rule_with_role(each_rule, resolver, ClauseRole::Assertion) {
+        match eval_rule(each_rule, resolver, ClauseRole::Assertion) {
             Ok(status) => match status {
                 Status::PASS => {
                     passes += 1;
@@ -2941,7 +2856,7 @@ fn disjunction_type_name<T>() -> String {
 }
 
 #[allow(clippy::never_loop)]
-pub fn eval_conjunction_clauses<'value, 'loc: 'value, T, E>(
+pub(crate) fn eval_conjunction_clauses<'value, 'loc: 'value, T, E>(
     conjunctions: &'value Conjunctions<T>,
     resolver: &mut dyn EvalContext<'value, 'loc>,
     eval_fn: E,

@@ -1,11 +1,11 @@
 use colored::*;
-use serde::{Serialize, Serializer};
+use serde::Serialize;
 
 use crate::commands::tracker::StatusContext;
 use crate::rules::eval_context::{
-    find_skip_reason, not_applicable_reasons, simplified_json_from_root, BinaryCheck,
-    BinaryComparison, ClauseReport, EventRecord, FileReport, GuardClauseReport, InComparison,
-    Metadata, UnaryCheck, UnaryComparison, ValueComparisons, ValueUnResolved,
+    find_skip_reason, BinaryCheck, BinaryComparison, ClauseReport, EventRecord, FileReport,
+    GuardClauseReport, InComparison, UnaryCheck, UnaryComparison, ValueComparisons,
+    ValueUnResolved,
 };
 
 use crate::rules::values::CmpOperator;
@@ -20,68 +20,6 @@ use std::convert::TryInto;
 use std::fmt::Debug;
 use std::hash::{Hash, Hasher};
 use std::io::Write;
-
-#[derive(Debug)]
-pub(super) struct FileReportWithReasons<'value> {
-    pub(super) report: FileReport<'value>,
-    not_applicable_reasons: BTreeMap<String, String>,
-}
-
-#[derive(Serialize)]
-struct FileReportOutput<'report, 'value> {
-    name: &'value str,
-    metadata: &'report Metadata,
-    status: Status,
-    #[serde(with = "serde_yaml::with::singleton_map_recursive")]
-    not_compliant: &'report Vec<ClauseReport<'value>>,
-    not_applicable: &'report BTreeSet<String>,
-    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
-    not_applicable_reasons: &'report BTreeMap<String, String>,
-    compliant: &'report BTreeSet<String>,
-}
-
-impl Serialize for FileReportWithReasons<'_> {
-    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        FileReportOutput {
-            name: self.report.name,
-            metadata: &self.report.metadata,
-            status: self.report.status,
-            not_compliant: &self.report.not_compliant,
-            not_applicable: &self.report.not_applicable,
-            not_applicable_reasons: &self.not_applicable_reasons,
-            compliant: &self.report.compliant,
-        }
-        .serialize(serializer)
-    }
-}
-
-impl<'value> FileReportWithReasons<'value> {
-    pub(super) fn empty(name: &'value str) -> Self {
-        Self {
-            report: FileReport {
-                name,
-                ..Default::default()
-            },
-            not_applicable_reasons: BTreeMap::new(),
-        }
-    }
-
-    pub(super) fn from_record(root: &EventRecord<'value>) -> crate::rules::Result<Self> {
-        Ok(Self {
-            report: simplified_json_from_root(root)?,
-            not_applicable_reasons: not_applicable_reasons(root),
-        })
-    }
-
-    pub(super) fn combine(&mut self, report: Self) {
-        self.report.combine(report.report);
-        self.not_applicable_reasons
-            .extend(report.not_applicable_reasons);
-    }
-}
 
 #[derive(Debug, PartialEq, Serialize)]
 pub(super) struct Comparison {

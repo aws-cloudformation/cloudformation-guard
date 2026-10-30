@@ -5,7 +5,7 @@ use crate::{
 use chrono::prelude::*;
 use chrono::Utc;
 
-pub fn parse_epoch(args: &[QueryResult]) -> crate::Result<Vec<Option<PathAwareValue>>> {
+pub(crate) fn parse_epoch(args: &[QueryResult]) -> crate::Result<Vec<Option<PathAwareValue>>> {
     let mut aggr = vec![];
     for entry in args.iter() {
         match entry {
@@ -34,7 +34,7 @@ pub fn parse_epoch(args: &[QueryResult]) -> crate::Result<Vec<Option<PathAwareVa
     Ok(aggr)
 }
 
-pub fn now() -> crate::Result<Vec<Option<PathAwareValue>>> {
+pub(crate) fn now() -> crate::Result<Vec<Option<PathAwareValue>>> {
     let now = Utc::now().timestamp();
     let path = Path::root();
     let path_aware_value = PathAwareValue::Int((path, now));

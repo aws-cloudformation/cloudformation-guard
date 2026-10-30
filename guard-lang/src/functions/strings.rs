@@ -5,7 +5,7 @@ use crate::errors::Error;
 use fancy_regex::Regex;
 use std::convert::TryFrom;
 
-pub fn url_decode(args: &[QueryResult]) -> crate::Result<Vec<Option<PathAwareValue>>> {
+pub(crate) fn url_decode(args: &[QueryResult]) -> crate::Result<Vec<Option<PathAwareValue>>> {
     let mut aggr = Vec::with_capacity(args.len());
     for entry in args.iter() {
         match entry {
@@ -32,7 +32,7 @@ pub fn url_decode(args: &[QueryResult]) -> crate::Result<Vec<Option<PathAwareVal
     Ok(aggr)
 }
 
-pub fn json_parse(args: &[QueryResult]) -> crate::Result<Vec<Option<PathAwareValue>>> {
+pub(crate) fn json_parse(args: &[QueryResult]) -> crate::Result<Vec<Option<PathAwareValue>>> {
     let mut aggr = Vec::with_capacity(args.len());
     for entry in args.iter() {
         match entry {
@@ -50,7 +50,7 @@ pub fn json_parse(args: &[QueryResult]) -> crate::Result<Vec<Option<PathAwareVal
     Ok(aggr)
 }
 
-pub fn regex_replace(
+pub(crate) fn regex_replace(
     args: &[QueryResult],
     extract_expr: &str,
     replace_expr: &str,
@@ -78,7 +78,7 @@ pub fn regex_replace(
     Ok(aggr)
 }
 
-pub fn substring(
+pub(crate) fn substring(
     args: &[QueryResult],
     from: usize,
     to: usize,
@@ -122,7 +122,7 @@ pub fn substring(
     Ok(aggr)
 }
 
-pub fn to_upper(args: &[QueryResult]) -> crate::Result<Vec<Option<PathAwareValue>>> {
+pub(crate) fn to_upper(args: &[QueryResult]) -> crate::Result<Vec<Option<PathAwareValue>>> {
     let mut aggr = Vec::with_capacity(args.len());
     for entry in args.iter() {
         match entry {
@@ -144,7 +144,7 @@ pub fn to_upper(args: &[QueryResult]) -> crate::Result<Vec<Option<PathAwareValue
     Ok(aggr)
 }
 
-pub fn to_lower(args: &[QueryResult]) -> crate::Result<Vec<Option<PathAwareValue>>> {
+pub(crate) fn to_lower(args: &[QueryResult]) -> crate::Result<Vec<Option<PathAwareValue>>> {
     let mut aggr = Vec::with_capacity(args.len());
     for entry in args.iter() {
         match entry {
@@ -166,7 +166,7 @@ pub fn to_lower(args: &[QueryResult]) -> crate::Result<Vec<Option<PathAwareValue
     Ok(aggr)
 }
 
-pub fn join(args: &[QueryResult], delimiter: &str) -> crate::Result<PathAwareValue> {
+pub(crate) fn join(args: &[QueryResult], delimiter: &str) -> crate::Result<PathAwareValue> {
     let mut aggr = String::with_capacity(512);
     let total = args.len();
 

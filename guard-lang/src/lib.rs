@@ -4,12 +4,10 @@ pub mod display;
 pub mod errors;
 pub mod eval;
 pub mod eval_context;
-pub mod evaluate;
+mod evaluate;
 pub mod exprs;
-pub mod functions;
-#[doc(hidden)]
-#[deprecated(note = "internal YAML implementation; use PathAwareValue conversion instead")]
-pub mod libyaml;
+mod functions;
+mod libyaml;
 pub mod parser;
 pub mod path_value;
 pub mod values;
@@ -40,7 +38,7 @@ use std::rc::Rc;
 pub type Result<R> = std::result::Result<R, Error>;
 
 lazy_static! {
-    pub static ref SHORT_FORM_TO_LONG_MAPPING: HashMap<&'static str, &'static str> = {
+    pub(crate) static ref SHORT_FORM_TO_LONG_MAPPING: HashMap<&'static str, &'static str> = {
         let mut m = HashMap::new();
         m.insert("Ref", "Ref");
         m.insert("GetAtt", "Fn::GetAtt");
@@ -367,12 +365,12 @@ pub enum RecordType<'value> {
     ClauseValueCheck(ClauseCheck<'value>),
 }
 
-pub trait RecordTracer<'value> {
+pub(crate) trait RecordTracer<'value> {
     fn start_record(&mut self, context: &str) -> Result<()>;
     fn end_record(&mut self, context: &str, record: RecordType<'value>) -> Result<()>;
 }
 
-pub trait EvalContext<'value, 'loc: 'value>: RecordTracer<'value> {
+pub(crate) trait EvalContext<'value, 'loc: 'value>: RecordTracer<'value> {
     fn query(&mut self, query: &'value [QueryPart<'loc>]) -> Result<Vec<QueryResult>>;
     //fn resolve(&self, guard_clause: &GuardAccessClause<'_>) -> Result<Vec<QueryResult>>;
     fn find_parameterized_rule(
@@ -380,34 +378,26 @@ pub trait EvalContext<'value, 'loc: 'value>: RecordTracer<'value> {
         rule_name: &str,
     ) -> Result<&'value ParameterizedRule<'loc>>;
     fn root(&mut self) -> Rc<PathAwareValue>;
-    fn rule_status(&mut self, rule_name: &'value str) -> Result<Status>;
-
-    /// Resolve a named rule for an assertion or a `when` gate.
+    /// Resolve a named rule's status for a reference in the given role.
     ///
-    /// The default preserves the 1.0 `EvalContext` contract for external implementations. Guard's
-    /// scopes override this method so their cache and unevaluatable-clause behavior account for
-    /// the reference role. Implementations that cache results must key by `(rule_name, role)`.
-    #[doc(hidden)]
-    fn rule_status_with_role(
-        &mut self,
-        rule_name: &'value str,
-        _role: eval::ClauseRole,
-    ) -> Result<Status> {
-        self.rule_status(rule_name)
-    }
-
+    /// `role` is the role of the *reference site*, and it is carried into the rule's own
+    /// body: an unevaluatable clause in there is a failure when the reference is an
+    /// assertion and merely inapplicable when it is a `when` condition. Implementations
+    /// that cache must key on `(rule_name, role)`, since the same rule reached from a body
+    /// and from a gate are two different questions.
+    fn rule_status(&mut self, rule_name: &'value str, role: eval::ClauseRole) -> Result<Status>;
     fn resolve_variable(&mut self, variable_name: &'value str) -> Result<Vec<QueryResult>>;
     fn add_variable_capture_key(
         &mut self,
         variable_name: &'value str,
         key: Rc<PathAwareValue>,
     ) -> Result<()>;
-    fn add_variable_capture_index(&mut self, _: &str, _: Rc<PathAwareValue>) -> Result<()> {
-        Ok(())
-    }
-
-    /// Record a compatibility notice without changing the evaluation result.
-    #[doc(hidden)]
+    /// Note that a clause took a path whose answer is going to change, without changing this run's
+    /// answer.
+    ///
+    /// Deliberately returns nothing, so a notice cannot influence a verdict: the evaluator can only
+    /// deposit a string, and no evaluation path reads one back. Defaulted to a no-op because the
+    /// nested scopes forward it and the test doubles do not care.
     fn record_deprecation(&mut self, _notice: String) {}
 }
 
@@ -431,7 +421,7 @@ pub trait EvaluationContext {
     fn start_evaluation(&self, eval_type: EvaluationType, context: &str);
 }
 
-pub trait Evaluate {
+pub(crate) trait Evaluate {
     fn evaluate<'s>(
         &self,
         context: &'s PathAwareValue,
@@ -439,14 +429,15 @@ pub trait Evaluate {
     ) -> Result<Status>;
 }
 
-pub fn short_form_to_long(fn_ref: &str) -> &'static str {
+pub(crate) fn short_form_to_long(fn_ref: &str) -> &'static str {
     match SHORT_FORM_TO_LONG_MAPPING.get(fn_ref) {
         Some(fn_ref) => fn_ref,
         _ => unreachable!(),
     }
 }
 
-pub fn read_file_content(file: std::fs::File) -> Result<String> {
+#[cfg(test)]
+pub(crate) fn read_file_content(file: std::fs::File) -> Result<String> {
     use std::io::Read;
     let mut content = String::new();
     std::io::BufReader::new(file).read_to_string(&mut content)?;

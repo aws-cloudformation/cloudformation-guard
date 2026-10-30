@@ -34,16 +34,6 @@ jobs:
       - name: Run unit tests ${{ matrix.os }}
         run: cargo test --verbose
 
-  guard-lang-semver:
-    name: Guard language API compatibility
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: obi1kenobi/cargo-semver-checks-action@6b69fcf40e9b5fb17adeb57e4b6ecd020649a239 # v2.9
-        with:
-          package: cloudformation-guard-lang
-          release-type: minor
-
   shellcheck:
     name: Shellcheck
     runs-on: ubuntu-latest

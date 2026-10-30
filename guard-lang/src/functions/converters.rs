@@ -16,7 +16,7 @@
 
 use crate::{path_value::PathAwareValue, QueryResult};
 
-pub fn parse_float(args: &[QueryResult]) -> crate::Result<Vec<Option<PathAwareValue>>> {
+pub(crate) fn parse_float(args: &[QueryResult]) -> crate::Result<Vec<Option<PathAwareValue>>> {
     let mut aggr = vec![];
     for entry in args.iter() {
         match entry {
@@ -61,7 +61,7 @@ pub fn parse_float(args: &[QueryResult]) -> crate::Result<Vec<Option<PathAwareVa
     Ok(aggr)
 }
 
-pub fn parse_int(args: &[QueryResult]) -> crate::Result<Vec<Option<PathAwareValue>>> {
+pub(crate) fn parse_int(args: &[QueryResult]) -> crate::Result<Vec<Option<PathAwareValue>>> {
     let mut aggr = vec![];
     for entry in args.iter() {
         match entry {
@@ -106,7 +106,7 @@ pub fn parse_int(args: &[QueryResult]) -> crate::Result<Vec<Option<PathAwareValu
     Ok(aggr)
 }
 
-pub fn parse_bool(args: &[QueryResult]) -> crate::Result<Vec<Option<PathAwareValue>>> {
+pub(crate) fn parse_bool(args: &[QueryResult]) -> crate::Result<Vec<Option<PathAwareValue>>> {
     let mut aggr = vec![];
     for entry in args.iter() {
         match entry {
@@ -136,7 +136,7 @@ pub fn parse_bool(args: &[QueryResult]) -> crate::Result<Vec<Option<PathAwareVal
     Ok(aggr)
 }
 
-pub fn parse_str(args: &[QueryResult]) -> crate::Result<Vec<Option<PathAwareValue>>> {
+pub(crate) fn parse_str(args: &[QueryResult]) -> crate::Result<Vec<Option<PathAwareValue>>> {
     let mut aggr = vec![];
     for entry in args.iter() {
         match entry {
@@ -173,7 +173,7 @@ pub fn parse_str(args: &[QueryResult]) -> crate::Result<Vec<Option<PathAwareValu
     Ok(aggr)
 }
 
-pub fn parse_char(args: &[QueryResult]) -> crate::Result<Vec<Option<PathAwareValue>>> {
+pub(crate) fn parse_char(args: &[QueryResult]) -> crate::Result<Vec<Option<PathAwareValue>>> {
     let mut aggr = vec![];
     for entry in args.iter() {
         match entry {

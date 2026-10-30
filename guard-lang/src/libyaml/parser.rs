@@ -13,7 +13,7 @@ use std::{borrow::Cow, mem::MaybeUninit, ptr::addr_of_mut};
 
 use unsafe_libyaml as sys;
 
-pub struct Parser<'input> {
+pub(crate) struct Parser<'input> {
     pin: Owned<ParserPinned<'input>>,
 }
 

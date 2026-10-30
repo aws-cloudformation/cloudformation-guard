@@ -9,13 +9,13 @@ use crate::path_value::Location;
 #[allow(clippy::unsafe_removed_from_name)]
 use unsafe_libyaml as sys;
 
-pub struct Owned<T, Init = T> {
+pub(crate) struct Owned<T, Init = T> {
     ptr: NonNull<T>,
     marker: PhantomData<NonNull<Init>>,
 }
 
 impl<T> Owned<T> {
-    pub fn new_uninit() -> Owned<MaybeUninit<T>, T> {
+    pub(crate) fn new_uninit() -> Owned<MaybeUninit<T>, T> {
         // FIXME: use Box::new_uninit when stable
         let boxed = Box::new(MaybeUninit::<T>::uninit());
         Owned {
@@ -35,7 +35,7 @@ impl<T> Owned<T> {
 }
 
 #[repr(transparent)]
-pub struct InitPtr<T> {
+pub(crate) struct InitPtr<T> {
     pub ptr: *mut T,
 }
 
@@ -53,7 +53,7 @@ impl<T, Init> Drop for Owned<T, Init> {
     }
 }
 
-pub fn system_mark_to_location(mark: sys::yaml_mark_t) -> Location {
+pub(crate) fn system_mark_to_location(mark: sys::yaml_mark_t) -> Location {
     Location {
         line: mark.line as usize,
         col: mark.column as usize,

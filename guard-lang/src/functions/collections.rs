@@ -3,7 +3,7 @@ use crate::{
     QueryResult,
 };
 
-pub fn count(args: &[QueryResult]) -> PathAwareValue {
+pub(crate) fn count(args: &[QueryResult]) -> PathAwareValue {
     let count = args
         .iter()
         .filter(|query| !matches!(query, QueryResult::UnResolved(_)))

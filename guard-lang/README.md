@@ -31,10 +31,10 @@ let status = eval_rules_file(&rules, &mut scope, Some("template.json")).unwrap()
 assert_eq!(status, Status::PASS);
 ```
 
-The module paths published in 1.0.0 remain available for compatibility. New consumers should use the crate-root exports.
+The module paths and data types used by `cloudformation-validate` remain available. Other implementation details exposed by 1.0.0 are not part of the supported API.
 
 ## Compatibility
 
-The manually published 1.0.0 is a bootstrap release. Subsequent versions are assigned by the coordinated `cfn-guard` release workflow. The next release preserves the 1.0 source API and includes stricter policy-enforcement behavior from `cfn-guard` 3.2.1. Rules that previously passed or skipped when a comparison could not be evaluated may now fail closed. Consumers using a 1.x version requirement must update it to the coordinated Guard version to receive these fixes.
+The manually published 1.0.0 is a bootstrap release. Subsequent versions are assigned by the coordinated `cfn-guard` release workflow. The next release keeps the `cloudformation-validate` integration source-compatible and includes stricter policy-enforcement behavior from `cfn-guard` 3.2.1. Other 1.0 consumers may need to migrate to the crate-root entry points.
 
 The `junit` feature enables JUnit report support. It is disabled by default.

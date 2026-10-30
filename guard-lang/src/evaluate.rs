@@ -744,15 +744,14 @@ impl<'loc, T: Evaluate + 'loc> Evaluate for Conjunctions<T> {
         Ok(loop {
             let mut num_passes = 0;
             let mut num_fails = 0;
-            let is_guard_clause =
-                std::any::type_name::<T>() == std::any::type_name::<GuardClause>();
+            let item_name = std::any::type_name::<T>();
             'conjunction: for conjunction in self {
                 let mut num_of_disjunction_fails = 0;
-                let mut report = if is_guard_clause {
+                let mut report = if "cfn_guard::rules::exprs::GuardClause" == item_name {
                     Some(AutoReport::new(
                         EvaluationType::Conjunction,
                         var_resolver,
-                        "GuardClause",
+                        item_name,
                     ))
                 } else {
                     None
@@ -1067,7 +1066,7 @@ fn extract_variables<'s, 'loc>(
 #[derive(Debug)]
 #[deprecated]
 #[allow(dead_code)]
-pub struct RootScope<'s, 'loc> {
+pub(crate) struct RootScope<'s, 'loc> {
     rules: &'s RulesFile<'loc>,
     input_context: &'s PathAwareValue,
     pending_queries: HashMap<&'s str, &'s AccessQuery<'loc>>,
@@ -1079,7 +1078,7 @@ pub struct RootScope<'s, 'loc> {
 
 #[cfg(test)]
 impl<'s, 'loc> RootScope<'s, 'loc> {
-    pub fn new(rules: &'s RulesFile<'loc>, value: &'s PathAwareValue) -> Result<Self> {
+    pub(crate) fn new(rules: &'s RulesFile<'loc>, value: &'s PathAwareValue) -> Result<Self> {
         let mut literals = HashMap::new();
         let mut pending = HashMap::new();
         extract_variables(&rules.assignments, &mut literals, &mut pending)?;
@@ -1168,7 +1167,7 @@ impl<'s, 'loc> EvaluationContext for RootScope<'s, 'loc> {
 }
 
 #[allow(dead_code)]
-pub struct BlockScope<'s, T> {
+pub(crate) struct BlockScope<'s, T> {
     block_type: &'s Block<'s, T>,
     input_context: &'s PathAwareValue,
     pending_queries: HashMap<&'s str, &'s AccessQuery<'s>>,
@@ -1178,7 +1177,7 @@ pub struct BlockScope<'s, T> {
 }
 
 impl<'s, T> BlockScope<'s, T> {
-    pub fn new(
+    pub(crate) fn new(
         block_type: &'s Block<'s, T>,
         context: &'s PathAwareValue,
         parent: &'s dyn EvaluationContext,

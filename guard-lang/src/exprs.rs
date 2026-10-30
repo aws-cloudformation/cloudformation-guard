@@ -3,7 +3,6 @@ use crate::values::*;
 use crate::display::ValueOnlyDisplay;
 use crate::path_value::PathAwareValue;
 use serde::{Deserialize, Serialize};
-use std::convert::TryFrom;
 use std::fmt::Formatter;
 use std::hash::Hash;
 use std::rc::Rc;
@@ -11,11 +10,11 @@ use std::rc::Rc;
 use super::eval_context::FunctionName;
 
 #[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize, Hash)]
-pub struct FileLocation<'loc> {
-    pub line: u32,
-    pub column: u32,
+pub(crate) struct FileLocation<'loc> {
+    pub(crate) line: u32,
+    pub(crate) column: u32,
     #[serde(skip_serializing, skip_deserializing)]
-    pub file_name: &'loc str,
+    pub(crate) file_name: &'loc str,
 }
 
 impl<'loc> std::fmt::Display for FileLocation<'loc> {
@@ -29,7 +28,7 @@ impl<'loc> std::fmt::Display for FileLocation<'loc> {
 }
 
 #[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize, Hash)]
-pub enum LetValue<'loc> {
+pub(crate) enum LetValue<'loc> {
     Value(PathAwareValue),
     AccessClause(AccessQuery<'loc>),
     FunctionCall(FunctionExpr<'loc>),
@@ -39,12 +38,12 @@ pub enum LetValue<'loc> {
 /// This expression encapsulates assignment expressions inside a block expression
 /// or at the file let. An assignment can either be a direct Value object or access
 /// from incoming context. Access expressions support **predicate** queries to help
-/// match specific selections [crate::common::walk_type]
+/// match specific selections.
 ///
 #[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize, Hash)]
-pub struct LetExpr<'loc> {
-    pub var: String,
-    pub value: LetValue<'loc>,
+pub(crate) struct LetExpr<'loc> {
+    pub(crate) var: String,
+    pub(crate) value: LetValue<'loc>,
 }
 
 ///
@@ -69,12 +68,18 @@ pub enum QueryPart<'loc> {
     MapKeyFilter(Option<String>, MapKeyFilterClause<'loc>),
     AllValues(Option<String>),
     AllIndices(Option<String>),
-    Index(i32),
+    /// An array index as written in the rule, kept at the width the parser reads.
+    ///
+    /// `i32` before, narrowed with `as i32` at both parse sites, which wrapped instead of rejecting:
+    /// `Items[4294967296]` became `Items[0]` and the clause then compared the wrong element and
+    /// passed. Retrieval already reports an out-of-range index as unresolved, so widening is all that
+    /// is needed -- the bounds check does the rejecting.
+    Index(i64),
     Filter(Option<String>, Conjunctions<GuardClause<'loc>>),
 }
 
 impl<'loc> QueryPart<'loc> {
-    pub fn is_variable(&self) -> bool {
+    pub(crate) fn is_variable(&self) -> bool {
         let name = match self {
             QueryPart::Key(name) => name,
             _ => return false,
@@ -82,7 +87,7 @@ impl<'loc> QueryPart<'loc> {
         name.starts_with('%')
     }
 
-    pub fn variable(&self) -> Option<&str> {
+    pub(crate) fn variable(&self) -> Option<&str> {
         let name = match self {
             QueryPart::Key(name) => name,
             _ => return None,
@@ -142,15 +147,15 @@ pub struct AccessQuery<'loc> {
     pub match_all: bool,
 }
 
-//pub type AccessQuery<'loc> = Vec<QueryPart<'loc>>;
+//pub(crate) type AccessQuery<'loc> = Vec<QueryPart<'loc>>;
 
 #[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize, Hash)]
 pub struct AccessClause<'loc> {
-    pub query: AccessQuery<'loc>,
-    pub comparator: (CmpOperator, bool),
-    pub compare_with: Option<LetValue<'loc>>,
+    pub(crate) query: AccessQuery<'loc>,
+    pub(crate) comparator: (CmpOperator, bool),
+    pub(crate) compare_with: Option<LetValue<'loc>>,
     pub custom_message: Option<String>,
-    pub location: FileLocation<'loc>,
+    pub(crate) location: FileLocation<'loc>,
 }
 
 impl<'loc> Default for AccessClause<'loc> {
@@ -178,20 +183,28 @@ pub type Conjunctions<T> = Vec<Disjunctions<T>>;
 #[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize, Hash)]
 pub struct GuardAccessClause<'loc> {
     pub access_clause: AccessClause<'loc>,
-    pub negation: bool,
+    pub(crate) negation: bool,
 }
 
 #[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize, Hash)]
 pub struct MapKeyFilterClause<'loc> {
-    #[serde(
-        serialize_with = "serialize_map_key_comparator",
-        deserialize_with = "deserialize_map_key_comparator"
-    )]
-    pub comparator: (CmpOperator, bool),
-    pub compare_with: LetValue<'loc>,
+    pub(crate) comparator: MapKeyComparator,
+    pub(crate) compare_with: LetValue<'loc>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+/// The comparators a map key filter can be written with.
+///
+/// This field held a `(CmpOperator, bool)`, which can express every operator in the language while
+/// `map_keys_match` parses exactly these four. The gap was not free. `real_binary_operation` -- whose
+/// only caller is the map key filter -- carried arms for `Ge`, `Gt`, `Lt` and `Le` that no rules
+/// file could reach, and they recorded zero executions against a 288-clause matrix using those very
+/// operators. Dead code that looks live is worse than dead code that looks dead: the arms duplicate
+/// the comparison logic, so someone fixing a comparison bug would naturally edit the one calling
+/// `compare_ge` and see no effect anywhere.
+///
+/// Narrowing the type is what makes those arms impossible rather than merely unused, which is why
+/// this is an enum here instead of a comment there.
+#[derive(Eq, PartialEq, Debug, Clone, Copy, Serialize, Deserialize, Hash)]
 pub(crate) enum MapKeyComparator {
     Eq,
     NotEq,
@@ -199,108 +212,58 @@ pub(crate) enum MapKeyComparator {
     NotIn,
 }
 
-#[derive(Deserialize)]
-#[serde(untagged)]
-enum MapKeyComparatorRepresentation {
-    Named(MapKeyComparator),
-    Pair((CmpOperator, bool)),
-}
-
-impl TryFrom<(CmpOperator, bool)> for MapKeyComparator {
-    type Error = crate::Error;
-
-    fn try_from(comparator: (CmpOperator, bool)) -> crate::Result<Self> {
-        match comparator {
-            (CmpOperator::Eq, false) => Ok(Self::Eq),
-            (CmpOperator::Eq, true) => Ok(Self::NotEq),
-            (CmpOperator::In, false) => Ok(Self::In),
-            (CmpOperator::In, true) => Ok(Self::NotIn),
-            (operator, is_negated) => Err(crate::Error::IncompatibleError(format!(
-                "operator {operator} with negation={is_negated} is not valid in a map-key filter"
-            ))),
-        }
-    }
-}
-
 impl MapKeyComparator {
+    /// The wider pair, for the comparison records the reporters render.
     pub(crate) fn as_cmp_operator(self) -> (CmpOperator, bool) {
         match self {
-            Self::Eq => (CmpOperator::Eq, false),
-            Self::NotEq => (CmpOperator::Eq, true),
-            Self::In => (CmpOperator::In, false),
-            Self::NotIn => (CmpOperator::In, true),
+            MapKeyComparator::Eq => (CmpOperator::Eq, false),
+            MapKeyComparator::NotEq => (CmpOperator::Eq, true),
+            MapKeyComparator::In => (CmpOperator::In, false),
+            MapKeyComparator::NotIn => (CmpOperator::In, true),
         }
     }
 
+    /// Equality against more than one right-hand value is membership.
+    ///
+    /// `keys == %several` reads as "each key equals" and is evaluated as "is among", which is what
+    /// the `Eq`-with-multiple-values promotion has always done. Kept as a method so the rule is
+    /// stated once rather than inline in the evaluator.
     pub(crate) fn widened_for(self, rhs_count: usize) -> Self {
         match self {
-            Self::Eq if rhs_count > 1 => Self::In,
-            Self::NotEq if rhs_count > 1 => Self::NotIn,
+            MapKeyComparator::Eq if rhs_count > 1 => MapKeyComparator::In,
+            MapKeyComparator::NotEq if rhs_count > 1 => MapKeyComparator::NotIn,
             unchanged => unchanged,
         }
     }
 }
 
-fn serialize_map_key_comparator<S>(
-    comparator: &(CmpOperator, bool),
-    serializer: S,
-) -> std::result::Result<S::Ok, S::Error>
-where
-    S: serde::Serializer,
-{
-    match MapKeyComparator::try_from(*comparator) {
-        Ok(comparator) => comparator.serialize(serializer),
-        Err(_) => comparator.serialize(serializer),
-    }
-}
-
-fn deserialize_map_key_comparator<'de, D>(
-    deserializer: D,
-) -> std::result::Result<(CmpOperator, bool), D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    Ok(
-        match MapKeyComparatorRepresentation::deserialize(deserializer)? {
-            MapKeyComparatorRepresentation::Named(comparator) => comparator.as_cmp_operator(),
-            MapKeyComparatorRepresentation::Pair(comparator) => comparator,
-        },
-    )
-}
-
 #[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize, Hash)]
 pub struct GuardNamedRuleClause<'loc> {
-    pub dependent_rule: String,
-    pub negation: bool,
+    pub(crate) dependent_rule: String,
+    pub(crate) negation: bool,
     pub custom_message: Option<String>,
-    pub location: FileLocation<'loc>,
+    pub(crate) location: FileLocation<'loc>,
 }
 
 #[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize, Hash)]
 pub struct BlockGuardClause<'loc> {
-    pub query: AccessQuery<'loc>,
+    pub(crate) query: AccessQuery<'loc>,
     pub block: Block<'loc, GuardClause<'loc>>,
-    pub location: FileLocation<'loc>,
-    pub not_empty: bool,
-}
-
-#[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize, Hash)]
-pub struct WhenGuardBlockClause<'loc> {
-    pub conditions: WhenConditions<'loc>,
-    pub block: Block<'loc, GuardClause<'loc>>,
+    pub(crate) location: FileLocation<'loc>,
+    pub(crate) not_empty: bool,
 }
 
 #[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize, Hash)]
 pub struct ParameterizedNamedRuleClause<'loc> {
-    pub parameters: Vec<LetValue<'loc>>,
+    pub(crate) parameters: Vec<LetValue<'loc>>,
     pub named_rule: GuardNamedRuleClause<'loc>,
 }
 
 #[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize, Hash)]
-pub struct FunctionExpr<'loc> {
-    pub parameters: Vec<LetValue<'loc>>,
-    pub name: FunctionName,
-    pub location: FileLocation<'loc>,
+pub(crate) struct FunctionExpr<'loc> {
+    pub(crate) parameters: Vec<LetValue<'loc>>,
+    pub(crate) name: FunctionName,
+    pub(crate) location: FileLocation<'loc>,
 }
 
 #[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize, Hash)]
@@ -323,16 +286,16 @@ pub type WhenConditions<'loc> = Conjunctions<WhenGuardClause<'loc>>;
 
 #[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize, Hash)]
 pub struct Block<'loc, T> {
-    pub assignments: Vec<LetExpr<'loc>>,
+    pub(crate) assignments: Vec<LetExpr<'loc>>,
     pub conjunctions: Conjunctions<T>,
 }
 
 #[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize)]
 pub struct TypeBlock<'loc> {
-    pub type_name: String,
-    pub conditions: Option<WhenConditions<'loc>>,
+    pub(crate) type_name: String,
+    pub(crate) conditions: Option<WhenConditions<'loc>>,
     pub block: Block<'loc, GuardClause<'loc>>, // only contains access clauses
-    pub query: Vec<QueryPart<'loc>>,
+    pub(crate) query: Vec<QueryPart<'loc>>,
 }
 
 #[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize)]
@@ -345,27 +308,27 @@ pub enum RuleClause<'loc> {
 #[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize)]
 pub struct Rule<'loc> {
     pub rule_name: String,
-    pub conditions: Option<WhenConditions<'loc>>,
+    pub(crate) conditions: Option<WhenConditions<'loc>>,
     pub block: Block<'loc, RuleClause<'loc>>,
 }
 
 #[derive(PartialEq, Debug, Clone, Serialize, Deserialize)]
-pub struct ParameterizedRule<'loc> {
-    pub parameter_names: indexmap::IndexSet<String>,
-    pub rule: Rule<'loc>,
+pub(crate) struct ParameterizedRule<'loc> {
+    pub(crate) parameter_names: indexmap::IndexSet<String>,
+    pub(crate) rule: Rule<'loc>,
 }
 
 #[derive(PartialEq, Debug, Clone, Serialize, Deserialize)]
 pub struct RulesFile<'loc> {
     #[serde(with = "serde_yaml::with::singleton_map_recursive")]
-    pub assignments: Vec<LetExpr<'loc>>,
+    pub(crate) assignments: Vec<LetExpr<'loc>>,
     #[serde(with = "serde_yaml::with::singleton_map_recursive")]
     pub guard_rules: Vec<Rule<'loc>>,
     #[serde(with = "serde_yaml::with::singleton_map_recursive")]
-    pub parameterized_rules: Vec<ParameterizedRule<'loc>>,
+    pub(crate) parameterized_rules: Vec<ParameterizedRule<'loc>>,
 }
 
-pub struct SliceDisplay<'a, T: 'a>(pub &'a [T]);
+pub(crate) struct SliceDisplay<'a, T: 'a>(pub(crate) &'a [T]);
 impl<'a, T: std::fmt::Display + 'a> std::fmt::Display for SliceDisplay<'a, T> {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         let mut first = true;
@@ -469,49 +432,7 @@ impl<'loc> std::fmt::Display for LetValue<'loc> {
     }
 }
 
-pub fn display_comparator(cmp: (CmpOperator, bool)) -> String {
+pub(crate) fn display_comparator(cmp: (CmpOperator, bool)) -> String {
     let (op, not) = cmp;
     format!("{}{} ", if not { "not " } else { "" }, op)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[derive(Debug, PartialEq, serde::Serialize, serde::Deserialize)]
-    struct ComparatorRepresentation {
-        #[serde(
-            serialize_with = "serialize_map_key_comparator",
-            deserialize_with = "deserialize_map_key_comparator"
-        )]
-        comparator: (CmpOperator, bool),
-    }
-
-    #[test]
-    fn map_key_comparator_serialization_accepts_current_and_legacy_forms() {
-        let expected = ComparatorRepresentation {
-            comparator: (CmpOperator::Eq, false),
-        };
-        let serialized = serde_json::to_string(&expected).unwrap();
-        assert_eq!(serialized, r#"{"comparator":"Eq"}"#);
-        assert_eq!(
-            serde_json::from_str::<ComparatorRepresentation>(&serialized).unwrap(),
-            expected
-        );
-        assert_eq!(
-            serde_json::from_str::<ComparatorRepresentation>(r#"{"comparator":["Eq",false]}"#)
-                .unwrap(),
-            expected
-        );
-
-        let legacy = ComparatorRepresentation {
-            comparator: (CmpOperator::Gt, false),
-        };
-        let serialized = serde_json::to_string(&legacy).unwrap();
-        assert_eq!(serialized, r#"{"comparator":["Gt",false]}"#);
-        assert_eq!(
-            serde_json::from_str::<ComparatorRepresentation>(&serialized).unwrap(),
-            legacy
-        );
-    }
 }

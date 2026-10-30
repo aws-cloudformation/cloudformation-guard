@@ -6,7 +6,7 @@ use std::{
 };
 
 #[derive(Copy, Clone)]
-pub struct CStr<'a> {
+pub(crate) struct CStr<'a> {
     ptr: NonNull<u8>,
     marker: PhantomData<&'a [u8]>,
 }
@@ -23,7 +23,7 @@ impl<'a> CStr<'a> {
         }
     }
 
-    pub fn len(self) -> usize {
+    pub(crate) fn len(self) -> usize {
         let start = self.ptr.as_ptr();
         let mut end = start;
         unsafe {
@@ -34,7 +34,7 @@ impl<'a> CStr<'a> {
         }
     }
 
-    pub fn to_bytes(self) -> &'a [u8] {
+    pub(crate) fn to_bytes(self) -> &'a [u8] {
         let len = self.len();
         unsafe { slice::from_raw_parts(self.ptr.as_ptr(), len) }
     }
@@ -77,7 +77,7 @@ fn display_lossy(mut bytes: &[u8], formatter: &mut fmt::Formatter) -> fmt::Resul
     }
 }
 
-pub fn debug_lossy(mut bytes: &[u8], formatter: &mut fmt::Formatter) -> fmt::Result {
+pub(crate) fn debug_lossy(mut bytes: &[u8], formatter: &mut fmt::Formatter) -> fmt::Result {
     formatter.write_char('"')?;
 
     while !bytes.is_empty() {

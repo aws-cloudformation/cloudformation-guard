@@ -27,7 +27,7 @@ use std::vec::Vec;
 
 use super::functions::date_time::{now, parse_epoch};
 
-pub struct Scope<'value, 'loc: 'value> {
+pub(crate) struct Scope<'value, 'loc: 'value> {
     root: Rc<PathAwareValue>,
     resolved_variables: HashMap<&'value str, Vec<QueryResult>>,
     literals: HashMap<&'value str, Rc<PathAwareValue>>,
@@ -79,14 +79,14 @@ impl<'value, 'loc: 'value> RootScope<'value, 'loc> {
     }
 }
 
-pub struct BlockScope<'value, 'loc: 'value, 'eval> {
+pub(crate) struct BlockScope<'value, 'loc: 'value, 'eval> {
     scope: Scope<'value, 'loc>,
     parent: &'eval mut dyn EvalContext<'value, 'loc>,
 }
 
-pub struct ValueScope<'value, 'eval, 'loc: 'value> {
-    pub root: Rc<PathAwareValue>,
-    pub parent: &'eval mut dyn EvalContext<'value, 'loc>,
+pub(crate) struct ValueScope<'value, 'eval, 'loc: 'value> {
+    pub(crate) root: Rc<PathAwareValue>,
+    pub(crate) parent: &'eval mut dyn EvalContext<'value, 'loc>,
 }
 
 type ExtractedStatements<'value, 'loc> = (
@@ -125,6 +125,10 @@ fn retrieve_index(
     elements: &Vec<PathAwareValue>,
     query: &[QueryPart<'_>],
 ) -> QueryResult {
+    // `index_offset` rather than arithmetic here, for two reasons it records: negating `i64::MIN` is
+    // not representable, which used to panic in a debug build and wrap in release, and a negative index
+    // counts from the end rather than being its own magnitude. Pinned by
+    // `an_out_of_range_index_does_not_panic` and `a_negative_index_counts_back_from_the_end`.
     if let Some(check) = index_offset(index, elements.len()) {
         QueryResult::Resolved(Rc::new(elements[check].clone()))
     } else {
@@ -285,7 +289,7 @@ fn check_and_delegate<'value, 'loc: 'value>(
             conjunctions,
             eval_context,
             // Filter predicate: a selection test, not an assertion.
-            |gc, r| super::eval::eval_guard_clause_with_role(gc, r, super::eval::ClauseRole::Gate),
+            |gc, r| super::eval::eval_guard_clause(gc, r, super::eval::ClauseRole::Gate),
         ) {
             Ok(status) => {
                 eval_context.end_record(&context, RecordType::Filter(status))?;
@@ -442,9 +446,7 @@ fn query_retrieval_with_converter<'value, 'loc: 'value>(
                                     QueryPart::AllIndices(_) | QueryPart::Key(_) => (keys, query_index + 1),
                                     QueryPart::Index(index) => {
                                         // See `index_offset` for why this is not arithmetic.
-                                        if let Some(check) =
-                                            index_offset(i64::from(*index), keys.len())
-                                        {
+                                        if let Some(check) = index_offset(*index, keys.len()) {
                                             (vec![keys[check].clone()], query_index + 2)
                                         } else {
                                             return to_unresolved_result(
@@ -605,7 +607,7 @@ fn query_retrieval_with_converter<'value, 'loc: 'value>(
         QueryPart::Index(index) => match &*current {
             PathAwareValue::List((_, list)) => map_resolved(
                 &current,
-                retrieve_index(Rc::clone(&current), i64::from(*index), list, query),
+                retrieve_index(Rc::clone(&current), *index, list, query),
                 |val| {
                     query_retrieval_with_converter(query_index + 1, query, val, resolver, converter)
                 },
@@ -786,11 +788,7 @@ fn query_retrieval_with_converter<'value, 'loc: 'value>(
                         // assertion, so an unevaluatable clause makes the filter
                         // select nothing rather than fail.
                         |gc, r| {
-                            super::eval::eval_guard_clause_with_role(
-                                gc,
-                                r,
-                                super::eval::ClauseRole::Gate,
-                            )
+                            super::eval::eval_guard_clause(gc, r, super::eval::ClauseRole::Gate)
                         },
                     ) {
                         Ok(status) => {
@@ -830,11 +828,7 @@ fn query_retrieval_with_converter<'value, 'loc: 'value>(
                         // assertion, so an unevaluatable clause makes the filter
                         // select nothing rather than fail.
                         |gc, r| {
-                            super::eval::eval_guard_clause_with_role(
-                                gc,
-                                r,
-                                super::eval::ClauseRole::Gate,
-                            )
+                            super::eval::eval_guard_clause(gc, r, super::eval::ClauseRole::Gate)
                         },
                     ) {
                         Ok(status) => match status {
@@ -986,7 +980,7 @@ pub fn root_scope<'value, 'loc: 'value>(
     )
 }
 
-pub fn root_scope_with<'value, 'loc: 'value>(
+pub(crate) fn root_scope_with<'value, 'loc: 'value>(
     literals: HashMap<&'value str, Rc<PathAwareValue>>,
     queries: HashMap<&'value str, &'value AccessQuery<'loc>>,
     lookup_cache: HashMap<&'value str, Vec<&'value Rule<'loc>>>,
@@ -1014,7 +1008,7 @@ pub fn root_scope_with<'value, 'loc: 'value>(
     }
 }
 
-pub fn block_scope<'value, 'block, 'loc: 'value, 'eval, T>(
+pub(crate) fn block_scope<'value, 'block, 'loc: 'value, 'eval, T>(
     block: &'value Block<'loc, T>,
     root: Rc<PathAwareValue>,
     parent: &'eval mut dyn EvalContext<'value, 'loc>,
@@ -1033,15 +1027,14 @@ pub fn block_scope<'value, 'block, 'loc: 'value, 'eval, T>(
     }
 }
 
-#[derive(Default)]
 pub struct RecordTracker<'value> {
-    pub events: Vec<EventRecord<'value>>,
+    pub(crate) events: Vec<EventRecord<'value>>,
     pub final_event: Option<EventRecord<'value>>,
 }
 
 impl<'value> RecordTracker<'value> {
     #[cfg(test)]
-    pub fn new() -> RecordTracker<'value> {
+    pub(crate) fn new() -> RecordTracker<'value> {
         RecordTracker {
             events: vec![],
             final_event: None,
@@ -1135,12 +1128,8 @@ impl<'value, 'loc: 'value> EvalContext<'value, 'loc> for RootScope<'value, 'loc>
         Rc::clone(&self.scope.root)
     }
 
-    fn rule_status(&mut self, rule_name: &'value str) -> Result<Status> {
-        self.rule_status_with_role(rule_name, super::eval::ClauseRole::Assertion)
-    }
-
     #[allow(clippy::never_loop)]
-    fn rule_status_with_role(
+    fn rule_status(
         &mut self,
         rule_name: &'value str,
         role: super::eval::ClauseRole,
@@ -1178,7 +1167,7 @@ impl<'value, 'loc: 'value> EvalContext<'value, 'loc> for RootScope<'value, 'loc>
                 // strictness the *reference* deserves: a failure when the reference is an
                 // assertion, inapplicable when it is a gate. That is exactly the
                 // Unevaluatable split `Outcome::to_status` describes.
-                let status = super::eval::eval_rule_with_role(each_rule, self, role)?;
+                let status = super::eval::eval_rule(each_rule, self, role)?;
                 if status != SKIP {
                     break 'done status;
                 }
@@ -1258,7 +1247,7 @@ impl<'value, 'loc: 'value> EvalContext<'value, 'loc> for RootScope<'value, 'loc>
 
 #[derive(Eq, PartialEq, Debug, Clone, Serialize, Deserialize, Hash)]
 #[serde(rename_all = "snake_case")]
-pub enum FunctionName {
+pub(crate) enum FunctionName {
     Count,
     Join,
     JsonParse,
@@ -1598,16 +1587,12 @@ impl<'value, 'loc: 'value, 'eval> EvalContext<'value, 'loc> for ValueScope<'valu
         Rc::clone(&self.root)
     }
 
-    fn rule_status(&mut self, rule_name: &'value str) -> Result<Status> {
-        self.parent.rule_status(rule_name)
-    }
-
-    fn rule_status_with_role(
+    fn rule_status(
         &mut self,
         rule_name: &'value str,
         role: super::eval::ClauseRole,
     ) -> Result<Status> {
-        self.parent.rule_status_with_role(rule_name, role)
+        self.parent.rule_status(rule_name, role)
     }
 
     fn resolve_variable(&mut self, variable_name: &'value str) -> Result<Vec<QueryResult>> {
@@ -1653,16 +1638,12 @@ impl<'value, 'loc: 'value, 'eval> EvalContext<'value, 'loc> for BlockScope<'valu
         Rc::clone(&self.scope.root)
     }
 
-    fn rule_status(&mut self, rule_name: &'value str) -> Result<Status> {
-        self.parent.rule_status(rule_name)
-    }
-
-    fn rule_status_with_role(
+    fn rule_status(
         &mut self,
         rule_name: &'value str,
         role: super::eval::ClauseRole,
     ) -> Result<Status> {
-        self.parent.rule_status_with_role(rule_name, role)
+        self.parent.rule_status(rule_name, role)
     }
 
     fn resolve_variable(&mut self, variable_name: &'value str) -> Result<Vec<QueryResult>> {
@@ -1823,6 +1804,11 @@ pub struct FileReport<'value> {
     #[serde(with = "serde_yaml::with::singleton_map_recursive")]
     pub not_compliant: Vec<ClauseReport<'value>>,
     pub not_applicable: BTreeSet<String>,
+    /// Why each inapplicable rule did not apply, for the ones where the evaluator knows something
+    /// a bare "not applicable" does not convey. Omitted when empty, so a run with nothing to
+    /// explain serialises to exactly the document consumers parse today.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub not_applicable_reasons: BTreeMap<String, String>,
     pub compliant: BTreeSet<String>,
 }
 
@@ -1836,6 +1822,8 @@ impl<'value> FileReport<'value> {
         self.not_compliant.extend(report.not_compliant);
         self.compliant.extend(report.compliant);
         self.not_applicable.extend(report.not_applicable);
+        self.not_applicable_reasons
+            .extend(report.not_applicable_reasons);
     }
 }
 
@@ -2659,26 +2647,12 @@ fn report_all_failed_clauses_for_rules<'value>(
     clauses
 }
 
-#[doc(hidden)]
-pub fn not_applicable_reasons(root: &EventRecord<'_>) -> BTreeMap<String, String> {
-    root.children
-        .iter()
-        .filter_map(|rule_record| match &rule_record.container {
-            Some(RecordType::RuleCheck(NamedStatus {
-                name,
-                status: Status::SKIP,
-                ..
-            })) => find_skip_reason(rule_record).map(|reason| (name.to_string(), reason)),
-            _ => None,
-        })
-        .collect()
-}
-
 pub fn simplified_json_from_root<'value>(root: &EventRecord<'value>) -> Result<FileReport<'value>> {
     Ok(match &root.container {
         Some(RecordType::FileCheck(NamedStatus { name, status, .. })) => {
             let mut pass: BTreeSet<String> = BTreeSet::new();
             let mut skip: BTreeSet<String> = BTreeSet::new();
+            let mut skip_reasons: BTreeMap<String, String> = BTreeMap::new();
             for each in &root.children {
                 if let Some(RecordType::RuleCheck(NamedStatus { status, name, .. })) =
                     &each.container
@@ -2689,6 +2663,9 @@ pub fn simplified_json_from_root<'value>(root: &EventRecord<'value>) -> Result<F
                         }
                         SKIP => {
                             skip.insert(name.to_string());
+                            if let Some(reason) = find_skip_reason(each) {
+                                skip_reasons.insert(name.to_string(), reason);
+                            }
                         }
                         _ => {}
                     }
@@ -2699,6 +2676,7 @@ pub fn simplified_json_from_root<'value>(root: &EventRecord<'value>) -> Result<F
                 name,
                 not_compliant: report_all_failed_clauses_for_rules(&root.children),
                 not_applicable: skip,
+                not_applicable_reasons: skip_reasons,
                 compliant: pass,
                 ..Default::default()
             }
@@ -2707,7 +2685,7 @@ pub fn simplified_json_from_root<'value>(root: &EventRecord<'value>) -> Result<F
     })
 }
 
-pub fn resolve_function<'value, 'eval, 'loc: 'value>(
+pub(crate) fn resolve_function<'value, 'eval, 'loc: 'value>(
     name: &FunctionName,
     parameters: &'value [LetValue<'loc>],
     resolver: &'eval mut dyn EvalContext<'value, 'loc>,
@@ -2747,6 +2725,7 @@ pub fn resolve_function<'value, 'eval, 'loc: 'value>(
 //
 // https://vallentin.dev/2019/05/14/pretty-print-tree
 //
+#[cfg(test)]
 #[allow(clippy::uninlined_format_args)]
 fn pprint_tree(
     current: &EventRecord<'_>,
@@ -2768,10 +2747,11 @@ fn pprint_tree(
     }
 }
 
-pub fn print_verbose_tree(root: &EventRecord<'_>, writer: &mut dyn std::io::Write) {
+#[cfg(test)]
+pub(crate) fn print_verbose_tree(root: &EventRecord<'_>, writer: &mut dyn std::io::Write) {
     pprint_tree(root, "".to_string(), true, writer);
 }
 
 #[cfg(test)]
 #[path = "eval_context_tests.rs"]
-pub mod eval_context_tests;
+pub(super) mod eval_context_tests;

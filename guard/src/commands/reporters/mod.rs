@@ -17,7 +17,7 @@ use crate::{
     rules::{
         self,
         eval::eval_rules_file,
-        eval_context::{not_applicable_reasons, root_scope, simplified_json_from_root, Messages},
+        eval_context::{root_scope, simplified_json_from_root, Messages},
         exprs::RulesFile,
         Status,
     },
@@ -112,7 +112,6 @@ fn get_test_case<'rule>(
     let mut root_scope = root_scope(rule, Rc::new(data.path_value.clone()));
     let status = eval_rules_file(rule, &mut root_scope, Some(&data.name))?;
     let root_record = root_scope.reset_recorder().extract();
-    let skip_reasons = not_applicable_reasons(&root_record);
     let time = now.elapsed().as_millis();
 
     let tc = match simplified_json_from_root(&root_record) {
@@ -156,7 +155,8 @@ fn get_test_case<'rule>(
                     // `status="skip"` and nothing else, which is indistinguishable from a rule that
                     // was simply not selected.
                     Status::SKIP => TestCaseStatus::Skip {
-                        reasons: skip_reasons
+                        reasons: report
+                            .not_applicable_reasons
                             .iter()
                             .map(|(rule, reason)| format!("{}: {}", rule, reason))
                             .collect(),

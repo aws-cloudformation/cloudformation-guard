@@ -1,4 +1,4 @@
-pub mod collections;
+pub(crate) mod collections;
 pub mod converters;
 pub mod date_time;
-pub mod strings;
+pub(crate) mod strings;

@@ -5,9 +5,9 @@ use crate::path_value::*;
 use crate::{CmpOperator, QueryResult, UnResolved};
 
 #[derive(Clone, Debug)]
-pub struct LhsRhsPair {
-    pub lhs: Rc<PathAwareValue>,
-    pub rhs: Rc<PathAwareValue>,
+pub(crate) struct LhsRhsPair {
+    pub(crate) lhs: Rc<PathAwareValue>,
+    pub(crate) rhs: Rc<PathAwareValue>,
 }
 
 impl LhsRhsPair {
@@ -17,10 +17,10 @@ impl LhsRhsPair {
 }
 
 #[derive(Clone, Debug)]
-pub struct QueryIn {
-    pub diff: Vec<Rc<PathAwareValue>>,
-    pub lhs: Vec<Rc<PathAwareValue>>,
-    pub rhs: Vec<Rc<PathAwareValue>>,
+pub(crate) struct QueryIn {
+    pub(crate) diff: Vec<Rc<PathAwareValue>>,
+    pub(crate) lhs: Vec<Rc<PathAwareValue>>,
+    pub(crate) rhs: Vec<Rc<PathAwareValue>>,
 }
 
 impl QueryIn {
@@ -34,10 +34,10 @@ impl QueryIn {
 }
 
 #[derive(Clone, Debug)]
-pub struct ListIn {
-    pub diff: Vec<Rc<PathAwareValue>>,
-    pub lhs: Rc<PathAwareValue>,
-    pub rhs: Rc<PathAwareValue>,
+pub(crate) struct ListIn {
+    pub(crate) diff: Vec<Rc<PathAwareValue>>,
+    pub(crate) lhs: Rc<PathAwareValue>,
+    pub(crate) rhs: Rc<PathAwareValue>,
 }
 
 impl ListIn {
@@ -51,7 +51,7 @@ impl ListIn {
 }
 
 #[derive(Clone, Debug)]
-pub enum Compare {
+pub(crate) enum Compare {
     Value(LhsRhsPair),
     QueryIn(QueryIn),
     ListIn(ListIn),
@@ -59,7 +59,7 @@ pub enum Compare {
 }
 
 #[derive(Clone, Debug)]
-pub enum ComparisonResult {
+pub(crate) enum ComparisonResult {
     Success(Compare),
     Fail(Compare),
     NotComparable(NotComparable),
@@ -67,13 +67,13 @@ pub enum ComparisonResult {
 }
 
 #[derive(Clone, Debug)]
-pub enum ValueEvalResult {
+pub(crate) enum ValueEvalResult {
     LhsUnresolved(UnResolved),
     ComparisonResult(ComparisonResult),
 }
 
 impl ValueEvalResult {
-    pub fn fail<C>(self, c: C) -> ValueEvalResult
+    pub(crate) fn fail<C>(self, c: C) -> ValueEvalResult
     where
         C: FnOnce(ValueEvalResult) -> ValueEvalResult,
     {
@@ -86,7 +86,7 @@ impl ValueEvalResult {
 }
 
 #[derive(Clone, Debug)]
-pub enum EvalResult {
+pub(crate) enum EvalResult {
     Skip,
     /// The left-hand side resolved to values but the right-hand side resolved to
     /// nothing, so there was no reference to compare against. Only produced by the
@@ -103,18 +103,13 @@ pub enum EvalResult {
 }
 
 #[derive(Clone, Debug)]
-pub struct NotComparable {
-    pub reason: String,
-    pub pair: LhsRhsPair,
+pub(crate) struct NotComparable {
+    pub(crate) reason: String,
+    pub(crate) pair: LhsRhsPair,
 }
 
-pub trait Comparator {
+pub(crate) trait Comparator {
     fn compare(&self, lhs: &[QueryResult], rhs: &[QueryResult]) -> crate::Result<EvalResult>;
-}
-
-#[allow(dead_code)]
-pub trait UnaryComparator {
-    fn compare(&self, lhs: &[QueryResult]) -> crate::Result<EvalResult>;
 }
 
 struct CommonOperator {

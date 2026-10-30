@@ -6,7 +6,7 @@ use crate::{BlockCheck, ClauseCheck, QueryResult, RecordType, Status};
 use std::fmt::{Display, Formatter};
 use std::rc::Rc;
 
-pub fn display_comparison((cmp, not): (CmpOperator, bool)) -> String {
+pub(crate) fn display_comparison((cmp, not): (CmpOperator, bool)) -> String {
     format!("{} {}", if not { "not" } else { "" }, cmp)
 }
 

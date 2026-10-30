@@ -239,7 +239,7 @@ pub struct RangeType<T: PartialOrd> {
 pub const LOWER_INCLUSIVE: u8 = 0x01;
 pub const UPPER_INCLUSIVE: u8 = 0x01 << 1;
 
-pub trait WithinRange<RHS: PartialOrd = Self> {
+pub(crate) trait WithinRange<RHS: PartialOrd = Self> {
     fn is_within(&self, range: &RangeType<RHS>) -> bool;
 }
 
@@ -422,7 +422,7 @@ pub enum MarkedValue {
 }
 
 impl MarkedValue {
-    pub fn location(&self) -> &Location {
+    pub(crate) fn location(&self) -> &Location {
         match self {
             Self::Null(loc)
             | Self::BadValue(_, loc)

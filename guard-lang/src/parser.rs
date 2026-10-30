@@ -32,18 +32,18 @@ use crate::values::*;
 pub type Span<'a> = LocatedSpan<&'a str, &'a str>;
 const DEFAULT_RULE_NAME: &str = "default";
 
-pub fn from_str2(in_str: &str) -> Span<'_> {
+pub(crate) fn from_str2(in_str: &str) -> Span<'_> {
     Span::new_extra(in_str, "")
 }
 
 #[derive(Clone, PartialEq, Debug)]
-pub struct ParserError<'a> {
-    pub context: String,
-    pub span: Span<'a>,
-    pub kind: ErrorKind,
+pub(crate) struct ParserError<'a> {
+    context: String,
+    span: Span<'a>,
+    kind: ErrorKind,
 }
 
-pub type IResult<'a, I, O> = nom::IResult<I, O, ParserError<'a>>;
+pub(crate) type IResult<'a, I, O> = nom::IResult<I, O, ParserError<'a>>;
 
 impl<'a> nom::error::ContextError<Span<'a>> for ParserError<'a> {
     fn add_context(input: Span<'a>, ctx: &'static str, other: Self) -> Self {
@@ -107,7 +107,7 @@ impl<'a> std::fmt::Display for ParserError<'a> {
 //                                                                                                //
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-pub fn comment2(input: Span) -> IResult<Span, Span> {
+pub(crate) fn comment2(input: Span) -> IResult<Span, Span> {
     delimited(char('#'), take_till(|c| c == '\n'), multispace0)(input)
 }
 //
@@ -119,7 +119,7 @@ pub fn comment2(input: Span) -> IResult<Span, Span> {
 // Expected error codes: (remember alt returns the error from the last one)
 //    nom::error::ErrorKind::Char => if the comment does not start with '#'
 //
-pub fn white_space_or_comment(input: Span) -> IResult<Span, ()> {
+pub(crate) fn white_space_or_comment(input: Span) -> IResult<Span, ()> {
     value((), alt((multispace1, comment2)))(input)
 }
 
@@ -128,7 +128,7 @@ pub fn white_space_or_comment(input: Span) -> IResult<Span, ()> {
 // failure when this isn't the case. Consumers of this combinator must use
 // cut or handle it as a failure if that is the right outcome
 //
-pub fn one_or_more_ws_or_comment(input: Span) -> IResult<Span, ()> {
+pub(crate) fn one_or_more_ws_or_comment(input: Span) -> IResult<Span, ()> {
     value((), many1(white_space_or_comment))(input)
 }
 
@@ -136,23 +136,23 @@ pub fn one_or_more_ws_or_comment(input: Span) -> IResult<Span, ()> {
 // This provides extract for *(LWSP / comment), same as above but this one never
 // errors out
 //
-pub fn zero_or_more_ws_or_comment(input: Span) -> IResult<Span, ()> {
+pub(crate) fn zero_or_more_ws_or_comment(input: Span) -> IResult<Span, ()> {
     value((), many0(white_space_or_comment))(input)
 }
 
-pub fn white_space(ch: char) -> impl Fn(Span) -> IResult<Span, char> {
+pub(crate) fn white_space(ch: char) -> impl Fn(Span) -> IResult<Span, char> {
     move |input: Span| preceded(zero_or_more_ws_or_comment, char(ch))(input)
 }
 
-pub fn preceded_by(ch: char) -> impl Fn(Span) -> IResult<Span, char> {
+pub(crate) fn preceded_by(ch: char) -> impl Fn(Span) -> IResult<Span, char> {
     white_space(ch)
 }
 
-pub fn separated_by(ch: char) -> impl Fn(Span) -> IResult<Span, char> {
+pub(crate) fn separated_by(ch: char) -> impl Fn(Span) -> IResult<Span, char> {
     white_space(ch)
 }
 
-pub fn followed_by(ch: char) -> impl Fn(Span) -> IResult<Span, char> {
+pub(crate) fn followed_by(ch: char) -> impl Fn(Span) -> IResult<Span, char> {
     white_space(ch)
 }
 
@@ -211,9 +211,7 @@ fn keyword<'a>(word: &'static str) -> impl Fn(Span<'a>) -> IResult<'a, Span<'a>,
     }
 }
 
-#[doc(hidden)]
-#[deprecated(note = "use rules_file to parse Guard source")]
-pub fn parse_int_value(input: Span) -> IResult<Span, Value> {
+pub(crate) fn parse_int_value(input: Span) -> IResult<Span, Value> {
     let negative = map_res(preceded(tag("-"), digit1), |s: Span| {
         s.fragment().parse::<i64>().map(|i| Value::Int(-i))
     });
@@ -255,7 +253,7 @@ fn parse_string_inner(ch: char) -> impl Fn(Span) -> IResult<Span, Value> {
     }
 }
 
-pub fn parse_string(input: Span) -> IResult<Span, Value> {
+pub(crate) fn parse_string(input: Span) -> IResult<Span, Value> {
     alt((parse_string_inner('\''), parse_string_inner('\"')))(input)
     //    map(
     //        alt((
@@ -497,7 +495,7 @@ fn parse_null(input: Span) -> IResult<Span, Value> {
     )(input)
 }
 
-pub fn parse_value(input: Span) -> IResult<Span, Value> {
+pub(crate) fn parse_value(input: Span) -> IResult<Span, Value> {
     preceded(
         zero_or_more_ws_or_comment,
         alt((
@@ -628,7 +626,7 @@ pub fn parse_value(input: Span) -> IResult<Span, Value> {
 // Expected error codes:
 //    nom::error::ErrorKind::Alpha => if the input does not start with a char
 //
-pub fn var_name(input: Span) -> IResult<Span, String> {
+pub(crate) fn var_name(input: Span) -> IResult<Span, String> {
     let (remainder, first_part) = alpha1(input)?;
     let (remainder, next_part) = take_while(|c: char| c.is_alphanumeric() || c == '_')(remainder)?;
     let mut var_name = (*first_part.fragment()).to_string();
@@ -647,7 +645,7 @@ pub fn var_name(input: Span) -> IResult<Span, String> {
 //
 //  see var_name for other error codes
 //
-pub fn var_name_access(input: Span) -> IResult<Span, String> {
+pub(crate) fn var_name_access(input: Span) -> IResult<Span, String> {
     preceded(char('%'), var_name)(input)
 }
 
@@ -752,7 +750,7 @@ fn is_type_operations(input: Span) -> IResult<Span, CmpOperator> {
     ))(input)
 }
 
-pub fn value_cmp(input: Span) -> IResult<Span, (CmpOperator, bool)> {
+pub(crate) fn value_cmp(input: Span) -> IResult<Span, (CmpOperator, bool)> {
     //
     // This is really crappy as the earlier version used << for custom message
     // delimiter. '<' can be interpreted as Lt comparator.
@@ -803,7 +801,7 @@ fn custom_message(input: Span<'_>) -> IResult<'_, Span<'_>, &str> {
     delimited(tag("<<"), extract_message, tag(">>"))(input)
 }
 
-pub fn does_comparator_have_rhs(op: &CmpOperator) -> bool {
+pub(crate) fn does_comparator_have_rhs(op: &CmpOperator) -> bool {
     !op.is_unary()
 }
 
@@ -821,28 +819,19 @@ fn predicate_filter_clauses(input: Span) -> IResult<Span, QueryPart> {
     Ok((input, QueryPart::Filter(var, filters)))
 }
 
-fn query_index(input: Span) -> IResult<Span, QueryPart> {
-    let (remaining, value) = parse_int_value(input)?;
-    let Value::Int(index) = value else {
-        unreachable!()
-    };
-    match i32::try_from(index) {
-        Ok(index) => Ok((remaining, QueryPart::Index(index))),
-        Err(_) => Err(nom::Err::Failure(ParserError {
-            context: "array index is outside the supported i32 range".to_string(),
-            kind: ErrorKind::Digit,
-            span: input,
-        })),
-    }
-}
-
 fn dotted_property(input: Span) -> IResult<Span, QueryPart> {
     preceded(
         zero_or_more_ws_or_comment,
         preceded(
             char('.'),
             alt((
-                query_index,
+                map(parse_int_value, |idx| {
+                    let idx = match idx {
+                        Value::Int(i) => i,
+                        _ => unreachable!(),
+                    };
+                    QueryPart::Index(idx)
+                }),
                 map(property_name, QueryPart::Key),
                 map(var_name_access_inclusive, QueryPart::Key),
                 value(QueryPart::AllValues(None), char('*')),
@@ -873,7 +862,16 @@ fn all_indices(input: Span) -> IResult<Span, QueryPart> {
 }
 
 fn array_index(input: Span) -> IResult<Span, QueryPart> {
-    delimited(open_array, query_index, cut(close_array))(input)
+    map(
+        delimited(open_array, parse_int_value, cut(close_array)),
+        |idx| {
+            let idx = match idx {
+                Value::Int(i) => i,
+                _ => unreachable!(),
+            };
+            QueryPart::Index(idx)
+        },
+    )(input)
 }
 
 fn map_key_lookup(input: Span) -> IResult<Span, QueryPart> {
@@ -903,15 +901,16 @@ fn map_keys_match(input: Span) -> IResult<Span, QueryPart> {
     let (input, _open) = open_array(input)?;
     let (input, var) = opt(variable_capture_in_map_or_index)(input)?;
     let (input, _keys) = preceded(zero_or_more_ws_or_comment, keys)(input)?;
-    // The four comparator forms accepted by a key filter. Keep the published tuple representation
-    // while the evaluator converts it into its narrower internal enum.
+    // The four comparators a key filter accepts. `MapKeyComparator` exists so this list and the
+    // evaluator cannot disagree: anything absent here is unrepresentable downstream rather than an
+    // unreachable match arm.
     let (input, cmp) = cut(preceded(
         zero_or_more_ws_or_comment,
         alt((
-            value((CmpOperator::Eq, false), tag("==")),
-            value((CmpOperator::Eq, true), tag("!=")),
-            value((CmpOperator::In, false), in_keyword),
-            value((CmpOperator::In, true), tuple((not, in_keyword))),
+            value(MapKeyComparator::Eq, tag("==")),
+            value(MapKeyComparator::NotEq, tag("!=")),
+            value(MapKeyComparator::In, in_keyword),
+            map(tuple((not, in_keyword)), |_m| MapKeyComparator::NotIn),
         )),
     ))(input)?;
     let (input, with) = cut(preceded(
@@ -1011,7 +1010,7 @@ fn this_keyword(input: Span) -> IResult<Span, QueryPart> {
 //
 //   access     =   (var_name / var_name_access) [dotted_access]
 //
-pub fn access(input: Span) -> IResult<Span, AccessQuery> {
+pub(crate) fn access(input: Span) -> IResult<Span, AccessQuery> {
     map(
         tuple((
             opt(some_keyword),
@@ -1145,7 +1144,7 @@ where
     clause_with_map(input, access, GuardClause::Clause)
 }
 
-pub fn block_clause(input: Span) -> IResult<Span, GuardClause> {
+pub(crate) fn block_clause(input: Span) -> IResult<Span, GuardClause> {
     let location = FileLocation {
         file_name: input.extra,
         line: input.location_line(),
@@ -1210,7 +1209,7 @@ fn function_expr(input: Span) -> IResult<Span, FunctionExpr> {
     ))
 }
 
-pub fn let_value(input: Span) -> IResult<Span, LetValue> {
+pub(crate) fn let_value(input: Span) -> IResult<Span, LetValue> {
     preceded(
         zero_or_more_ws_or_comment,
         alt((
@@ -1234,7 +1233,9 @@ fn call_expr(input: Span) -> IResult<Span, (String, Vec<LetValue>)> {
     ))(input)
 }
 
-pub fn parameterized_rule_call_clause(input: Span) -> IResult<Span, ParameterizedNamedRuleClause> {
+pub(crate) fn parameterized_rule_call_clause(
+    input: Span,
+) -> IResult<Span, ParameterizedNamedRuleClause> {
     let location = FileLocation {
         file_name: input.extra,
         line: input.location_line(),
@@ -1652,7 +1653,7 @@ where
     }
 }
 
-pub fn type_name(input: Span) -> IResult<Span, TypeName> {
+pub(crate) fn type_name(input: Span) -> IResult<Span, TypeName> {
     match tuple((
         terminated(var_name, tag("::")),
         terminated(var_name, tag("::")),
@@ -2138,8 +2139,8 @@ impl<'a> TryFrom<&'a str> for RulesFile<'a> {
 }
 
 #[derive(Ord, Eq, PartialEq, PartialOrd, Debug, Clone, Hash)]
-pub struct TypeName {
-    pub type_name: String,
+pub(crate) struct TypeName {
+    type_name: String,
 }
 impl Display for TypeName {
     fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {

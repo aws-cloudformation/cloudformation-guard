@@ -23,11 +23,11 @@ pub struct Loader {
 }
 
 impl Loader {
-    pub fn new() -> Loader {
+    pub(crate) fn new() -> Loader {
         Loader::default()
     }
 
-    pub fn load(&mut self, content: String) -> crate::Result<MarkedValue> {
+    pub(crate) fn load(&mut self, content: String) -> crate::Result<MarkedValue> {
         let mut parser = Parser::new(Cow::Borrowed(content.as_bytes()));
 
         loop {

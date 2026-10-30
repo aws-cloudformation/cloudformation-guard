@@ -12,8 +12,7 @@ use lazy_static::lazy_static;
 use crate::{
     commands::{
         reporters::validate::common::{
-            populate_hierarchy_path_trees, FileReportWithReasons, IdentityHash, LocalResourceAggr,
-            PathTree, RuleHierarchy,
+            populate_hierarchy_path_trees, IdentityHash, LocalResourceAggr, PathTree, RuleHierarchy,
         },
         tracker::StatusContext,
         validate::{OutputFormatType, Reporter},
@@ -23,8 +22,8 @@ use crate::{
         display::ValueOnlyDisplay,
         errors::InternalError::UnresolvedKeyForReporter,
         eval_context::{
-            BinaryComparison, ClauseReport, EventRecord, FileReport, InComparison, RuleReport,
-            UnaryComparison,
+            simplified_json_from_root, BinaryComparison, ClauseReport, EventRecord, FileReport,
+            InComparison, RuleReport, UnaryComparison,
         },
         path_value::{
             traversal::{Node, Traversal, TraversalResult},
@@ -97,7 +96,7 @@ impl<'reporter> Reporter for CfnAware<'reporter> {
         let root = data.root().unwrap();
 
         if data.at("/Resources", root).is_ok() {
-            let failure_report = FileReportWithReasons::from_record(root_record)?;
+            let failure_report = simplified_json_from_root(root_record)?;
             match output_type {
                 OutputFormatType::YAML => serde_yaml::to_writer(write, &failure_report)?,
                 OutputFormatType::JSON => serde_json::to_writer_pretty(write, &failure_report)?,
@@ -108,7 +107,7 @@ impl<'reporter> Reporter for CfnAware<'reporter> {
                         data_file_bytes,
                         rules_file,
                         data,
-                        failure_report.report,
+                        failure_report,
                     ) {
                         Err(crate::Error::InternalError(_)) => {
                             self.next.map_or(Ok(()), |next| {

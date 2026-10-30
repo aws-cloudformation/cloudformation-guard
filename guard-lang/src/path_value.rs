@@ -34,7 +34,7 @@ pub struct Location {
 
 impl Location {
     #[cfg(test)]
-    pub fn new(line: usize, col: usize) -> Self {
+    pub(crate) fn new(line: usize, col: usize) -> Self {
         Location { line, col }
     }
 }
@@ -50,11 +50,11 @@ pub struct Path(pub String, pub Location);
 
 impl Path {
     #[cfg(test)]
-    pub fn new(path: String, line: usize, col: usize) -> Path {
+    pub(crate) fn new(path: String, line: usize, col: usize) -> Path {
         Path(path, Location::new(line, col))
     }
 
-    pub fn with_location(&self, loc: Location) -> Self {
+    pub(crate) fn with_location(&self, loc: Location) -> Self {
         Path(self.0.clone(), loc)
     }
 }
@@ -70,7 +70,7 @@ impl Path {
         Path("".to_string(), Location::default())
     }
 
-    pub fn relative(&self) -> &str {
+    pub(crate) fn relative(&self) -> &str {
         match self.0.rfind('/') {
             Some(pos) => &self.0[pos + 1..],
             None => &self.0,
@@ -118,18 +118,18 @@ impl TryFrom<&[String]> for Path {
 }
 
 impl Path {
-    pub fn extend_str(&self, part: &str) -> Path {
+    pub(crate) fn extend_str(&self, part: &str) -> Path {
         let mut copy = self.0.clone();
         copy.push('/');
         copy.push_str(part);
         Path(copy, self.1)
     }
 
-    pub fn extend_string(&self, part: &str) -> Path {
+    pub(crate) fn extend_string(&self, part: &str) -> Path {
         self.extend_str(part)
     }
 
-    pub fn extend_usize(&self, part: usize) -> Path {
+    pub(crate) fn extend_usize(&self, part: usize) -> Path {
         let as_str = part.to_string();
         self.extend_string(&as_str)
     }
@@ -137,8 +137,8 @@ impl Path {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct MapValue {
-    pub keys: Vec<PathAwareValue>,
-    pub values: indexmap::IndexMap<String, PathAwareValue>,
+    pub(crate) keys: Vec<PathAwareValue>,
+    pub(crate) values: indexmap::IndexMap<String, PathAwareValue>,
 }
 
 impl Serialize for MapValue {
@@ -163,7 +163,7 @@ impl PartialEq for MapValue {
 impl Eq for MapValue {}
 
 impl MapValue {
-    pub fn is_empty(&self) -> bool {
+    pub(crate) fn is_empty(&self) -> bool {
         self.values.is_empty()
     }
 }
@@ -657,7 +657,7 @@ impl QueryResolver for PathAwareValue {
             QueryPart::This => self.select(all, &query[1..], resolver),
 
             QueryPart::Key(key) => {
-                match key.parse::<i32>() {
+                match key.parse::<i64>() {
                     Ok(index) => match self {
                         PathAwareValue::List((_, list)) => {
                             PathAwareValue::retrieve_index(self, index, list, query).map_or_else(
@@ -682,7 +682,7 @@ impl QueryResolver for PathAwareValue {
                                     match query[1] {
                                         QueryPart::AllIndices(_) | QueryPart::Key(_) => keys,
                                         QueryPart::Index(index) => {
-                                            match index_offset(i64::from(index), keys.len()) {
+                                            match index_offset(index, keys.len()) {
                                                 Some(check) => vec![keys[check]],
                                                 None => self.map_some_or_error_all(all, query)?,
                                             }
@@ -962,15 +962,15 @@ impl PathAwareValue {
         Ok(self)
     }
 
-    pub fn is_list(&self) -> bool {
+    pub(crate) fn is_list(&self) -> bool {
         matches!(self, PathAwareValue::List((_, _)))
     }
 
-    pub fn is_map(&self) -> bool {
+    pub(crate) fn is_map(&self) -> bool {
         matches!(self, PathAwareValue::Map((_, _)))
     }
 
-    pub fn is_null(&self) -> bool {
+    pub(crate) fn is_null(&self) -> bool {
         matches!(self, PathAwareValue::Null(_))
     }
 
@@ -1001,7 +1001,7 @@ impl PathAwareValue {
         }
     }
 
-    pub fn is_scalar(&self) -> bool {
+    pub(crate) fn is_scalar(&self) -> bool {
         !self.is_list() && !self.is_map()
     }
 
@@ -1009,7 +1009,7 @@ impl PathAwareValue {
         self.self_value().0
     }
 
-    pub fn self_value(&self) -> (&Path, &PathAwareValue) {
+    pub(crate) fn self_value(&self) -> (&Path, &PathAwareValue) {
         match self {
             PathAwareValue::Null(path) => (path, self),
             PathAwareValue::String((path, _)) => (path, self),
@@ -1026,7 +1026,7 @@ impl PathAwareValue {
         }
     }
 
-    pub fn type_info(&self) -> &'static str {
+    pub(crate) fn type_info(&self) -> &'static str {
         match self {
             PathAwareValue::Null(_path) => "null",
             PathAwareValue::String((_path, _)) => "String",
@@ -1043,13 +1043,13 @@ impl PathAwareValue {
         }
     }
 
-    pub fn retrieve_index<'v>(
+    pub(crate) fn retrieve_index<'v>(
         parent: &PathAwareValue,
-        index: i32,
+        index: i64,
         list: &'v Vec<PathAwareValue>,
         query: &[QueryPart<'_>],
     ) -> Result<&'v PathAwareValue, Error> {
-        if let Some(check) = index_offset(i64::from(index), list.len()) {
+        if let Some(check) = index_offset(index, list.len()) {
             Ok(&list[check])
         } else {
             Err(Error::
@@ -1060,7 +1060,7 @@ impl PathAwareValue {
         }
     }
 
-    pub fn accumulate<'v>(
+    pub(crate) fn accumulate<'v>(
         parent: &PathAwareValue,
         all: bool,
         query: &[QueryPart<'_>],
@@ -1172,7 +1172,9 @@ fn compare_int_to_float(i: i64, f: f64) -> Option<Ordering> {
 /// off by one at the same time. Nothing asserted it in either direction, and the behaviour is
 /// undocumented, which is how it survived -- `docs/CLAUSES.md` now describes it.
 ///
-/// Checked conversion prevents an out-of-range index from wrapping to a valid slot.
+/// `try_from` rather than `as usize`, because the index is an `i64`: on a 32-bit target the cast would
+/// truncate and could land back inside the collection, turning an out-of-range index into a wrong
+/// element rather than a rejection.
 pub(crate) fn index_offset(index: i64, len: usize) -> Option<usize> {
     let magnitude = usize::try_from(index.unsigned_abs()).ok()?;
     let offset = match index < 0 {
@@ -1243,7 +1245,7 @@ fn compare_values(first: &PathAwareValue, other: &PathAwareValue) -> Result<Orde
 }
 
 #[allow(clippy::never_loop)]
-pub fn compare_eq(first: &PathAwareValue, second: &PathAwareValue) -> Result<bool, Error> {
+pub(crate) fn compare_eq(first: &PathAwareValue, second: &PathAwareValue) -> Result<bool, Error> {
     let (reg, s) = match (first, second) {
         (PathAwareValue::String((_, s)), PathAwareValue::Regex((_, r))) => {
             (Regex::try_from(r.as_str()).map_err(Box::new)?, s.as_str())
@@ -1334,7 +1336,7 @@ pub fn compare_eq(first: &PathAwareValue, second: &PathAwareValue) -> Result<boo
     }
 }
 
-pub fn compare_lt(first: &PathAwareValue, other: &PathAwareValue) -> Result<bool, Error> {
+pub(crate) fn compare_lt(first: &PathAwareValue, other: &PathAwareValue) -> Result<bool, Error> {
     match compare_values(first, other) {
         Ok(o) => match o {
             Ordering::Equal | Ordering::Greater => Ok(false),
@@ -1344,7 +1346,7 @@ pub fn compare_lt(first: &PathAwareValue, other: &PathAwareValue) -> Result<bool
     }
 }
 
-pub fn compare_le(first: &PathAwareValue, other: &PathAwareValue) -> Result<bool, Error> {
+pub(crate) fn compare_le(first: &PathAwareValue, other: &PathAwareValue) -> Result<bool, Error> {
     match compare_values(first, other) {
         Ok(o) => match o {
             Ordering::Greater => Ok(false),
@@ -1354,7 +1356,7 @@ pub fn compare_le(first: &PathAwareValue, other: &PathAwareValue) -> Result<bool
     }
 }
 
-pub fn compare_gt(first: &PathAwareValue, other: &PathAwareValue) -> Result<bool, Error> {
+pub(crate) fn compare_gt(first: &PathAwareValue, other: &PathAwareValue) -> Result<bool, Error> {
     match compare_values(first, other) {
         Ok(o) => match o {
             Ordering::Greater => Ok(true),
@@ -1364,7 +1366,7 @@ pub fn compare_gt(first: &PathAwareValue, other: &PathAwareValue) -> Result<bool
     }
 }
 
-pub fn compare_ge(first: &PathAwareValue, other: &PathAwareValue) -> Result<bool, Error> {
+pub(crate) fn compare_ge(first: &PathAwareValue, other: &PathAwareValue) -> Result<bool, Error> {
     match compare_values(first, other) {
         Ok(o) => match o {
             Ordering::Greater | Ordering::Equal => Ok(true),
