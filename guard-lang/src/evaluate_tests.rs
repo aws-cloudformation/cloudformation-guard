@@ -4,6 +4,7 @@ use super::*;
 use crate::parser::{rules_file, Span};
 use crate::read_file_content;
 use pretty_assertions::assert_eq;
+use std::cell::RefCell;
 use std::convert::TryFrom;
 use std::fs::File;
 
@@ -68,6 +69,59 @@ impl EvaluationContext for DummyEval {
     }
 
     fn start_evaluation(&self, _eval_type: EvaluationType, _context: &str) {}
+}
+
+#[derive(Default)]
+struct ConjunctionRecorder {
+    completed: RefCell<Vec<(String, Option<Status>)>>,
+}
+
+impl EvaluationContext for ConjunctionRecorder {
+    fn resolve_variable(&self, _variable: &str) -> Result<Vec<&PathAwareValue>> {
+        unreachable!()
+    }
+
+    fn rule_status(&self, _rule_name: &str) -> Result<Status> {
+        unreachable!()
+    }
+
+    fn end_evaluation(
+        &self,
+        eval_type: EvaluationType,
+        context: &str,
+        _msg: String,
+        _from: Option<PathAwareValue>,
+        _to: Option<PathAwareValue>,
+        status: Option<Status>,
+        _cmp: Option<(CmpOperator, bool)>,
+    ) {
+        if eval_type == EvaluationType::Conjunction {
+            self.completed
+                .borrow_mut()
+                .push((context.to_string(), status));
+        }
+    }
+
+    fn start_evaluation(&self, _eval_type: EvaluationType, _context: &str) {}
+}
+
+#[test]
+fn guard_clause_conjunctions_keep_reporting_after_crate_extraction() -> Result<()> {
+    let conjunctions = vec![vec![GuardClause::try_from(r#"Value == "expected""#)?]];
+    let root = PathAwareValue::try_from(r#"{"Value":"actual"}"#)?;
+    let recorder = ConjunctionRecorder::default();
+
+    let status = conjunctions.evaluate(&root, &recorder)?;
+
+    assert_eq!(status, Status::FAIL);
+    assert_eq!(
+        *recorder.completed.borrow(),
+        vec![(
+            "cfn_guard::rules::exprs::GuardClause".to_string(),
+            Some(Status::FAIL)
+        )]
+    );
+    Ok(())
 }
 
 #[test]

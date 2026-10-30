@@ -15,6 +15,8 @@ use crate::path_value::{PathAwareValue, QueryResolver};
 use crate::values::*;
 use crate::{Evaluate, EvaluationContext, EvaluationType, Result, Status};
 
+const GUARD_CLAUSE_REPORT_CONTEXT: &str = "cfn_guard::rules::exprs::GuardClause";
+
 //////////////////////////////////////////////////////////////////////////////////////////////////
 //                                                                                              //
 //  Implementation for Guard Evaluations                                                        //
@@ -744,14 +746,15 @@ impl<'loc, T: Evaluate + 'loc> Evaluate for Conjunctions<T> {
         Ok(loop {
             let mut num_passes = 0;
             let mut num_fails = 0;
-            let item_name = std::any::type_name::<T>();
+            let is_guard_clause =
+                std::any::type_name::<T>() == std::any::type_name::<GuardClause<'_>>();
             'conjunction: for conjunction in self {
                 let mut num_of_disjunction_fails = 0;
-                let mut report = if "cfn_guard::rules::exprs::GuardClause" == item_name {
+                let mut report = if is_guard_clause {
                     Some(AutoReport::new(
                         EvaluationType::Conjunction,
                         var_resolver,
-                        item_name,
+                        GUARD_CLAUSE_REPORT_CONTEXT,
                     ))
                 } else {
                     None
