@@ -91,7 +91,7 @@
   "dependencies": {
     "@actions/core": "2.0.3",
     "@actions/exec": "2.0.0",
-    "@actions/github": "8.0.1",
+    "@actions/github": "9.1.1",
     "cfn-guard": "file:../guard/ts-lib"
   },
   "devDependencies": {
