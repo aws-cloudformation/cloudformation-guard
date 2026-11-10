@@ -33,12 +33,15 @@
     "ajv": "6.14.0",
     "picomatch": "2.3.2",
     "micromatch": "4.0.8",
-    "js-yaml": "5.2.2",
-    "brace-expansion@<2": "1.1.18",
-    "brace-expansion@>=2 <3": "2.1.4",
-    "minimatch": ">=3.1.5",
+    "js-yaml": "5.4.1",
+    "brace-expansion@<2": "1.1.21",
+    "brace-expansion@>=2 <3": "2.1.7",
+    "minimatch@<7": "3.1.5",
+    "minimatch@>=7 <11.0.1": "11.0.6",
     "tar": "7.5.21",
-    "@babel/helpers": ">=7.26.10"
+    "@babel/helpers": ">=7.26.10",
+    "baseline-browser-mapping": "2.11.0",
+    "browserslist@<=4.28.6": "4.28.7"
   },
   "devDependencies": {
     "@types/jest": "^29.5.12",
