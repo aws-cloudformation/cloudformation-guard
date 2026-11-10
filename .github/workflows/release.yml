@@ -49,6 +49,9 @@ jobs:
 
       - uses: actions-rust-lang/setup-rust-toolchain@v1
 
+      - name: Verify cloudformation-guard-lang package with a fresh dependency resolution
+        run: cargo package --package cloudformation-guard-lang
+
       - name: Run tests
         run: cargo test --verbose
 
