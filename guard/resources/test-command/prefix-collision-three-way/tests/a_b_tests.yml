@@ -1,0 +1,8 @@
+- name: suite for a_b
+  input:
+    Resources:
+      One:
+        Type: AWS::S3::Bucket
+  expectations:
+    rules:
+      a_b_rule: PASS
