@@ -123,7 +123,14 @@ async function readFiles(dirOrFile: string, supportedExtensions: string[]): Prom
       fileContents.push(content);
     });
     await Promise.all(readPromises);
-  } else if (stat.isFile() && supportedExtensions.includes(path.extname(dirOrFile))) {
+  } else if (stat.isFile()) {
+    // Reject an explicitly named unsupported file instead of validating an empty input set.
+    if (!supportedExtensions.includes(path.extname(dirOrFile))) {
+      throw new Error(
+        `${dirOrFile} does not have a supported extension (${supportedExtensions.join(', ')})`
+      );
+    }
+
     const content = await fs.promises.readFile(dirOrFile, 'utf8');
     fileNames.push(dirOrFile);
     fileContents.push(content);
