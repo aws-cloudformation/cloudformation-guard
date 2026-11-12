@@ -39,9 +39,7 @@ async function readFiles(dirOrFile, supportedExtensions) {
         await Promise.all(readPromises);
     }
     else if (stat.isFile()) {
-        // Filtering by extension is right for a directory walk, but a file named
-        // explicitly was asked for. Dropping it silently leaves the caller with an
-        // empty rule or data set and a run that reports no failures.
+        // Reject an explicitly named unsupported file instead of validating an empty input set.
         if (!supportedExtensions.includes(path.extname(dirOrFile))) {
             throw new Error(`${dirOrFile} does not have a supported extension (${supportedExtensions.join(', ')})`);
         }
