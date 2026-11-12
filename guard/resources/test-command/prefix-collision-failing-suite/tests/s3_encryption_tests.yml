@@ -1,0 +1,10 @@
+- name: suite for s3 encryption
+  input:
+    Resources:
+      One:
+        Type: AWS::S3::Bucket
+        Properties:
+          Encrypted: false
+  expectations:
+    rules:
+      s3_encryption_rule: PASS
