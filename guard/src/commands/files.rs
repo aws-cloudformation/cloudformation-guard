@@ -68,7 +68,7 @@ where
     }
 }
 
-pub(crate) fn iterate_over<T, C>(files: &[PathBuf], converter: C) -> Iter<T, C>
+pub(crate) fn iterate_over<T, C>(files: &[PathBuf], converter: C) -> Iter<'_, T, C>
 where
     C: Fn(String, &PathBuf) -> Result<T, Error>,
 {

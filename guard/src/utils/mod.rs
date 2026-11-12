@@ -11,7 +11,7 @@ pub(crate) struct ReadCursor<'buffer> {
 }
 
 impl<'buffer> ReadCursor<'buffer> {
-    pub(crate) fn new(buffer: &str) -> ReadCursor {
+    pub(crate) fn new(buffer: &str) -> ReadCursor<'_> {
         ReadCursor {
             line_num: 0,
             line_buffer: buffer.lines(),
