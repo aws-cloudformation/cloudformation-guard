@@ -50,7 +50,9 @@ jobs:
       - uses: actions-rust-lang/setup-rust-toolchain@v1
 
       - name: Verify cloudformation-guard-lang package with a fresh dependency resolution
-        run: cargo package --package cloudformation-guard-lang
+        run: |
+          cargo package --package cloudformation-guard-lang
+          cargo package --package cloudformation-guard-lang --list | grep -Fxq README.md
 
       - name: Run tests
         run: cargo test --verbose
@@ -92,6 +94,26 @@ jobs:
           sed -i "s/cfn-guard = { version = \"[^\"]*\"/cfn-guard = { version = \"$VERSION\"/" guard-lambda/Cargo.toml
           sed -i "s/cfn-guard = { version = \"[^\"]*\"/cfn-guard = { version = \"$VERSION\"/" guard-ffi/Cargo.toml
           sed -i "s/cfn-guard = { version = \"[^\"]*\"/cfn-guard = { version = \"$VERSION\"/" guard-examples/library/Cargo.toml
+
+          # Keep the TypeScript release package and the Action's local dependency metadata aligned.
+          node <<'NODE'
+          const fs = require('node:fs');
+
+          const version = process.env.VERSION;
+          const packagePath = 'guard/ts-lib/package.json';
+          const packageJson = JSON.parse(fs.readFileSync(packagePath, 'utf8'));
+          packageJson.version = version;
+          fs.writeFileSync(packagePath, `${JSON.stringify(packageJson, null, 2)}\n`);
+
+          const lockPath = 'action/package-lock.json';
+          const actionLock = JSON.parse(fs.readFileSync(lockPath, 'utf8'));
+          const localPackage = actionLock.packages['../guard/ts-lib'];
+          if (!localPackage) {
+            throw new Error('action/package-lock.json is missing the ../guard/ts-lib package');
+          }
+          localPackage.version = version;
+          fs.writeFileSync(lockPath, `${JSON.stringify(actionLock, null, 2)}\n`);
+          NODE
 
           # Update test fixtures that embed the version
           sed -i "s/\"semanticVersion\": \"[^\"]*\"/\"semanticVersion\": \"$VERSION\"/" guard/resources/validate/output-dir/structured.sarif
@@ -215,12 +237,75 @@ jobs:
           path: "*.tar.gz"
           retention-days: 1
 
+  build-ts-lib:
+    name: Build TypeScript library
+    needs: [validate, version-bump]
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ needs.validate.outputs.version }}
+    defaults:
+      run:
+        working-directory: guard
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.validate.outputs.version }}
+
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          target: wasm32-unknown-unknown
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: guard/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build TypeScript library
+        run: |
+          WASM_OUTPUT="$(mktemp -d "$RUNNER_TEMP/cfn-guard-wasm.XXXXXX")"
+          ./node_modules/.bin/wasm-pack build \
+            --target nodejs \
+            --out-name guard \
+            --out-dir "$WASM_OUTPUT" \
+            --no-pack \
+            --release
+          cp \
+            "$WASM_OUTPUT/guard.js" \
+            "$WASM_OUTPUT/guard.d.ts" \
+            "$WASM_OUTPUT/guard_bg.wasm" \
+            "$WASM_OUTPUT/guard_bg.wasm.d.ts" \
+            ts-lib/
+          npm run build:typescript
+
+      - name: Lint and test
+        run: |
+          npm run lint
+          npm test -- --runInBand
+
+      - name: Package TypeScript library
+        run: |
+          cd ts-lib
+          npm pack
+          mv "cfn-guard-${VERSION}.tgz" "../../cfn-guard-ts-lib-${VERSION}.tgz"
+
+      - name: Upload TypeScript library artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: cfn-guard-ts-lib
+          path: cfn-guard-ts-lib-${{ env.VERSION }}.tgz
+          if-no-files-found: error
+          retention-days: 1
+
   # ---------------------------------------------------------------------------
   # 4. Create GitHub Release & upload all assets
   # ---------------------------------------------------------------------------
   github-release:
     name: GitHub Release
-    needs: [validate, build]
+    needs: [validate, build, build-ts-lib]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -280,14 +365,20 @@ jobs:
           tag_name: ${{ env.VERSION }}
           name: v${{ env.VERSION }}
           body_path: release-notes.md
-          files: artifacts/*.tar.gz
+          files: |
+            artifacts/*.tar.gz
+            artifacts/*.tgz
+          fail_on_unmatched_files: true
 
       - name: Update existing release assets
         if: ${{ !inputs.dry_run && steps.check.outputs.exists == 'true' }}
         uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ env.VERSION }}
-          files: artifacts/*.tar.gz
+          files: |
+            artifacts/*.tar.gz
+            artifacts/*.tgz
+          fail_on_unmatched_files: true
 
   # ---------------------------------------------------------------------------
   # 5. Publish to crates.io
@@ -302,7 +393,6 @@ jobs:
         shell: bash
     env:
       VERSION: ${{ needs.validate.outputs.version }}
-      CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -311,6 +401,8 @@ jobs:
       - uses: actions-rust-lang/setup-rust-toolchain@v1
 
       - name: Publish cloudformation-guard-lang
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN_GUARD_LANG }}
         run: |
           cd guard-lang
           cargo publish --no-verify 2>&1 | tee /tmp/publish.log || {
@@ -322,6 +414,8 @@ jobs:
           }
 
       - name: Publish cfn-guard
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
         run: |
           cd guard
           cargo publish --no-verify 2>&1 | tee /tmp/publish.log || {
@@ -333,6 +427,8 @@ jobs:
           }
 
       - name: Publish cfn-guard-lambda
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
         run: |
           cd guard-lambda
           cargo publish --no-verify 2>&1 | tee /tmp/publish.log || {
@@ -344,6 +440,8 @@ jobs:
           }
 
       - name: Publish cfn-guard-ffi
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
         run: |
           cd guard-ffi
           cargo publish --no-verify 2>&1 | tee /tmp/publish.log || {
