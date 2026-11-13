@@ -47,8 +47,8 @@ pub mod writer;
 /// notions of "line" that must not be unified: this one follows the document loader, that one follows the
 /// grammar.
 ///
-/// `pub(crate)` for `rules::values`, which rewrites JSON text before the loader reads it and has to
-/// number the source's lines the way the loader will, so that a position read off the rewritten text
+/// `pub`, with `crate::values` as the caller: it rewrites JSON text before the loader reads it and has
+/// to number the source's lines the way the loader will, so that a position read off the rewritten text
 /// can be put back on the source. One definition of a break for both, or the two drift apart again.
 pub fn break_width(bytes: &[u8], at: usize) -> Option<usize> {
     match bytes[at] {
@@ -86,21 +86,9 @@ pub fn break_width(bytes: &[u8], at: usize) -> Option<usize> {
 /// Everything `str::lines` gets right is kept: a terminator at the end of the file adds no empty line,
 /// and a blank line in the middle is a line. Collapsing either renumbers the rest of the excerpt.
 ///
-/// `start` has to clear *every* byte of the terminator, and getting that wrong does not produce a wrong
-/// line number -- it panics. Recognize a three-byte LS but step one byte and `start` lands on `\x80`,
-/// mid-character, and the next `&buffer[start..at]` slices at a boundary that is not a character
-/// boundary. On the pinned toolchain that reads
-/// `byte index 4 is not a char boundary; it is inside '\u{2028}' (bytes 3..6) of ...`.
-///
-/// Measured on all four of `one<LS>two<LS>`, `one<LS>two`, `one<NEL>two<NEL>` and `one<NEL>two`, so it
-/// is not confined to a trailing separator -- a single multi-byte break anywhere in the file is enough,
-/// reaching the panic either at the in-loop push or at the final one. That is why the width comes from
-/// `break_width` rather than from a fixed step.
-///
-/// The wording above is 1.77.2's. A later std phrases it `start byte index 4`, and that is what a probe
-/// built with a bare `rustc` prints, because a bare `rustc` ignores `rust-toolchain.toml` and resolves to
-/// the default toolchain instead. Quote std text from the pinned toolchain, via `rustup run 1.77.2 rustc`
-/// or `cargo`, or the quote describes a compiler this project does not use.
+/// `start` has to clear *every* byte of the terminator: stepping fewer bytes than the break width slices
+/// inside a UTF-8 character and panics, which is why the width comes from `break_width` rather than from
+/// a fixed step.
 ///
 /// Eager rather than an iterator, because the result is a `Vec` of slices into a buffer that is already
 /// in memory, and `ReadCursor` caches every line it reads anyway.
@@ -185,7 +173,8 @@ impl<'buffer> ReadCursor<'buffer> {
     /// - The cache was only consulted when `previous_lines.len() > line`, so a request for exactly
     ///   the highest line already read fell through to the loop, which compares each newly pulled
     ///   line against a number it has already passed. It drained to EOF and answered `None`.
-    ///   `emit_code` shares one cursor across every violation in a file and reads six lines per
+    ///   `emit_code` (the CLI crate's CFN reporter, `guard/src/commands/reporters/validate/cfn.rs`)
+    ///   shares one cursor across every violation in a file and reads six lines per
     ///   violation -- one at the seek point and five after -- so two violations exactly five lines
     ///   apart put the second one's context start on that boundary and its whole `Code:` snippet
     ///   rendered blank.
@@ -265,7 +254,8 @@ mod tests {
     /// line fell through to the loop. The loop only pulls *new* lines and tests each against
     /// `line`, which it has already passed, so it ran to EOF and answered `None`.
     ///
-    /// The caller this matters for is `cfn::single_line`'s `emit_code`, which shares one cursor
+    /// The caller this matters for is `emit_code` in the CLI crate's CFN reporter
+    /// (`guard/src/commands/reporters/validate/cfn.rs`), which shares one cursor
     /// across every violation in a file and reads six lines per violation -- one at the seek point
     /// and five after. So the boundary is hit whenever two violations are exactly five lines
     /// apart, and the second one's whole `Code:` snippet came out blank. The last two assertions
@@ -420,7 +410,8 @@ mod tests {
 
         // Mixed separators, which is what a botched conversion leaves. Every pair is exercised so that
         // no ordering of two breaks is handled only by accident -- in particular CR before LF, which
-        // must stay one break rather than becoming two.
+        // must stay one break rather than becoming two. The loop always puts a word between the two
+        // breaks, so the adjacent spellings are pinned right after it.
         for (_, first, _) in BREAKS {
             for (_, second, _) in BREAKS {
                 let buffer = format!("one{first}two{second}three");
@@ -432,6 +423,19 @@ mod tests {
                 );
             }
         }
+
+        // The adjacent spellings the loop above never produces, pinned directly: CR immediately
+        // before LF is one CRLF ending; two CRLFs in a row leave a blank line between them; and LF
+        // immediately before CR is two endings with the same blank line between them.
+        assert_eq!(vec![(1, "one"), (2, "two")], read_all("one\r\ntwo"));
+        assert_eq!(
+            vec![(1, "one"), (2, ""), (3, "two")],
+            read_all("one\r\n\r\ntwo")
+        );
+        assert_eq!(
+            vec![(1, "one"), (2, ""), (3, "two")],
+            read_all("one\n\rtwo")
+        );
 
         // No text, no lines -- `seek_line` on an empty file answers None rather than indexing into
         // nothing.

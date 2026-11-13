@@ -268,6 +268,7 @@ impl Error {
                 Error::Errors(Errors(errors.0.iter().map(Error::repeated).collect()))
             }
             Error::IllegalArguments(s) => Error::IllegalArguments(s.clone()),
+            #[cfg(feature = "junit")]
             Error::XMLError(e) => Error::XMLError(e.clone()),
             Error::InternalError(e) => Error::InternalError(e.repeated()),
         }
@@ -317,7 +318,9 @@ impl Error {
 /// The refusal token `Error::UndecidableComparison` carries in its second field: a per-thread count minted
 /// where the evaluator registers a refusal or delivers one as a marker (`eval_context::mint_refusal_token`),
 /// which a filter predicate run compares with the count it opened at. Opaque outside the evaluator: the
-/// field is private and there is no public constructor, so code outside this crate can name the type in a
+/// field is private and there is no public constructor outside test builds (`minted` is exported only
+/// under the `testing` feature, test support for a dependent crate's fixtures and never a feature a
+/// normal dependency turns on), so code outside this crate can name the type in a
 /// pattern (`UndecidableComparison(_, Some(_))`) and can neither forge a token nor read its count: its
 /// `Debug` form is written by hand below and prints the type's name alone, so `{:?}` of an `Error` that
 /// carries one shows no count either.
@@ -337,6 +340,19 @@ impl Error {
 /// ```compile_fail,E0603
 /// let forged = cloudformation_guard_lang::RefusalToken(1);
 /// ```
+#[cfg_attr(
+    not(feature = "testing"),
+    doc = r#"
+With the `testing` feature off, which is every build but a dependent crate's test build, the
+constructor is crate-private too, so a token cannot be forged through it either (E0624, the private
+associated function; under the feature `minted` is exported for test fixtures, the line below
+compiles, and this doctest is gated off):
+
+```compile_fail,E0624
+cloudformation_guard_lang::RefusalToken::minted(1);
+```
+"#
+)]
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct RefusalToken(u64);
 
@@ -350,14 +366,26 @@ impl std::fmt::Debug for RefusalToken {
 }
 
 impl RefusalToken {
-    /// The token for the `count`-th mint on this thread.
+    /// The token for the `count`-th mint on this thread. Exported only under the `testing` feature,
+    /// test support for a dependent crate's record-dump fixtures (the CLI crate's tests) and never a
+    /// feature a normal dependency turns on.
+    #[cfg(feature = "testing")]
     pub fn minted(count: u64) -> RefusalToken {
         RefusalToken(count)
     }
 
+    /// The token for the `count`-th mint on this thread. Crate-private: with the `testing` feature
+    /// off there is no public constructor, so a consumer cannot forge a token (the gated doctest on
+    /// the type is the proof).
+    #[cfg(not(feature = "testing"))]
+    pub(crate) fn minted(count: u64) -> RefusalToken {
+        RefusalToken(count)
+    }
+
     /// Whether this token was minted at or after the count a filter predicate run opened at
-    /// (`eval_context::RefusalFrame`): inside that run.
-    pub fn minted_at_or_after(self, count: u64) -> bool {
+    /// (`eval_context::RefusalFrame`): inside that run. Crate-private, as the comparison is the
+    /// evaluator's own.
+    pub(crate) fn minted_at_or_after(self, count: u64) -> bool {
         self.0 >= count
     }
 
@@ -369,14 +397,14 @@ impl RefusalToken {
     /// any token of the fold would be. Crate-private, as the ordering is the evaluator's own; the type
     /// stays opaque to consumers. The counter's wrap at `u64::MAX` (`wrapping_add`) is a named limit: a
     /// token minted after the wrap reads as earlier than one minted before it.
-    pub fn later_than(self, other: RefusalToken) -> bool {
+    pub(crate) fn later_than(self, other: RefusalToken) -> bool {
         self.0 > other.0
     }
 
     /// The token's place in the thread's minting order, for a store that keys by token and reads its
     /// entries first-minted first (`eval_context::RootScope`'s held notices). Crate-private, as
     /// `later_than` is: the type stays opaque to consumers, and no public ordering is derived on it.
-    pub fn minting_order(self) -> u64 {
+    pub(crate) fn minting_order(self) -> u64 {
         self.0
     }
 }
@@ -512,7 +540,9 @@ impl<'a> From<nom::Err<ParserError<'a>>> for Error {
 
 #[cfg(target_arch = "wasm32")]
 impl From<JsValue> for Error {
+    // A terminal construction: an earlier body delegated to `err.into()`, which is this very impl,
+    // so the conversion recursed instead of ever building an `Error`.
     fn from(err: JsValue) -> Self {
-        err.into()
+        Error::IllegalArguments(format!("{err:?}"))
     }
 }

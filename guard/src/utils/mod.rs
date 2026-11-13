@@ -7,4 +7,4 @@ pub mod writer {
     pub use guard_lang::utils::writer::*;
 }
 
-pub use guard_lang::utils::ReadCursor;
+pub(crate) use guard_lang::utils::ReadCursor;

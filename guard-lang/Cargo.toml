@@ -13,7 +13,9 @@ nom = "7.0.0"
 nom_locate = "4.0.0"
 indexmap = { version = "1.6.0", features = ["serde-1"] }
 serde = { version = "1.0", features = ["derive", "rc"] }
-serde_json = { version = "1.0.85", features = ["preserve_order"] }
+# `unbounded_depth` lets the JSON shape check in `values` run without serde_json's own recursion
+# limit of 128, which sat below the loader's nesting bound; the loader enforces depth.
+serde_json = { version = "1.0.85", features = ["preserve_order", "unbounded_depth"] }
 serde_yaml = "0.9.10"
 # Pin serde_json and serde_yaml's shared indexmap 2.x resolution to a release compatible with rust-version.
 indexmap2-msrv = { package = "indexmap", version = "=2.11.4" }

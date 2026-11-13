@@ -271,8 +271,10 @@ impl std::fmt::Debug for UnResolvedKind {
 /// kind; the key filter's rendering of its holders and the operators' membership compare
 /// `PathAwareValue`s. No production site compares two `QueryResult`s or two markers whole, and no marker
 /// list is searched or deduplicated by equality; the compiler says so now, where this comment said it. The
-/// tests that compare two runs' record dumps record for record keep `assert_eq!`: under `cfg(test)` the
-/// kind is equal by `reading`, the two facts `Debug` prints, and the carriers derive `PartialEq` over it.
+/// tests that compare two runs' record dumps record for record keep `assert_eq!`: under
+/// `any(test, feature = "testing")` -- the `testing` feature is test support for the CLI crate's tests,
+/// never a feature a normal dependency turns on -- the kind is equal by `reading`, the two facts `Debug`
+/// prints, and the carriers derive `PartialEq` over it.
 impl UnResolvedKind {
     /// The two facts a reader of a record dump compares, the kind's name and whether an `Undecidable`
     /// marker is a refusal, with no token in either: `("Absent", false)`, `("EmptyEnumeration", false)`,
@@ -290,10 +292,12 @@ impl UnResolvedKind {
     }
 }
 
-/// Test builds only: equal by `reading`, so a record-dump test's `assert_eq!` over two runs compares what
-/// the dump prints and never the token's count (two markers of one refusal, minted apart, are equal; a
-/// refused marker and a plain one are not; `carried` is not read). Production builds have no `==` over
-/// this kind or its carriers, which is the point of the gate: see the comment above `reading`.
+/// Test builds only, `any(test, feature = "testing")` (the `testing` feature is test support for the CLI
+/// crate's tests, never a feature a normal dependency turns on): equal by `reading`, so a record-dump
+/// test's `assert_eq!` over two runs compares what the dump prints and never the token's count (two
+/// markers of one refusal, minted apart, are equal; a refused marker and a plain one are not; `carried`
+/// is not read). Production builds have no `==` over this kind or its carriers, which is the point of
+/// the gate: see the comment above `reading`.
 #[cfg(any(test, feature = "testing"))]
 impl PartialEq for UnResolvedKind {
     fn eq(&self, other: &Self) -> bool {
@@ -347,7 +351,7 @@ impl UnResolvedKind {
 /// Equality in test builds only: `kind` carries the refusal token, which `eval::would_replace` and
 /// `eval_context::RefusalFrame::minted_inside` decide on, so the evaluator offers no whole-value equality
 /// that could stand in for those readers (see `UnResolvedKind::reading` and the `PartialEq` under
-/// `cfg(test)` beside it, which the record-dump tests compare through).
+/// `any(test, feature = "testing")` beside it, which the record-dump tests compare through).
 #[derive(Debug, Clone, Serialize)]
 #[cfg_attr(any(test, feature = "testing"), derive(PartialEq))]
 pub struct UnResolved {
