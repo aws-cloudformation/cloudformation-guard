@@ -4,6 +4,34 @@ import * as path from 'path';
 import { describe, expect, it } from '@jest/globals';
 
 describe('validate', () => {
+  const unsupportedFile = path.resolve(__dirname, '__fixtures__/unsupported_extension.txt')
+  const supportedRulesFile = path.resolve(
+    __dirname,
+    '../../resources/validate/rules-dir/s3_bucket_public_read_prohibited.guard'
+  )
+  const supportedDataFile = path.resolve(
+    __dirname,
+    '../../resources/validate/data-dir/s3-public-read-prohibited-template-non-compliant.yaml'
+  )
+
+  it('should reject a named rules file whose extension is not supported', async () => {
+    await expect(
+      validate({
+        rulesPath: unsupportedFile,
+        dataPath: supportedDataFile,
+      })
+    ).rejects.toThrow('does not have a supported extension')
+  })
+
+  it('should reject a named data file whose extension is not supported', async () => {
+    await expect(
+      validate({
+        rulesPath: supportedRulesFile,
+        dataPath: unsupportedFile,
+      })
+    ).rejects.toThrow('does not have a supported extension')
+  })
+
   it('should handle directories in both rules, data, and match the snapshot', async () => {
     const result = await validate({
       rulesPath: path.resolve(__dirname, '../../resources/validate/rules-dir'),

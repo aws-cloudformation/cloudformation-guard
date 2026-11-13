@@ -37,7 +37,7 @@ use crate::utils::writer::Writer;
 use wasm_bindgen::prelude::*;
 
 #[derive(Eq, Clone, Debug, PartialEq)]
-pub(crate) struct DataFile {
+pub struct DataFile {
     pub(crate) content: String,
     pub(crate) path_value: PathAwareValue,
     pub(crate) name: String,
@@ -966,11 +966,13 @@ pub(crate) fn validate_path(base: &str) -> Result<()> {
     }
 }
 
+#[cfg(target_arch = "wasm32")]
 #[wasm_bindgen]
 extern "C" {
     type Buffer;
 }
 
+#[cfg(target_arch = "wasm32")]
 #[wasm_bindgen(module = "fs")]
 extern "C" {
     #[wasm_bindgen(js_name = existsSync, catch)]
@@ -979,6 +981,7 @@ extern "C" {
     fn read_dir(path: &str) -> Result<String>;
 }
 
+#[cfg(target_arch = "wasm32")]
 #[wasm_bindgen(module = "path")]
 extern "C" {
     #[wasm_bindgen(js_name = resolve, catch)]
@@ -1663,7 +1666,7 @@ fn get_rule_info(rules: &[PathBuf], writer: &mut Writer) -> Result<Vec<RuleFileI
     })
 }
 
-pub(crate) struct RuleFileInfo {
+pub struct RuleFileInfo {
     pub(crate) content: String,
     pub(crate) file_name: String,
 }

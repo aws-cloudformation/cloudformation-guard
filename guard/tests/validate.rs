@@ -18372,9 +18372,10 @@ mod validate_tests {
     #[test]
     fn the_member_spellings_sit_before_the_path_in_the_console_and_the_json_report() {
         // The engine's `THE_MEMBER_SPELLINGS`, read from the one file both sides include at compile time
-        // (`guard/resources/notices/member-spellings.txt`): this integration crate cannot read a
+        // (`guard-lang/resources/notices/member-spellings.txt`): this integration crate cannot read a
         // `pub(crate)` item, and the hand copy that stood here drifted the moment either side changed.
-        const MEMBERS: &str = include_str!("../resources/notices/member-spellings.txt");
+        const MEMBERS: &str =
+            include_str!("../../guard-lang/resources/notices/member-spellings.txt");
         const SPELLINGS: &str = "Write `X[*] { Key == value }` or `X[*].Key == value`";
         let json_of = |rules: &str, data: &str| {
             let (status_code, stdout, _) = utils::capture_both_streams(|writer, reader| {

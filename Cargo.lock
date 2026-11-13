@@ -215,36 +215,28 @@ checksum = "baf1de4339761588bc0619e3cbc0120ee582ebb74b53b4efbf79117bd2da40fd"
 name = "cfn-guard"
 version = "3.2.1"
 dependencies = [
- "chrono",
  "clap",
  "clap_complete",
+ "cloudformation-guard-lang",
  "colored",
- "cruet",
  "enumflags2",
  "enumflags2_derive",
  "fancy-regex",
- "grep-matcher",
- "grep-regex",
- "grep-searcher",
  "heck 0.3.3",
  "indexmap 1.9.3",
  "indoc",
  "itertools",
  "lazy_static",
  "nom",
- "nom_locate",
  "pretty_assertions",
  "proc-macro2",
  "quick-xml",
- "regex-syntax",
  "rstest",
  "serde",
  "serde_json",
  "serde_yaml",
  "string-builder",
  "syn",
- "thiserror",
- "unsafe-libyaml",
  "urlencoding",
  "walkdir",
  "wasm-bindgen",
@@ -333,6 +325,38 @@ name = "clap_lex"
 version = "0.7.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f46ad14479a25103f283c0f10005961cf086d8dc42205bb44c46ac563475dca6"
+
+[[package]]
+name = "cloudformation-guard-lang"
+version = "3.2.1"
+dependencies = [
+ "chrono",
+ "colored",
+ "cruet",
+ "fancy-regex",
+ "grep-matcher",
+ "grep-regex",
+ "grep-searcher",
+ "indexmap 1.9.3",
+ "indexmap 2.11.4",
+ "indoc",
+ "lazy_static",
+ "nom",
+ "nom_locate",
+ "pretty_assertions",
+ "proc-macro2",
+ "quick-xml",
+ "regex-syntax",
+ "rstest",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "syn",
+ "thiserror",
+ "unsafe-libyaml",
+ "urlencoding",
+ "wasm-bindgen",
+]
 
 [[package]]
 name = "colorchoice"
@@ -734,9 +758,9 @@ dependencies = [
 
 [[package]]
 name = "indexmap"
-version = "2.7.1"
+version = "2.11.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8c9c992b02b5b4c94ea26e32fe5bccb7aa7d9f390ab5c1221ff895bc7ea8b652"
+checksum = "4b0f83760fb341a774ed326568e19f5a863af4a952def8c39f9ab92fd95b88e5"
 dependencies = [
  "equivalent",
  "hashbrown 0.15.2",
@@ -1176,7 +1200,7 @@ version = "1.0.138"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d434192e7da787e94a6ea7e9670b26a036d0ca41e0b7efb2676dd32bae872949"
 dependencies = [
- "indexmap 2.7.1",
+ "indexmap 2.11.4",
  "itoa",
  "memchr",
  "ryu",
@@ -1200,7 +1224,7 @@ version = "0.9.34+deprecated"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6a8b1a1a2ebf674015cc02edccce75287f1a0130d394307b36743c2f5d504b47"
 dependencies = [
- "indexmap 2.7.1",
+ "indexmap 2.11.4",
  "itoa",
  "ryu",
  "serde",
@@ -1360,7 +1384,7 @@ version = "0.22.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "02a8b472d1a3d7c18e2d61a489aee3453fd9031c33e4f55bd533f4a7adca1bee"
 dependencies = [
- "indexmap 2.7.1",
+ "indexmap 2.11.4",
  "toml_datetime",
  "winnow",
 ]

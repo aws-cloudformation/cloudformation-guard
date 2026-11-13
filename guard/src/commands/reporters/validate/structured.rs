@@ -29,7 +29,7 @@ pub struct StructuredEvaluator<'eval> {
 }
 
 impl<'eval> StructuredEvaluator<'eval> {
-    pub(crate) fn evaluate(&mut self) -> rules::Result<i32> {
+    pub fn evaluate(&mut self) -> rules::Result<i32> {
         // A rules file the parser rejects is dropped from `rules`, so no reporter ever sees it and
         // nothing it would have reported becomes a finding. That left every format emitting the
         // document a clean run emits: three empty verdict lists in json and yaml, `tests="0"

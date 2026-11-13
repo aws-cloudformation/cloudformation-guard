@@ -85,9 +85,15 @@ const CLAUSE_TABLE_HEADER: &str =
 /// The test sources a clause table or a prose citation may cite, by the name the documents use and the
 /// path under the crate.
 const CITED_TEST_SOURCES: [(&str, &str); 5] = [
-    ("eval_tests.rs", "src/rules/eval_tests.rs"),
-    ("eval_context_tests.rs", "src/rules/eval_context_tests.rs"),
-    ("loader_tests.rs", "src/rules/libyaml/loader_tests.rs"),
+    ("eval_tests.rs", "../guard-lang/src/eval_tests.rs"),
+    (
+        "eval_context_tests.rs",
+        "../guard-lang/src/eval_context_tests.rs",
+    ),
+    (
+        "loader_tests.rs",
+        "../guard-lang/src/libyaml/loader_tests.rs",
+    ),
     ("tests/validate.rs", "tests/validate.rs"),
     ("tests/test_command.rs", "tests/test_command.rs"),
 ];
