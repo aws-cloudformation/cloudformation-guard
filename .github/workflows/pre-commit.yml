@@ -1,19 +1,29 @@
 name: Pre-Commit Hook CI
+
+# commit-message.yml and requirements-dev.txt are in the path list because
+# pre_commit_hooks_tests/test_commit_message_gate.py asserts on both: it reads the `cz check`
+# command out of that workflow and compares the commitizen pin in that requirements file against
+# the pre-commit hook's rev. Without them here, dropping a flag from the gate or unpinning
+# commitizen would change what those tests are about while leaving the tests unrun.
 on:
   push:
     paths:
       - pre_commit_hooks/**
       - pre_commit_hooks_tests/**
       - .github/workflows/pre-commit.yml
+      - .github/workflows/commit-message.yml
       - .pre-commit-config.yaml
       - .pre-commit-hooks.yaml
+      - requirements-dev.txt
   pull_request:
     paths:
       - pre_commit_hooks/**
       - pre_commit_hooks_tests/**
       - .github/workflows/pre-commit.yml
+      - .github/workflows/commit-message.yml
       - .pre-commit-config.yaml
       - .pre-commit-hooks.yaml
+      - requirements-dev.txt
 permissions:
   contents: read
 jobs:
