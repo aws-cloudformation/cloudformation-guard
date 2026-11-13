@@ -1,0 +1,14 @@
+Wanted:
+  - Name: beta
+    Use: true
+Resources:
+  Cfg:
+    Map:
+      Wanted:
+        - Name: alpha
+          Use: true
+        - Name: gamma
+          Use: false
+      alpha: 1
+      beta: 2
+      gamma: 2

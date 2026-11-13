@@ -1,0 +1,35 @@
+# Two cases reach the one call site and share a name. The command prints one line for the site in this
+# file, the first case's line with its count covering both cases' maps ("2 more maps across 2 cases in
+# this file"): the second case, named like the first, is a second case, so its map is counted into the
+# first case's line rather than its own line standing in for the first's.
+- name: x
+  input:
+    Resources:
+      First:
+        Wanted: beta
+        Map:
+          Wanted: alpha
+          alpha: 1
+          beta: 2
+      Second:
+        Wanted: gamma
+        Map:
+          Wanted: alpha
+          alpha: 1
+          gamma: 2
+  expectations:
+    rules:
+      func_key_per_resource: PASS
+
+- name: x
+  input:
+    Resources:
+      Third:
+        Wanted: beta
+        Map:
+          Wanted: alpha
+          alpha: 1
+          beta: 2
+  expectations:
+    rules:
+      func_key_per_resource: PASS

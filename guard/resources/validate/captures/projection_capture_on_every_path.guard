@@ -1,0 +1,26 @@
+# A file-level projection captured at the rule's level, inside a `when` block, inside a block clause
+# and inside a type block body: `b` binds the logical id `A` on every path, because the container the
+# projection enumerated is `Resources` wherever the read sits.
+let buckets = Resources.*[ Type == 'AWS::S3::Bucket' ]
+rule top {
+  %buckets[ b | Properties exists ] !empty
+  %b == 'A'
+}
+rule in_when_block {
+  when Resources exists {
+    %buckets[ b | Properties exists ] !empty
+    %b == 'A'
+  }
+}
+rule in_block {
+  Resources.*[ Type == 'AWS::IAM::Role' ] {
+    %buckets[ b | Properties exists ] !empty
+    %b == 'A'
+  }
+}
+rule in_type_block {
+  AWS::IAM::Role {
+    %buckets[ b | Properties exists ] !empty
+    %b == 'A'
+  }
+}

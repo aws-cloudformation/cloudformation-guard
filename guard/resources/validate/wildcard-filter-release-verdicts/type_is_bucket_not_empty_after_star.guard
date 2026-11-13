@@ -1,0 +1,3 @@
+rule r {
+    Resources.*.Properties.Rules[*][ Type == 'AWS::S3::Bucket' ] !empty
+}

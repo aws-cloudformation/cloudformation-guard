@@ -1,0 +1,12 @@
+Mappings:
+  Allowed:
+    Types: [gp2, gp3]
+Resources:
+  A:
+    Type: AWS::EC2::Volume
+    Properties:
+      VolumeTypes: [gp]
+  B:
+    Type: AWS::EC2::Volume
+    Properties:
+      VolumeTypes: [gp2, gp3]

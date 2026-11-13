@@ -24,8 +24,22 @@ export type SarifReport = {
 
 export type SarifRun = {
   artifacts: SarifArtifact[];
+  // Present only when the run has something to say about itself, such as a
+  // rules file that could not be parsed. A run whose `results` are empty is a
+  // clean run only if no invocation reports `executionSuccessful: false`.
+  invocations?: SarifInvocation[];
   results: SarifResult[];
   tool: SarifTool;
+}
+
+export type SarifInvocation = {
+  executionSuccessful: boolean;
+  toolConfigurationNotifications?: SarifNotification[];
+}
+
+export type SarifNotification = {
+  level: string;
+  message: SarifMessage;
 }
 
 export type SarifArtifact = {
@@ -46,7 +60,9 @@ export type SarifResult = {
 export type SarifPhysicalLocation = {
   physicalLocation: {
     artifactLocation: SarifArtifactLocation;
-    region: SarifRegion;
+    // Absent when the position of the finding is not known. The core omits the
+    // region rather than reporting line 1 for a position it does not have.
+    region?: SarifRegion;
   };
 }
 
@@ -55,7 +71,8 @@ export type SarifArtifactLocation = {
 }
 
 export type SarifRegion = {
-  startColumn: number;
+  // Absent when the line is known and the column is not.
+  startColumn?: number;
   startLine: number;
 }
 
@@ -89,6 +106,10 @@ type ValidateParams = {
 const formatOutput = ({ result, rulesNames, dataNames }: FormatOutputParams): SarifReport => {
   const dataPattern = /DATA_STDIN\[(\d+)\]/g;
   const rulesPattern = /RULES_STDIN\[(\d+)\]\/DEFAULT/g;
+  // The core names a rules file it was given through the payload RULES_STDIN[n] wherever it
+  // mentions it, including the notification for a file that did not parse. After the ruleId pass
+  // above, any remaining mention gets the file name the caller supplied.
+  const rulesFilePattern = /RULES_STDIN\[(\d+)\]/g;
   const isWindows = process.platform === 'win32';
 
   const output = JSON.parse(JSON.stringify(result).replace(dataPattern, (match: string, index: string) => {
@@ -104,6 +125,13 @@ const formatOutput = ({ result, rulesNames, dataNames }: FormatOutputParams): Sa
       return fileNameWithoutExtension.toUpperCase();
     }
     return match;
+  }).replace(rulesFilePattern, (match: string, index: string) => {
+    const ruleIndex = parseInt(index, 10) - 1;
+    const ruleName = rulesNames[ruleIndex];
+
+    // The substitution happens inside a JSON-encoded string, so a Windows path separator has to
+    // become `/` here as it does for data names above.
+    return ruleName ? (isWindows ? ruleName.split('\\').join('/') : ruleName) : match;
   }));
 
   return JSON.parse(output);

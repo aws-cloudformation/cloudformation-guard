@@ -1,0 +1,3 @@
+rule name_in_replaced_default {
+    Resources.*.Properties.Name IN regex_replace(Parameters.Allowed.Default, Mappings.Allowed.Patterns[*], "")
+}

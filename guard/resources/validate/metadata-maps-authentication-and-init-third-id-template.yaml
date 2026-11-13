@@ -1,0 +1,40 @@
+# The same two resources as metadata-maps-authentication-and-init-template.yaml, with the instance under a
+# third logical id, `Server`. One of the templates a run over several files uses to draw the one filter
+# site in filter_through_a_metadata_projection.guard from more files than the trailer after the run
+# names: the trailer names the first few later files and counts the rest.
+Resources:
+  RootRole:
+    Type: "AWS::IAM::Role"
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: "Allow"
+            Principal:
+              Service:
+                - "ec2.amazonaws.com"
+            Action:
+              - "sts:AssumeRole"
+    Metadata:
+      cfn_nag:
+        rules_to_suppress:
+          - id: W11
+            reason: "the role is scoped by its trust policy"
+  Server:
+    Type: "AWS::EC2::Instance"
+    Properties:
+      ImageId: "ami-6df1e514"
+      InstanceType: "t2.micro"
+      SubnetId:
+        "Ref": "subnetId"
+    Metadata:
+      AWS::CloudFormation::Authentication:
+        testBasic:
+          type: "basic"
+          username: "testUsername1"
+          password: "sensitive_password"
+      AWS::CloudFormation::Init:
+        config:
+          commands:
+            01_hello:
+              command: "echo hello"

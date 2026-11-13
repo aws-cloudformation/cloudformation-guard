@@ -1,0 +1,5 @@
+# Control: `Other` has no `PubliclyAccessible`. An absent key is a retrieval failure and fails the clause
+# under `!=` as under `==`; the null arms do not reach it.
+rule absent_key_is_not_true {
+    Resources.Other.Properties.PubliclyAccessible != true
+}

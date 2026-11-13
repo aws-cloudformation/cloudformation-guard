@@ -1,0 +1,17 @@
+#
+# Defines one rule, and the paired suite expects a different one. Byte-identical to its sibling under
+# `../second/`, so the only thing that can tell the two runs apart is how the diagnostic names the file.
+#
+# The expectation for `absent_rule` therefore goes unchecked in both directories, and
+# `unchecked_expectation_message` describes it as "in this file" -- a phrase with no referent once two
+# files produce it. In `single-line-summary`, which is the default format, those two lines are the only
+# record of either dropped expectation: the report on stdout carries no unchecked-expectation entry at
+# all, so unlike the structured formats there is no `rule_file` beside it to recover the name from.
+#
+# `present_rule` exists so the file parses to `Ok(Some(RulesFile))` with a rule in it. A file with no
+# rules at all takes `report_expectations_against_no_rules` instead, which is a different sentence with
+# its own fixture under `../../no-rules-same-basename-dirs/`.
+#
+rule present_rule {
+    Region == 'us-east-1'
+}

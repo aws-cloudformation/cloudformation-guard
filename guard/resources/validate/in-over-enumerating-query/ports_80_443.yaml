@@ -1,0 +1,9 @@
+Mappings:
+  DenyGroups:
+    ssh: [22]
+    rdp: [3389]
+Resources:
+  R:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      Ports: [80, 443]

@@ -1,0 +1,9 @@
+Resources:
+  Build:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Environment:
+        Type: LINUX_CONTAINER
+        ComputeType: BUILD_GENERAL1_LARGE
+        Image: aws/codebuild/standard:7.0
+      ServiceRole: arn:aws:iam::123456789012:role/build

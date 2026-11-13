@@ -1,0 +1,20 @@
+# Two resources, each with a `Wanted` beside its map that differs from the map's own `Wanted: alpha`.
+# The rule passes on the maps' own values; the moved reading is one warning for the one call site.
+- name: two maps under one call
+  input:
+    Resources:
+      First:
+        Wanted: beta
+        Map:
+          Wanted: alpha
+          alpha: 1
+          beta: 2
+      Second:
+        Wanted: gamma
+        Map:
+          Wanted: alpha
+          alpha: 1
+          gamma: 2
+  expectations:
+    rules:
+      func_key_per_resource: PASS

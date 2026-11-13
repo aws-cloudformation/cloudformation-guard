@@ -1,0 +1,5 @@
+let pairs = Mappings.Pairs.List[*]
+
+rule allowed_pair {
+    Resources.*.Properties.Pair IN %pairs
+}

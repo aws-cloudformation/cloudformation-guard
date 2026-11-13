@@ -1,0 +1,7 @@
+rule is_regulated(t) {
+    %t IN Mappings.Regulated.Tiers[*]
+}
+
+rule unregulated_volumes_encrypted when not is_regulated(Resources.*[ Type == 'Custom::Volume' ].Properties.Tier) {
+    Resources.*[ Type == 'Custom::Volume' ].Properties.Encrypted == true
+}

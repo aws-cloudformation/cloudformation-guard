@@ -1,0 +1,3 @@
+rule ratio_is_not_one {
+    Resources.*.Properties.Ratio != 1.0
+}

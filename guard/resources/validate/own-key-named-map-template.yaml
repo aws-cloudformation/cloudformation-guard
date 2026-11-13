@@ -1,0 +1,7 @@
+# One bucket: a filter on `Resources.B1` that names `Type`, a string of the bucket itself, is refused with
+# no member spellings, since no member of `B1` holds `Type`.
+Resources:
+  B1:
+    Type: AWS::S3::Bucket
+    Properties:
+      Public: false

@@ -5,8 +5,17 @@ export type SarifReport = {
 };
 export type SarifRun = {
     artifacts: SarifArtifact[];
+    invocations?: SarifInvocation[];
     results: SarifResult[];
     tool: SarifTool;
+};
+export type SarifInvocation = {
+    executionSuccessful: boolean;
+    toolConfigurationNotifications?: SarifNotification[];
+};
+export type SarifNotification = {
+    level: string;
+    message: SarifMessage;
 };
 export type SarifArtifact = {
     location: SarifLocation;
@@ -23,14 +32,14 @@ export type SarifResult = {
 export type SarifPhysicalLocation = {
     physicalLocation: {
         artifactLocation: SarifArtifactLocation;
-        region: SarifRegion;
+        region?: SarifRegion;
     };
 };
 export type SarifArtifactLocation = {
     uri: string;
 };
 export type SarifRegion = {
-    startColumn: number;
+    startColumn?: number;
     startLine: number;
 };
 export type SarifMessage = {

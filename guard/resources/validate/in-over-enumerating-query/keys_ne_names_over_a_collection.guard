@@ -1,0 +1,8 @@
+# `!=` over the same right-hand side: over `Names: []` the right-hand side is an empty set, every key is
+# outside it, and the filter selects every key, so the assertion runs over all of them; over `Names: [x]`
+# it selects `alpha`.
+let names = Mappings.Allowed.Names[*]
+
+rule unequal_keys_are_two {
+    Resources.*.Map[ keys != %names ] == 2
+}

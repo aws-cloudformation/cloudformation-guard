@@ -1,0 +1,5 @@
+Resources:
+  Group:
+    Item:
+      Type: Grouped::Item
+      Size: 2000

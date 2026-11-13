@@ -1,0 +1,5 @@
+Resources EXISTS
+
+rule default {
+    Resources EXISTS
+}

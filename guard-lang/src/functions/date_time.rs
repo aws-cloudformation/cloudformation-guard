@@ -5,7 +5,7 @@ use crate::{
 use chrono::prelude::*;
 use chrono::Utc;
 
-pub(crate) fn parse_epoch(args: &[QueryResult]) -> crate::Result<Vec<Option<PathAwareValue>>> {
+pub fn parse_epoch(args: &[QueryResult]) -> crate::Result<Vec<Option<PathAwareValue>>> {
     let mut aggr = vec![];
     for entry in args.iter() {
         match entry {
@@ -13,9 +13,10 @@ pub(crate) fn parse_epoch(args: &[QueryResult]) -> crate::Result<Vec<Option<Path
                 PathAwareValue::String((path, val)) => {
                     let datetime = DateTime::parse_from_rfc3339(val)
                         .map_err(|e| {
-                            crate::Error::IncompatibleError(format!(
-                                "Failed to parse datetime: {val} at {path}: {e}"
-                            ))
+                            crate::Error::unanswerable(
+                                entry,
+                                format!("Failed to parse datetime: {val} at {path}: {e}"),
+                            )
                         })?
                         .with_timezone(&Utc);
                     let epoch = datetime.timestamp();
@@ -34,7 +35,7 @@ pub(crate) fn parse_epoch(args: &[QueryResult]) -> crate::Result<Vec<Option<Path
     Ok(aggr)
 }
 
-pub(crate) fn now() -> crate::Result<Vec<Option<PathAwareValue>>> {
+pub fn now() -> crate::Result<Vec<Option<PathAwareValue>>> {
     let now = Utc::now().timestamp();
     let path = Path::root();
     let path_aware_value = PathAwareValue::Int((path, now));

@@ -1,0 +1,12 @@
+# The second case is a mapping tagged `!!Equals`, which is `!Equals` with one `!` too many. The loader
+# marks the container unreadable, and a case that is not a mapping has no `input:` to run, so the
+# file is refused; the message names what a case must be and carries the tag's refusal. The ordinary
+# case before it is not reported, because the file was refused.
+- name: an ordinary case
+  input:
+    A: 1
+  expectations:
+    rules:
+      a_is_one: PASS
+
+- !!Equals {name: a case under a two-bang tag, input: {A: 1}, expectations: {rules: {a_is_one: PASS}}}

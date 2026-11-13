@@ -1,0 +1,4 @@
+let k = Cfg.KeyList[*]
+rule all_values_after_interpolated_key { Cfg.Tags.%k.* exists }
+rule filter_after_interpolated_key { Cfg.Tags.%k[ x == 1 ] exists }
+rule key_filter_after_interpolated_key { Cfg.Tags.%k[ keys == 'x' ] == 1 }

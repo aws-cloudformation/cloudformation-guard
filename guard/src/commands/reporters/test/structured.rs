@@ -1,23 +1,28 @@
-use std::{convert::TryFrom, path::PathBuf, rc::Rc, time::Instant};
+use std::{collections::HashMap, convert::TryFrom, path::PathBuf, rc::Rc, time::Instant};
 
 use crate::commands::reporters::test::{
-    get_by_rules, get_status_result, unmatched_expectations, Diagnostics,
+    get_by_rules, get_status_result, joined_rule_reasons, located_diagnostic,
+    unchecked_expectation_message, unmatched_expectation_names, Diagnostics, Notices, ReasonForm,
+    StderrLineKind,
 };
 use crate::commands::reporters::{
     FailingTestCase, TestCase as JunitTestCase, TestCaseStatus, TestSuite,
 };
 
-use crate::commands::test::TestExpectations;
+use crate::commands::validate::file_name_of;
 use crate::commands::{SUCCESS_STATUS_CODE, TEST_ERROR_STATUS_CODE, TEST_FAILURE_STATUS_CODE};
 use crate::rules::eval_context::Messages;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    commands::{files::iterate_over, test::TestSpec, validate::OutputFormatType},
-    rules::{
-        errors::Error, eval::eval_rules_file, eval_context, exprs::RulesFile,
-        path_value::PathAwareValue, Status,
+    commands::{
+        files::iterate_over,
+        test::{
+            convert_input, duplicate_case_names, parse_test_specs, specs_noting_tags, TestSpec,
+        },
+        validate::OutputFormatType,
     },
+    rules::{eval::eval_rules_file, eval_context, exprs::RulesFile, Status},
 };
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -62,9 +67,23 @@ impl TestResult {
         match self {
             TestResult::Err(Err { .. }) => TEST_ERROR_STATUS_CODE,
             TestResult::Ok(Ok { test_cases, .. }) => {
-                match test_cases.iter().any(|test_case| test_case.has_failures()) {
-                    true => TEST_FAILURE_STATUS_CODE,
-                    false => SUCCESS_STATUS_CODE,
+                // A case that could not run, and an unchecked expectation, are both the error code
+                // rather than the failure code, and they are asked first so they win over a failure
+                // elsewhere in the file. The command's own two codes already draw this line -- an
+                // expectation that could not be evaluated is a different answer from an expectation
+                // that was not met -- and neither an expectation whose rule produced no verdict nor a
+                // case that never ran could be evaluated: there was nothing to compare with.
+                //
+                // Not a `TestResult::Err`, which is the other way to reach this code. That replaces
+                // the whole document with a single error object, so every rule that did get a verdict
+                // would vanish from the report over one stale name or one bad case in the test file.
+                // The result stays `Ok`, carrying the verdicts alongside what got none.
+                if test_cases.iter().any(|test_case| test_case.has_errors()) {
+                    TEST_ERROR_STATUS_CODE
+                } else if test_cases.iter().any(|test_case| test_case.has_failures()) {
+                    TEST_FAILURE_STATUS_CODE
+                } else {
+                    SUCCESS_STATUS_CODE
                 }
             }
         }
@@ -96,16 +115,20 @@ impl TestResult {
                 ..
             }) => {
                 let mut failures = 0;
+                // Counted into `errors` rather than `failures`, matching the code the run exits with
+                // and the arm above, which reports a rules file that could not be read the same way.
+                let mut errors = 0;
                 let mut time = 0;
                 let test_cases = test_cases.iter().fold(vec![], |mut acc, tc| {
                     let mut test_cases = tc.build_junit_test_cases();
                     failures += tc.number_of_failures();
+                    errors += tc.number_of_errors();
                     time += tc.time;
                     acc.append(&mut test_cases);
                     acc
                 });
 
-                TestSuite::new(rule_file.to_string(), test_cases, time, 0, failures)
+                TestSuite::new(rule_file.to_string(), test_cases, time, errors, failures)
             }
         }
     }
@@ -124,14 +147,44 @@ impl TestResult {
 #[derive(Debug, Serialize, Deserialize, Default)]
 pub struct TestCase {
     name: String,
+    /// What stopped this case, when something did: an `input:` this loader cannot read, an
+    /// expectation that is not a status, or an evaluation that failed part way.
+    ///
+    /// On the case rather than on the whole `TestResult`, which is the distinction this field exists
+    /// to make. All three are mistakes in one case of the test file, and answering them with a
+    /// `TestResult::Err` replaced the whole document with a single error object -- so every other
+    /// case's verdict, already decided, vanished over one bad case. The generic reporter reports
+    /// exactly these three per case and keeps the rest, and the two formats have to agree on content.
+    ///
+    /// Omitted when absent, so a report over a suite where every case ran is byte for byte what it
+    /// was before this field existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
     passed_rules: Vec<PassedRule>,
     failed_rules: Vec<FailedRule>,
     skipped_rules: Vec<SkippedRule>,
+    /// Omitted when empty, so a report over a suite with no unchecked expectation is byte for byte
+    /// what it was before this field existed.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    unchecked_expectations: Vec<UncheckedExpectation>,
     #[serde(skip_serializing)] // NOTE: Only using this for junit
     time: u128,
 }
 
 impl TestCase {
+    /// A case carrying nothing but the reason it could not run.
+    ///
+    /// The name is kept even though the case produced no verdict: it is the only thing that says
+    /// *which* case the reader has to go and fix, and it is what the junit `<testcase>` is named.
+    fn errored(name: String, error: String, time: u128) -> Self {
+        TestCase {
+            name,
+            error: Some(error),
+            time,
+            ..Default::default()
+        }
+    }
+
     fn has_failures(&self) -> bool {
         !self.failed_rules.is_empty()
     }
@@ -140,13 +193,48 @@ impl TestCase {
         self.failed_rules.len()
     }
 
+    /// Whether anything about this case is an error rather than a verdict: the case itself could not
+    /// be run, or an expectation it carries had no rule to be checked against.
+    ///
+    /// Both answers are `TEST_ERROR_STATUS_CODE`, and both become a junit `status="error"`, so they
+    /// are asked together everywhere rather than separately in each of the three places.
+    fn has_errors(&self) -> bool {
+        self.error.is_some() || !self.unchecked_expectations.is_empty()
+    }
+
+    /// Counted the way [`Self::build_junit_test_cases`] emits them: one per unchecked expectation,
+    /// plus one for a case that could not run. Derived from the same two fields as `has_errors`, so
+    /// the suite's `errors` total cannot disagree with the elements under it.
+    fn number_of_errors(&self) -> usize {
+        usize::from(self.error.is_some()) + self.unchecked_expectations.len()
+    }
+
     fn build_junit_test_cases(&self) -> Vec<JunitTestCase> {
         let mut test_cases = vec![];
+
+        // The case itself, when it could not run. Named after the case and not after the rules file,
+        // which is what the whole-file `TestResult::Err` produced: a suite of one erroring test named
+        // after the file, with the decided cases absent from the count entirely, so a CI job read a
+        // two-case suite as one test. `id` repeats the name so a consumer grouping the suite by `id`
+        // -- every other element here carries the case name in it -- files this with its own case
+        // rather than in a nameless bucket.
+        if let Some(error) = &self.error {
+            test_cases.push(JunitTestCase {
+                id: Some(&self.name),
+                status: TestCaseStatus::Error {
+                    error: error.clone(),
+                },
+                name: &self.name,
+                time: self.time,
+            })
+        }
 
         for test_case in &self.passed_rules {
             test_cases.push(JunitTestCase {
                 id: Some(&self.name),
-                status: TestCaseStatus::Pass,
+                status: TestCaseStatus::Pass {
+                    reason: test_case.reason.clone(),
+                },
                 name: &test_case.name,
                 time: self.time,
             })
@@ -159,9 +247,11 @@ impl TestCase {
                     name: None,
                     messages: vec![Messages {
                         location: None,
+                        refusal: false,
+                        parts: None,
                         custom_message: None,
                         error_message: Some(format!(
-                            "Expected = {}, Evaluated = [{}]",
+                            "Expected = {}, Evaluated = [{}]{}",
                             test_case.expected,
                             test_case
                                 .evaluated
@@ -173,11 +263,31 @@ impl TestCase {
                                         acc.push_str(&format!("{status}"))
                                     }
                                     acc
-                                })
+                                }),
+                            test_case
+                                .reason
+                                .as_ref()
+                                .map_or(String::new(), |reason| format!(", Reason = {reason}"))
                         )),
                     }],
                 }),
                 name: &test_case.name,
+                time: self.time,
+            })
+        }
+
+        // `status="error"` with an `<error>` body, not the `<skipped>` it was. A skipped case counts
+        // into `tests` and nothing else, so a consumer watching `failures` and `errors` -- which is
+        // what a CI junit step watches -- read a suite where every expectation named a stale rule as
+        // entirely green. `errors` is the total this feeds, and it is the one the run's own exit code
+        // agrees with.
+        for unchecked in &self.unchecked_expectations {
+            test_cases.push(JunitTestCase {
+                id: Some(&self.name),
+                status: TestCaseStatus::Error {
+                    error: unchecked.reason.clone(),
+                },
+                name: &unchecked.name,
                 time: self.time,
             })
         }
@@ -190,6 +300,17 @@ impl TestCase {
 pub struct PassedRule {
     name: String,
     evaluated: Status,
+    /// Why, for a rule evaluated FAIL whose expectation was FAIL and whose OWN `when` failed closed on
+    /// refusals (several joined to the rule's sentence beside the error that decided it, or one alone as
+    /// the sentence): that sentence, raw and whole, as `FailedRule::reason` carries it for an unmet
+    /// expectation. A rule evaluated PASS or SKIP carries none (nothing refused it closed), and so does a
+    /// FAIL rule with no such sentence: a plain error in its `when`, an author's `<< >>` text, or a body
+    /// assertion that failed on a refusal, which the rule's checks explain and which carries no reason
+    /// here. The field is then omitted, so a report over a suite with none is byte for byte what it was
+    /// before this field existed. The plain reporter prints the same sentence after `Reason = ` on the met
+    /// line, and the junit report as the passed case's `<system-out>` text.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    reason: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -197,145 +318,337 @@ pub struct SkippedRule {
     name: String,
 }
 
+/// An expectation no rule in the file answered, so it was never consulted.
+///
+/// Deliberately not folded into `skipped_rules`. That array holds rules the file does define which
+/// the test data gave no expectation for; this holds expectations the test data gave which no rule
+/// answers. The two are opposite directions of the same mismatch, and a consumer that saw one array
+/// could not tell which had happened.
+///
+/// `reason` is carried in the report rather than left to the reader to infer from the name, because
+/// there is more than one reason and they call for different fixes: a name the file does not have
+/// wants the test file corrected, while a parameterized rule wants the expectation moved to whatever
+/// invokes it. It is also the text the junit `<error>` element uses, so the two cannot disagree.
+///
+/// Crate-visible, unlike `PassedRule`, `SkippedRule` and `FailedRule` beside it, which the crate
+/// published before this record existed and which stay `pub` for the code that names them. This one
+/// is built in `evaluate` and held in a private field of `TestCase`, and nothing outside the crate
+/// names it; its shape reaches a consumer only through the serialized report.
+#[derive(Debug, Serialize, Deserialize)]
+pub(crate) struct UncheckedExpectation {
+    name: String,
+    reason: String,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct FailedRule {
     name: String,
     expected: Status,
     evaluated: Vec<Status>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct TestData {
-    name: String,
-    path_value: Rc<PathAwareValue>,
-    expectations: TestExpectations,
+    /// Why, for a rule whose OWN `when` failed closed on refusals: several joined to the rule's sentence
+    /// beside the error that decided it, whether that error was a plain one or a refusal, or one refusal
+    /// alone as the sentence. The sentence is carried raw and whole: no cut and no console escape, since
+    /// the serializer does its own escaping and every structured output carries every part whole. The
+    /// plain reporter prints the same sentence on its `Reason =` through the console's pipeline (one line,
+    /// controls escaped, cut). Omitted when the rule has no such sentence (a plain error with nothing
+    /// joined, an author's `<< >>` text, or a body assertion that failed on a refusal, which the rule's
+    /// checks explain), so a report over a suite with none is byte for byte what it was before this field
+    /// existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    reason: Option<String>,
 }
 
 impl<'reporter> StructuredTestReporter<'reporter> {
+    /// The report, with everything the run had to say on stderr left in `diagnostics` as the sorted
+    /// set of distinct lines, which is how the field was released and how a library caller reads it.
+    /// The field is text, so the kind each line was collected with is not carried in it; nothing is
+    /// written to a stream here, and a caller that writes these lines routes them by reading them.
+    /// The `test` command calls `StructuredTestReporter::evaluate_noting` instead, which keeps the
+    /// positioned lines in document order and the once-per-site notices keyed, and writes them itself;
+    /// the binary compiles these modules directly and has no caller for this one.
+    #[allow(dead_code)]
     pub fn evaluate(&mut self) -> crate::rules::Result<TestResult> {
+        let mut notices = Notices::new();
+        let result = self.evaluate_noting(&mut notices)?;
+        self.diagnostics = notices.iter().map(|line| line.text.clone()).collect();
+        Ok(result)
+    }
+
+    /// The report, with everything the run has to say on stderr added to `notices`, which the caller
+    /// owns along with the writer: the `test` command keeps one collection across a whole directory
+    /// walk, so two rules files with the same hazard say it once, and the positioned lines keep the
+    /// order their files give them.
+    pub(crate) fn evaluate_noting(
+        &mut self,
+        notices: &mut Notices,
+    ) -> crate::rules::Result<TestResult> {
         let ContextAwareRule { rule, name: file } = &self.rules;
         let now = Instant::now();
-        // Local rather than the field directly: `rule` and `file` borrow `self` for the body of
-        // this loop, so the field is filled once at the end instead.
-        let mut diagnostics = Diagnostics::new();
         let mut result = TestResult::Ok(Ok {
             rule_file: file.to_owned(),
             test_cases: vec![],
             time: 0,
         });
 
-        for specs in iterate_over(
-            self.data_test_files,
-            |data, path| match serde_yaml::from_str::<Vec<TestSpec>>(&data) {
-                Ok(spec) => Ok(spec),
-                Err(..) => match serde_json::from_str::<Vec<TestSpec>>(&data) {
-                    Ok(spec) => Ok(spec),
-                    Err(e) => Err(Error::ParseError(format!(
-                        "Unable to process data in file {}, Error {}",
-                        path.display(),
-                        e
-                    ))),
-                },
-            },
-        ) {
-            match specs {
+        let specs_by_file = iterate_over(self.data_test_files, |data, path| {
+            Ok(parse_test_specs(&data, path))
+        });
+
+        // Zipped with the paths rather than iterated alone. `iterate_over` yields exactly one item
+        // per file in slice order, and a test file it could not read has to be reported against that
+        // file rather than against the rules file, which is not what went wrong.
+        for (test_file, read) in self.data_test_files.iter().zip(specs_by_file) {
+            // The `!!` tags the loader read past in this file are noted first, whether or not the
+            // file then loaded; the caller writes them to stderr before the structured document.
+            let specs = match specs_noting_tags(read, notices) {
+                // One errored case named after the unreadable file, not a `TestResult::Err`. `test`
+                // takes a directory of test data as readily as one file, and returning here
+                // discarded every case of every *other* test file over one that would not parse --
+                // while the generic reporter reported them and carried on to the next file.
                 Err(e) => {
-                    return Ok(TestResult::Err(Err {
-                        rule_file: file.to_owned(),
-                        error: e.to_string(),
-                        time: now.elapsed().as_millis(),
-                    }))
+                    result.insert_test_case(TestCase::errored(
+                        file_name_of(test_file),
+                        e.to_string(),
+                        now.elapsed().as_millis(),
+                    ));
+                    continue;
                 }
-                Ok(spec) => {
-                    let test_data = get_test_data(spec)?;
+                Ok(specs) => specs,
+            };
+            notices.extend_in_order(
+                StderrLineKind::Notice,
+                duplicate_case_names(&specs, test_file),
+            );
 
-                    for each in &test_data {
-                        let now = Instant::now();
-                        let mut root_scope =
-                            eval_context::root_scope(rule, Rc::clone(&each.path_value));
+            'case: for (
+                index,
+                TestSpec {
+                    name,
+                    input,
+                    collisions,
+                    expectations,
+                    unreadable,
+                    ..
+                },
+            ) in specs.into_iter().enumerate()
+            {
+                let now = Instant::now();
+                // Kept as given for the case's scope, which names an unnamed case by its number; the
+                // report names it by the empty string, as it always has.
+                let case_name = name.clone();
+                let name = name.unwrap_or_default();
 
-                        eval_rules_file(rule, &mut root_scope, None)?;
+                // A case whose field the command could not read is an errored case carrying the
+                // reason, as a case whose `input:` cannot be converted is below, and the other cases
+                // keep their verdicts.
+                if let Some(reason) = unreadable {
+                    result.insert_test_case(TestCase::errored(
+                        name,
+                        crate::rules::errors::Error::ParseError(reason).to_string(),
+                        now.elapsed().as_millis(),
+                    ));
+                    continue;
+                }
 
-                        // Read before `reset_recorder` consumes the scope, as in `validate`.
-                        diagnostics.extend(root_scope.deprecations().cloned());
-
-                        let top = root_scope.reset_recorder().extract();
-
-                        let by_rules = get_by_rules(&top);
-                        diagnostics.extend(unmatched_expectations(
-                            &each.expectations.rules,
-                            &by_rules.keys().copied().collect(),
+                // On the case, and this is the sibling call the reason below was not applied to. A
+                // case's `input:` that this loader cannot read is a mistake in one case of the test
+                // file: propagating it with `?` reached `main`'s catch-all and exited 255,
+                // `INTERNAL_FAILURE`, and answering it with a `TestResult::Err` instead still cost
+                // every decided case in the file its verdict -- in `json`, `yaml` and `junit` only,
+                // because the generic reporter had already been taught to keep them.
+                let path_value = match convert_input(input, &collisions, test_file, notices) {
+                    Ok(root) => Rc::new(root),
+                    Err(e) => {
+                        result.insert_test_case(TestCase::errored(
+                            name,
+                            e.to_string(),
+                            now.elapsed().as_millis(),
                         ));
+                        continue;
+                    }
+                };
 
-                        let mut test_case = TestCase {
-                            name: each.name.to_string(),
-                            ..Default::default()
-                        };
+                // Built for the case, so a notice that cites a position in its input can say which case
+                // of which spec file the position is in; the command reads no data file to name instead.
+                let mut root_scope = eval_context::root_scope_for_case(
+                    rule,
+                    path_value,
+                    test_file,
+                    case_name.as_deref(),
+                    index + 1,
+                );
 
-                        for (rule_name, records) in by_rules {
-                            let expected = match each.expectations.rules.get(rule_name) {
-                                Some(exp) => match Status::try_from(exp.as_str()) {
-                                    Ok(exp) => exp,
-                                    Err(e) => {
-                                        return Ok(TestResult::Err(Err {
-                                            rule_file: file.to_owned(),
-                                            error: e.to_string(),
-                                            time: now.elapsed().as_millis(),
-                                        }))
-                                    }
-                                },
-                                None => {
-                                    test_case.skipped_rules.push(SkippedRule {
-                                        name: rule_name.to_string(),
-                                    });
-                                    continue;
-                                }
-                            };
+                // Recorded on the case rather than returned, for the reason the generic reporter
+                // gives: `eval_rules_file` evaluates every rule before returning an error, so the
+                // record holds the other rules' verdicts and this case still reports them. That
+                // reporter prints the error line and then the verdicts; this is the same answer in a
+                // document.
+                let eval_error = eval_rules_file(rule, &mut root_scope, None)
+                    .err()
+                    .map(|e| e.to_string());
 
-                            match get_status_result(expected, records) {
-                                (Some(status), _) => test_case.passed_rules.push(PassedRule {
-                                    name: rule_name.to_string(),
-                                    evaluated: status,
-                                }),
+                // Read before `reset_recorder` consumes the scope, as in `validate`: both notice kinds.
+                notices.absorb_deprecations(&root_scope);
+                notices.absorb_warnings(&root_scope);
 
-                                (None, statuses) => test_case.failed_rules.push(FailedRule {
-                                    name: rule_name.to_string(),
-                                    evaluated: statuses,
-                                    expected,
-                                }),
+                let top = root_scope.reset_recorder().extract();
+
+                let by_rules = get_by_rules(&top);
+
+                // Decided once and used three times -- the note on stderr, the report, and the
+                // exit code the caller reads off the report -- so they cannot disagree about
+                // which expectations went unchecked or why.
+                let unchecked = unmatched_expectation_names(
+                    &expectations.rules,
+                    &by_rules.keys().copied().collect(),
+                )
+                .into_iter()
+                .map(|name| UncheckedExpectation {
+                    reason: unchecked_expectation_message(rule, &name),
+                    name,
+                })
+                .collect::<Vec<UncheckedExpectation>>();
+
+                // Located on the way to stderr, and not in the report. `reason` sits in an entry whose
+                // `rule_file` already names the file; the stderr line has no such field, and this walk
+                // keeps one `Notices` collection across every rules file, so two siblings with the
+                // same unchecked expectation deduped to a single line naming neither. Same wrapper as
+                // the plaintext reporter, so the two streams render the fact one way.
+                notices.extend_sorted(
+                    StderrLineKind::Failure,
+                    unchecked
+                        .iter()
+                        .map(|each| located_diagnostic(file, &each.reason)),
+                );
+
+                let mut test_case = TestCase {
+                    name,
+                    error: eval_error,
+                    unchecked_expectations: unchecked,
+                    ..Default::default()
+                };
+
+                // Built on the first rule that is evaluated FAIL or whose expectation is unmet, and not
+                // before, as the plain reporter builds it: a case whose rules all passed or were skipped
+                // as expected never needs the report walk, and a FAIL rule is told why whatever the
+                // expectation on it.
+                let mut joined_reasons: Option<HashMap<String, String>> = None;
+
+                for (rule_name, records) in by_rules {
+                    let expected = match expectations.rules.get(rule_name) {
+                        Some(exp) => match Status::try_from(exp.as_str()) {
+                            Ok(exp) => exp,
+                            Err(e) => {
+                                // The case, and only the case, as in the generic reporter: there
+                                // this error leaves `get_by_result` and the caller abandons the
+                                // case, so the verdicts collected so far go with it and so does any
+                                // evaluation error. One reason per case is reported, and an
+                                // expectation that is not a status is the one to act on.
+                                result.insert_test_case(TestCase::errored(
+                                    test_case.name,
+                                    e.to_string(),
+                                    now.elapsed().as_millis(),
+                                ));
+                                continue 'case;
                             }
+                        },
+                        None => {
+                            test_case.skipped_rules.push(SkippedRule {
+                                name: rule_name.to_string(),
+                            });
+                            continue;
+                        }
+                    };
+
+                    match get_status_result(expected, records) {
+                        (Some(status), _) => {
+                            // A met expectation of FAIL on a rule that failed closed on a refusal still
+                            // says why: the same sentence an unmet expectation would carry.
+                            let reason = match status {
+                                Status::FAIL => joined_reasons
+                                    .get_or_insert_with(|| {
+                                        joined_rule_reasons(&top, ReasonForm::Raw)
+                                    })
+                                    .get(rule_name)
+                                    .cloned(),
+                                _ => None,
+                            };
+                            test_case.passed_rules.push(PassedRule {
+                                name: rule_name.to_string(),
+                                evaluated: status,
+                                reason,
+                            })
                         }
 
-                        test_case.time = now.elapsed().as_millis();
-                        result.insert_test_case(test_case);
+                        (None, statuses) => {
+                            let reason = joined_reasons
+                                .get_or_insert_with(|| joined_rule_reasons(&top, ReasonForm::Raw))
+                                .get(rule_name)
+                                .cloned();
+                            test_case.failed_rules.push(FailedRule {
+                                name: rule_name.to_string(),
+                                evaluated: statuses,
+                                expected,
+                                reason,
+                            })
+                        }
                     }
                 }
+
+                test_case.time = now.elapsed().as_millis();
+                result.insert_test_case(test_case);
             }
         }
-
-        self.diagnostics = diagnostics;
 
         Ok(result)
     }
 }
 
-fn get_test_data(specs: Vec<TestSpec>) -> crate::rules::Result<Vec<TestData>> {
-    specs.into_iter().try_fold(
-        vec![],
-        |mut acc,
-         TestSpec {
-             name,
-             input,
-             expectations,
-         }| {
-            let root = PathAwareValue::try_from(input)?;
-            acc.push(TestData {
-                name: name.unwrap_or_default(),
-                path_value: Rc::new(root),
-                expectations,
-            });
+#[cfg(test)]
+mod evaluate_tests {
+    use std::collections::BTreeSet;
+    use std::path::PathBuf;
 
-            Ok(acc)
-        },
-    )
+    use super::{ContextAwareRule, StructuredTestReporter};
+    use crate::commands::validate::OutputFormatType;
+
+    /// `evaluate` leaves the run's stderr lines in the public `diagnostics` field, read as the sorted
+    /// set of distinct lines it was released as. The `test` command does not use this route; a library
+    /// caller does, and the field and its type are its contract.
+    #[test]
+    fn evaluate_fills_the_public_diagnostics_set() {
+        let text = "rule a_is_one { A == 1 }";
+        let span = crate::rules::parser::Span::new_extra(text, "rules.guard");
+        let rule = crate::rules::parser::rules_file(span)
+            .expect("the rules file parses")
+            .expect("the rules file declares a rule");
+        let data = [PathBuf::from(
+            "resources/test-command/foreign-tags/two_tags_tests.yaml",
+        )];
+        let mut reporter = StructuredTestReporter {
+            data_test_files: &data,
+            output: OutputFormatType::JSON,
+            rules: ContextAwareRule {
+                rule,
+                name: "rules.guard".to_string(),
+            },
+            diagnostics: BTreeSet::new(),
+        };
+
+        reporter.evaluate().expect("the cases evaluate");
+
+        let lines: &BTreeSet<String> = &reporter.diagnostics;
+        assert_eq!(
+            2,
+            lines.len(),
+            "one line per tagged node of the spec file, as a set:\n{lines:?}"
+        );
+        assert!(
+            lines
+                .iter()
+                .all(|line| line.contains("does not read the YAML tag `!!python/str`")),
+            "{:?}",
+            lines
+        );
+    }
 }

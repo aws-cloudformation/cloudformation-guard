@@ -1,0 +1,5 @@
+# One case without `input:`, so the no-rules path reports it as a case it could not read.
+- name: a case without an input
+  expectations:
+    rules:
+      a_is_one: PASS

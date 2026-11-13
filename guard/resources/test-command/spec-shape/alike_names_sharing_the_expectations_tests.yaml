@@ -1,0 +1,23 @@
+# One name over two cases with one set of expectations and inputs that differ. Both run, and no
+# warning is drawn: cases that agree on their expectations over different inputs are how a suite
+# groups the cases that exercise one scenario under one label, and a suite with one rule has three
+# verdicts to choose from, so two cases agreeing is ordinary. Only a repeated input is the shape of a
+# pasted case.
+- name: a pasted case
+  input:
+    A: 1
+    B: 2
+  expectations:
+    rules:
+      a_is_one: PASS
+      b_is_two: PASS
+
+- name: a pasted case
+  input:
+    A: 1
+    B: 2
+    Unread: yes
+  expectations:
+    rules:
+      a_is_one: PASS
+      b_is_two: PASS

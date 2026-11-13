@@ -1,0 +1,22 @@
+#
+# Plain mapping keys the loader will not commit to a number keep their source text as the key, on
+# every route. The *_LITERAL_KEY rules look the keys up by that text and must PASS. The same document
+# and these rules run under validate, the test command and run_checks, and the verdicts are the ones
+# validate gives, measured with the CLI.
+#
+# Three rows are controls and must FAIL: BIG_FLOAT_KEY, UNDERFLOW_ZERO_KEY and HUGE_FLOAT_KEY look
+# the keys up by the text a float rendering would give them. "18446744073709551616.0" is the exact
+# `{:.1}` rendering of 2^64 as an f64 and "340282366920938463463374607431768211456.0" of 2^128;
+# "0.0" is what 1e-400 parses to. A loader that resolved any of these literals to a float would render
+# the key that way and the row would PASS. Measured on the parent of the commit that added the file:
+# the three rows FAIL there exactly as they do here, so they do not distinguish parent from tip; they
+# guard the loader's own key handling, which is the only route left that could render them.
+#
+rule BIG_LITERAL_KEY { Mappings.M."18446744073709551616" exists }
+rule BIG_FLOAT_KEY { Mappings.M."18446744073709551616.0" exists }
+rule UNDERFLOW_LITERAL_KEY { Mappings.M."1e-400" exists }
+rule UNDERFLOW_ZERO_KEY { Mappings.M."0.0" exists }
+rule HUGE_LITERAL_KEY { Mappings.M."340282366920938463463374607431768211456" exists }
+rule HUGE_FLOAT_KEY { Mappings.M."340282366920938463463374607431768211456.0" exists }
+rule NEG_LITERAL_KEY { Mappings.M."-9223372036854775809" exists }
+rule CONTROL_U64_KEY { Mappings.M."18446744073709551615" exists }

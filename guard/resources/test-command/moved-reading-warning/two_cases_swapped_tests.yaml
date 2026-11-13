@@ -1,0 +1,36 @@
+# The two cases of `two_cases_tests.yaml` in the other order: the one-map case first. Each case is
+# evaluated in a scope of its own and the command prints the moved reading once per call site and spec
+# file, keeping the first case's line; so the line printed for this file names this case, with no
+# count, where the other file's line names its two-map case with the count. The line says which case
+# drew it, so the order of the cases decides what is said and never leaves the reader guessing.
+- name: one map, first
+  input:
+    Resources:
+      Cfg:
+        Wanted: beta
+        Map:
+          Wanted: alpha
+          alpha: 1
+          beta: 2
+  expectations:
+    rules:
+      func_key_per_resource: PASS
+
+- name: two maps, second
+  input:
+    Resources:
+      First:
+        Wanted: beta
+        Map:
+          Wanted: alpha
+          alpha: 1
+          beta: 2
+      Second:
+        Wanted: gamma
+        Map:
+          Wanted: alpha
+          alpha: 1
+          gamma: 2
+  expectations:
+    rules:
+      func_key_per_resource: PASS

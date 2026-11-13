@@ -1,0 +1,10 @@
+Resources:
+  R:
+    Type: X
+    Properties:
+      L:
+        - a
+        - b
+        - c
+      Ports:
+        - "80"

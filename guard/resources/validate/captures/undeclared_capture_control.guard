@@ -1,0 +1,5 @@
+# Control: `%t` is declared nowhere, which is the rules file being wrong rather than the data.
+rule r {
+  Resources.*.Properties.Tags[*][ Key == 'Name' ] !empty
+  %t !empty
+}

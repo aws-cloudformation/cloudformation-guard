@@ -1,0 +1,6 @@
+#
+# The pass-over refusal under a `when` gate with a long real query and a two-clause predicate: the console
+# prints the whole explanation, the definition of `X` and the remedy first; the JSON report carries the
+# same text.
+#
+rule r when Resources.WebServer.Properties.Configuration.Settings[ ServerSideEncryptionConfiguration !exists LoggingConfiguration !exists ] empty { Resources.WebServer.Type == 'X' }

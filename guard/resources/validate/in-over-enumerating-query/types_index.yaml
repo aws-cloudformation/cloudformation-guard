@@ -1,0 +1,16 @@
+Mappings:
+  Allowed:
+    Types: [production-bucket, big-bucket]
+    Entries:
+      - Name: production-bucket
+      - Name: big-bucket
+    KeyList: [prod, dev]
+    KeyList1: [prod]
+  Names:
+    prod: production-bucket
+    dev: development-bucket
+Resources:
+  B:
+    Type: AWS::S3::Bucket
+    Properties:
+      Name: bucket

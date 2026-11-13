@@ -1,0 +1,30 @@
+# Every expectation in the pinned aws-guard-rules-registry corpus that names a rule its .guard file
+# never declares, so the expectation is never consulted and gets no verdict. `<rule-name> <count>`,
+# where the count is how many test cases carry an expectation for that name.
+#
+# All 30 of them are in one file, rules/aws/aws_cloudformation/cfn_no_explicit_resource_names.guard.
+# That file used to declare per-resource-type rules with these names and now has a single aggregate
+# rule; the test file was never updated, so each of these asserts nothing.
+#
+# This list is what makes the integration jobs' green mean something. `cfn-guard test -d` over this
+# corpus exits 1, and 1 is also what a run that genuinely broke would give, so the exit code alone
+# cannot tell the two apart -- see .github/scripts/check-registry-corpus.sh. Read it as a lock on a
+# known-bad state: a name appearing here is a new dead expectation and turns the job red, and a name
+# disappearing means someone fixed one and this file has to say so.
+#
+# The count is here and not just the name so that a name losing some of its expectations, but not
+# all, is still a change. The fix that empties this file is
+# aws-cloudformation/aws-guard-rules-registry#288; when it merges, the pin in
+# .github/workflows/pr.yml moves forward and these lines go with it.
+
+no_static_names 2
+static_alarmname 2
+static_dbinstanceidentifier 2
+static_deploymentconfigname 2
+static_deploymentgroupname 2
+static_domainname 2
+static_groupname 4
+static_managedpolicyname 2
+static_name 7
+static_repositoryname 2
+static_rolename 3

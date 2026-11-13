@@ -1,0 +1,46 @@
+#
+# A filter through a variable over a `Metadata` map holding one member map that lacks the predicate's
+# key: metadata-maps-init-without-authentication-template.yaml, whose `Node` carries only an init block.
+# A population of one cannot be told from the map by the key the predicate names, so the walk over the
+# entries and the test of the map as one object agree on the entry and differ only in what is selected:
+# the filter through the variable tests the map as one object, the reading cfn-guard 3.2.1 gave every
+# filter through a variable over one map (observed on its binary over this template), in both polarities:
+#
+# - `!exists` holds on the map by absence, so the map is selected: `!empty` PASS; a key read below the
+#   selection reads the map, so `."AWS::CloudFormation::Init" exists` PASS and `.config exists` FAIL (the
+#   block holds `config`, the map does not); a gate on the selection opens and reads the map (PASS).
+# - `exists` does not hold on the map, so nothing is selected: `empty` PASS, `!empty` FAIL.
+#
+# The literal `Resources.Node.Metadata[ ... !exists ]` walks the entries and selects the init block, so its
+# `.config exists` PASSes (the control); the author's `[*]` walks the same way. No notice is written: a map
+# read as one object is never walked.
+#
+let md = Resources.Node.Metadata
+
+rule INIT_ONLY_NEGATED_SELECTS_THE_MAP {
+  %md[ "AWS::CloudFormation::Authentication" !exists ] !empty
+}
+
+rule INIT_ONLY_NEGATED_READS_THE_MAPS_OWN_KEY {
+  %md[ "AWS::CloudFormation::Authentication" !exists ]."AWS::CloudFormation::Init" exists
+}
+
+rule INIT_ONLY_NEGATED_DOES_NOT_READ_THE_BLOCK {
+  %md[ "AWS::CloudFormation::Authentication" !exists ].config exists
+}
+
+rule INIT_ONLY_NEGATED_GATE_OPENS_ON_THE_MAP when %md[ "AWS::CloudFormation::Authentication" !exists ] !empty {
+  %md[ "AWS::CloudFormation::Authentication" !exists ]."AWS::CloudFormation::Init".config exists
+}
+
+rule INIT_ONLY_POSITIVE_SELECTS_NOTHING {
+  %md[ "AWS::CloudFormation::Authentication" exists ] empty
+}
+
+rule INIT_ONLY_POSITIVE_IS_NOT_SELECTED {
+  %md[ "AWS::CloudFormation::Authentication" exists ] !empty
+}
+
+rule CONTROL_LITERAL_SELECTS_THE_INIT_BLOCK {
+  Resources.Node.Metadata[ "AWS::CloudFormation::Authentication" !exists ].config exists
+}

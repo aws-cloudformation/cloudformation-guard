@@ -1,0 +1,9 @@
+Cfg:
+  KeyList: [A, B]
+  Tags:
+    A:
+      x: 1
+      y: 2
+    B:
+      x: 1
+      y: 4

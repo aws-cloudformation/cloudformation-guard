@@ -1,0 +1,9 @@
+# `guarded`'s condition reads a parameter carrying a function's result, so the condition is measured
+# and evaluated more than once. Its filter capture must still hold exactly the two buckets. The gates
+# are spelled with `some` so the entry the function had no answer for does not decide them.
+let tags = to_lower(Resources.*.Properties.Tags)
+rule guarded(x) when some %x == "a" Resources[ buckets | Type == 'AWS::S3::Bucket' ] !empty {
+  let n = count(%buckets)
+  %n == 2
+}
+rule main when some %tags == "a" { guarded(%tags) }

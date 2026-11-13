@@ -1,0 +1,5 @@
+let v = Items[ Name == 'zzz' ]
+
+rule r {
+    %v !empty
+}

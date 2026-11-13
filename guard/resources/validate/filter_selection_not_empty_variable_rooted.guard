@@ -1,0 +1,5 @@
+let items = Items
+
+rule r {
+    %items[ Name == 'zzz' ] !empty
+}

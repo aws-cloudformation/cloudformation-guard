@@ -1,0 +1,16 @@
+- name: a deprecation notice and two key-filter argument warnings, each one line, deprecation first and then the warnings in evaluation order
+  input:
+    Wanted: Name
+    Resources:
+      B1:
+        Type: AWS::S3::Bucket
+        Properties:
+          Scalar: x
+          Tags:
+            Wanted: Other
+            other: v
+  expectations:
+    rules:
+      early_argument: PASS
+      filter_after_a_scalar: FAIL
+      late_argument: PASS

@@ -1,0 +1,8 @@
+# A right-hand side that is the empty list literal, bound to a variable: an empty set, so `==` and `IN`
+# select no key and `!=` and `NOT IN` select every key, as for a query that resolved to an empty
+# collection.
+let names = []
+
+rule selected_keys_are_two {
+    Resources.*.Map[ keys == %names ] == 2
+}

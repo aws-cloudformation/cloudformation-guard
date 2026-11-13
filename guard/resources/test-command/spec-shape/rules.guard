@@ -1,0 +1,6 @@
+#
+# One rule over one property. The paired specs in this directory are about the shape of the spec
+# file itself -- duplicated fields, empty files, aliases, non-string names, JSON escapes -- so the rule
+# only has to be decidable.
+#
+rule a_is_one { A == 1 }

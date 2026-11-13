@@ -1,0 +1,7 @@
+Resources:
+  B:
+    Type: AWS::S3::Bucket
+    Properties:
+      Tags:
+        - Key: Name
+          Value: dev

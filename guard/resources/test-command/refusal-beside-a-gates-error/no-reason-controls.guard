@@ -1,0 +1,9 @@
+# The rules of the `test` cells that pin where NO reason is written: `passes` is evaluated PASS over a
+# document that holds `Resources`, and `author_body` fails on a plain comparison (a key the document lacks)
+# under a call that carries an author's `<< >>` text, which is the author's prose and no refusal. Neither
+# line of the plain report carries a `Reason`, and neither structured record carries a `reason`.
+rule passes { Resources exists }
+
+rule missing_key(p) { %p exists }
+
+rule author_body { missing_key(Resources.Missing) << the author says so >> }

@@ -1,0 +1,92 @@
+# The list-valued half of the same defect, and it needs its own fixture because the reserved slot
+# behaves differently over a list than over a map: on a map a bare `[*]` is a documented
+# pass-through, so consuming the slot and walking it can coincide, while on a list it enumerates, so
+# the two readings differ for every tail rather than only for a filter.
+#
+# TWO SENSES OF "PROJECTED" LIVE IN THIS FILE, and conflating them is why its stated oracle sat here
+# for a release without firing.
+#
+# `filtered` below is reached THROUGH a projection -- a wildcard and a filter -- and then descends a
+# last key. Its last act is that `Key`, and the last act is the whole of what `query_projects` reads,
+# so `query_projects` answers false for it exactly as it does for `direct`. Both sides walk the
+# reserved slot, both agree, and no tail can separate them. The three pairs over `direct`/`filtered`
+# are therefore a control on a shared answer, not a test of a projecting binding, and the file was
+# named for the other sense while containing only this one.
+#
+# `enumerated` is the other sense: its last act is an expansion, so `query_projects` answers true and
+# the reader consumes the reserved slot instead of walking it. `indexed` holds the identical list and
+# is judged false, because `part_projects` counts an expansion and not an index. That pair is what the
+# file's name claims and what it now contains.
+#
+# Each pair is one clause spelled twice, so what is asserted is agreement between the two spellings
+# rather than any particular verdict: the engine may answer these however it likes, but it has to
+# answer them the same way, because the two names in each pair hold the same value.
+let direct = Outer.Tags
+let filtered = Wrapper.*[ Marker == 'selected' ].Tags
+
+rule key_descent_over_a_direct_binding {
+    %direct.Status == 'no-such-value-zzz'
+}
+
+rule key_descent_over_a_filtered_binding {
+    %filtered.Status == 'no-such-value-zzz'
+}
+
+rule index_into_a_direct_binding {
+    %direct[0] == 'no-such-value-zzz'
+}
+
+rule index_into_a_filtered_binding {
+    %filtered[0] == 'no-such-value-zzz'
+}
+
+rule key_filter_over_a_direct_binding {
+    %direct[ keys == /Status/ ] !empty
+}
+
+rule key_filter_over_a_filtered_binding {
+    %filtered[ keys == /Status/ ] !empty
+}
+
+# The pair the file is named for: one value, two bindings, and only one of them projecting.
+#
+# `Outer.Groups` is `[[{Key: Name, Value: alpha}]]`, so `[0]` and `[*]` each leave the inner list in
+# hand. The identity pair below is the premise -- without it, a change to what either binding HOLDS
+# would read as having reached agreement -- and it is asserted rather than assumed.
+let indexed = Outer.Groups[0]
+let enumerated = Outer.Groups[*]
+
+rule the_indexed_binding_holds_a_list {
+    %indexed IS_LIST
+}
+
+rule the_enumerated_binding_holds_a_list {
+    %enumerated IS_LIST
+}
+
+# The tail whose first written part is the author's own bare `[*]`. `access_query` retags that `[*]`
+# in place rather than inserting a slot in front of it, so there is no reserved slot in these two
+# queries to consume and the author's wildcard has to run on both sides. It did not: for `enumerated`
+# the projecting binding's judgment consumed the author's part, the query ran nothing after its root,
+# and `.Value` was applied to the list instead of to the map inside it -- a retrieval error where
+# `indexed` reported the comparison against `alpha`.
+rule authored_wildcard_over_an_indexed_binding {
+    %indexed[*].Value == 'no-such-value-zzz'
+}
+
+rule authored_wildcard_over_an_enumerated_binding {
+    %enumerated[*].Value == 'no-such-value-zzz'
+}
+
+# NOT asserted here, and deliberately: `%indexed.Value` and `%enumerated.Value` -- the same descent
+# with no wildcard written -- still disagree, and through a different predicate. There slot 1 IS the
+# reserved slot, so `binding_enumerated` decides, and the indexed binding walks where the projecting
+# one consumes.
+#
+# The deviant side there is `indexed`, not `enumerated`. `%enumerated.Value` reproduces its literal
+# oracle `Outer.Groups[*].Value` message for message, and `Outer.Groups[0].Value` reports that same
+# answer, so `%indexed.Value`'s comparison against `alpha` is the one answer no literal spelling of
+# the descent gives. `QueryPart::Key` never reads `query[query_index - 1]`, which is what makes the
+# literal a sound oracle for this tail where it is not one for a filter. Closing it is a change to
+# `part_projects` that moves every `let v = Q[0]` binding, so it is named here rather than left for a
+# reader to rediscover as a fresh finding.

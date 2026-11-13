@@ -1,0 +1,7 @@
+# Every clause here names a part of a plan that the console reporter's extraction regex does not match --
+# it only matches /resource_changes/<x>/change/after/<...>. `terraform_version` sorts after
+# `resource_changes` and used to panic; `format_version` sorts before it and used to vanish.
+rule plan_metadata_is_current {
+    terraform_version == "9.9.9"
+    format_version == "9.9"
+}

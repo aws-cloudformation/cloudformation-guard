@@ -1,0 +1,17 @@
+Resources:
+  A:
+    Type: AWS::S3::Bucket
+    Properties:
+      Name: a
+  B:
+    Type: AWS::S3::Bucket
+    Properties:
+      Name: b
+  R1:
+    Type: AWS::IAM::Role
+    Properties:
+      Name: r1
+  R2:
+    Type: AWS::IAM::Role
+    Properties:
+      Name: r2

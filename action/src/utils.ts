@@ -1,4 +1,19 @@
+import { SarifRegion } from 'cfn-guard';
 import getConfig from './getConfig';
+
+/**
+ * Render a SARIF region as `L<line>,C<column>`, with `?` for a line or a
+ * column the core did not report. A result with no region is a finding whose
+ * position is unknown; the core says so by omitting the region rather than by
+ * reporting line 1.
+ *
+ * @function formatPosition
+ * @param {SarifRegion | undefined} region - The result's region, if it has one
+ * @returns {string}
+ */
+export function formatPosition(region?: SarifRegion): string {
+  return `L${region?.startLine ?? '?'},C${region?.startColumn ?? '?'}`;
+}
 
 /**
  * Handle adding the root when a user supplies a path

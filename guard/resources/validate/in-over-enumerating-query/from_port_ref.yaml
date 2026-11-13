@@ -1,0 +1,12 @@
+Parameters:
+  PortParam:
+    Type: Number
+    Default: 22
+Mappings:
+  Denied:
+    Ports: [22, 3389]
+Resources:
+  R:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      FromPort: !Ref PortParam

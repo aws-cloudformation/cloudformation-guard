@@ -1,0 +1,2 @@
+rule a { Resources exists }
+﻿rule b { Resources exists }

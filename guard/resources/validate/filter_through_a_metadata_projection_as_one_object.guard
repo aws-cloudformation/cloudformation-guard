@@ -1,0 +1,22 @@
+#
+# The binding of filter_through_a_metadata_projection.guard, filtered with a predicate that names a key
+# the instance's `Metadata` map holds itself: `"AWS::CloudFormation::Authentication" exists`. The map has
+# no scalar entry, and none of its map-valued entries holds that key, so the map is one object: the
+# filter through the variable tests the map as a whole, the predicate holds on it, and the map is
+# selected. The `when` gate opens and the body compares the block's `username`, so the rule FAILs
+# (exit 19) over metadata-maps-authentication-and-init-template.yaml. The role's map lacks the key and is
+# not selected. Over metadata-maps-init-without-authentication-template.yaml no map holds the key, the
+# selection is empty, the gate does not open, and the rule is SKIP (exit 0). No notice is written for
+# either template, because nothing is lost.
+#
+# These are the verdicts cfn-guard 3.2.1 gives this rules file over these two templates: FAIL at exit 19
+# and SKIP at exit 0.
+#
+# The author's own `%blocks[*][ ... ]` does not read this shape the same way: an enumerating `[*]`
+# over a map with no scalar entry that holds the predicate's key refuses the filter, so no control rule
+# for it sits here.
+#
+let blocks = Resources.*[ Metadata exists ].Metadata
+rule FILTER_THROUGH_A_METADATA_PROJECTION_AS_ONE_OBJECT when %blocks[ "AWS::CloudFormation::Authentication" exists ] !empty {
+  %blocks[ "AWS::CloudFormation::Authentication" exists ]."AWS::CloudFormation::Authentication".*.username == "no-such-user-zzz"
+}

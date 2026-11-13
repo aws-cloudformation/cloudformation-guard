@@ -1,0 +1,8 @@
+#
+# YAML 1.2 core has no binary integers, so a plain `0b101` is the string "0b101" on every route, while
+# `0x1F` resolves to 31. The same document and these rules run under validate, the test command and
+# run_checks, and the verdicts are the ones validate gives, measured with the CLI.
+#
+rule BIN_IS_STRING { V is_string  V == "0b101" }
+rule BIN_IS_INT { V is_int  V == 5 }
+rule CONTROL_HEX_IS_INT { H is_int  H == 31 }

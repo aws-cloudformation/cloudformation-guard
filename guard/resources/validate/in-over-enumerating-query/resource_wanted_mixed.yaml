@@ -1,0 +1,10 @@
+# One member names `X`, one has no `Name`; `x` differs from the other value so a filter that selects
+# it fails and one that selects every key but it passes.
+Resources:
+  Cfg:
+    Wanted:
+      - Name: X
+      - Other: 1
+    Map:
+      alpha: 2
+      x: 3

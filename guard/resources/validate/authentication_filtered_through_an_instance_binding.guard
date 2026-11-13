@@ -1,0 +1,27 @@
+#
+# A variable holding one resource, filtered for a key that resource has. The resource holds a scalar
+# `Type`, and `Metadata` is not a key of any of its map-valued entries (its Metadata and Properties
+# maps), so it is one object: the filter tests the resource as a whole, as `%m[*][ ... ]` does, the
+# predicate holds on it, and the resource is selected in its own place. Nothing is announced on stderr.
+#
+# What each rule then reports, on a template whose WebServer block holds a password:
+# - the ungated `!exists` FAILs on the password;
+# - the same assertion behind `when %auth !empty` applies, since the selection is not empty, and FAILs;
+# - a positive `exists` PASSes.
+# On a template with no WebServer the variable holds nothing, so no map is tested and nothing is
+# announced: the ungated `!exists` PASSes, the gated rule is SKIP, and the positive `exists` FAILs.
+#
+let m = Resources.WebServer
+let auth = %m[ Metadata."AWS::CloudFormation::Authentication" exists ]
+
+rule authentication_has_no_password {
+    %auth.Metadata."AWS::CloudFormation::Authentication".*.password !exists
+}
+
+rule authentication_has_no_password_when_selected when %auth !empty {
+    %auth.Metadata."AWS::CloudFormation::Authentication".*.password !exists
+}
+
+rule authentication_block_is_selected {
+    %auth exists
+}

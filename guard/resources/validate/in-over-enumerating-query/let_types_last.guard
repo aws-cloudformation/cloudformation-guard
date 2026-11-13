@@ -1,0 +1,5 @@
+let t = Mappings.Allowed.Types
+
+rule name_in_last_type {
+    Resources.*.Properties.Name IN %t[-1]
+}

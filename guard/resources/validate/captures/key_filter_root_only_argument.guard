@@ -1,0 +1,3 @@
+# The map has no `Wanted`; the document root does. The argument is read from the root with a
+# deprecation notice, which is the reading this spelling had before arguments became map-relative.
+rule func_key { Resources.Cfg.Map[ keys == to_lower(Wanted) ] == 1 }

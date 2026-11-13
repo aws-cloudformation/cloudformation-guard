@@ -1,0 +1,51 @@
+# Two cases, both reaching the one clause site with the same refusal shape among its right-hand values
+# (the same function `M` with the same map-shaped tags) that the verdict never raises. The twin's refusal
+# text names the refused map at its position in this file, so the two cases carry two texts. Each case is
+# evaluated in a scope of its own, so the line is recorded once per case; the command prints it once per
+# clause site and spec file, rendered from both cases: the `Warning:` prefix, the clause, the one
+# verdict, both refusal texts numbered, and the two cases in place of the one case's name.
+- name: first case
+  input:
+    Mappings:
+      Wanted:
+        Keys:
+          - Env
+    Resources:
+      B:
+        Type: AWS::S3::Bucket
+        Properties:
+          Tags:
+            - Key: Env
+              Value: allowed
+      M:
+        Type: AWS::Serverless::Function
+        Properties:
+          Handler: index.handler
+          Tags:
+            Env: x
+  expectations:
+    rules:
+      owner_unset: PASS
+
+- name: second case
+  input:
+    Mappings:
+      Wanted:
+        Keys:
+          - Env
+    Resources:
+      C:
+        Type: AWS::S3::Bucket
+        Properties:
+          Tags:
+            - Key: Env
+              Value: other
+      M:
+        Type: AWS::Serverless::Function
+        Properties:
+          Handler: index.handler
+          Tags:
+            Env: x
+  expectations:
+    rules:
+      owner_unset: PASS

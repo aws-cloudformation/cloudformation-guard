@@ -1,0 +1,5 @@
+#
+# The first of two rules files that declare no rules. Its spec file is tagged and then refused by the
+# loader, so a walk over the directory can show the refusal keeping its place after the file's tag
+# lines and before the next file's lines.
+#

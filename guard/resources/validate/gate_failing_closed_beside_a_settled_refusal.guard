@@ -1,0 +1,20 @@
+# The parameter `p` is unused on purpose: a parameterized rule is run only where a rule calls it,
+# so these two bodies are evaluated as the gate of the rules below and not on their own.
+rule gate_some(p) {
+  some Resources.*.Tags[*][ Key == 'Env' ] {
+    Value == 'prod'
+    let n = parse_int(Value)
+    %n == 1
+  }
+}
+
+rule gate_all(p) {
+  Resources.*.Tags[*][ Key == 'Env' ] {
+    Value == 'prod'
+    let n = parse_int(Value)
+    %n == 1
+  }
+}
+
+rule opened_by_some when gate_some(1) { Resources exists }
+rule opened_by_all when gate_all(1) { Resources exists }

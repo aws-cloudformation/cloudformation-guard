@@ -1,0 +1,6 @@
+rule other {
+    Resources.A.Type == "x"
+}
+rule main when Resources exists << m >> other {
+    Resources.B.Properties.Encrypted == true
+}

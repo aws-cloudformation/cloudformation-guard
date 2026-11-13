@@ -1,0 +1,26 @@
+# One input declared with an anchor and reused by alias. A spec file resolves its aliases, so every
+# case below runs against the document the first one wrote; see docs/UNIT_TESTING.md.
+- name: the base case
+  input: &base
+    A: 1
+    B: 2
+  expectations:
+    rules:
+      a_is_one: PASS
+      b_is_two: PASS
+
+- name: a case reusing the base input through an alias
+  input: *base
+  expectations:
+    rules:
+      a_is_one: PASS
+      b_is_two: PASS
+
+- name: a case merging the base input and overriding one key
+  input:
+    <<: *base
+    B: 3
+  expectations:
+    rules:
+      a_is_one: PASS
+      b_is_two: FAIL

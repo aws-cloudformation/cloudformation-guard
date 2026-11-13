@@ -1,0 +1,26 @@
+#
+# A variable bound to a map written out in the rules file, and then filtered through the variable
+# with a predicate written against that map's own keys.
+#
+# The literal holds a non-null scalar entry (`Version`) and the predicate names `Statement`, a key none
+# of the map's map-valued entries holds, so the map is one object: the filter through the variable
+# tests the map itself, as `%policy[*][ ... ]` does, `Statement exists` holds on it, the map is selected
+# and `!empty` passes. Nothing is announced on stderr.
+#
+let policy = {
+    "Version": "2012-10-17",
+    "Statement": [{ "Effect": "Allow", "Action": "sqs:SendMessage" }]
+}
+
+rule LITERAL_POLICY_HAS_A_STATEMENT when %policy !empty {
+    %policy[ Statement exists ] !empty
+}
+
+# The same document as a YAML map under a key, filtered the same way with the authored `[*]` before the
+# filter: the answer the filter through the variable gives, PASS.
+rule CONTROL_STAR_SPELLING {
+    Resources.Q.Properties.Doc[*][ Statement exists ] !empty
+}
+
+# The spelling with no `[*]` is refused (FAIL, exit 19); it is kept apart from this file, in
+# control_key_spelling_over_the_policy_doc.guard, so that this file exits 0.

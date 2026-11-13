@@ -1,0 +1,9 @@
+Parameters:
+  Unrelated:
+    Type: String
+    Default: nothing
+Resources:
+  BucketA:
+    Type: Custom::Bucket
+    Properties:
+      Encrypted: false

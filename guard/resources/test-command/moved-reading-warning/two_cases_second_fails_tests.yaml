@@ -1,0 +1,30 @@
+# Two cases reach the one call site, and both readings moved: the first case's map selects `alpha` and
+# the rule passes; the second case's map holds `Wanted: beta`, so the moved reading selects `beta` and
+# the rule fails, which the case expects. The command prints one line for the site in this file, naming
+# the first case, and its count covers every case of the file that recorded the site, so the reader of
+# the failing second case is told the warning applies to it too.
+- name: first case, passes
+  input:
+    Resources:
+      Cfg:
+        Wanted: beta
+        Map:
+          Wanted: alpha
+          alpha: 1
+          beta: 2
+  expectations:
+    rules:
+      func_key_per_resource: PASS
+
+- name: second case, fails
+  input:
+    Resources:
+      Cfg:
+        Wanted: alpha
+        Map:
+          Wanted: beta
+          alpha: 1
+          beta: 2
+  expectations:
+    rules:
+      func_key_per_resource: FAIL

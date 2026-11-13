@@ -1,0 +1,5 @@
+let needle = "gp2"
+
+rule needle_in_joined_types {
+    %needle IN join(Mappings.Allowed.Types[*], "")
+}

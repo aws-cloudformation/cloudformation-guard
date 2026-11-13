@@ -1,0 +1,25 @@
+#
+# The refused/decided membership pair again, aimed at the STRUCTURED reporter rather than the console
+# one, over a CloudFormation-shaped template.
+#
+# A new file rather than a widened `membership_lead_sentence.guard`, because that fixture's cell
+# asserts `membership_lines.len() == 3` and adding or reshaping a rule there would move a count another
+# test depends on. Two fixtures with one rule pair each is cheaper than one fixture with two tests
+# reading different slices of it.
+#
+# `Resources` is load-bearing. Without it `CfnAware` hands the file to `generic_summary`, whose sentence
+# is built by `membership_verdict` -- a different site with its own coverage. The CloudFormation shape is
+# what routes the report through `common::report_from_events` and so through the `ClauseCheck::InComparison`
+# arm in `eval_context.rs`, which is the site this fixture exists to reach.
+#
+# `k_refused` names a pattern that compiles and then exhausts fancy-regex's backtracking budget on the
+# eighteen-character key, so nothing was compared. `k_decided` names both keys literally, so the
+# comparison genuinely answered. One report, both arms of the conditional.
+#
+rule k_refused {
+    Resources.*.Properties.Cfg[ keys not in [/(?!x)((a+)+)b/] ] !empty
+}
+
+rule k_decided {
+    Resources.*.Properties.Cfg[ keys not in ["aaaaaaaaaaaaaaaaaa", "other"] ] !empty
+}

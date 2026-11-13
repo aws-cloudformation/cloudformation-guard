@@ -1,0 +1,7 @@
+rule r {
+    Resources.A.Type == "x" << Violation: X
+    Fix: Y >>
+    Resources.B.Properties.Encrypted == true <<
+    must be encrypted
+    >>
+}

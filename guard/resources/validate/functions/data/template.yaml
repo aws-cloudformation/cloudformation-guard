@@ -59,3 +59,4 @@ Resources:
       HealthCheckGracePeriod: 1
       HealthCheckType: "true"
       UpdatedAt: "4024-08-10T00:00:00Z"
+      Cooldown: 2.0

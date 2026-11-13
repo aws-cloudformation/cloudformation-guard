@@ -1,0 +1,9 @@
+# A case whose `input:` holds a key the loader refuses, a null, and whose `rules:` is empty. Beside a
+# rules file that declares rules the case is an errored case at exit 1; beside a rules file that
+# declares none there is no expectation to name, and the refused input is what the command reports.
+- name: a case whose input the loader refuses and that expects nothing
+  input:
+    A: 1
+    null: 2
+  expectations:
+    rules: {}

@@ -1,0 +1,13 @@
+{
+  "Resources": {
+    "M": {
+      "Tags": {
+        "Env": "dev",
+        "ENV": { "Ref": "Stage" }
+      }
+    },
+    "N": {
+      "Tags": { "Key": "Env", "Value": "prod" }
+    }
+  }
+}

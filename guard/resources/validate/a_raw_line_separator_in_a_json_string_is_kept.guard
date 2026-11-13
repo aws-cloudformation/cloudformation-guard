@@ -1,0 +1,9 @@
+#
+# Reads one string that a JSON template spells as `a`, a space, a raw U+2028 or U+2029, a space and
+# `b`. The YAML reader on its own folds the separator and drops the spaces beside it, leaving three
+# characters, so the rule passes only when the five are all there; the fixture that holds the
+# character is written at test time, beside its U+0085 sibling.
+#
+rule label_is_kept {
+    Resources.B.Properties.Label == /^a . b$/
+}

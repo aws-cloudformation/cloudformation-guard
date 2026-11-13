@@ -1,0 +1,5 @@
+# Second in walk order, and its suite names a rule this file does not declare: INCORRECT_STATUS_ERROR
+# (1), which has to outrank the 7 the file before it produced.
+rule other_rule {
+  Resources exists
+}

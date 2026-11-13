@@ -1,0 +1,9 @@
+# The right-hand side is a bare query over a collection, `Names[*]`, bound to a variable, with nothing
+# beside the map for it to be read from. Over `Names: []` the retrieval hands back no entry, the right-hand
+# side is an empty set of names, no key is in it, and the filter selects none; over `Names: [x]` it
+# selects `x`.
+let names = Mappings.Allowed.Names[*]
+
+rule selected_keys_are_two {
+    Resources.*.Map[ keys == %names ] == 2
+}

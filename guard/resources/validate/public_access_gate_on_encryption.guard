@@ -1,0 +1,16 @@
+#
+# A check that only runs when a boolean property is true. The gate is the whole point: if the
+# loader reads the property as a string rather than a boolean, `== true` is not answerable, the
+# gate does not fire, the body never runs, and the process exits 0 having checked nothing.
+#
+# This file sits at the resources/validate root rather than in rules-dir/, because
+# test_updated_summary_output evaluates every rules file in rules-dir/ against every data file in
+# data-dir/ and compares the result to a checked-in golden output.
+#
+rule no_public_bucket {
+    Resources.*[ Type == "AWS::S3::Bucket" ] {
+        when Properties.PublicAccess == true {
+            Properties.Encrypted == true
+        }
+    }
+}

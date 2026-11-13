@@ -1,0 +1,5 @@
+# Not a CloudFormation template. A second document for `incomparable_membership_clause.guard`: `Name`
+# is again a string the integer list cannot be compared with, under a different value, so the clause
+# draws the same notice text as it does over `incomparable-membership-template.yaml`. The two files
+# together are the pair whose single-line `validate` run writes that text once, beside the first.
+Name: "60"

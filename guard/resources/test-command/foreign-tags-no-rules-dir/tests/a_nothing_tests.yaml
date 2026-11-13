@@ -1,0 +1,16 @@
+# Two `!!python/str` tags on the case names, then a flow sequence left open on the last line, so the
+- name: !!python/str the first tagged case
+  input:
+    A: 1
+  expectations:
+    rules:
+      a_is_one: PASS
+# loader refuses the file after reading past both tags. The comment lines are PADDING holding the
+# second tag on a two-digit line; the tests scan this file for the tag lines.
+- name: !!python/str the second tagged case
+  input:
+    A: 1
+  expectations:
+    rules:
+      a_is_one: PASS
+- [

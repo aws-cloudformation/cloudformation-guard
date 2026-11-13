@@ -1,0 +1,5 @@
+let n = parse_float(Resources.*.Properties.Name)
+
+rule r {
+    %n > 0
+}

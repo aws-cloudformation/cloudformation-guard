@@ -1,0 +1,12 @@
+{
+  "Resources": {
+    "A": {
+      "Type": "AWS::S3::Bucket",
+      "Properties": {
+        "%foo": "x",
+        "foo bar": "x",
+        "bar": "x"
+      }
+    }
+  }
+}

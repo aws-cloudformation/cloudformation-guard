@@ -1,0 +1,15 @@
+# Two cases that both lack `input:`, so each is an unreadable case naming its own position. The
+- name: the first case without an input
+  expectations:
+    rules:
+      a_is_one: PASS
+# comment lines are PADDING that puts the second case on a two-digit line (L:12), so a text sort of
+# the two lines puts the second case before the first while the document reads them the other way
+# round. The tests assert the case positions L:2,C:3 and L:12,C:3.
+#
+#
+#
+- name: the second case without an input
+  expectations:
+    rules:
+      a_is_one: PASS

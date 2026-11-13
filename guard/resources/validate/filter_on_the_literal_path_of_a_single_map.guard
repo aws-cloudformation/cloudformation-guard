@@ -1,0 +1,35 @@
+#
+# The same predicate as filter_through_a_single_map_binding.guard, spelled on the literal path rather
+# than through a variable. A filter after a key walks the map's entries, and `Metadata` here is one map
+# whose own key the predicate names, a key none of its entries can carry: the filter is the misreading
+# "Metadata, when it has that key", and it is refused. SKIP in the previous release, where the filter
+# selected nothing and the rule was not applicable; FAIL now, as a verdict and not a notice, so nothing
+# is announced on stderr.
+#
+let cfn_authentication_rule = Resources.Metadata
+let skip_cfn_authentication = Resources.Metadata[
+      "AWS::CloudFormation::Authentication" exists
+      Metadata.cfn_nag.rules_to_suppress not exists or
+      Metadata.cfn_nag.rules_to_suppress.*.id != "W1"
+      Metadata.guard.SuppressedRules not exists or
+      Metadata.guard.SuppressedRules.* != "CFN_AUTHENTICATION_RULE"
+]
+
+rule CFN_AUTHENTICATION_RULE when
+    %cfn_authentication_rule !empty
+    %skip_cfn_authentication !empty
+ {
+  let violation = Resources.Metadata[
+    "AWS::CloudFormation::Authentication".*.accessKeyId exists
+    OR
+    "AWS::CloudFormation::Authentication".*.password exists
+    OR
+    "AWS::CloudFormation::Authentication".*.secretKey exists
+  ]
+
+  %violation empty
+  <<
+    Violation: CFN template has sensitive credentials defined.
+    Fix: Remove sensitive credentials.
+  >>
+}

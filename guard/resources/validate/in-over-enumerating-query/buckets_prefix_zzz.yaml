@@ -1,0 +1,13 @@
+Resources:
+  BktOne:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: production-bucket
+  BktTwo:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: big-bucket
+  Cfg:
+    Type: Custom::Cfg
+    Properties:
+      Prefix: Zzz

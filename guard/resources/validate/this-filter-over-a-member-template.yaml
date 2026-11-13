@@ -1,0 +1,12 @@
+Resources:
+  B1:
+    Type: AWS::S3::Bucket
+    Properties:
+      Encrypted: false
+      Rules:
+        - Action: allow
+          Name: first
+        - Action: deny
+          Name: second
+      ServerSideEncryptionConfiguration:
+        SSEAlgorithm: AES256

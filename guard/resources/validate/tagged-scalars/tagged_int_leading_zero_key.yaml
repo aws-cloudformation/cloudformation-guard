@@ -1,0 +1,5 @@
+Resources:
+  F:
+    Properties:
+      !!int 0755: read-write-execute
+      Mode: 7

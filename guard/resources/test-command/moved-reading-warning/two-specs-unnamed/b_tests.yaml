@@ -1,0 +1,15 @@
+# The second of two spec files run together over `rules.guard`: one case with no `name:`. The moved
+# reading's line names it by its position in this file, "case 1 of `b_tests.yaml`", on every output
+# format; a count that ran across the files would call it case 3, and would name a case this file does
+# not have.
+- input:
+    Resources:
+      Cfg:
+        Wanted: beta
+        Map:
+          Wanted: alpha
+          alpha: 1
+          beta: 2
+  expectations:
+    rules:
+      func_key_per_resource: PASS

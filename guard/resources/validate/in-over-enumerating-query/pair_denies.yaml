@@ -1,0 +1,8 @@
+Mappings:
+  Denies:
+    - [1, 3]
+Resources:
+  X:
+    Type: Custom::Combination
+    Properties:
+      Pair: [1, 2]

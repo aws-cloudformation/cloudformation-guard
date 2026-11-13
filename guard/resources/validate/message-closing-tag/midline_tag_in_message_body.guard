@@ -1,0 +1,9 @@
+rule r {
+    Resources.A.Type == "x" <<
+    Violation: X
+    Fix: echo x >> file
+    >>
+    Resources.B.Properties.Encrypted == true <<
+    must be encrypted
+    >>
+}

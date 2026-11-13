@@ -1,0 +1,30 @@
+# Three rules whose conditions cannot be evaluated over refusal-beside-a-two-kilobyte-value.yaml, so
+# that all of them reach the console's "Could not be evaluated" section through the same arm, and the
+# only difference between their lines is the kind of message each carries.
+#
+# The condition below raises the converter's message for a string that is not an integer, and that
+# message carries the string: a 2048-character template value. The console holds the line to the
+# recorded-message cap. It once read the error's wrapper to decide the bound, and every unevaluatable
+# clause displays that wrapper, so this line was printed whole, value and all.
+let size = parse_int(Resources.Big.Properties.Size)
+
+rule value_carrying_text_is_cut when %size == 1 {
+    Resources.*.Type == 'AWS::S3::Bucket'
+}
+
+# The condition below is refused: the filter reads `Tags` as one object that has no `Name`, keeps
+# nothing, and `Value` is read from that selection. The refusal's sentence is the evaluator's own,
+# names the query, the key the object lacks, the remedy and the path, and runs past the cap. The
+# console prints it whole, because the record says it is a refusal, not because of its words.
+rule refusal_longer_than_the_cap when Resources.*.Properties.Configuration.Settings.Tags[*][ Name == 'Environment' ].Value == 'production' {
+    Resources.*.Type == 'AWS::S3::Bucket'
+}
+
+# The condition below raises the JSON parser's message for a 2150-character string that is not JSON,
+# and that message carries the string. It is the other message a template value reaches the console
+# through, and the console holds its line to the recorded-message cap as it holds the converter's.
+let parsed = json_parse(Resources.Big.Properties.Blob)
+
+rule parser_text_is_cut when %parsed.a == 1 {
+    Resources.*.Type == 'AWS::S3::Bucket'
+}

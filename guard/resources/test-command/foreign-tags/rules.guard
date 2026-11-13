@@ -1,0 +1,5 @@
+#
+# One rule, so the specs beside it can show what `test` says about the `!!` tags a spec file carries:
+# the verdicts are not what these files are about.
+#
+rule a_is_one { A == 1 }

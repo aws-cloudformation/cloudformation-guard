@@ -1,0 +1,4 @@
+Resources:
+  A:
+    Properties:
+      Ports: [80, 443]

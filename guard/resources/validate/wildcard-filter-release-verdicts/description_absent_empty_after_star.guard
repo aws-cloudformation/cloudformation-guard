@@ -1,0 +1,7 @@
+#
+# The absence check docs/CLAUSES.md and the README's 3.2 bullets write over a security group's ingress
+# rules: `[*]` then a filter asking which rules lack a `Description`, `empty` requiring that none does.
+# Over a list of rules the filter selects the elements lacking the key, so a list with one undescribed
+# rule fails and a list whose every rule carries one passes.
+#
+rule r { Resources.*.Properties.SecurityGroupIngress[*][ Description !exists ] empty }

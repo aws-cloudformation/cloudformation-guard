@@ -1,0 +1,33 @@
+# `count(%id)` read inside the iteration that captured it, in five shapes. Two buckets exist, so
+# `%id` holds 2 ids per read; a capture duplicated by re-finding the projection's container would
+# count 4.
+let buckets = Resources.*[ Type == 'AWS::S3::Bucket' ]
+rule count_in_type_block_body {
+  AWS::IAM::Role {
+    %buckets[ id | Properties exists ] !empty
+    let n = count(%id)
+    %n == 2
+  }
+}
+rule count_in_type_block_when {
+  AWS::IAM::Role when %buckets[ id | Properties exists ] !empty {
+    let n = count(%id)
+    %n == 2
+  }
+}
+rule count_in_block_clause {
+  Resources.*[ Type == 'AWS::IAM::Role' ] {
+    %buckets[ id | Properties exists ] !empty
+    let n = count(%id)
+    %n == 2
+  }
+}
+rule count_at_rule_level {
+  %buckets[ id | Properties exists ] !empty
+  let n = count(%id)
+  %n == 2
+}
+rule count_in_rule_when when %buckets[ id | Properties exists ] !empty {
+  let n = count(%id)
+  %n == 2
+}

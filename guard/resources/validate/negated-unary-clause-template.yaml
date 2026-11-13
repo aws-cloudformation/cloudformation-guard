@@ -1,0 +1,5 @@
+Resources:
+  b:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: present

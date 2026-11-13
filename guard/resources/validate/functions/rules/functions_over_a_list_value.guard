@@ -1,0 +1,35 @@
+#
+# A function argument that resolves to one list value is read as that list's elements, the way the
+# comparison operators read one.
+#
+# count(Resources.R.Properties.L) used to answer 1 (the list, as one value) while
+# Resources.R.Properties.L == ["a", "b", "c"] compared element-wise; join over a list literal refused
+# with "Joining non string values"; parse_int over a one-element list of strings resolved to nothing.
+# The [*] spellings in the last two rules answered the same values before and after.
+#
+let n = count(Resources.R.Properties.L)
+let lit = ["a", "b", "c"]
+let j = join(%lit, ",")
+let m = count(%lit)
+let ports = parse_int(Resources.R.Properties.Ports)
+let n_expanded = count(Resources.R.Properties.L[*])
+let j_expanded = join(Resources.R.Properties.L[*], ",")
+
+rule COUNT_OF_A_LIST_PROPERTY {
+    %n == 3
+}
+rule JOIN_OF_A_LIST_LITERAL {
+    %j == "a,b,c"
+}
+rule COUNT_OF_A_LIST_LITERAL {
+    %m == 3
+}
+rule PARSE_INT_OF_A_LIST_PROPERTY {
+    %ports == 80
+}
+rule COUNT_OF_THE_EXPANDED_LIST_CONTROL {
+    %n_expanded == 3
+}
+rule JOIN_OF_THE_EXPANDED_LIST_CONTROL {
+    %j_expanded == "a,b,c"
+}

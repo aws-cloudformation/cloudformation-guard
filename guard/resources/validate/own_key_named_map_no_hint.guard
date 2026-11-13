@@ -1,0 +1,5 @@
+#
+# The key spelling of the own-key misreading over a bucket: `Type` is a string of `B1`, no member holds
+# it, so the refusal names the two bracket spellings and the path and offers no member spellings.
+#
+rule r { Resources.B1[ Type == 'AWS::S3::Bucket' ] exists }

@@ -1,0 +1,19 @@
+# `<<: *base` is how a shared input is usually reused, so a misspelled anchor name arrives at the merge
+# key rather than anywhere else. The merge key's value is then an alias the loader could not resolve,
+# and the refusal that case reports has to be the alias's own: it names `*bsae` and says no earlier
+# node declares it. Reporting that the merge key was given something other than a mapping would hide
+# the typo. The case that declares the anchor keeps its verdict.
+- name: the shared base, anchored
+  input: &base
+    A: 1
+  expectations:
+    rules:
+      a_is_one: PASS
+
+- name: a merge of a misspelled anchor
+  input:
+    <<: *bsae
+    B: 2
+  expectations:
+    rules:
+      b_is_two: PASS

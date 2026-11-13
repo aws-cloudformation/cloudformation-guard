@@ -1,0 +1,13 @@
+#
+# A case-insensitive allowlist written through to_lower.
+#
+# Every ingress entry must name tcp, in any case. An entry whose IpProtocol is not a string (-1 is
+# CloudFormation's "all traffic") or that has no IpProtocol at all is exactly what the rule is meant to
+# catch, and it fails the rule the way the bare `%ingress.IpProtocol == "TCP"` does.
+#
+let ingress = Resources.*.Properties.SecurityGroupIngress[*]
+
+rule TCP_ONLY when %ingress !empty {
+    let proto = to_lower(%ingress.IpProtocol)
+    %proto == "tcp"
+}

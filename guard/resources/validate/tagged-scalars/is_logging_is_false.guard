@@ -1,0 +1,3 @@
+rule is_logging_is_false {
+    Resources.Trail.Properties.IsLogging == false
+}

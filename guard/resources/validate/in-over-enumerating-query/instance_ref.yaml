@@ -1,0 +1,12 @@
+Parameters:
+  TypeParam:
+    Type: String
+    Default: t2.micro
+Mappings:
+  Denied:
+    Types: [t2.micro, t2.nano]
+Resources:
+  I:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: !Ref TypeParam

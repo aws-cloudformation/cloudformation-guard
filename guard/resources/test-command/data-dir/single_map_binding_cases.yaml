@@ -1,0 +1,66 @@
+###
+# The two shapes a published registry rule's own tests carry for a resource whose logical id is
+# `Metadata`: an authentication block with a password and one without. The rules file is
+# `resources/validate/filter_through_a_single_map_binding.guard`, shared with the validate-side test so
+# one fixture describes the change.
+#
+# The `Metadata` map holds a scalar `Type` beside its authentication block, one object, so the filter
+# through `%cfn_authentication_rule` tests the map itself, as `[*]` reads it, and the rule applies:
+# FAIL with a password, PASS without, the verdicts the published rule's own tests expect. No notice is
+# written for either case.
+###
+---
+- name: Authentication block with a password
+  input:
+    Resources:
+      RootRole:
+        Type: "AWS::IAM::Role"
+        Properties:
+          AssumeRolePolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: "Allow"
+                Principal:
+                  Service:
+                    - "ec2.amazonaws.com"
+                Action:
+                  - "sts:AssumeRole"
+      Metadata:
+        Type: AWS::CloudFormation::Authentication
+        AWS::CloudFormation::Authentication:
+          testBasic:
+            type: "basic"
+            username: "testUsername1"
+            password: "sensitive_password"
+            uris:
+              - "http://www.example.com/test"
+  expectations:
+    rules:
+      CFN_AUTHENTICATION_RULE: FAIL
+
+- name: Authentication block without a password
+  input:
+    Resources:
+      RootRole:
+        Type: "AWS::IAM::Role"
+        Properties:
+          AssumeRolePolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: "Allow"
+                Principal:
+                  Service:
+                    - "ec2.amazonaws.com"
+                Action:
+                  - "sts:AssumeRole"
+      Metadata:
+        Type: AWS::CloudFormation::Authentication
+        AWS::CloudFormation::Authentication:
+          testS3:
+            type: "s3"
+            roleName: !Ref RootRole
+            buckets:
+              - "somebucket333"
+  expectations:
+    rules:
+      CFN_AUTHENTICATION_RULE: PASS

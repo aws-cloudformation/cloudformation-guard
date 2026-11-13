@@ -1,0 +1,7 @@
+Resources:
+  B:
+    Type: AWS::S3::Bucket
+    Properties:
+      <<:
+        - 1: a
+        - "1": b

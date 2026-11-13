@@ -1,0 +1,11 @@
+#
+# Two merge sources each hold one key, the integer 1 and the string "1", which read as one name: a
+# collision across sources. The loader keeps the earlier source's value, a, and reports the pair as a
+# duplicate key whose notice names the earlier line first and says the first value is the one
+# evaluated ("first at L:6,C:11 and again at L:7,C:11. The first value is the one evaluated."); the
+# serde conversion refuses the same document. The same document and these rules run under validate,
+# the test command and run_checks, and the verdicts are the ones validate gives, measured with the CLI.
+#
+rule earlier_source_wins { Resources.B.Properties."1" == "a" }
+rule later_source_is_not_read { Resources.B.Properties."1" != "b" }
+rule merge_key_is_folded { Resources.B.Properties."<<" !exists }

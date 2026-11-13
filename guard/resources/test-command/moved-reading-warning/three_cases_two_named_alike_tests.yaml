@@ -1,0 +1,50 @@
+# Three cases reach the one call site, and the first and the third share a name, which a spec file may
+# do (`docs/UNIT_TESTING.md`: a name repeated over cases with different inputs is ordinary). The
+# command prints one line for the site in this file, naming the first case, and its count covers the
+# maps of all three cases (two in the first, one in each of the others, so "3 more maps across 3 cases
+# in this file"): a case is counted by its position in the file, not by its name, so two cases named
+# alike are two cases.
+- name: x
+  input:
+    Resources:
+      First:
+        Wanted: beta
+        Map:
+          Wanted: alpha
+          alpha: 1
+          beta: 2
+      Second:
+        Wanted: gamma
+        Map:
+          Wanted: alpha
+          alpha: 1
+          gamma: 2
+  expectations:
+    rules:
+      func_key_per_resource: PASS
+
+- name: y
+  input:
+    Resources:
+      Middle:
+        Wanted: beta
+        Map:
+          Wanted: alpha
+          alpha: 1
+          beta: 2
+  expectations:
+    rules:
+      func_key_per_resource: PASS
+
+- name: x
+  input:
+    Resources:
+      Third:
+        Wanted: beta
+        Map:
+          Wanted: alpha
+          alpha: 1
+          beta: 2
+  expectations:
+    rules:
+      func_key_per_resource: PASS

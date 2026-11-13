@@ -1,0 +1,7 @@
+Mappings:
+  DenyNestedNine: [[9]]
+Resources:
+  X:
+    Type: Custom::Nested
+    Properties:
+      Nest: [1, [9]]

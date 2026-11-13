@@ -1,0 +1,10 @@
+# An anchored key beside an alias of it inside `input:` is a key written twice: the last value stands
+# and the warning names the key at the two lines it was written at, the alias at its own line (6 and
+# 7), as the same document warns under `validate`. The last value is 1, so the expectation holds.
+- name: an aliased key inside the input
+  input:
+    &k A: 2
+    *k: 1
+  expectations:
+    rules:
+      a_is_one: PASS

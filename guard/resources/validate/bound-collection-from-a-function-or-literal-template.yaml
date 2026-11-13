@@ -1,0 +1,8 @@
+# One policy document embedded as JSON text, for a `let` bound to `json_parse` of it. The document is a
+# map of two sub-maps, `Read` and `Write`, with no scalar entry, and each sub-map carries a `Sid`: a
+# collection in which every entry holds the key a `Sid !exists` filter tests.
+Resources:
+  Q:
+    Type: AWS::SQS::QueuePolicy
+    Properties:
+      PolicyText: '{"Read": {"Sid": "r"}, "Write": {"Sid": "w"}}'

@@ -1,0 +1,9 @@
+#
+# The control for `vacuous_comparison_inside_a_parameterized_rule.guard`: the same comparison over the
+# same empty list, written at the top level instead of inside a parameterized rule's body. A comparison
+# over an empty collection fails as a missing key does (KNOWN_ISSUES.md item 9), with no notice, and the
+# rule body reports the same verdict through the scope that binds its parameter.
+#
+rule VACUOUS_COMPARISON_AT_THE_TOP_LEVEL {
+  Config.Sizes == 50
+}

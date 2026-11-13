@@ -1,0 +1,7 @@
+# An index into an empty list: `Names[0]` over `Names: []` names an element the list does not have, which
+# is a path the document lacks, not an enumeration that yielded nothing. Fails closed.
+let name = Mappings.Allowed.Names[0]
+
+rule first_name_is_two {
+    Resources.*.Map[ keys == %name ] == 2
+}

@@ -1,0 +1,4 @@
+# Not a CloudFormation template. `Config.Sizes` is an empty list, the operand shape whose comparison
+# passes without comparing anything, placed under a key so a parameterized rule can be handed it.
+Config:
+  Sizes: []

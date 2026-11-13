@@ -1,0 +1,9 @@
+Wanted: Name
+Resources:
+  B1:
+    Type: AWS::S3::Bucket
+    Properties:
+      Scalar: x
+      Tags:
+        Wanted: Other
+        other: v

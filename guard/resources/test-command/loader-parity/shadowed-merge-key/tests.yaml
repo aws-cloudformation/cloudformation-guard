@@ -1,0 +1,15 @@
+- name: a shadowed merge source that reads as one name has one reading
+  input:
+    Resources:
+      B:
+        Type: AWS::S3::Bucket
+        Properties:
+          <<:
+            1: merged_number
+            "1": merged_string
+          "1": explicit
+  expectations:
+    rules:
+      explicit_wins: PASS
+      merged_values_are_not_read: PASS
+      merge_key_is_folded: PASS

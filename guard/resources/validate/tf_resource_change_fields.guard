@@ -1,0 +1,7 @@
+# The four everyday resource-change fields outside `change.after`, all of which panicked.
+rule resource_change_fields {
+    resource_changes[*].type == "never_matches"
+    resource_changes[*].address == "never_matches"
+    resource_changes[*].name == "never_matches"
+    resource_changes[*].change.actions == ["delete"]
+}

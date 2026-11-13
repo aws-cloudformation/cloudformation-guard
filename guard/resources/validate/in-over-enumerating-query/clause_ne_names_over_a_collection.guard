@@ -1,0 +1,5 @@
+let names = Mappings.Allowed.Names[*]
+
+rule tag_keys_differ {
+    Resources.*.Tags[*].Key != %names
+}

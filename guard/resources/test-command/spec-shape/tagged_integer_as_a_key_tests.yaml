@@ -1,0 +1,18 @@
+# The second case's `input:` has a `!!int` whose payload is not an integer where a key should be. The
+# loader cannot read the tagged scalar, and a key with no text is refused as one: the case fails with
+# the key refusal, which names the position and says to quote the key, and the case before it keeps
+# its verdict.
+- name: an ordinary case
+  input:
+    A: 1
+  expectations:
+    rules:
+      a_is_one: PASS
+
+- name: a tagged integer that is not one, as a key
+  input:
+    A: 1
+    !!int abc: 1
+  expectations:
+    rules:
+      a_is_one: PASS

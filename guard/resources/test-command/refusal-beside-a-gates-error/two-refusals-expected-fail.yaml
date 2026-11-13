@@ -1,0 +1,25 @@
+###
+# The input of the `test` cell for a FAIL expectation MET on a gate whose deciding error is a refusal, with
+# a second refusal settled beside it: the document of `two-refusals.yaml` (`M1` and `M2` each hold an
+# intrinsic beside the compared entry, a refused selection each), with both expectations FAIL. Both are met,
+# and the met line of each gated rule still carries the rule's sentence as its reason, naming both refused
+# maps once.
+###
+---
+- name: a met FAIL expectation on a rule that failed closed on two refusals
+  input:
+    Resources:
+      M1:
+        Tags:
+          Env: dev
+          ENV:
+            Ref: Stage
+      M2:
+        Tags:
+          Env: dev
+          ENV:
+            Ref: Release
+  expectations:
+    rules:
+      opened_by_some: FAIL
+      opened_by_all: FAIL

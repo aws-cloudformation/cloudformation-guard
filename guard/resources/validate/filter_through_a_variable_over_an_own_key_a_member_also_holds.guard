@@ -1,0 +1,37 @@
+#
+# A filter through a variable over a `Metadata` map with NO scalar entry that holds the predicate's key
+# itself while a sub-map (`Wrapper`) holds the same key. The map holds the key, so the filter through the
+# variable tests the map as one object, the reading cfn-guard 3.2.1 gave every filter through a variable
+# over one map (observed on its binary over metadata-own-authentication-beside-a-wrapper-template.yaml):
+#
+# - `exists`: the predicate holds on the map, the map is selected (`!empty` PASS), and the password check
+#   below the selection reads the map's OWN block, which carries a password: FAIL (3.2.1 FAIL).
+# - `!exists`: the predicate does not hold on the map, nothing is selected, `empty` PASS (3.2.1 PASS).
+#
+# The literal `Resources.Box.Metadata[ ... exists ]` walks the entries and selects `Wrapper`, whose block
+# carries no password, so its password check PASSes; the author's `[*]` enumerates the map the same way
+# (a key a member holds too is exempt from the own-key refusal) and PASSes too. Neither spelling refuses
+# this map, which is why the variable spelling is one object and not refused. No notice is written: a map
+# the slot reads as one object is never walked, so no selection moves.
+#
+let md = Resources.Box.Metadata
+
+rule OWN_KEY_BESIDE_A_MEMBER_SELECTS_THE_MAP {
+  %md[ "AWS::CloudFormation::Authentication" exists ] !empty
+}
+
+rule OWN_KEY_BESIDE_A_MEMBER_PASSWORD when %md[ "AWS::CloudFormation::Authentication" exists ] !empty {
+  %md[ "AWS::CloudFormation::Authentication" exists ]."AWS::CloudFormation::Authentication".*.password !exists
+}
+
+rule NEGATED_OVER_THE_MAP_HOLDING_THE_KEY_SELECTS_NOTHING {
+  %md[ "AWS::CloudFormation::Authentication" !exists ] empty
+}
+
+rule CONTROL_LITERAL_SELECTS_THE_WRAPPER {
+  Resources.Box.Metadata[ "AWS::CloudFormation::Authentication" exists ]."AWS::CloudFormation::Authentication".*.password !exists
+}
+
+rule CONTROL_STAR_SELECTS_THE_WRAPPER {
+  Resources.Box.Metadata[*][ "AWS::CloudFormation::Authentication" exists ]."AWS::CloudFormation::Authentication".*.password !exists
+}

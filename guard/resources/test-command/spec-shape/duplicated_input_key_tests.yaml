@@ -1,0 +1,10 @@
+# A key written twice inside `input:` resolves last-wins with a warning, as the same document does
+# under `validate`. The last value is 1, so the expectation holds, and the warning names the key and
+# both positions.
+- name: a duplicated key inside the input
+  input:
+    A: 2
+    A: 1
+  expectations:
+    rules:
+      a_is_one: PASS

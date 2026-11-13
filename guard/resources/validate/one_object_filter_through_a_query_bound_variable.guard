@@ -1,0 +1,17 @@
+#
+# A filter over a map read as one object whose predicate names a `%variable` the run has not read: `k` is
+# bound to a query into the template's Parameters, and nothing before the filter reads it. The probe that
+# decides whether the one-object reading holds reads such a binding quietly (a name some scope binds), so
+# `Kind == %k` is read, fails on a Cfg with no `Kind`, the one-object reading does not hold, and nothing is
+# refused: `empty` passes at exit 0 over a selection of nothing, exactly as the literal `let k = 'k'` does.
+# The reading where an unread `%k` left `Owner !exists` to hold alone, refusing the filter at exit 19,
+# made the verdict depend on which clause ran first; this file pins the order-free reading on the binary.
+# The second rule is the literal sibling; the third keeps the one-object refusal itself in view: with no
+# `Kind` clause at all, `Owner !exists` holds on the map read as one object and the filter is refused.
+#
+let k = Parameters.K.Default
+let k_literal = 'k'
+
+rule QUERY_BOUND_K_NEVER_READ { Resources.R.Properties.Cfg[ Owner !exists  Kind == %k ] empty }
+
+rule LITERAL_K { Resources.R.Properties.Cfg[ Owner !exists  Kind == %k_literal ] empty }

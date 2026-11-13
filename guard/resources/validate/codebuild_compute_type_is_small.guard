@@ -1,0 +1,3 @@
+rule codebuild_compute_type_is_small {
+    Resources.*.Properties.Environment.ComputeType == 'BUILD_GENERAL1_SMALL'
+}

@@ -1,0 +1,6 @@
+rule other {
+    Resources.A.Type == "x"
+}
+rule r {
+    Resources.A.Type == "x" << m >> other |OR| Resources.B.Properties.Encrypted == true
+}

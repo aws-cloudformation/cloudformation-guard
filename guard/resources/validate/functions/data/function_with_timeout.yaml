@@ -1,0 +1,6 @@
+Resources:
+  Fn:
+    Type: AWS::Lambda::Function
+    Properties:
+      Timeout: 5
+      FunctionName: prod-database-01

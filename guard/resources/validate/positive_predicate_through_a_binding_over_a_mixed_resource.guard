@@ -1,0 +1,21 @@
+#
+# A positive predicate through a variable holding one resource whose `Wrapper` entry is itself a map
+# carrying the key the predicate names, beside the resource's `Type` string: a mixed map. The filter
+# through the variable tests the predicate on the resource itself, as cfn-guard 3.2.1 did (observed on
+# its binary): the resource's own `Metadata` has no `AWS::CloudFormation::Authentication`, so the
+# predicate does not hold, nothing is selected, `empty` passes and a `!exists` over the selection's
+# passwords is not applicable. The literal `Resources.Only[ ... ]` walks the entries and selects
+# `Wrapper`; it does not refuse the filter (the predicate holds by presence), so the variable keeps the
+# release's reading rather than refusing. Over the same resource with no `Type` string (a collection to
+# the slot) the walk stands and `Wrapper` is selected: positive_predicate_through_a_binding_over_a_collection.guard.
+#
+let m = Resources.Only
+let carrying = %m[ Metadata."AWS::CloudFormation::Authentication" exists ]
+
+rule the_resource_lacks_the_block_at_its_own_level {
+    %m[ Metadata."AWS::CloudFormation::Authentication" exists ] empty
+}
+
+rule the_password_check_is_not_applicable {
+    %carrying.Metadata."AWS::CloudFormation::Authentication".*.password !exists
+}

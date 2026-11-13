@@ -1,0 +1,4 @@
+let p = Resources.LT.Properties
+rule r when %p[ TagSpecifications !exists ] !empty {
+    %p.LaunchTemplateName exists
+}

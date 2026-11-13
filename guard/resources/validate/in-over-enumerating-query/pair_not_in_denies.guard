@@ -1,0 +1,3 @@
+rule no_denied_pair {
+    Resources.*.Properties.Pair NOT IN Mappings.Denies[*]
+}

@@ -1,0 +1,10 @@
+# `%names` is a function result that kept an unresolved entry (B has no Name), so the `when` is
+# measured once more with every condition evaluated on its own. In the run itself the first
+# disjunct of the second condition passes and the key filter is never evaluated; the measurement
+# evaluates it, and what a measurement reads must leave no warning behind.
+let names = to_lower(Resources.*.Name)
+rule unreached_key_filter when some %names == 'a'
+                             Resources.A.Type == 'AWS::S3::Bucket' or
+                             Resources.Cfg.Map[ keys == to_lower(Wanted) ] !empty {
+  Resources.A.Type == 'AWS::S3::Bucket'
+}

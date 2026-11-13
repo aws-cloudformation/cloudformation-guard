@@ -1,0 +1,5 @@
+let needle = "2"
+
+rule some_type_holds_the_needle {
+    some %needle IN Mappings.Allowed.Types[*]
+}

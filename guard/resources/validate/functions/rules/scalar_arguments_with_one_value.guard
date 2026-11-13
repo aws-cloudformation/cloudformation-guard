@@ -1,0 +1,23 @@
+#
+# Control for scalar_arguments_with_two_values.guard: the same calls with each scalar argument bound
+# to a query that selects one value. These pass.
+#
+let end = Resources.R1.Properties.End
+let delim = Resources.R1.Properties.Delim
+let pattern = Resources.R1.Properties.Pattern
+let name = Resources.R1.Properties.Name
+let names = Resources.*.Properties.Name
+
+let sub = substring(%name, 0, %end)
+let joined = join(%names, %delim)
+let replaced = regex_replace(%name, %pattern, "X")
+
+rule SUBSTRING_WITH_ONE_END {
+    %sub == "abc"
+}
+rule JOIN_WITH_ONE_DELIMITER {
+    %joined == "abcdefgh-abcdefgh"
+}
+rule REGEX_REPLACE_WITH_ONE_PATTERN {
+    %replaced == "Xdefgh"
+}

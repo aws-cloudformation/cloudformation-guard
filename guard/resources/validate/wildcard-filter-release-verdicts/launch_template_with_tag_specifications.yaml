@@ -1,0 +1,11 @@
+Resources:
+  LT:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateName: x
+      LaunchTemplateData:
+        TagSpecifications:
+          - ResourceType: instance
+            Tags:
+              - Key: Env
+                Value: prod

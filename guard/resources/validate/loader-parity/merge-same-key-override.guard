@@ -1,0 +1,17 @@
+#
+# A merged key under an explicit key written the same way -- plain BucketName under plain BucketName,
+# quoted "1" under quoted "1" -- is a same-key override, the merge key's documented use: the explicit
+# value stands, nothing is reported on any route, and nothing is refused. The same document and these
+# rules run under validate, the test command and run_checks, and the verdicts are the ones validate
+# gives, measured with the CLI.
+#
+# `skipped_without_tags` is gated on a property the document does not have, so its verdict is SKIP on
+# every route; it is here so the three-route pin carries a SKIP row and the readers that compare the
+# routes to this file have to carry one too.
+#
+rule explicit_bucket_name_wins { Resources.B.Properties.BucketName == "explicit" }
+rule explicit_quoted_key_wins { Resources.B.Properties."1" == "explicit" }
+rule merge_key_is_folded { Resources.B.Properties."<<" !exists }
+rule skipped_without_tags when Resources.B.Properties.Tags exists {
+    Resources.B.Properties.Tags !empty
+}

@@ -1,0 +1,21 @@
+#
+# A count and a join over both buckets, each failing. The answers describe the two buckets together, so
+# they sit at the path the buckets share, /Resources, and not at whichever bucket the template lists
+# first. The console reporter organizes findings by resource and cannot place one at /Resources; by its
+# rule the file is then rendered by the next reporter, which prints each finding against that path.
+# The two clauses stay separate findings.
+#
+let buckets = Resources.*[ Type == 'AWS::S3::Bucket' ]
+let names = Resources.*[ Type == 'AWS::S3::Bucket' ].Properties.BucketName
+
+rule three_buckets {
+    let n = count(%buckets)
+    %n == 3
+    << Violation: expected exactly three buckets >>
+}
+
+rule joined_names {
+    let j = join(%names, ",")
+    %j == "x"
+    << Violation: joined names differ >>
+}

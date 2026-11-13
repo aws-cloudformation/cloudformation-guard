@@ -1,0 +1,9 @@
+# One Properties map whose own keys and whose nested map's keys overlap: `Name` is a key of the map
+# and of its `Inner` entry. A filter for `Name exists` through a variable bound to this map tests the
+# map itself and selects it, as cfn-guard 3.2.1 did; the literal `Properties[ Name exists ]` selects `Inner`.
+Resources:
+  B:
+    Properties:
+      Name: a
+      Inner:
+        Name: b

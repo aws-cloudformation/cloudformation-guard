@@ -1,0 +1,6 @@
+Resources:
+  A:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: a
+  B:

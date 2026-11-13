@@ -1,0 +1,8 @@
+#
+# Both operands resolve to a collection with no element, so there is no pair to compare on either
+# side. The clause fails with a block-level explanation, since there is no per-value pair to file it
+# against.
+#
+rule both_sides_empty {
+    Resources.*.Properties.Ports <= Resources.Instance.Properties.Ports
+}

@@ -1,0 +1,9 @@
+# The rules file after the unreadable one in walk order, and the reason this directory holds two.
+#
+# `handle_plaintext_directory` read rule content with `?`, so the unreadable `a_not_utf8.guard` ended
+# the whole walk and this file was never reached -- while the structured walk reported the unreadable
+# file and carried on to here. The test asserts this file's name appears in the report, so a return to
+# propagating would fail rather than merely change a number.
+rule always_passes {
+  Resources exists
+}

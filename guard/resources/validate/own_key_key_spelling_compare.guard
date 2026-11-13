@@ -1,0 +1,6 @@
+#
+# The key spelling after the wildcard, as an assertion with a binary comparison: over a `Resources` map
+# whose own key `A` names a member another lacks, the left-hand value is the refusal's marker, and the
+# comparison's record carries the refusal, printed whole on the console and carried by the JSON report.
+#
+rule r { Resources[*].A.S == "abc" }

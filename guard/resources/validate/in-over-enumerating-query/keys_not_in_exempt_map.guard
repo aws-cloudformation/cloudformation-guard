@@ -1,0 +1,7 @@
+# An exemption list written as a map, each exempted bucket a key: the right-hand side of the key filter is
+# the map's key set, so `NOT IN` selects every bucket not named in it and checks those.
+let exempt = Mappings.Exempt.Buckets
+
+rule unexempted_buckets_are_encrypted {
+    Resources[ keys NOT IN %exempt ].Properties.Encrypted == true
+}

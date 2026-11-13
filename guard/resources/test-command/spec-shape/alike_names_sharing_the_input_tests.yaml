@@ -1,0 +1,19 @@
+# One name over two cases with one input and different expectations: the second case was pasted from
+# the first and given one more expectation, not the input it was meant to run against. Both run, and
+# the command warns on stderr naming both positions.
+- name: a pasted case
+  input:
+    A: 1
+    B: 2
+  expectations:
+    rules:
+      a_is_one: PASS
+
+- name: a pasted case
+  input:
+    A: 1
+    B: 2
+  expectations:
+    rules:
+      a_is_one: PASS
+      b_is_two: PASS

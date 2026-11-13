@@ -1,0 +1,5 @@
+let denies = Mappings.Denies[*]
+
+rule no_denied_pair {
+    Resources.*.Properties.Pair NOT IN %denies
+}

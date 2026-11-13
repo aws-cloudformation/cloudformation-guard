@@ -1,0 +1,15 @@
+# An alias to a name that no node before it anchors. YAML has no forward references, and libyaml
+# leaves the check to whoever composes the document, so the loader marks the alias unreadable: its
+# case fails naming the alias, and the case that declares the anchor afterwards still runs.
+- name: an alias ahead of its anchor
+  input: *later
+  expectations:
+    rules:
+      a_is_one: PASS
+
+- name: the anchor, declared too late to be aliased above
+  input: &later
+    A: 1
+  expectations:
+    rules:
+      a_is_one: PASS

@@ -32,7 +32,12 @@ pub(super) fn resolve_variable_query<'s>(
     let retrieved = var_resolver.resolve_variable(variable)?;
     let index: usize = if query.len() > 1 {
         match &query[1] {
-            QueryPart::AllIndices(_) => 2,
+            // `AuthoredIndices` answers as `AllIndices` does, which keeps this walker's answers exactly
+            // where they were: an author's `[*]` at slot 1 was `AllIndices(None)` before the variant
+            // existed and skipped to 2, so it still does. This arm is the unconditional skip that
+            // `eval_context`'s root-variable arm stopped making, and narrowing it is a separate change
+            // with its own coverage to establish -- not something to smuggle in behind a parser marker.
+            QueryPart::AllIndices(_) | QueryPart::AuthoredIndices => 2,
             _ => 1,
         }
     } else {
@@ -512,13 +517,18 @@ impl<'loc> Evaluate for GuardAccessClause<'loc> {
             //
             // ==, !=
             //
+            // `compare_eq_symmetric`, matching `EqOperation` on the other evaluation path: `==` has no
+            // subject among its two operands and `compare_eq`'s range arms are written
+            // scalar-on-the-left, so a range on the left refused a pair the same clause decides when
+            // it is written the other way round. `IN` below keeps `compare_eq`, where
+            // one-directional is what membership means.
             CmpOperator::Eq => compare(
                 &lhs,
                 &clause.access_clause.query.query,
                 &rhs,
                 rhs_query,
                 invert_closure(
-                    super::path_value::compare_eq,
+                    super::path_value::compare_eq_symmetric,
                     clause.access_clause.comparator.1,
                     clause.negation,
                 ),
@@ -1069,7 +1079,7 @@ fn extract_variables<'s, 'loc>(
 #[derive(Debug)]
 #[deprecated]
 #[allow(dead_code)]
-pub(crate) struct RootScope<'s, 'loc> {
+pub struct RootScope<'s, 'loc> {
     rules: &'s RulesFile<'loc>,
     input_context: &'s PathAwareValue,
     pending_queries: HashMap<&'s str, &'s AccessQuery<'loc>>,
@@ -1081,7 +1091,7 @@ pub(crate) struct RootScope<'s, 'loc> {
 
 #[cfg(test)]
 impl<'s, 'loc> RootScope<'s, 'loc> {
-    pub(crate) fn new(rules: &'s RulesFile<'loc>, value: &'s PathAwareValue) -> Result<Self> {
+    pub fn new(rules: &'s RulesFile<'loc>, value: &'s PathAwareValue) -> Result<Self> {
         let mut literals = HashMap::new();
         let mut pending = HashMap::new();
         extract_variables(&rules.assignments, &mut literals, &mut pending)?;
@@ -1170,7 +1180,7 @@ impl<'s, 'loc> EvaluationContext for RootScope<'s, 'loc> {
 }
 
 #[allow(dead_code)]
-pub(crate) struct BlockScope<'s, T> {
+pub struct BlockScope<'s, T> {
     block_type: &'s Block<'s, T>,
     input_context: &'s PathAwareValue,
     pending_queries: HashMap<&'s str, &'s AccessQuery<'s>>,
@@ -1180,7 +1190,7 @@ pub(crate) struct BlockScope<'s, T> {
 }
 
 impl<'s, T> BlockScope<'s, T> {
-    pub(crate) fn new(
+    pub fn new(
         block_type: &'s Block<'s, T>,
         context: &'s PathAwareValue,
         parent: &'s dyn EvaluationContext,

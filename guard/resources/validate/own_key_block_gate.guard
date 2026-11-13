@@ -1,0 +1,9 @@
+#
+# The block spelling's own-key refusal as a `when` GATE: `inner` is a parameterized rule (evaluated only
+# through the call, never on its own, so the file's exit and the console lines are the OUTER rule's), and
+# over `R1.Cfg` (its own key `Limits` names a member, no member holds a `Limits` of its own) it is refused,
+# so `outer`'s condition cannot be evaluated and `outer` fails closed with the refusal, remedy included,
+# printed whole on the outer rule's line.
+#
+rule inner(cfgs) { %cfgs[*] { Limits exists } }
+rule outer when inner(Resources.*.Cfg) { Resources exists }

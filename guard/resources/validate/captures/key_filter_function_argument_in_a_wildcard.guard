@@ -1,0 +1,8 @@
+# `Properties.Env` is not an entry of `Mappings`, so the argument falls back to the enclosing
+# scope, which is the resource in both spellings: the member `.*` expanded, and the block's value.
+rule flat { Resources.*.Properties.Mappings[ keys == to_upper(Properties.Env) ] == 1 }
+rule block {
+  Resources.*[ Type == 'AWS::S3::Bucket' ] {
+    Properties.Mappings[ keys == to_upper(Properties.Env) ] == 1
+  }
+}

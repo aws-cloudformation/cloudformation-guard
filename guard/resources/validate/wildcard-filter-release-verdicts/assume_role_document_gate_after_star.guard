@@ -1,0 +1,13 @@
+#
+# docs/KNOWN_ISSUES.md item 15's projecting binding read with the author's own `[*]` before the filter:
+# `let b` holds every role's Properties map, and the gate asks `%b[*][ AssumeRolePolicyDocument exists ]`.
+# Each Properties map holds `AssumeRolePolicyDocument` itself and no entry of it does, so the filter
+# after the wildcard is refused in both polarities and the gated rule fails at exit 19, over one role
+# (`one_role.yaml`) as over two (`two_roles.yaml`). Named `after_star` for the `[*]` the refusal is about;
+# the binding is the spelling docs/KNOWN_ISSUES.md item 15 documents (`through_a_variable` in the README's
+# naming key), so this rule holds both of the key's shapes at once.
+#
+let b = Resources.*[ Type == 'AWS::IAM::Role' ].Properties
+rule r when %b[*][ AssumeRolePolicyDocument exists ] !empty {
+  %b.AssumeRolePolicyDocument.Version == '2012-10-17'
+}

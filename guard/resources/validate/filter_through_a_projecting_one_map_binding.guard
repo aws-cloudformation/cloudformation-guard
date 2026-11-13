@@ -1,0 +1,14 @@
+#
+# A projecting binding that resolves to exactly ONE map, then a filter through it whose predicate
+# names a key of that map over scalar entries. The map has a scalar entry (`Status`), so it is one
+# object: the filter tests the map itself, as the author's own `%p[*][ ... ]` does, `Status ==
+# 'Enabled'` holds on it, and the map is selected. The `when` gate opens, and the body's
+# `.Status == 'no-such-value-zzz'` fails as a plain comparison against "Enabled" at the key's own
+# path (exit 19). Nothing is refused and nothing is announced, because no selection was lost. The
+# literal `Wrapper.Only.Config[ Status == 'Enabled' ]` is the one spelling that stays refused for
+# its own key.
+#
+let p = Wrapper.*[ Marker == 'selected' ].Config
+rule FILTER_THROUGH_A_PROJECTING_ONE_MAP_BINDING when %p[ Status == 'Enabled' ] !empty {
+  %p[ Status == 'Enabled' ].Status == 'no-such-value-zzz'
+}

@@ -1,0 +1,3 @@
+# A case with a name and nothing else. Two fields are missing, and the one named first is `input`,
+# as the reader this command had before named it; a case missing both is told about its input.
+- name: a case with only a name

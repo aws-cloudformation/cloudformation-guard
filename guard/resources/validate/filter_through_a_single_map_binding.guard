@@ -1,0 +1,46 @@
+#
+# The structure of a published registry rule: a variable bound by a plain key path to ONE map (the
+# resource whose logical id is `Metadata`), then filtered through the variable with a predicate written
+# against that map's own keys.
+#
+# The `Metadata` map holds a non-null scalar entry (`Type`) beside its authentication block, so it is
+# one object: a filter through the variable tests the map itself, as `%cfn_authentication_rule[*][ ... ]`
+# does, the predicate written against the map's own keys holds, the map is selected and the rule
+# applies: FAIL over an authentication block that defines a password, PASS over one that does not,
+# the verdicts cfn-guard 3.2.1 gives the published rule's own two tests. Nothing is announced on
+# stderr; the verdict is the report.
+#
+# A `Metadata` map with NO scalar entry is one object too when the predicate names a key the map holds
+# itself that none of its map-valued entries holds, as `"AWS::CloudFormation::Authentication" exists`
+# does over the authentication block alone (single-map-binding-without-type-template.yaml): the filter
+# tests the map itself, the map is selected, and the rule applies with the same verdicts, FAIL over a
+# block that defines a password and PASS over one that does not. cfn-guard 3.2.1 gives FAIL for the
+# password shape.
+#
+let cfn_authentication_rule = Resources.Metadata
+let skip_cfn_authentication = %cfn_authentication_rule[
+      "AWS::CloudFormation::Authentication" exists
+      Metadata.cfn_nag.rules_to_suppress not exists or
+      Metadata.cfn_nag.rules_to_suppress.*.id != "W1"
+      Metadata.guard.SuppressedRules not exists or
+      Metadata.guard.SuppressedRules.* != "CFN_AUTHENTICATION_RULE"
+]
+
+rule CFN_AUTHENTICATION_RULE when
+    %cfn_authentication_rule !empty
+    %skip_cfn_authentication !empty
+ {
+  let violation = %cfn_authentication_rule[
+    "AWS::CloudFormation::Authentication".*.accessKeyId exists
+    OR
+    "AWS::CloudFormation::Authentication".*.password exists
+    OR
+    "AWS::CloudFormation::Authentication".*.secretKey exists
+  ]
+
+  %violation empty
+  <<
+    Violation: CFN template has sensitive credentials defined.
+    Fix: Remove sensitive credentials.
+  >>
+}

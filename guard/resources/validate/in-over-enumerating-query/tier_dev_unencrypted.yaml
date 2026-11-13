@@ -1,0 +1,9 @@
+Mappings:
+  Regulated:
+    Tiers: [production]
+Resources:
+  V:
+    Type: Custom::Volume
+    Properties:
+      Tier: dev
+      Encrypted: false

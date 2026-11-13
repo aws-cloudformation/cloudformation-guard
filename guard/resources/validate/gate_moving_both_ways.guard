@@ -1,0 +1,15 @@
+#
+# One `when` whose buckets move in both directions. `%p` is a function's result over every resource's
+# Tags, and the resource without Tags leaves an entry the function had no answer for, which the `when`
+# reads now and did not before. Read together, `%p !empty or Properties.Kind == "y"` decides a `Kind: x`
+# bucket by `%p !empty` (passed before, fails now: its block ran and is skipped) and `some %p !exists or
+# Properties.Kind == "x"` decides a `Kind: y` bucket by `some %p !exists` (failed before, passes now: its
+# block was skipped and runs). So one site, the `when`, records two notices of two kinds, one per
+# direction, on every template shaped like gate-moving-both-ways-template.yaml.
+#
+let p = to_lower(Resources.*.Properties.Tags)
+rule GATE_MOVING_BOTH_WAYS {
+    AWS::S3::Bucket when %p !empty or Properties.Kind == "y" some %p !exists or Properties.Kind == "x" {
+        Properties.Tags == "b"
+    }
+}

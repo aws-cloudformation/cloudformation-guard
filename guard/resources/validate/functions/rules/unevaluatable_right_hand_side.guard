@@ -1,0 +1,32 @@
+#
+# The side of the operator a failing conversion lands on must not change the exit code.
+#
+# `TooBig` is 1.0e40 and does not fit in an i64, so converting it reports an incompatible type. That is an
+# unevaluatable error: the clause cannot produce a value, so it fails closed and the rest of the file keeps
+# reporting, and the run exits 19 as a policy failure.
+#
+# That is what happened when the failing conversion was the clause's own query, on the left. On the right
+# the clause was recorded as failing and then the error was propagated anyway, so the run aborted with
+# "Error occurred" and exited 255 -- the tool-failure code, on a template that is merely non-compliant.
+# Both spellings of the right-hand side did it: a variable bound to the conversion, and the conversion
+# written inline.
+#
+# All three rules below fail. The exit code is the assertion.
+#
+let template = Resources.*[ Type == 'AWS::New::Service' ]
+
+rule FAILING_CONVERSION_ON_THE_LEFT when %template !empty {
+    let too_big = parse_int(%template.Properties.TooBig)
+    %too_big == 5
+}
+
+rule FAILING_CONVERSION_ON_THE_RIGHT_VIA_A_VARIABLE when %template !empty {
+    let fine = parse_int(%template.Properties.Fine)
+    let too_big = parse_int(%template.Properties.TooBig)
+    %fine == %too_big
+}
+
+rule FAILING_CONVERSION_ON_THE_RIGHT_INLINE when %template !empty {
+    let fine = parse_int(%template.Properties.Fine)
+    %fine == parse_int(%template.Properties.TooBig)
+}

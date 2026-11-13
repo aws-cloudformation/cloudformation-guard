@@ -1,0 +1,5 @@
+# Control: a capture after a map binds the entry's key, which is the documented shape.
+rule r {
+  Resources[ nm | Type == 'AWS::S3::Bucket' ] !empty
+  %nm == 'B'
+}

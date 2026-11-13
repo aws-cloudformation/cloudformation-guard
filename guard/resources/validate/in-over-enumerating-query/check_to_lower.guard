@@ -1,0 +1,7 @@
+rule check(allowed) {
+    Resources.*.Properties.VolumeType IN %allowed
+}
+
+rule allowed_volume_types {
+    check(to_lower(Mappings.Allowed.Upper[*]))
+}

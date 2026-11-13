@@ -139,7 +139,7 @@
                 "query": {
                   "query": [
                     {
-                      "Key": "%s3_buckets_server_side_encryption"
+                      "Variable": "s3_buckets_server_side_encryption"
                     }
                   ],
                   "match_all": true
@@ -171,7 +171,7 @@
                     "query": {
                       "query": [
                         {
-                          "Key": "%s3_buckets_server_side_encryption"
+                          "Variable": "s3_buckets_server_side_encryption"
                         },
                         {
                           "AllIndices": null
@@ -209,7 +209,7 @@
                     "query": {
                       "query": [
                         {
-                          "Key": "%s3_buckets_server_side_encryption"
+                          "Variable": "s3_buckets_server_side_encryption"
                         },
                         {
                           "AllIndices": null

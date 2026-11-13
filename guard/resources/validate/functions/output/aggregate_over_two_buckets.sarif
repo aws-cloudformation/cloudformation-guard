@@ -1,0 +1,62 @@
+{
+  "$schema": "https://docs.oasis-open.org/sarif/sarif/v2.1.0/errata01/os/schemas/sarif-schema-2.1.0.json",
+  "version": "2.1.0",
+  "runs": [
+    {
+      "tool": {
+        "driver": {
+          "name": "cfn-guard",
+          "semanticVersion": "3.2.1",
+          "fullName": "cfn-guard 3.2.1",
+          "organization": "Amazon Web Services",
+          "downloadUri": "https://github.com/aws-cloudformation/cloudformation-guard",
+          "informationUri": "https://github.com/aws-cloudformation/cloudformation-guard",
+          "shortDescription": {
+            "text": "AWS CloudFormation Guard is an open-source general-purpose policy-as-code evaluation tool. It provides developers with a simple-to-use, yet powerful and expressive domain-specific language (DSL) to define policies and enables developers to validate JSON- or YAML- formatted structured data with those policies."
+          }
+        }
+      },
+      "artifacts": [
+        {
+          "location": {
+            "uri": "some/path"
+          }
+        }
+      ],
+      "results": [
+        {
+          "ruleId": "three_buckets",
+          "level": "error",
+          "message": {
+            "text": "Check was not compliant as property value [Path=/Resources[L:3,C:5] Value=2] not equal to value [Path=[L:0,C:0] Value=3].  Violation: expected exactly three buckets "
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "some/path"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "joined_names",
+          "level": "error",
+          "message": {
+            "text": "Check was not compliant as property value [Path=/Resources[L:0,C:0] Value=\"a,b\"] not equal to value [Path=[L:0,C:0] Value=\"x\"].  Violation: joined names differ "
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "some/path"
+                }
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

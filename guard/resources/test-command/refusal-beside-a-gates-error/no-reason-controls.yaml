@@ -1,0 +1,16 @@
+###
+# The input of the `test` cells that pin where NO reason is written (`no-reason-controls.guard`): `passes`
+# is evaluated PASS and its expectation of PASS is met; `author_body` fails on a key the document lacks under
+# a call with an author's `<< >>` text and its expectation of FAIL is met. Neither met line carries a reason.
+###
+---
+- name: a passed rule and a plain failure with an author body
+  input:
+    Resources:
+      A:
+        Tags:
+          Env: dev
+  expectations:
+    rules:
+      passes: PASS
+      author_body: FAIL

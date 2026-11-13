@@ -1,0 +1,8 @@
+Mappings:
+  Denied:
+    Ports: [22, "ssh"]
+Resources:
+  R:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      FromPort: 80

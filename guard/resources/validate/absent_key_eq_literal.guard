@@ -1,0 +1,4 @@
+# Control: `Other` has no `PubliclyAccessible`. An absent key fails `==` as it fails `!=`.
+rule absent_key_equals_true {
+    Resources.Other.Properties.PubliclyAccessible == true
+}

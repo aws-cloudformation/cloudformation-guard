@@ -1,0 +1,7 @@
+rule check {
+  Resources.*.Tags[*][ Key == 'Env' ] {
+    Value == 'prod'
+    let n = parse_int(Value)
+    %n == 1
+  }
+}

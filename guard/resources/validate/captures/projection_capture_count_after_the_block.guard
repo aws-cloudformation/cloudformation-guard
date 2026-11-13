@@ -1,0 +1,24 @@
+# `count(%id)` AFTER a type block, and after a block clause, over two roles: the union over both
+# iterations, 4, which is what a clause after a block reads of every capture made inside it. The `_2`
+# rules state the wrong number and fail; the `_4` rules pass.
+let buckets = Resources.*[ Type == 'AWS::S3::Bucket' ]
+rule after_type_block_2 {
+  AWS::IAM::Role { %buckets[ id | Properties exists ] !empty }
+  let n = count(%id)
+  %n == 2
+}
+rule after_type_block_4 {
+  AWS::IAM::Role { %buckets[ id | Properties exists ] !empty }
+  let n = count(%id)
+  %n == 4
+}
+rule after_block_clause_2 {
+  Resources.*[ Type == 'AWS::IAM::Role' ] { %buckets[ id | Properties exists ] !empty }
+  let n = count(%id)
+  %n == 2
+}
+rule after_block_clause_4 {
+  Resources.*[ Type == 'AWS::IAM::Role' ] { %buckets[ id | Properties exists ] !empty }
+  let n = count(%id)
+  %n == 4
+}

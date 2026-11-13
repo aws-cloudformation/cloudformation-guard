@@ -1,0 +1,6 @@
+#
+# The shortest own-key refusal that carries the member spellings: `BucketA` is a key of `Resources` and a
+# member named like the key, the null `Placeholder` keeps the own-key reading, and the whole text, member
+# spellings and path included, is short.
+#
+rule r { Resources[*][ BucketA exists ] !empty }

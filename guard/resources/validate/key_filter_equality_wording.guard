@@ -1,0 +1,43 @@
+#
+# A key filter's `==` and `!=` against a list, beside the `in` spelling of the same list, so the lead
+# sentences can be compared in one report.
+#
+# A list on the right of a key filter is a set, so `keys == ["nope"]` is decided as membership. It is
+# still the comparison the author wrote, so its one record per key carries `==` and the report says what
+# the equality found: "is not equal to any of [...]" for `==`, and for `!=` the element the key was equal
+# to, "is equal to [x], one of [...]", so no line states a pair that was not compared that way. `in`
+# keeps the membership wording, "did not match expected value in [...]". A report that gave the `==` rule
+# the membership wording would be describing a clause no line of the rule contains, and one that filed a
+# record per list value would state, for `!=`, pairs that are false.
+#
+# A pairing the comparator refuses is neither: `keys == [r[a,f]]` over keys of more than one character
+# has no answer, so the key is selected under neither polarity and the line says the comparison could not
+# be made, "could not be compared with expected value in [...]", never that the key did or did not match.
+#
+# Every rule fails on both keys of `Cfg`: neither key is `nope` or `nah`, both are in the two-element
+# denylist, and neither is a single character. One line per key per rule, whatever the length of the
+# list.
+#
+rule k_eq_one_element {
+    Cfg[ keys == ["nope"] ] !empty
+}
+
+rule k_eq_two_element {
+    Cfg[ keys == ["nope", "nah"] ] !empty
+}
+
+rule k_not_eq_two_element {
+    Cfg[ keys != ["aaaaaaaaaaaaaaaaaa", "other"] ] !empty
+}
+
+rule k_in_one_element {
+    Cfg[ keys in ["nope"] ] !empty
+}
+
+rule k_eq_refused {
+    Cfg[ keys == [r[a,f]] ] !empty
+}
+
+rule k_not_eq_refused {
+    Cfg[ keys != [r[a,f]] ] !empty
+}

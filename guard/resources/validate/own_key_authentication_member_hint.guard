@@ -1,0 +1,7 @@
+#
+# The own-key misreading on a 33-character key under a 28-character query, the longest pair a published
+# rule writes (`AWS::CloudFormation::Authentication` under a resource's `Metadata`): the entry under the
+# key is a plain member map, so the refusal carries the member sentence, which the console summary and
+# the JSON report both print whole, then the path.
+#
+rule r { Resources.WebServer.Metadata[ "AWS::CloudFormation::Authentication" exists ] exists }

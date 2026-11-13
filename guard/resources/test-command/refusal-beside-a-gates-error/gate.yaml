@@ -1,0 +1,23 @@
+###
+# The input of the `test` cell for a refusal settled beside a gate's error. `M` holds an intrinsic beside the
+# compared entry (a refused selection) and `L` a list whose body raises a converter's error, so each gated rule
+# of the rules file fails closed on the error with the refusal at `/Resources/M/Tags` settled beside it. Both
+# expectations are PASS, so both are unmet, and the report of an unmet expectation carries the reason.
+###
+---
+- name: a refusal settled beside a gate's error
+  input:
+    Resources:
+      M:
+        Tags:
+          Env: dev
+          ENV:
+            Ref: Stage
+      L:
+        Tags:
+          - Key: Env
+            Value: prod
+  expectations:
+    rules:
+      opened_by_some: PASS
+      opened_by_all: PASS

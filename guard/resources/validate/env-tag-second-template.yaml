@@ -1,0 +1,14 @@
+# The second of two templates for `tags_allowed_by_containment.guard`: the same tag under another
+# logical id, so the filter draws the same notice at the same site, which the run announced once beside
+# the first file; the trailer after the last file names this file and the notice by its kind.
+Mappings:
+  Allowed:
+    Keys:
+      - Environment
+      - Owner
+Resources:
+  Second:
+    Type: AWS::S3::Bucket
+    Properties:
+      Tags:
+        Env: staging

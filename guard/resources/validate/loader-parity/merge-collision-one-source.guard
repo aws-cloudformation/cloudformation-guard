@@ -1,0 +1,10 @@
+#
+# One merge source holds two keys that read as one name, the integer 1 and the string "1": a collision.
+# The loader keeps the last value, b, and reports the pair as a duplicate key; the serde conversion
+# refuses the same document, since it has no warning channel. The same document and these rules run
+# under validate, the test command and run_checks, and the verdicts are the ones validate gives,
+# measured with the CLI.
+#
+rule last_merged_value_wins { Resources.B.Properties."1" == "b" }
+rule first_merged_value_is_not_read { Resources.B.Properties."1" != "a" }
+rule merge_key_is_folded { Resources.B.Properties."<<" !exists }

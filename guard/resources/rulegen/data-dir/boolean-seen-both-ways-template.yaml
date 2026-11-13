@@ -1,0 +1,17 @@
+# Two volumes that disagree about one boolean, and nothing else to generate from.
+#
+# rulegen collapses a property across every resource of its type into one clause. A boolean
+# observed both ways would be `Encrypted IN [false, true]`, which no boolean value can fail, so
+# rulegen refuses the clause rather than write it; with no other property it has no rule to write
+# and exits without a rules file. The round-trip test lists the volume's `Encrypted` property as
+# omitted, with the warning rulegen prints; with no other property left, no volume rule is expected,
+# and a refusal for any other cause stays a failure.
+Resources:
+  Encrypted:
+    Type: AWS::EC2::Volume
+    Properties:
+      Encrypted: true
+  Unencrypted:
+    Type: AWS::EC2::Volume
+    Properties:
+      Encrypted: false

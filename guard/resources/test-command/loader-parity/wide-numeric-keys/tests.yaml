@@ -1,0 +1,19 @@
+- name: keys the loader keeps as text are looked up by that text
+  input:
+    Mappings:
+      M:
+        18446744073709551616: big
+        1e-400: tiny
+        340282366920938463463374607431768211456: huge
+        -9223372036854775809: neg
+        18446744073709551615: u64max
+  expectations:
+    rules:
+      BIG_LITERAL_KEY: PASS
+      BIG_FLOAT_KEY: FAIL
+      UNDERFLOW_LITERAL_KEY: PASS
+      UNDERFLOW_ZERO_KEY: FAIL
+      HUGE_LITERAL_KEY: PASS
+      HUGE_FLOAT_KEY: FAIL
+      NEG_LITERAL_KEY: PASS
+      CONTROL_U64_KEY: PASS

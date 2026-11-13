@@ -1,0 +1,13 @@
+rule CAPTURE_AFTER_THIS_OVER_RULES {
+    Resources.B1.Properties.Rules {
+        this[ r | Action == 'allow' ] !empty
+        %r.Name == 'first'
+    }
+}
+rule CONTROL_CAPTURE_AFTER_THE_KEY {
+    Resources.B1.Properties.Rules[ r | Action == 'allow' ] !empty
+    %r.Name == 'first'
+}
+rule OTHER_RULE_STILL_REPORTED {
+    Resources.B1.Type == 'AWS::S3::Bucket'
+}

@@ -1,0 +1,10 @@
+# One case refusing the capture. The command reads no data file, so the warning names the case and
+# this spec file, not "this template".
+- name: the one case
+  input:
+    Resources:
+      B1:
+        Type: AWS::S3::Bucket
+  expectations:
+    rules:
+      capture_after_this: FAIL

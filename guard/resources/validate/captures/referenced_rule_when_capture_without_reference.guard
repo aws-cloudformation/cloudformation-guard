@@ -1,0 +1,5 @@
+# The same two rules, with `main` not referencing `helper` at all.
+rule helper when Resources[ b | Type == 'AWS::S3::Bucket' ] !empty { Resources exists }
+rule main when Resources[ b | Type == 'AWS::IAM::Role' ] !empty {
+  %b == "MyRole"
+}

@@ -1,0 +1,15 @@
+#
+# One clause that passes today and is documented to change in a later release. It passes, so the
+# deprecation notice is the only observable output.
+#
+# `Name` is a string and the list holds integers, so nothing in the list can be compared with it.
+# `NOT IN` reads that as "not a member" and passes, while `!=` on the same operands fails closed.
+#
+# This file was `vacuous_and_incomparable_clauses.guard` and held a second clause, `Sizes == 50`
+# over an empty `Sizes`, which passed without comparing anything and carried its own notice. That
+# comparison now fails, so the clause left and the file took the name of the one clause it keeps;
+# `empty_collection_comparisons.guard` covers the failure the other became.
+#
+rule incomparable_membership {
+    Name not IN [10, 50, 100]
+}

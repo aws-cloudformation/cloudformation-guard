@@ -1,0 +1,10 @@
+Defaults:
+  A: &a
+    "8080": web
+  B: &b
+    8080: api
+Resources:
+  R:
+    <<: [*a, *b]
+  S:
+    <<: *a

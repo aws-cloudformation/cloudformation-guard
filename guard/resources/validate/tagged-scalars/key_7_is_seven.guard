@@ -1,0 +1,3 @@
+rule key_7_is_seven {
+    Resources.F.Properties."7" == "seven"
+}

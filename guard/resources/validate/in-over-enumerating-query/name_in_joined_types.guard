@@ -1,0 +1,3 @@
+rule name_in_joined_types {
+    Resources.*.Properties.Name IN join(Mappings.Allowed.Types[*], "|")
+}

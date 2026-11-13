@@ -6,6 +6,28 @@ type HandleWriteActionSummaryParams = {
   results: string[][];
 };
 
+type HandleWriteRulesFileFailureSummaryParams = {
+  messages: string[];
+};
+
+/**
+ * Writes the rules files that could not be evaluated to the GitHub Actions summary, so a run that
+ * failed for that reason says why there as well as in the log.
+ * @param {HandleWriteRulesFileFailureSummaryParams} params - The parameters for writing the summary.
+ * @param {string[]} params.messages - One message per rules file, as reported by cfn-guard.
+ * @returns {Promise<void>} - Resolves when the action summary has been written.
+ */
+export async function handleWriteRulesFileFailureSummary({
+  messages
+}: HandleWriteRulesFileFailureSummaryParams): Promise<void> {
+  debugLog('Writing rules file failure summary...');
+
+  await core.summary
+    .addHeading(SummaryStrings.RULES_FILE_HEADING)
+    .addList(messages)
+    .write();
+}
+
 /**
  * Writes a summary of the validation results to the GitHub Actions summary.
  * @param {HandleWriteActionSummaryParams} params - The parameters for writing the action summary.

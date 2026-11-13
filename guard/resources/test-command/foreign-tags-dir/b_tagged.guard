@@ -1,0 +1,4 @@
+#
+# The second rules file of the directory; see a_tagged.guard.
+#
+rule a_is_one { A == 1 }

@@ -1,0 +1,9 @@
+#
+# The mapping that merged is itself anchored and aliased. `X` merges `*b` and a string `"1"` beside
+# it, a collision, with the integer's value `a` standing; `Y` is a copy of `X`, positions included, so
+# it holds the same collided entry at the same place. The notice is printed once per copy, as a
+# duplicate pair written inside an aliased mapping is: /X/1 and /Y/1, each "first at L:1,C:12 and again
+# at L:2,C:19. The first value is the one evaluated." Two notices, X before Y; `Base`, which merged
+# nothing, gets none.
+#
+rule the_held_value_stands_in_both_copies { X."1" == "a" Y."1" == "a" }

@@ -1,0 +1,11 @@
+Mappings:
+  Exempt:
+    Buckets:
+      BucketA: true
+Resources:
+  BucketA:
+    Properties:
+      Encrypted: false
+  BucketB:
+    Properties:
+      Encrypted: true

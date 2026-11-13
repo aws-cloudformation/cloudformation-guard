@@ -1,0 +1,2 @@
+# The `IN` twin of the lowered-names filter.
+rule r_members { Resources.*.Map[ keys IN to_lower(Wanted[*].Name) ] == 2 }

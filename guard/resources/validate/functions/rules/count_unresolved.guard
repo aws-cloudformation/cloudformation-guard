@@ -1,0 +1,18 @@
+#
+# `Collectionz` is a typo for `Collection`, which the data carries and which holds three entries.
+#
+# `count` used to filter the unresolved results out and count what was left, so a query naming something
+# absent came back as 0. 0 is a value and it compares, so `== 0` was satisfied and this rule passed at
+# exit 0 -- on data that the correctly spelled rule reports three entries for. `count` was the only
+# function that answered at all on an absent path; the others report "resolved to no values" at exit 19.
+#
+# The query names a key that is not there, so there is no collection to count and the clause now fails
+# the way it does for `to_upper` or `substring` on the same path.
+#
+let template = Resources.*[ Type == 'AWS::New::Service' ]
+
+rule MISSPELLED_COLLECTION_IS_NOT_A_COUNT_OF_ZERO when %template !empty {
+    let collection = %template.Collectionz.*
+    let n = count(%collection)
+    %n == 0
+}

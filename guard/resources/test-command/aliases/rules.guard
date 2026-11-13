@@ -1,0 +1,7 @@
+#
+# Two rules over two properties, so a spec can show that an input reused through an alias reaches
+# the rules whole, and that a merge key fed through an alias adds the base keys without displacing
+# the keys the case writes for itself.
+#
+rule a_is_one { A == 1 }
+rule b_is_two { B == 2 }

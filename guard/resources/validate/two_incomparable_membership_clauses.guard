@@ -1,0 +1,14 @@
+#
+# The clause of incomparable_membership_clause.guard written twice, in two rules, byte for byte. Each
+# draws the incomparable-membership notice over the incomparable-membership templates, and the two
+# notices open with the same words (the clause as written) and differ only in the position each ends
+# with. Over the pair of templates both are drawn by the second file too, so the trailer after the run
+# has two plain notices of one kind to tell apart.
+#
+rule incomparable_membership_first {
+    Name not IN [10, 50, 100]
+}
+
+rule incomparable_membership_second {
+    Name not IN [10, 50, 100]
+}

@@ -1,5 +1,8 @@
 import * as core from '@actions/core';
-import { handleWriteActionSummary } from '../src/handleWriteActionSummary';
+import {
+  handleWriteActionSummary,
+  handleWriteRulesFileFailureSummary
+} from '../src/handleWriteActionSummary';
 import { jest, describe, it, expect } from '@jest/globals';
 
 jest.mock('@actions/core', () => {
@@ -7,6 +10,9 @@ jest.mock('@actions/core', () => {
     summary: {
       addHeading: jest.fn().mockReturnValue({
         addTable: jest.fn().mockReturnValue({
+          write: jest.fn()
+        }),
+        addList: jest.fn().mockReturnValue({
           write: jest.fn()
         })
       })
@@ -35,5 +41,22 @@ describe('handleWriteActionSummary', () => {
       ...mockResults
     ]);
     expect(core.summary.addHeading('').addTable([]).write).toHaveBeenCalled();
+  });
+});
+
+describe('handleWriteRulesFileFailureSummary', () => {
+  it('should write the rules files that could not be evaluated to the GitHub Actions summary', async () => {
+    const messages = [
+      'Rules file rules/a.guard could not be parsed, so none of its rules were evaluated: Parser Error',
+      'Rules file rules/b.guard could not be parsed, so none of its rules were evaluated: Parser Error'
+    ];
+
+    await handleWriteRulesFileFailureSummary({ messages });
+
+    expect(core.summary.addHeading).toHaveBeenCalledWith(
+      'Rules Files Not Evaluated'
+    );
+    expect(core.summary.addHeading('').addList).toHaveBeenCalledWith(messages);
+    expect(core.summary.addHeading('').addList([]).write).toHaveBeenCalled();
   });
 });

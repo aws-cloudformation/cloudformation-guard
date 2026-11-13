@@ -1,0 +1,16 @@
+# The same pasted case as duplicated_case_field_tests.yaml, with each case writing `input` and
+# `expectations` before `name`. The first repeated field is then `input`, and the second `name` comes
+# last: the case still fails naming the repeated field's two positions, and it still has no name to
+# report, because it has two.
+- input:
+    A: 1
+  expectations:
+    rules:
+      a_is_one: PASS
+  name: the first case
+  input:
+    A: 2
+  expectations:
+    rules:
+      a_is_one: FAIL
+  name: the second case, pasted without its dash

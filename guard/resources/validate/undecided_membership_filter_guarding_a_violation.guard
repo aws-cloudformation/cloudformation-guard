@@ -1,0 +1,33 @@
+#
+# The same undecidable `NOT IN`, used as a filter predicate rather than as a `when` condition.
+#
+# Both roles carry `ClauseRole::Gate` -- `eval_when_clause` and the three filter sites in
+# `eval_context.rs` all pass it -- so a repair keyed on the role alone reaches both, and the two
+# absorb a failure in different ways. A `when` condition that fails makes the rule inapplicable; a
+# filter predicate that fails selects nothing, and an assertion over an empty selection SKIPs. Both
+# end at exit 0 with the body unchecked, so both need the same answer.
+#
+# This file is the canary for the direction that repair must NOT take. `docs/KNOWN_ISSUES.md` and
+# `incomparable_membership_notice` record five aws-guard-rules-registry rules that use `NOT IN` inside
+# a filter predicate to catch a `!Ref`-shaped value, where failing closed would make the filter select
+# fewer resources and turn a reported violation into a pass. Those rules are untouched, and the
+# distinction is mechanical rather than a judgment call: `Unanswerable` splits a comparison the engine
+# abandoned from a refusal to compare two kinds, and only the first fails a gate closed. A kind
+# mismatch still records `NotComparable` exactly as before and still answers a plain FAIL.
+#
+# The registry is what makes that split non-negotiable rather than tidy. Rule authors write a value
+# against both spellings it might carry -- `ScanOnPush == 'False' OR ScanOnPush == false` -- and rely
+# on the pairing that does not apply answering "no" rather than "unknown". Measured: treating every
+# undecided comparison as unknown moves 143 rules of the pinned corpus off their expectations, against
+# 0 failed rules at the merge-base.
+#
+# Measured on this template before the fix: exit 0, the filter selected nothing, and `MustBeTrue` was
+# never compared.
+#
+rule unrelated_violation {
+    Region == 'no-such-region-zzz'
+}
+
+rule guarded {
+    Resources.*[ Properties.Cat NOT IN [/(?!x)((a+)+)b/] ].Properties.MustBeTrue == true
+}

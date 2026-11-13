@@ -1,0 +1,5 @@
+let denied = Mappings.Denied.Entries
+
+rule no_denied_protocol {
+    Resources.*.Properties.Protocol NOT IN %denied[*].Name
+}

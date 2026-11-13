@@ -1,0 +1,7 @@
+# `IN` over the same right-hand side: over `Names: []` no key is in the empty set and the filter selects
+# none; over `Names: [x]` it selects `x`.
+let names = Mappings.Allowed.Names[*]
+
+rule member_keys_are_two {
+    Resources.*.Map[ keys IN %names ] == 2
+}

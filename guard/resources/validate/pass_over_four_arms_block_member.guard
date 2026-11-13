@@ -1,0 +1,10 @@
+# The `this` arm of the pass-over refusal over a map that keeps a member beside the scalar passed over,
+# inside a block over the member: `Config` holds `Mode` beside `Inner`, which lacks both keys and is kept
+# in the map's place, and `Config` itself lacks both keys, so the filter is refused; the console shows the
+# whole text, the definition of `X` and the remedy first; no sub-map holds either key, so the remedy is
+# the one-object spelling.
+rule r {
+    Resources.WebServer.Properties.Configuration.Config {
+        this[ ServerSideEncryptionConfiguration !exists LoggingConfiguration !exists ] empty
+    }
+}

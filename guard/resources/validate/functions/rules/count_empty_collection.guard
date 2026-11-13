@@ -1,0 +1,14 @@
+#
+# The control for count_unresolved.guard. `Grants` is present and holds nothing, so counting it gives 0
+# and "no public grants exist" is genuinely satisfied.
+#
+# This is the case a fix for the absent-path defect could plausibly have taken with it, since both used
+# to arrive as an unresolved result. It passes before that change and after it.
+#
+let buckets = Resources.*[ Type == 'AWS::S3::Bucket' ]
+
+rule AN_EMPTY_COLLECTION_STILL_COUNTS_ZERO when %buckets !empty {
+    let grants = %buckets.Properties.Grants.*
+    let n = count(%grants)
+    %n == 0
+}

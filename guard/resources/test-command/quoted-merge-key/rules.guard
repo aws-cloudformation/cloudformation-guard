@@ -1,0 +1,12 @@
+#
+# A quoted `"<<"` is an ordinary key whose name is `<<`; only the plain spelling is YAML's merge key.
+# `validate` answers PASS, PASS for the quoted spelling and FAIL, FAIL for the plain one. The paired
+# spec expects those answers from `test`.
+#
+rule quoted_key_is_literal {
+    Resources.A.Properties["<<"] exists
+}
+
+rule hoisted_is_absent {
+    Resources.A.Properties.hoisted !exists
+}

@@ -1,0 +1,9 @@
+- name: a binary-looking literal is a string
+  input:
+    V: 0b101
+    H: 0x1F
+  expectations:
+    rules:
+      BIN_IS_STRING: PASS
+      BIN_IS_INT: FAIL
+      CONTROL_HEX_IS_INT: PASS

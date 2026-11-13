@@ -1,0 +1,7 @@
+# The empty-set key filter under `==`, asserted to select something: it selects nothing, so the rule
+# fails and the reporters print the per-key records, each a comparison of the key with the empty set.
+let names = []
+
+rule selected_keys_exist {
+    Resources.*.Map[ keys == %names ] !empty
+}

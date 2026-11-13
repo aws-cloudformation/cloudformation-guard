@@ -1,0 +1,15 @@
+Mappings:
+  Combos:
+    a:
+      Pair: [s1, g1]
+    b:
+      Pair: [s2, g2]
+  Pairs:
+    List:
+      - [s1, g1]
+      - [s2, g2]
+Resources:
+  X:
+    Type: Custom::Combination
+    Properties:
+      Pair: [g1, s1]

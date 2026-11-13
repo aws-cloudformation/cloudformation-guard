@@ -1,0 +1,5 @@
+# A present null is not `true`, so `!=` passes. It used to be a refusal ("not comparable null, bool"),
+# which failed both polarities.
+rule present_null_is_not_true {
+    Resources.Db.Properties.PubliclyAccessible != true
+}

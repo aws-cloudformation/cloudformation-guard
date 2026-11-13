@@ -1,0 +1,9 @@
+#
+# The anchored mapping `&b` is merged twice. Under `X` its integer key `1` is merged beside a `"1"`
+# written as a string, which is a collision, and the held integer key's value `a` stands ("first at
+# L:1,C:12 and again at L:3,C:18. The first value is the one evaluated."). `Y` merges the same anchor
+# alone and `Base` is the anchor itself: both hold the key `1` at the anchor's position, and neither
+# merged anything that collided, so neither is reported. One notice, at /Resources/X/1.
+#
+rule held_value_stands_under_x { Resources.X."1" == "a" }
+rule the_other_copies_are_untouched { Resources.Y."1" == "a" Base."1" == "a" }

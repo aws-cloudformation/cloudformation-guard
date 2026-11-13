@@ -1,0 +1,28 @@
+# The first of two spec files run together over `rules.guard`: two named cases, so the run has counted
+# two cases before the second file's first case is reached. The second file's case has no name and is
+# named by its position in ITS file, 1, not by the run-wide count, 3.
+- name: first in file a
+  input:
+    Resources:
+      Cfg:
+        Wanted: beta
+        Map:
+          Wanted: alpha
+          alpha: 1
+          beta: 2
+  expectations:
+    rules:
+      func_key_per_resource: PASS
+
+- name: second in file a
+  input:
+    Resources:
+      Cfg:
+        Wanted: gamma
+        Map:
+          Wanted: alpha
+          alpha: 1
+          gamma: 2
+  expectations:
+    rules:
+      func_key_per_resource: PASS

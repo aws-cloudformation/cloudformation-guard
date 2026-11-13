@@ -1,0 +1,10 @@
+# A rules map with one member, under a long query: the refusal of `Rules[*][ R1 exists ]` names `R1`, a
+# member named like the key, so the member spellings precede the path, and the path is the part
+# whose length the template decides.
+Resources:
+  A:
+    Type: X
+    Properties:
+      Rules:
+        R1:
+          Action: allow

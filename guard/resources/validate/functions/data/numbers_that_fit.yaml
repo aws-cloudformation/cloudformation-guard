@@ -1,0 +1,10 @@
+#
+# The control for numbers_that_do_not_fit.yaml. Two ordinary floats that really are different and that
+# both fit in an i64, so truncation toward zero applies and the comparison means what it says.
+#
+Resources:
+  ordinary:
+    Type: AWS::New::Service
+    Properties:
+      Budget: 5.0
+      Limit: 12.9

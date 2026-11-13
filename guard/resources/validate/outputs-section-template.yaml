@@ -1,0 +1,10 @@
+# `Outputs` sorts BEFORE `Resources`, the other direction the range filter got wrong.
+Outputs:
+  a:
+    b:
+      c: wrong
+Resources:
+  Bucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: fine

@@ -1,0 +1,25 @@
+# Three resources whose `Cfg` is a map of sub-maps sharing `cpu`. `R1.Cfg` has an own entry named
+# `Limits`, which the block `Cfg[*] { Limits exists  Tier == 'gold' }` would read in place of each
+# member's own `Limits`: that map is REFUSED, per value, with the direct path and the member spellings as
+# the remedy. `R2.Cfg` passes the block, `R3.Cfg` fails it on its `Tier`, and both are evaluated and
+# reported beside the refusal.
+Resources:
+  R1:
+    Type: AWS::Custom::Thing
+    Cfg:
+      Limits:
+        cpu: "1"
+      Other:
+        cpu: "2"
+  R2:
+    Type: AWS::Custom::Thing
+    Cfg:
+      Limits:
+        cpu: "1"
+      Tier: gold
+  R3:
+    Type: AWS::Custom::Thing
+    Cfg:
+      Limits:
+        cpu: "1"
+      Tier: silver

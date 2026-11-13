@@ -9,20 +9,17 @@ Resource = newServer {
   Rule = SOME_RULE {
     ALL {
       Check =  %res EQUALS  3 {
-        ComparisonError {
-          Error            = Check was not compliant as property value [Path=/Resources/newServer/Properties[L:4,C:6] Value=0] not equal to value [Path=[L:0,C:0] Value=3].
-          PropertyPath    = /Resources/newServer/Properties[L:4,C:6]
-          Operator        = EQUAL
-          Value           = 0
-          ComparedWith    = 3
+        RequiredPropertyError {
+          PropertyPath = /Resources/newServer/Properties[L:5,C:7]
+          MissingProperty = stuff
+          Reason = Could not find key stuff inside struct at path /Resources/newServer/Properties[L:5,C:7]
           Code:
-                2.  newServer:
                 3.    Type: AWS::New::Service
                 4.    Properties:
                 5.      Policy: |
                 6.        {
                 7.           "Principal": "*",
-
+                8.           "Actions": ["s3*", "ec2*"]
         }
       }
     }
