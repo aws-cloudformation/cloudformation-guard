@@ -99,12 +99,19 @@ impl Loader {
 
         self.stack.push(path_value);
     }
+    // YAML 1.1 booleans may be written in lowercase, Capitalized or UPPERCASE form
     fn is_bool_true(&self, s: &str) -> bool {
-        matches!(s, "true" | "yes" | "on" | "y")
+        matches!(
+            s,
+            "true" | "True" | "TRUE" | "yes" | "Yes" | "YES" | "on" | "On" | "ON" | "y" | "Y"
+        )
     }
 
     fn is_bool_false(&self, s: &str) -> bool {
-        matches!(s, "false" | "no" | "off" | "n")
+        matches!(
+            s,
+            "false" | "False" | "FALSE" | "no" | "No" | "NO" | "off" | "Off" | "OFF" | "n" | "N"
+        )
     }
 
     fn parse_bool(&self, val: &str) -> Option<bool> {
