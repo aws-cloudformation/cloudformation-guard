@@ -21,7 +21,7 @@ rule assert_ddb_resources_have_non_empty_tags
 # on.
 #
 # Expectations:
-# a) SKIP, when there are not DDB tables present or assert_all_resources_have_non_empty_tags FAILED
+# a) SKIP, when there are not DDB tables present or assert_ddb_resources_have_non_empty_tags FAILED
 # b) PASS when all DDB Tables do have encryption turned on
 # c) FAIL if wasn't set for them
 #

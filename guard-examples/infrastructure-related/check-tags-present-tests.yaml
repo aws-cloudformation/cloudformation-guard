@@ -29,7 +29,11 @@
 - input:
     Resources:
       skipped: 
-        Type: 'AWS::AmazonBroker::Service' # this is skipped
+        Type: 'AWS::EC2::Route' # this is skipped
+        Properties:
+          RouteTableId: rtb-0123456789abcdef0
+          DestinationCidrBlock: 0.0.0.0/0
+          GatewayId: igw-0123456789abcdef0
       compliant: 
         Type: Consoto::Network::VPC
         Properties: 
@@ -42,6 +46,27 @@
   expectations:
     rules:
       assert_all_resources_have_non_empty_tags: PASS
+- input:
+    Resources:
+      onlyExcluded:
+        Type: 'AWS::EC2::Route'
+        Properties:
+          RouteTableId: rtb-0123456789abcdef0
+          DestinationCidrBlock: 0.0.0.0/0
+          GatewayId: igw-0123456789abcdef0
+  expectations:
+    rules:
+      assert_all_resources_have_non_empty_tags: SKIP
+- input:
+    Resources:
+      # Shares the AWS::EC2::Route prefix but supports Tags, so it is not excluded
+      prefixCollision:
+        Type: 'AWS::EC2::RouteTable'
+        Properties:
+          VpcId: vpc-0123456789abcdef0
+  expectations:
+    rules:
+      assert_all_resources_have_non_empty_tags: FAIL
 - input:
     Resources:
       nonCompliant: 
