@@ -2,15 +2,17 @@
 # It is useful if you must have the same parameters in multiple templates (e.g. for tagging or name schema)
 
 # Exception that proves the rule. ;D Maybe you have templates which does not need those parameters. In this scenario we have the cloudformation templates from https://github.com/aws-solutions/aws-waf-security-automations in our template dir. The exclude list is based of the template description. You can use Metadata or other ways as well. 
+# Parentheses are escaped so the patterns match the literal "(SO0006)" prefix of those descriptions.
 let exclude = [
-  /(SO0006-FA) - Security Automations for AWS WAF - FA:/,
-  /(SO0006-WebACL) - Security Automations for AWS WAF:/,
-  /(SO0006) - Security Automations for AWS WAF:/
+  /\(SO0006-FA\) - Security Automations for AWS WAF - FA:/,
+  /\(SO0006-WebACL\) - Security Automations for AWS WAF:/,
+  /\(SO0006\) - Security Automations for AWS WAF:/
   ]
 
 
-# Now we check if our default parameters exists in templates which we have not excluded
-rule assert_default_parameters_exists when Description not in %exclude {
+# Now we check if our default parameters exists in templates which we have not excluded.
+# A template without a Description is never excluded, so it is still checked.
+rule assert_default_parameters_exists when Description !exists or Description not in %exclude {
     Parameters.Parameter1 exists
     Parameters.Parameter2 exists
     Parameters.Stage exists

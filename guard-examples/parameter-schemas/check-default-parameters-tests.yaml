@@ -3,7 +3,42 @@
     Parameters: {}
   expectations:
     rules:
+      assert_default_parameters_exists: FAIL
+      assert_default_parameter_configuration: SKIP
+      assert_ConstraintDescription: SKIP
+- input:
+    Description: "(SO0006) - Security Automations for AWS WAF: This AWS CloudFormation template helps you provision the Security Automations for AWS WAF stack without worrying about creating and configuring the underlying AWS infrastructure."
+    Parameters:
+      ActivateAWSManagedRulesParam:
+        Type: String
+        Default: 'no'
+        AllowedValues:
+          - 'yes'
+          - 'no'
+  expectations:
+    rules:
       assert_default_parameters_exists: SKIP
+      assert_default_parameter_configuration: SKIP
+      assert_ConstraintDescription: SKIP
+- input:
+    Description: "SO0006 - Security Automations for AWS WAF: description without the parenthesized solution id is not excluded"
+    Parameters:
+      ActivateAWSManagedRulesParam:
+        Type: String
+        Default: 'no'
+  expectations:
+    rules:
+      assert_default_parameters_exists: FAIL
+      assert_default_parameter_configuration: SKIP
+      assert_ConstraintDescription: SKIP
+- input:
+    Description: "Template without any Parameters section"
+    Resources:
+      Bucket:
+        Type: AWS::S3::Bucket
+  expectations:
+    rules:
+      assert_default_parameters_exists: FAIL
       assert_default_parameter_configuration: SKIP
       assert_ConstraintDescription: SKIP
 - input:
