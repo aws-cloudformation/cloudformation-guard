@@ -1,10 +1,24 @@
 #
-# This is an exclusion list for resources that do not support Tags. We 
-# will skip these resources when we select them from the CFN template
+# This is an exclusion list for resource types that do not support Tags. We
+# will skip these resources when we select them from the CFN template.
+#
+# The list is illustrative, not exhaustive: CloudFormation adds Tags support to
+# resource types over time, so check the resource reference for the types your
+# templates use before relying on it.
+#
+# Entries are plain strings so a type is excluded only on an exact match. A
+# regex entry such as /AWS::EC2::Route/ would also exempt AWS::EC2::RouteTable,
+# which does support Tags.
 #
 let excluded_resources = [
-    /AWS::AmazonBroker/,
-    /AWS::App*/
+    'AWS::EC2::Route',
+    'AWS::EC2::SubnetRouteTableAssociation',
+    'AWS::EC2::VPCGatewayAttachment',
+    'AWS::IAM::Policy',
+    'AWS::IoT::Thing',
+    'AWS::Lambda::Permission',
+    'AWS::S3::BucketPolicy',
+    'AWS::SNS::Subscription'
 ]
 
 #
@@ -13,7 +27,7 @@ let excluded_resources = [
 # 
 # Resources:
 #   skipped: 
-#     Type: 'AWS::AmazonBroker::Service' # this is skipped
+#     Type: 'AWS::EC2::Route' # this is skipped
 #   compliant: 
 #     Type: Consoto::Network::VPC
 #     Properties: 

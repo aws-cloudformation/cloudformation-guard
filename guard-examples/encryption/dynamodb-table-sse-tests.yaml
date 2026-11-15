@@ -3,7 +3,7 @@
     Resources: {}
   expectations:
     rules:
-      assert_all_resources_have_non_empty_tags: FAIL
+      assert_ddb_resources_have_non_empty_tags: FAIL
       dynamo_db_sse_on: SKIP
       dynamo_db_sse_on_for_prod_only: SKIP
 - input:
@@ -18,7 +18,7 @@
             SSEEnabled: true
   expectations:
     rules:
-      assert_all_resources_have_non_empty_tags: PASS
+      assert_ddb_resources_have_non_empty_tags: PASS
       dynamo_db_sse_on: PASS
       dynamo_db_sse_on_for_prod_only: SKIP
 - input:
@@ -41,7 +41,7 @@
             SSEEnabled: true
   expectations:
     rules:
-      assert_all_resources_have_non_empty_tags: PASS
+      assert_ddb_resources_have_non_empty_tags: PASS
       dynamo_db_sse_on: PASS
       dynamo_db_sse_on_for_prod_only: FAIL
 - input:
@@ -65,7 +65,7 @@
             SSEType: KMS
   expectations:
     rules:
-      assert_all_resources_have_non_empty_tags: PASS
+      assert_ddb_resources_have_non_empty_tags: PASS
       dynamo_db_sse_on: PASS
       # no DeletionPolicy
       dynamo_db_sse_on_for_prod_only: FAIL 
@@ -91,7 +91,7 @@
             SSEType: KMS
   expectations:
     rules:
-      assert_all_resources_have_non_empty_tags: PASS
+      assert_ddb_resources_have_non_empty_tags: PASS
       dynamo_db_sse_on: PASS
       dynamo_db_sse_on_for_prod_only: PASS
 - input:
@@ -113,6 +113,28 @@
             SSEType: KMS
   expectations:
     rules:
-      assert_all_resources_have_non_empty_tags: FAIL
+      assert_ddb_resources_have_non_empty_tags: FAIL
       dynamo_db_sse_on: SKIP
+      dynamo_db_sse_on_for_prod_only: SKIP
+- input:
+    Resources:
+      ddb:
+        Type: 'AWS::DynamoDB::Table'
+        Properties:
+          Tags:
+            - Key: Normal
+              Value: NotSelected
+          SSESpecification:
+            SSEEnabled: true
+      # AWS::EC2::Route does not support Tags and must not affect the DDB rules
+      route:
+        Type: 'AWS::EC2::Route'
+        Properties:
+          RouteTableId: rtb-0123456789abcdef0
+          DestinationCidrBlock: 0.0.0.0/0
+          GatewayId: igw-0123456789abcdef0
+  expectations:
+    rules:
+      assert_ddb_resources_have_non_empty_tags: PASS
+      dynamo_db_sse_on: PASS
       dynamo_db_sse_on_for_prod_only: SKIP
