@@ -2570,7 +2570,7 @@ fn report_all_failed_clauses_for_rules<'value>(
                                                 }),
                                                 context: current.context.to_string(),
                                                 messages: Messages {
-                                                    location: Some(to_res.clone().self_path().1),
+                                                    location: Some(res.self_path().1),
                                                     error_message: Some(message),
                                                     custom_message: Some(custom_message),
                                                 },

@@ -1579,6 +1579,45 @@ mod validate_tests {
     }
 
     #[test]
+    fn test_sarif_region_of_a_failed_comparison_points_at_the_template_value() {
+        let mut reader = Reader::default();
+        let mut writer = Writer::new(WBVec(vec![])).expect("Failed to create writer.");
+
+        let status_code = ValidateTestRunner::default()
+            .rules(vec!["sarif_comparison_location.guard"])
+            .data(vec!["sarif-comparison-location-template.yaml"])
+            .show_summary(vec!["none"])
+            .output_format(Option::from("sarif"))
+            .structured()
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(StatusCode::VALIDATION_ERROR, status_code);
+
+        let output = writer.stripped().expect("failed to read the writer");
+        let report: serde_json::Value =
+            serde_json::from_str(&output).expect("the sarif report is not valid JSON");
+        let region_of = |rule_id: &str| {
+            let results = report["runs"][0]["results"].as_array().unwrap();
+            let result = results
+                .iter()
+                .find(|result| result["ruleId"] == rule_id)
+                .unwrap_or_else(|| panic!("no result for {} in {}", rule_id, output));
+            result["locations"][0]["physicalLocation"]["region"].clone()
+        };
+
+        // Both rules fail on the same `Status` value, so both results must point at it. The `IN`
+        // comparison already did; the `==` comparison pointed at the "Enabled" literal from the
+        // rules file instead, which has no position in the template and came out as line 1.
+        let in_region = region_of("VERSIONING_IN_ENABLED");
+        let eq_region = region_of("VERSIONING_EQUALS_ENABLED");
+        assert_ne!(
+            serde_json::json!({"startLine": 1, "startColumn": 1}),
+            in_region
+        );
+        assert_eq!(in_region, eq_region);
+    }
+
+    #[test]
     fn test_structured_output_payload() {
         let mut reader = Reader::new(ReadCursor(Cursor::new(Vec::from(
             COMPLIANT_PAYLOAD.as_bytes(),
