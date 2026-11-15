@@ -138,15 +138,19 @@ This approach does not require user input and can be used in CI/CD pipelines:
 1. Make sure docker is running
 2. Navigate to `guard-lambda` directory and run `sam build --use-container` to build the code for the Lambda function
 3. Run `sam package --s3-bucket <your-bucket-name>` this will create a `.zip` package with the code and dependencies and upload to S3
-4. Run `sam deploy --s3-bucket <your-bucket-name> --stack-name <your-stack-name` this will deploy the application to CloudFormation
-5. Once it succeeds, the name of the function will be shown in the `CloudFormationGuardLambdaFunctionName` output. To retrieve this programmatically, run ` sam list stack-outputs --output json`. If `jq` is available, you can retrieve the value by running `sam list stack-outputs --output json | jq -r .[0].OutputValue`
+4. Run `sam deploy --s3-bucket <your-bucket-name> --stack-name <your-stack-name> --capabilities CAPABILITY_IAM` this will deploy the application to CloudFormation. `CAPABILITY_IAM` is required because the template creates the function's execution role
+5. Once it succeeds, the name of the function will be shown in the `CloudFormationGuardLambdaFunctionName` output. To retrieve this programmatically, run `sam list stack-outputs --stack-name <your-stack-name> --output json`. If `jq` is available, you can retrieve the value by running `sam list stack-outputs --stack-name <your-stack-name> --output json | jq -r .[0].OutputValue`
 
 See [here](https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/sam-cli-command-reference-sam-package.html) for all `sam package` options
 see [here](https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/sam-cli-command-reference-sam-deploy.html) for all sam deploy options
 
-Alternatively, you can build a `somconfig.toml` in your directory and specify any and all CLI options in [toml](https://toml.io/en/) format. AWS Documentation [here](https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/serverless-sam-cli-config.html).
+Alternatively, you can build a `samconfig.toml` in your directory and specify any and all CLI options in [toml](https://toml.io/en/) format. AWS Documentation [here](https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/serverless-sam-cli-config.html).
 
 #### Specifying Stack Parameters
+
+The template accepts an optional `FunctionName` parameter. When it is omitted or empty, CloudFormation generates the function name, which is also the behavior for stacks deployed before this parameter existed.
+
+**Warning:** `FunctionName` on `AWS::Lambda::Function` requires replacement. Setting it, changing it, or clearing it on an already-deployed stack deletes the existing function and creates a new one with a different ARN. Any caller that holds the old function name or ARN must be updated.
 
 To specify a stack parameter, add  `--parameter-overrides` option to the `sam deploy` command. For example, to specify the `FunctionName`, run the following command:
 
@@ -154,6 +158,7 @@ To specify a stack parameter, add  `--parameter-overrides` option to the `sam de
 sam deploy \
   --s3-bucket <your-bucket-name> \
   --stack-name <your-stack-name> \
+  --capabilities CAPABILITY_IAM \
   --parameter-overrides FunctionName=MyCfnGuardLambda
 ```
 
@@ -163,6 +168,7 @@ or in your `samconfig.toml`:
 [default.global.parameters]
 s3_bucket = "<your-bucket-name>"
 stack_name = "<your-stack-name>"
+capabilities = "CAPABILITY_IAM"
 parameter_overrides = "FunctionName=MyCfnGuardLambda"
 ```
 

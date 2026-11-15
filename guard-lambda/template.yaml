@@ -3,7 +3,11 @@ Transform: AWS::Serverless-2016-10-31
 Parameters:
   FunctionName:
     Type: String
-    Description: The name of the function
+    Default: ""
+    Description: Optional name for the Lambda function. Leave empty to let CloudFormation generate one.
+
+Conditions:
+  HasFunctionName: !Not [!Equals [!Ref FunctionName, ""]]
 
 Resources:
   CloudFormationGuardLambda:
@@ -11,7 +15,7 @@ Resources:
     Properties:
       Runtime: provided.al2
       Handler: guard.handler
-      FunctionName: !Ref FunctionName
+      FunctionName: !If [HasFunctionName, !Ref FunctionName, !Ref AWS::NoValue]
       # We need to point to the parent directory, so we can use ../guard/*
       CodeUri: ..
       Environment:
