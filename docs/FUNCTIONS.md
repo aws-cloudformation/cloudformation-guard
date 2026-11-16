@@ -350,6 +350,47 @@ rule SOME_RULE when %template !empty {
 }
 ```
 
+### key
+
+This function can be used to retrieve the name a value is stored under, which for a resource is its logical id
+
+#### Argument(s)
+
+1. `collection`: A query that can resolve to any type
+
+#### Return value
+
+A query containing the name of every resolved value from `collection`, in the same order. Values that have no name, such as the document root, are left out of the result
+
+Guard joins the names along a value's path with `/`, so `key` returns only the text after the last `/`. For a map key that contains `/` itself, such as `a/b`, `key` returns `b` rather than `a/b`.
+
+#### Example
+
+The following rule shows how you could check the logical id of every S3 bucket in a template.
+
+```
+let buckets = Resources.*[ Type == 'AWS::S3::Bucket' ]
+
+rule SOME_RULE when %buckets !empty {
+    let names = key(%buckets)
+    %names in ["s3", "bucket"]
+    << Violation: Bucket logical ids must be one of the approved names >>
+}
+```
+
+Since `key` returns one name per resolved value, a block can be used to work with a single
+resource at a time.
+
+```
+rule SOME_OTHER_RULE when %buckets !empty {
+    %buckets {
+        let name = key(this)
+        %name != "bucket"
+        << Violation: bucket is a reserved logical id >>
+    }
+}
+```
+
 ## Converter Functions
 
 When the argument passed to a function resolves to several values, the result has one entry per value. An element of a type the function does not take is not dropped: its entry is unresolved, a clause that compares the result fails for that element, and the report names the element, its type and the function. The same holds for the string functions above. So `parse_int` over `["1", true, 2]` answers `1` and `2` and an unresolved entry for `true`, and `let res = parse_int(...)  %res exists` fails on the `true`, with the report saying it is a bool, which the function does not take. This is different from a value of an accepted type the function refuses: `parse_int` over `"x"` is an error ("failed to convert a string: x into an integer"), and the clause that uses the result fails as a whole.

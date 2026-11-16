@@ -11,6 +11,7 @@ use crate::exprs::{
 };
 use crate::functions::collections::count;
 use crate::functions::converters::{parse_bool, parse_char, parse_float, parse_int, parse_str};
+use crate::functions::key::key;
 use crate::functions::strings::{
     compile_pattern, join, json_parse, regex_replace_with, substring, to_lower, to_upper,
     url_decode,
@@ -28204,6 +28205,7 @@ pub enum FunctionName {
     Count,
     Join,
     JsonParse,
+    Key,
     Now,
     ParseBoolean,
     ParseChar,
@@ -28233,7 +28235,8 @@ impl FunctionName {
             | FunctionName::ParseFloat
             | FunctionName::ParseInt
             | FunctionName::ParseEpoch
-            | FunctionName::ParseChar => 1,
+            | FunctionName::ParseChar
+            | FunctionName::Key => 1,
             FunctionName::Now => 0,
         }
     }
@@ -28255,6 +28258,7 @@ impl FunctionName {
         match self {
             FunctionName::Join | FunctionName::Count | FunctionName::Now => None,
             FunctionName::JsonParse
+            | FunctionName::Key
             | FunctionName::ParseBoolean
             | FunctionName::ParseChar
             | FunctionName::ParseEpoch
@@ -28276,6 +28280,7 @@ impl std::fmt::Display for FunctionName {
             FunctionName::Count => "count",
             FunctionName::Join => "join",
             FunctionName::JsonParse => "json_parse",
+            FunctionName::Key => "key",
             FunctionName::Now => "now",
             FunctionName::ParseBoolean => "parse_boolean",
             FunctionName::ParseChar => "parse_char",
@@ -28301,6 +28306,7 @@ impl TryFrom<&str> for FunctionName {
             "count" => Ok(FunctionName::Count),
             "join" => Ok(FunctionName::Join),
             "json_parse" => Ok(FunctionName::JsonParse),
+            "key" => Ok(FunctionName::Key),
             "now" => Ok(FunctionName::Now),
             "parse_boolean" => Ok(FunctionName::ParseBoolean),
             "parse_char" => Ok(FunctionName::ParseChar),
@@ -28322,6 +28328,7 @@ impl TryFrom<&str> for FunctionName {
 
 struct CountFunction;
 struct JsonParseFunction;
+struct KeyFunction;
 struct RegexReplaceFunction;
 struct SubstringFunction;
 struct ToUpperFunction;
@@ -28366,6 +28373,7 @@ impl Callable for FunctionName {
         match self {
             FunctionName::Count => CountFunction.call(args),
             FunctionName::JsonParse => JsonParseFunction.call(args),
+            FunctionName::Key => KeyFunction.call(args),
             FunctionName::RegexReplace => RegexReplaceFunction.call(args),
             FunctionName::Substring => SubstringFunction.call(args),
             FunctionName::ToUpper => ToUpperFunction.call(args),
@@ -28398,6 +28406,12 @@ impl Callable for NowFunction {
 impl Callable for CountFunction {
     fn call(&self, args: &[Vec<QueryResult>]) -> Result<Vec<Option<PathAwareValue>>> {
         Ok(vec![count(&args[0])])
+    }
+}
+
+impl Callable for KeyFunction {
+    fn call(&self, args: &[Vec<QueryResult>]) -> Result<Vec<Option<PathAwareValue>>> {
+        Ok(key(&args[0]))
     }
 }
 
@@ -36275,7 +36289,8 @@ fn general_no_answer_reason(name: &FunctionName, value: &PathAwareValue) -> Stri
             PathAwareValue::String(_) | PathAwareValue::Int(_) | PathAwareValue::Char(_)
         ),
         // These answer for the selection as a whole; a missing answer is never about one value's type.
-        FunctionName::Count | FunctionName::Join | FunctionName::Now => true,
+        // `key` reads only a value's path, so it accepts every type; a missing answer is a value with no name.
+        FunctionName::Count | FunctionName::Join | FunctionName::Key | FunctionName::Now => true,
     };
 
     // The path as every retrieval reason renders one (`template_path`: cut in its middle past the part
