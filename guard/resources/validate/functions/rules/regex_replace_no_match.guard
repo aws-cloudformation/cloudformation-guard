@@ -1,0 +1,19 @@
+#
+# A normalisation step that is a no-op on this input must not change the verdict.
+#
+# The author strips an optional prefix before checking the name, which is the ordinary way to write a
+# rule that has to accept either a bare name or a fully qualified one. `Arn` in the data does not carry
+# the `arn:aws:s3:::` prefix, so the pattern does not match.
+#
+# `regex_replace` used to answer `""` for a pattern that did not match, and `""` compares, so the `!=`
+# below was satisfied and the rule passed -- on a value it was written to catch. A no-match now returns
+# the input unchanged, so the comparison sees the real name and this rule FAILs, which is the same
+# verdict the assertion has when it is written without the normalisation step.
+#
+let template = Resources.*[ Type == 'AWS::New::Service' ]
+
+rule NORMALISED_ARN_IS_STILL_COMPARED when %template !empty {
+    let arn = %template.Properties.Arn
+    let normalised = regex_replace(%arn, "^arn:aws:s3:::(.+)$", "${1}")
+    %normalised != "arn:aws:newservice:us-west-2:123456789012:Table/extracted"
+}

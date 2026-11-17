@@ -24,17 +24,26 @@ main() {
 		do
 			echo "Installing cfn-guard version '${VERSION}'..."
 			MAJOR_VER=$(echo "$VERSION" | awk -F '.' '{ print $1 }')
+			get_os_type
+			if [ "$MAJOR_VER" -le 2 ] || [ "$VERSION" = "3.0.0" ]; then
+				if [ "$ARCH_TYPE" != "x86_64" ]; then
+					err "cfn-guard version $VERSION is not available for architecture $ARCH_TYPE"
+				fi
+				FILENAME="cfn-guard-v$MAJOR_VER-$OS_TYPE-latest"
+			else
+				FILENAME="cfn-guard-v$MAJOR_VER-$ARCH_TYPE-$OS_TYPE-latest"
+			fi
 			mkdir -p ~/.guard/"$MAJOR_VER" ~/.guard/bin ||
 				err "unable to make directories ~/.guard/$MAJOR_VER, ~/.guard/bin"
-			get_os_type
-			download https://github.com/aws-cloudformation/cloudformation-guard/releases/download/"$VERSION"/cfn-guard-v"$MAJOR_VER"-"$ARCH_TYPE"-"$OS_TYPE"-latest.tar.gz >/tmp/guard.tar.gz ||
-				err "unable to download https://github.com/aws-cloudformation/cloudformation-guard/releases/download/$VERSION/cfn-guard-v$MAJOR_VER-$ARCH_TYPE-$OS_TYPE-latest.tar.gz"
+			download https://github.com/aws-cloudformation/cloudformation-guard/releases/download/"$VERSION/$FILENAME".tar.gz >/tmp/guard.tar.gz ||
+				err "unable to download https://github.com/aws-cloudformation/cloudformation-guard/releases/download/$VERSION/$FILENAME.tar.gz"
 			tar -C ~/.guard/"$MAJOR_VER" -xzf /tmp/guard.tar.gz ||
 				err "unable to untar /tmp/guard.tar.gz"
-			ln -sf ~/.guard/"$MAJOR_VER"/cfn-guard-v"$MAJOR_VER"-"$ARCH_TYPE"-"$OS_TYPE"-latest/cfn-guard ~/.guard/bin ||
+			GUARD_BINARY="$HOME/.guard/$MAJOR_VER/$FILENAME/cfn-guard"
+			"$GUARD_BINARY" help ||
+				err "downloaded cfn-guard version $VERSION failed validation"
+			ln -sf "$GUARD_BINARY" ~/.guard/bin ||
 				err "unable to symlink to ~/.guard/bin directory"
-			~/.guard/bin/cfn-guard help ||
-				err "cfn-guard was not installed properly"
 			echo "Remember to SET PATH include PATH=\${PATH}:~/.guard/bin"
 		done
 }

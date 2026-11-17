@@ -1661,6 +1661,7 @@ mod validate_tests {
     #[case("regex_replace.guard")]
     #[case("substring.guard")]
     #[case("json_parse.guard")]
+    #[case("key.guard")]
     #[case("string_manipulation.guard")]
     #[case("url_decode.guard")]
     #[case("join.guard")]
@@ -1697,6 +1698,27 @@ mod validate_tests {
             "resources/validate/functions/output/failing_count_show_summary_all.out",
             writer
         );
+    }
+
+    /// A `regex_replace` whose pattern does not match returns the input, so the clause around it still
+    /// compares the real value and this rule fails.
+    ///
+    /// It used to return `""`. An empty string is a value and it compares, so the `!=` in
+    /// `regex_replace_no_match.guard` was satisfied and the run exited 0 -- a rule that normalises an
+    /// optional prefix before checking a name reported a pass on the name it was written to catch. The
+    /// verdict is the assertion here, not the text: SUCCESS before, VALIDATION_ERROR after.
+    #[test]
+    fn a_regex_replace_that_matches_nothing_does_not_pass_the_rule() {
+        let mut reader = Reader::default();
+        let mut writer = Writer::default();
+
+        let status_code = ValidateTestRunner::default()
+            .rules(vec!["/functions/rules/regex_replace_no_match.guard"])
+            .data(vec!["/functions/data/template.yaml"])
+            .show_summary(vec!["all"])
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(StatusCode::VALIDATION_ERROR, status_code);
     }
 
     #[test]
