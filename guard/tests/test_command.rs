@@ -259,6 +259,295 @@ mod test_command_tests {
         );
     }
 
+    /// A reported path is rendered with the platform's separator, so a fragment spelled with `/`
+    /// does not match the report verbatim on Windows. The walker joins each file name onto the
+    /// directory it was given, which leaves the directory as the caller spelled it and only the
+    /// last separator platform-dependent -- so the fragments below are compared against a copy
+    /// with the separators normalized rather than rebuilt around `MAIN_SEPARATOR`.
+    fn with_forward_slashes(reported: &str) -> String {
+        reported.replace('\\', "/")
+    }
+
+    /// The plaintext directory report writes one section per rules file, terminated by a `---` line.
+    /// Returns the section that names `rule_file`.
+    fn section_for<'out>(stdout: &'out str, rule_file: &str) -> &'out str {
+        stdout
+            .split("\n---")
+            .find(|section| with_forward_slashes(section).contains(rule_file))
+            .unwrap_or_else(|| panic!("no section mentions {} in:\n{}", rule_file, stdout))
+    }
+
+    /// The case names a section reported, which is the set of test files that rules file was paired
+    /// with.
+    fn suite_names_in(section: &str) -> Vec<&str> {
+        section
+            .lines()
+            .filter_map(|line| line.trim().strip_prefix("Name: "))
+            .collect()
+    }
+
+    /// A test failure was reported as a success, because a shorter rules file stem claimed a longer
+    /// one's tests.
+    ///
+    /// Test files are paired with rules files by prefix, and the first match in sort order won. With
+    /// `s3.guard` and `s3_encryption.guard` in one directory, `s3_encryption_tests.yml` starts with
+    /// `s3`, so it was attached to `s3.guard` -- whose rules it does not name -- and
+    /// `s3_encryption.guard` was reported as having no tests at all.
+    ///
+    /// The exit code is what makes this a defect rather than untidy output. This fixture's
+    /// expectation is not met: run as `test -r s3_encryption.guard -t tests/s3_encryption_tests.yml`
+    /// it exits 7, and over the same files `test -d` exited 0. A suite that fails when you point at
+    /// it and passes when the directory walker finds it is worse than no suite.
+    #[test]
+    fn a_shorter_rules_file_stem_does_not_claim_the_longer_ones_tests() {
+        let mut reader = Reader::default();
+        let mut writer = Writer::new(WBVec(vec![])).expect("Failed to create writer.");
+        let status_code = TestCommandTestRunner::default()
+            .directory(Option::from(
+                "resources/test-command/prefix-collision-failing-suite",
+            ))
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(
+            StatusCode::TEST_COMMAND_FAILURE,
+            status_code,
+            "the unmet expectation in s3_encryption_tests.yml must fail the run"
+        );
+
+        let stdout = writer.stripped().expect("failed to read stdout");
+        assert!(
+            !stdout.contains("did not have any tests associated"),
+            "each rules file here has a test file of its own:\n{}",
+            stdout
+        );
+
+        let encryption = section_for(&stdout, "/s3_encryption.guard");
+        assert_eq!(
+            suite_names_in(encryption),
+            vec!["suite for s3 encryption"],
+            "s3_encryption.guard must be paired with its own suite only:\n{}",
+            encryption
+        );
+        assert!(
+            encryption.contains("s3_encryption_rule: Expected = PASS, Evaluated = [FAIL]"),
+            "and must report which expectation was not met:\n{}",
+            encryption
+        );
+        assert_eq!(
+            suite_names_in(section_for(&stdout, "/s3.guard")),
+            vec!["suite for s3"],
+            "s3.guard must keep only its own suite:\n{}",
+            stdout
+        );
+    }
+
+    /// Longest-prefix pairing is not merely turning collisions red.
+    ///
+    /// The same two-file shape as the failing case, with both expectations met. Both rules files must
+    /// run their own suite and neither may be skipped, so the fix cannot be mistaken for one that
+    /// fails any directory it cannot pair confidently.
+    #[test]
+    fn each_rules_file_in_a_prefix_collision_runs_its_own_passing_suite() {
+        let mut reader = Reader::default();
+        let mut writer = Writer::new(WBVec(vec![])).expect("Failed to create writer.");
+        let status_code = TestCommandTestRunner::default()
+            .directory(Option::from(
+                "resources/test-command/prefix-collision-both-passing",
+            ))
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(StatusCode::SUCCESS, status_code);
+
+        let stdout = writer.stripped().expect("failed to read stdout");
+        assert!(
+            !stdout.contains("did not have any tests associated"),
+            "neither rules file may be skipped:\n{}",
+            stdout
+        );
+        assert_eq!(
+            suite_names_in(section_for(&stdout, "/s3.guard")),
+            vec!["suite for s3"],
+            "s3.guard must be paired with its own suite only:\n{}",
+            stdout
+        );
+        assert_eq!(
+            suite_names_in(section_for(&stdout, "/s3_encryption.guard")),
+            vec!["suite for s3 encryption"],
+            "s3_encryption.guard must be paired with its own suite only:\n{}",
+            stdout
+        );
+        assert_eq!(
+            stdout.matches("PASS Rules:").count(),
+            2,
+            "one passing suite per rules file:\n{}",
+            stdout
+        );
+    }
+
+    /// A rules file with no test file of its own is still skipped, and skipping is still not a
+    /// failure.
+    ///
+    /// `orphan.guard` shares no prefix with `paired_tests.yml`, so it has nothing to run. Pairing on
+    /// the longest match narrows which rules file a test file lands on; it must not widen what counts
+    /// as having no tests, and an unpaired rules file must not fail the run.
+    ///
+    /// This one passes before the change as well as after. That is what it is for.
+    #[test]
+    fn a_rules_file_with_no_test_file_is_skipped_without_failing_the_run() {
+        let mut reader = Reader::default();
+        let mut writer = Writer::new(WBVec(vec![])).expect("Failed to create writer.");
+        let status_code = TestCommandTestRunner::default()
+            .directory(Option::from(
+                "resources/test-command/rules-file-without-tests",
+            ))
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(
+            StatusCode::SUCCESS,
+            status_code,
+            "a rules file with no tests is not a test failure"
+        );
+
+        let stdout = writer.stripped().expect("failed to read stdout");
+        assert!(
+            with_forward_slashes(&stdout).contains(
+                "Guard File resources/test-command/rules-file-without-tests/orphan.guard did not have any tests associated, skipping."
+            ),
+            "the unpaired rules file must still be reported as skipped:\n{}",
+            stdout
+        );
+        assert_eq!(
+            suite_names_in(section_for(&stdout, "/paired.guard")),
+            vec!["suite for paired"],
+            "and the paired one must still run:\n{}",
+            stdout
+        );
+    }
+
+    /// Three stems where each is a prefix of the next.
+    ///
+    /// `a.guard`, `a_b.guard` and `a_b_c.guard` with a test file apiece. Every one of the three test
+    /// file names starts with `a`, so first-match sent all three to `a.guard` and skipped the other
+    /// two rules files. Longest-prefix is the rule that separates them: `a_b_tests.yml` matches `a`
+    /// and `a_b` but not `a_b_c`, and `a_b_c_tests.yml` matches all three.
+    #[test]
+    fn a_three_way_prefix_collision_pairs_each_rules_file_with_its_own_tests() {
+        let mut reader = Reader::default();
+        let mut writer = Writer::new(WBVec(vec![])).expect("Failed to create writer.");
+        let status_code = TestCommandTestRunner::default()
+            .directory(Option::from(
+                "resources/test-command/prefix-collision-three-way",
+            ))
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(StatusCode::SUCCESS, status_code);
+
+        let stdout = writer.stripped().expect("failed to read stdout");
+        assert!(
+            !stdout.contains("did not have any tests associated"),
+            "all three rules files have a test file of their own:\n{}",
+            stdout
+        );
+        for (rule_file, suite) in [
+            ("/a.guard", "suite for a"),
+            ("/a_b.guard", "suite for a_b"),
+            ("/a_b_c.guard", "suite for a_b_c"),
+        ] {
+            assert_eq!(
+                suite_names_in(section_for(&stdout, rule_file)),
+                vec![suite],
+                "{} must be paired with {} and nothing else:\n{}",
+                rule_file,
+                suite,
+                stdout
+            );
+        }
+    }
+
+    /// A test file no rules file claimed is named, instead of being dropped in silence.
+    ///
+    /// This is what a rules file rename looks like. `s3_bucket.guard` beside `tests/s3_tests.yml`
+    /// ran nothing and said only that the rules file had no tests associated, which reads as benign
+    /// because a rules file legitimately may have none. The suite that was skipped fails: rename the
+    /// file to `s3_bucket_tests.yml` and change nothing else and the run goes from exit 0 to exit 7.
+    ///
+    /// The exit code is deliberately still 0. A `tests/` directory may hold a yaml or json file that
+    /// is not a suite at all and the walker cannot tell by name, so failing would break setups that
+    /// work; and the line about the rules file must stay as it was, because it is not wrong.
+    #[test]
+    fn a_test_file_that_matches_no_rules_file_is_named_rather_than_discarded() {
+        const DIR: &str = "resources/test-command/orphaned-test-file";
+
+        // `stripped` and `err_to_stripped` each consume the writer, so one run cannot be read for
+        // both streams. The command is deterministic over these files.
+        let run = || {
+            let mut reader = Reader::default();
+            let mut writer = Writer::new_with_err(WBVec(vec![]), WBVec(vec![]))
+                .expect("Failed to create writer.");
+            let status_code = TestCommandTestRunner::default()
+                .directory(Option::from(DIR))
+                .run(&mut writer, &mut reader);
+
+            (status_code, writer)
+        };
+
+        let (status_code, err_writer) = run();
+        let (_, out_writer) = run();
+
+        assert_eq!(
+            StatusCode::SUCCESS,
+            status_code,
+            "naming the ignored file must not change the verdict"
+        );
+
+        let stderr = err_writer.err_to_stripped().expect("failed to read stderr");
+        assert!(
+            with_forward_slashes(&stderr).contains(
+                "resources/test-command/orphaned-test-file/tests/s3_tests.yml did not match any rules file, so it was not run"
+            ),
+            "the ignored test file must be named, path included:\n{}",
+            stderr
+        );
+
+        let stdout = out_writer.stripped().expect("failed to read stdout");
+        assert!(
+            with_forward_slashes(&stdout).contains(
+                "Guard File resources/test-command/orphaned-test-file/s3_bucket.guard did not have any tests associated, skipping."
+            ),
+            "and the existing line about the rules file must be unchanged:\n{}",
+            stdout
+        );
+    }
+
+    /// A directory where every test file pairs says nothing, so this does not become noise.
+    ///
+    /// Two shapes. `dir` is the plain one, every stem matching its own test file. The three-way
+    /// collision is the one that matters: whether a file was taken is answered once, where it is
+    /// taken, so longest-prefix pairing and this diagnostic cannot disagree. Deciding it a second
+    /// time by repeating the prefix test is what would report a paired file as unpaired, and
+    /// `a_b_tests.yml` -- which matches two stems and is claimed by one -- is where that would show.
+    #[rstest]
+    #[case("resources/test-command/dir")]
+    #[case("resources/test-command/prefix-collision-three-way")]
+    fn a_directory_where_every_test_file_pairs_reports_no_unmatched_file(#[case] dir: &str) {
+        let mut reader = Reader::default();
+        let mut writer =
+            Writer::new_with_err(WBVec(vec![]), WBVec(vec![])).expect("Failed to create writer.");
+        let status_code = TestCommandTestRunner::default()
+            .directory(Option::from(dir))
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(StatusCode::SUCCESS, status_code);
+
+        let stderr = writer.err_to_stripped().expect("failed to read stderr");
+        assert!(
+            !stderr.contains("did not match any rules file"),
+            "every test file in {} is paired, so nothing should be reported:\n{}",
+            dir,
+            stderr
+        );
+    }
+
     #[rstest]
     #[case("json")]
     #[case("yaml")]
