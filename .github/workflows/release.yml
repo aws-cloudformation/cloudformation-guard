@@ -77,6 +77,16 @@ jobs:
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
 
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          target: wasm32-unknown-unknown
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: guard/package-lock.json
+
       - name: Configure git
         run: |
           git config user.name "github-actions[bot]"
@@ -121,6 +131,28 @@ jobs:
 
           # Update lockfile to reflect new versions
           cargo check
+
+      - name: Install TypeScript library dependencies
+        working-directory: guard
+        run: npm ci
+
+      - name: Build TypeScript library
+        working-directory: guard
+        run: |
+          WASM_OUTPUT="$(mktemp -d "$RUNNER_TEMP/cfn-guard-wasm.XXXXXX")"
+          ./node_modules/.bin/wasm-pack build \
+            --target nodejs \
+            --out-name guard \
+            --out-dir "$WASM_OUTPUT" \
+            --no-pack \
+            --release
+          cp \
+            "$WASM_OUTPUT/guard.js" \
+            "$WASM_OUTPUT/guard.d.ts" \
+            "$WASM_OUTPUT/guard_bg.wasm" \
+            "$WASM_OUTPUT/guard_bg.wasm.d.ts" \
+            ts-lib/
+          npm run build:typescript
 
       - name: Commit & tag
         run: |
@@ -238,7 +270,7 @@ jobs:
           retention-days: 1
 
   build-ts-lib:
-    name: Build TypeScript library
+    name: Package TypeScript library
     needs: [validate, version-bump]
     runs-on: ubuntu-latest
     env:
@@ -251,10 +283,6 @@ jobs:
         with:
           ref: ${{ needs.validate.outputs.version }}
 
-      - uses: actions-rust-lang/setup-rust-toolchain@v1
-        with:
-          target: wasm32-unknown-unknown
-
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
@@ -263,23 +291,6 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
-
-      - name: Build TypeScript library
-        run: |
-          WASM_OUTPUT="$(mktemp -d "$RUNNER_TEMP/cfn-guard-wasm.XXXXXX")"
-          ./node_modules/.bin/wasm-pack build \
-            --target nodejs \
-            --out-name guard \
-            --out-dir "$WASM_OUTPUT" \
-            --no-pack \
-            --release
-          cp \
-            "$WASM_OUTPUT/guard.js" \
-            "$WASM_OUTPUT/guard.d.ts" \
-            "$WASM_OUTPUT/guard_bg.wasm" \
-            "$WASM_OUTPUT/guard_bg.wasm.d.ts" \
-            ts-lib/
-          npm run build:typescript
 
       - name: Lint and test
         run: |
