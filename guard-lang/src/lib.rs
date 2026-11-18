@@ -30,7 +30,8 @@ use crate::values::CmpOperator;
 use colored::*;
 use lazy_static::lazy_static;
 use nom::lib::std::convert::TryFrom;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, Serializer};
+use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 use std::fmt::Formatter;
 use std::rc::Rc;
@@ -206,11 +207,30 @@ impl QueryResult {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct ComparisonClauseCheck {
     pub comparison: (CmpOperator, bool),
+    /// `Literal` when the left operand was written in the rules file, so it has no location in
+    /// the input data. Serialized as `Resolved`, the form recorded before this distinction.
+    #[serde(serialize_with = "serialize_literal_as_resolved")]
     pub from: QueryResult,
     pub to: Option<QueryResult>, // happens with from is unresolved
     pub message: Option<String>,
     pub custom_message: Option<String>,
     pub status: Status,
+}
+
+/// Presents a rules-file literal the way records showed it before literals were distinguished,
+/// so serialized and displayed records stay unchanged for existing consumers.
+fn literal_as_resolved(query_result: &QueryResult) -> Cow<'_, QueryResult> {
+    match query_result {
+        QueryResult::Literal(value) => Cow::Owned(QueryResult::Resolved(Rc::clone(value))),
+        _ => Cow::Borrowed(query_result),
+    }
+}
+
+fn serialize_literal_as_resolved<S: Serializer>(
+    query_result: &QueryResult,
+    serializer: S,
+) -> std::result::Result<S::Ok, S::Error> {
+    literal_as_resolved(query_result).serialize(serializer)
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]

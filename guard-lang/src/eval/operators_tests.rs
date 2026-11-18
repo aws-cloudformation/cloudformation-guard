@@ -1130,3 +1130,60 @@ fn test_operator_not_eq() -> crate::Result<()> {
 
     Ok(())
 }
+
+fn failed_pairs(result: EvalResult) -> Vec<LhsRhsPair> {
+    let results = match result {
+        EvalResult::Result(results) => results,
+        other => panic!("expected comparison results, got {:?}", other),
+    };
+    results
+        .into_iter()
+        .map(|result| match result {
+            ValueEvalResult::ComparisonResult(ComparisonResult::Fail(Compare::Value(pair))) => pair,
+            other => panic!("expected a failed value comparison, got {:?}", other),
+        })
+        .collect()
+}
+
+#[test]
+fn failed_comparisons_keep_literal_provenance_of_each_flattened_lhs_element() -> crate::Result<()> {
+    let literal_list = PathAwareValue::try_from(crate::values::read_from("[10, 20]")?)?;
+    let input_value = PathAwareValue::Int((Path::new("/Limit".to_string(), 3, 7), 5));
+    let lhs = vec![QueryResult::Literal(Rc::new(literal_list))];
+    let rhs = vec![QueryResult::Resolved(Rc::new(input_value))];
+
+    let pairs = failed_pairs((CmpOperator::Lt, false).compare(&lhs, &rhs)?);
+
+    assert_eq!(pairs.len(), 2);
+    for pair in pairs {
+        assert!(
+            matches!(pair.lhs_query_result(), QueryResult::Literal(_)),
+            "lost literal provenance of {}",
+            pair.lhs
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn failed_comparisons_mark_an_input_lhs_at_the_document_origin_as_input() -> crate::Result<()> {
+    let input_at_origin = Rc::new(PathAwareValue::String((
+        Path::new("".to_string(), 0, 0),
+        "Wrong".to_string(),
+    )));
+    let input_rhs = Rc::new(PathAwareValue::String((
+        Path::new("/Expected".to_string(), 1, 10),
+        "Different".to_string(),
+    )));
+    let lhs = vec![QueryResult::Resolved(input_at_origin)];
+    let rhs = vec![QueryResult::Resolved(input_rhs)];
+
+    let pairs = failed_pairs((CmpOperator::Lt, false).compare(&lhs, &rhs)?);
+
+    assert_eq!(pairs.len(), 1);
+    assert!(matches!(
+        pairs[0].lhs_query_result(),
+        QueryResult::Resolved(_)
+    ));
+    Ok(())
+}

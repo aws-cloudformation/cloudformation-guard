@@ -2517,7 +2517,6 @@ fn report_all_failed_clauses_for_rules<'value>(
                         .map_or("".to_string(), |s| format!(" Error = [{}]", s));
 
                     match from {
-                        QueryResult::Literal(_) => unreachable!(),
                         QueryResult::UnResolved(to_unres) => {
                             let message = format!(
                                     "Check was not compliant as property [{remain}] to compare from is missing. Value traversed to [{to}].{err}",
@@ -2541,19 +2540,15 @@ fn report_all_failed_clauses_for_rules<'value>(
                             )));
                         }
 
-                        QueryResult::Resolved(res) => {
+                        QueryResult::Literal(res) | QueryResult::Resolved(res) => {
                             if let Some(to) = to {
                                 match to {
                                     QueryResult::Literal(_) => unreachable!(),
                                     QueryResult::Resolved(to_res) => {
-                                        let from_location = res.self_path().1;
-                                        // Values from rule literals carry the default location. Prefer
-                                        // the left operand when it has a data-file location, otherwise
-                                        // use the right operand's location.
-                                        let location = if from_location == Location::default() {
-                                            to_res.self_path().1
-                                        } else {
-                                            from_location
+                                        // A rules-file literal has no location in the input data.
+                                        let location = match from {
+                                            QueryResult::Literal(_) => to_res.self_path().1,
+                                            _ => res.self_path().1,
                                         };
                                         let message = format!(
                                                 "Check was not compliant as property value [{from}] {op_msg} value [{to}].{err}",

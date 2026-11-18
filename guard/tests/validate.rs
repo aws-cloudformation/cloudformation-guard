@@ -1620,6 +1620,42 @@ mod validate_tests {
     }
 
     #[test]
+    fn test_sarif_region_of_failed_comparison_between_input_values_points_at_the_left_value() {
+        let mut reader = Reader::default();
+        let mut writer = Writer::new(WBVec(vec![])).expect("Failed to create writer.");
+
+        let status_code = ValidateTestRunner::default()
+            .rules(vec!["sarif_comparison_location_origin.guard"])
+            .data(vec!["sarif-comparison-location-origin.yaml"])
+            .show_summary(vec!["none"])
+            .output_format(Option::from("sarif"))
+            .structured()
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(StatusCode::VALIDATION_ERROR, status_code);
+
+        let output = writer.stripped().expect("failed to read the writer");
+        let report: serde_json::Value =
+            serde_json::from_str(&output).expect("the sarif report is not valid JSON");
+        let results = report["runs"][0]["results"].as_array().unwrap();
+        let wrong_key_result = results
+            .iter()
+            .find(|result| {
+                result["message"]["text"]
+                    .as_str()
+                    .is_some_and(|text| text.contains("Value=\"Wrong\"] not equal to"))
+            })
+            .unwrap_or_else(|| panic!("no result for the `Wrong` key in {}", output));
+
+        // Both operands come from the template: the `Wrong` key at L:0,C:0 and the `Expected`
+        // value at L:1,C:10. The left one is reported, and SARIF clamps 0:0 to 1:1.
+        assert_eq!(
+            serde_json::json!({"startLine": 1, "startColumn": 1}),
+            wrong_key_result["locations"][0]["physicalLocation"]["region"]
+        );
+    }
+
+    #[test]
     fn test_structured_output_payload() {
         let mut reader = Reader::new(ReadCursor(Cursor::new(Vec::from(
             COMPLIANT_PAYLOAD.as_bytes(),

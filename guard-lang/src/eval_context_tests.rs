@@ -638,3 +638,202 @@ fn test_handle_function_call() -> Result<()> {
 
     Ok(())
 }
+
+const VERSIONING_TEMPLATE: &str = r#"Resources:
+  LogsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      VersioningConfiguration:
+        Status: Suspended
+"#;
+
+const VERSIONING_STATUS_LOCATION: Location = Location { line: 5, col: 16 };
+
+fn failed_comparison_location(rules: &str, data: &str, failed_value: &str) -> Result<Location> {
+    let rules_file = RulesFile::try_from(rules)?;
+    let root = PathAwareValue::try_from(crate::values::read_from(data)?)?;
+    let mut scope = root_scope(&rules_file, Rc::new(root));
+    crate::eval::eval_rules_file(&rules_file, &mut scope, None)?;
+    let records = scope.reset_recorder().extract();
+    let report = simplified_json_from_root(&records)?;
+
+    let failed_value_marker = format!("Value=\"{}\"]", failed_value);
+    let messages = report
+        .not_compliant
+        .iter()
+        .flat_map(ClauseReport::get_message)
+        .find(|messages| {
+            messages
+                .error_message
+                .as_ref()
+                .is_some_and(|message| message.contains(&failed_value_marker))
+        })
+        .unwrap_or_else(|| panic!("no failed comparison reported for {}", failed_value));
+    Ok(messages
+        .location
+        .expect("a failed comparison must carry a location"))
+}
+
+#[test]
+fn failed_comparison_with_a_literal_on_the_right_is_located_at_the_input_value() -> Result<()> {
+    let rules = r#"rule versioning_enabled {
+        Resources.*.Properties.VersioningConfiguration.Status == "Enabled"
+    }"#;
+
+    let location = failed_comparison_location(rules, VERSIONING_TEMPLATE, "Suspended")?;
+
+    assert_eq!(VERSIONING_STATUS_LOCATION, location);
+    Ok(())
+}
+
+#[test]
+fn failed_comparison_with_a_literal_on_the_left_is_located_at_the_input_value() -> Result<()> {
+    let rules = r#"let enabled = "Enabled"
+    rule versioning_enabled {
+        %enabled == Resources.*.Properties.VersioningConfiguration.Status
+    }"#;
+
+    let location = failed_comparison_location(rules, VERSIONING_TEMPLATE, "Enabled")?;
+
+    assert_eq!(VERSIONING_STATUS_LOCATION, location);
+    Ok(())
+}
+
+#[test]
+fn failed_comparison_between_input_values_is_located_at_the_left_value_at_the_document_origin(
+) -> Result<()> {
+    let rules = r#"rule top_level_keys_match_expected {
+        this[ keys == Expected ] !empty
+    }"#;
+    let data = "Wrong: 1\nExpected: Different\n";
+
+    let location = failed_comparison_location(rules, data, "Wrong")?;
+
+    assert_eq!(Location::new(0, 0), location);
+    Ok(())
+}
+
+fn failed_comparison_checks(record: &EventRecord<'_>) -> Vec<ComparisonClauseCheck> {
+    let mut checks: Vec<ComparisonClauseCheck> = record
+        .children
+        .iter()
+        .flat_map(failed_comparison_checks)
+        .collect();
+    if let Some(RecordType::ClauseValueCheck(ClauseCheck::Comparison(check))) = &record.container {
+        checks.push(check.clone());
+    }
+    checks
+}
+
+fn failed_comparison_check(rules: &str, data: &str) -> Result<ComparisonClauseCheck> {
+    let rules_file = RulesFile::try_from(rules)?;
+    let root = PathAwareValue::try_from(crate::values::read_from(data)?)?;
+    let mut scope = root_scope(&rules_file, Rc::new(root));
+    crate::eval::eval_rules_file(&rules_file, &mut scope, None)?;
+    let records = scope.reset_recorder().extract();
+    let mut checks = failed_comparison_checks(&records);
+    assert_eq!(1, checks.len(), "expected exactly one failed comparison");
+    Ok(checks.remove(0))
+}
+
+#[test]
+fn failed_comparison_record_marks_a_rules_literal_on_the_left_as_literal() -> Result<()> {
+    let rules = r#"let enabled = "Enabled"
+    rule versioning_enabled {
+        %enabled == Resources.*.Properties.VersioningConfiguration.Status
+    }"#;
+
+    let check = failed_comparison_check(rules, VERSIONING_TEMPLATE)?;
+
+    assert!(matches!(check.from, QueryResult::Literal(_)));
+    Ok(())
+}
+
+#[test]
+fn failed_comparison_record_marks_an_input_value_on_the_left_as_resolved() -> Result<()> {
+    let rules = r#"rule versioning_enabled {
+        Resources.*.Properties.VersioningConfiguration.Status == "Enabled"
+    }"#;
+
+    let check = failed_comparison_check(rules, VERSIONING_TEMPLATE)?;
+
+    assert!(matches!(check.from, QueryResult::Resolved(_)));
+    Ok(())
+}
+
+#[test]
+fn failed_comparison_record_with_a_literal_left_serializes_and_displays_as_resolved() -> Result<()>
+{
+    let literal = Rc::new(PathAwareValue::String((
+        Path::new("".to_string(), 0, 0),
+        "Enabled".to_string(),
+    )));
+    let input = Rc::new(PathAwareValue::String((
+        Path::new("/Status".to_string(), 5, 16),
+        "Suspended".to_string(),
+    )));
+    let check_with_from = |from: QueryResult| {
+        RecordType::ClauseValueCheck(ClauseCheck::Comparison(ComparisonClauseCheck {
+            comparison: (CmpOperator::Eq, false),
+            from,
+            to: Some(QueryResult::Resolved(Rc::clone(&input))),
+            message: None,
+            custom_message: None,
+            status: Status::FAIL,
+        }))
+    };
+    let literal_check = check_with_from(QueryResult::Literal(Rc::clone(&literal)));
+    let historical_check = check_with_from(QueryResult::Resolved(Rc::clone(&literal)));
+
+    assert_eq!(
+        serde_json::to_value(&historical_check)?,
+        serde_json::to_value(&literal_check)?
+    );
+    assert_eq!(historical_check.to_string(), literal_check.to_string());
+    Ok(())
+}
+
+#[test]
+fn failed_in_comparison_with_a_scalar_literal_on_the_left_is_located_at_the_input_value(
+) -> Result<()> {
+    let rules = r#"let enabled = "Enab"
+    rule versioning_enabled {
+        %enabled IN Resources.*.Properties.VersioningConfiguration.Status
+    }"#;
+
+    let location = failed_comparison_location(rules, VERSIONING_TEMPLATE, "Enab")?;
+    let check = failed_comparison_check(rules, VERSIONING_TEMPLATE)?;
+
+    assert_eq!(VERSIONING_STATUS_LOCATION, location);
+    assert!(matches!(check.from, QueryResult::Literal(_)));
+    Ok(())
+}
+
+#[test]
+fn not_comparable_in_comparison_with_a_list_literal_on_the_left_is_located_at_the_input_value(
+) -> Result<()> {
+    let rules = r#"let allowed = ["Enabled"]
+    rule versioning_allowed {
+        %allowed IN Resources.*.Properties.VersioningConfiguration.Status
+    }"#;
+    let data = r#"Resources:
+  ListedBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      VersioningConfiguration:
+        Status: [Enabled]
+  LogsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      VersioningConfiguration:
+        Status: Suspended
+"#;
+
+    let check = failed_comparison_check(rules, data)?;
+    let location = failed_comparison_location(rules, data, "Suspended")?;
+
+    assert!(matches!(check.from, QueryResult::Literal(_)));
+    assert!(check.message.is_some(), "expected a not-comparable record");
+    assert_eq!(Location::new(10, 16), location);
+    Ok(())
+}

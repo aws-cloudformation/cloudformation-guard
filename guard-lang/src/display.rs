@@ -2,7 +2,7 @@ use crate::eval_context::EventRecord;
 use crate::exprs::SliceDisplay;
 use crate::path_value::PathAwareValue;
 use crate::values::{CmpOperator, RangeType, LOWER_INCLUSIVE, UPPER_INCLUSIVE};
-use crate::{BlockCheck, ClauseCheck, QueryResult, RecordType, Status};
+use crate::{literal_as_resolved, BlockCheck, ClauseCheck, QueryResult, RecordType, Status};
 use std::fmt::{Display, Formatter};
 use std::rc::Rc;
 
@@ -176,7 +176,7 @@ impl<'value> std::fmt::Display for ClauseCheck<'value> {
                     "GuardClauseBinaryCheck(Status={}, Comparison={}, from={}, to={})",
                     check.status,
                     display_comparison(check.comparison),
-                    check.from,
+                    literal_as_resolved(&check.from),
                     match &check.to {
                         Some(exists) => format!("{}", exists),
                         None => "".to_string(),

@@ -239,7 +239,6 @@ fn pprint_failed_sub_tree(
                     };
 
                     match from {
-                        QueryResult::Literal(_) => unreachable!(),
                         QueryResult::UnResolved(to_unres) => {
                             writeln!(
                                 writer,
@@ -253,7 +252,7 @@ fn pprint_failed_sub_tree(
                             )?;
                         }
 
-                        QueryResult::Resolved(res) => {
+                        QueryResult::Literal(res) | QueryResult::Resolved(res) => {
                             writeln!(
                                 writer,
                                 "{}{}Check was not compliant as property value [{from}] {op_msg} value [{to}].{err}{msg}",
