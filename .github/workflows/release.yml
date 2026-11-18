@@ -154,6 +154,14 @@ jobs:
             ts-lib/
           npm run build:typescript
 
+      - name: Install GitHub Action dependencies
+        working-directory: action
+        run: npm ci
+
+      - name: Build GitHub Action
+        working-directory: action
+        run: npm run package
+
       - name: Commit & tag
         run: |
           BRANCH="release/$VERSION"
