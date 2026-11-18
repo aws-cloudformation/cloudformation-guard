@@ -2546,6 +2546,15 @@ fn report_all_failed_clauses_for_rules<'value>(
                                 match to {
                                     QueryResult::Literal(_) => unreachable!(),
                                     QueryResult::Resolved(to_res) => {
+                                        let from_location = res.self_path().1;
+                                        // Values from rule literals carry the default location. Prefer
+                                        // the left operand when it has a data-file location, otherwise
+                                        // use the right operand's location.
+                                        let location = if from_location == Location::default() {
+                                            to_res.self_path().1
+                                        } else {
+                                            from_location
+                                        };
                                         let message = format!(
                                                 "Check was not compliant as property value [{from}] {op_msg} value [{to}].{err}",
                                                 from=res,
@@ -2570,7 +2579,7 @@ fn report_all_failed_clauses_for_rules<'value>(
                                                 }),
                                                 context: current.context.to_string(),
                                                 messages: Messages {
-                                                    location: Some(res.self_path().1),
+                                                    location: Some(location),
                                                     error_message: Some(message),
                                                     custom_message: Some(custom_message),
                                                 },

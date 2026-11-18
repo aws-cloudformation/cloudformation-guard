@@ -1579,7 +1579,7 @@ mod validate_tests {
     }
 
     #[test]
-    fn test_sarif_region_of_a_failed_comparison_points_at_the_template_value() {
+    fn test_sarif_regions_of_failed_comparisons_point_at_the_template_value() {
         let mut reader = Reader::default();
         let mut writer = Writer::new(WBVec(vec![])).expect("Failed to create writer.");
 
@@ -1605,16 +1605,18 @@ mod validate_tests {
             result["locations"][0]["physicalLocation"]["region"].clone()
         };
 
-        // Both rules fail on the same `Status` value, so both results must point at it. The `IN`
-        // comparison already did; the `==` comparison pointed at the "Enabled" literal from the
-        // rules file instead, which has no position in the template and came out as line 1.
+        // All rules fail on the same `Status` value, so every result must point at it. The `IN`
+        // comparison already did. Comparisons against a literal must find the template location
+        // regardless of which side contains the literal.
         let in_region = region_of("VERSIONING_IN_ENABLED");
         let eq_region = region_of("VERSIONING_EQUALS_ENABLED");
+        let reversed_eq_region = region_of("VERSIONING_EQUALS_ENABLED_REVERSED");
         assert_ne!(
             serde_json::json!({"startLine": 1, "startColumn": 1}),
             in_region
         );
         assert_eq!(in_region, eq_region);
+        assert_eq!(in_region, reversed_eq_region);
     }
 
     #[test]

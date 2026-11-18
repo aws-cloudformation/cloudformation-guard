@@ -1,7 +1,12 @@
 let s3_buckets = Resources.*[ Type == "AWS::S3::Bucket" ]
+let enabled = "Enabled"
 
 rule VERSIONING_EQUALS_ENABLED when %s3_buckets !empty {
     %s3_buckets.Properties.VersioningConfiguration.Status == "Enabled"
+}
+
+rule VERSIONING_EQUALS_ENABLED_REVERSED when %s3_buckets !empty {
+    %enabled == %s3_buckets.Properties.VersioningConfiguration.Status
 }
 
 rule VERSIONING_IN_ENABLED when %s3_buckets !empty {
