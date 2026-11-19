@@ -542,3 +542,34 @@ jobs:
           docker push "$PREFIX:$VERSION"
           docker push "$PREFIX:latest"
 
+  # ---------------------------------------------------------------------------
+  # 7. Publish TypeScript library to npm
+  # ---------------------------------------------------------------------------
+  publish-npm:
+    name: Publish to npm
+    needs: [validate, github-release]
+    if: ${{ !inputs.dry_run }}
+    runs-on: ubuntu-latest
+    environment: release-npm
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      VERSION: ${{ needs.validate.outputs.version }}
+    steps:
+      - uses: actions/download-artifact@v7
+        with:
+          name: cfn-guard-ts-lib
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          registry-url: "https://registry.npmjs.org"
+          package-manager-cache: false
+
+      - name: Upgrade npm for trusted publishing
+        run: npm install -g npm@11
+
+      - name: Publish cfn-guard
+        run: npm publish "./cfn-guard-ts-lib-${VERSION}.tgz" --access public --provenance
+
