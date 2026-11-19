@@ -1,39 +1,43 @@
 {
   "name": "@aws/cloudformation-guard",
-  "collaborators": [
-    "Diwakar Chakravarthy",
-    "John Tompkins",
-    "Omkar Hegde",
-    "Priya Padmanaban",
-    "Bryan Ayala",
-    "Kexiang Wang",
-    "Akshay Rane",
-    "Tyler Southwick",
-    "Josh Fried",
-    "Dan Vassallo",
-    "aws-cloudformation-developers <aws-cloudformation-developers@amazon.com>"
-  ],
-  "description": "AWS CloudFormation Guard is an open-source general-purpose policy-as-code evaluation tool. It provides developers with a simple-to-use, yet powerful and expressive domain-specific language (DSL) to define policies and enables developers to validate JSON- or YAML- formatted structured data with those policies.",
   "version": "3.3.0",
+  "description": "TypeScript and JavaScript bindings for AWS CloudFormation Guard.",
+  "author": {
+    "name": "Amazon Web Services",
+    "url": "https://aws.amazon.com"
+  },
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "https://github.com/aws-cloudformation/cloudformation-guard"
+    "url": "https://github.com/aws-cloudformation/cloudformation-guard",
+    "directory": "guard/ts-lib"
+  },
+  "homepage": "https://github.com/aws-cloudformation/cloudformation-guard/tree/main/guard/ts-lib#readme",
+  "bugs": {
+    "url": "https://github.com/aws-cloudformation/cloudformation-guard/issues"
   },
   "files": [
+    "LICENSE",
+    "NOTICE",
     "guard_bg.wasm",
     "guard.js",
     "guard.d.ts",
     "index.d.ts",
     "index.js"
   ],
-  "main": "index.js",
-  "types": "index.d.ts",
+  "main": "./index.js",
+  "types": "./index.d.ts",
+  "engines": {
+    "node": ">=20"
+  },
   "keywords": [
+    "aws",
+    "cloudformation",
+    "cloudformation-guard",
     "policy-as-code",
-    "guard",
-    "cfn-guard",
+    "infrastructure-as-code",
     "security",
-    "compliance"
+    "compliance",
+    "typescript"
   ]
 }
