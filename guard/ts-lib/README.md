@@ -5,13 +5,13 @@ Currently the module supports only the validate functionality of cfn-guard and o
 ## Install
 
 ```shell
-npm install 'https://gitpkg.now.sh/aws-cloudformation/cloudformation-guard/guard/ts-lib?33d9931'
+npm install @aws/cloudformation-guard
 ```
 
 ## How to use
 
 ```typescript
-import { validate } from "cfn-guard"
+import { validate } from "@aws/cloudformation-guard"
 
 (async () => {
   const result = await validate({
