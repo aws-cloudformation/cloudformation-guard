@@ -309,7 +309,7 @@ jobs:
         run: |
           cd ts-lib
           npm pack
-          mv "cfn-guard-${VERSION}.tgz" "../../cfn-guard-ts-lib-${VERSION}.tgz"
+          mv "aws-cloudformation-guard-${VERSION}.tgz" "../../cfn-guard-ts-lib-${VERSION}.tgz"
 
       - name: Upload TypeScript library artifact
         uses: actions/upload-artifact@v6
@@ -570,6 +570,6 @@ jobs:
       - name: Upgrade npm for trusted publishing
         run: npm install -g npm@11
 
-      - name: Publish cfn-guard
+      - name: Publish @aws/cloudformation-guard
         run: npm publish "./cfn-guard-ts-lib-${VERSION}.tgz" --access public --provenance
 
