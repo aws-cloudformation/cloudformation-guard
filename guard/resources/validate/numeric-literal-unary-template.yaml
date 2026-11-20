@@ -1,0 +1,5 @@
+# A minimal template. The defect is in the rules file, not here: a unary operator applied to a numeric
+# literal fails, and building the report for that failure used to abort the process.
+Resources:
+  One:
+    Type: AWS::S3::Bucket

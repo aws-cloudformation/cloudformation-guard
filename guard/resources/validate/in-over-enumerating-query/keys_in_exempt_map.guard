@@ -1,0 +1,7 @@
+# The same exemption map under `IN`: the keys named in the map are selected, and this rule checks that an
+# exempted bucket is nonetheless encrypted, which the exempted one here is not.
+let exempt = Mappings.Exempt.Buckets
+
+rule exempted_buckets_are_encrypted_too {
+    Resources[ keys IN %exempt ].Properties.Encrypted == true
+}

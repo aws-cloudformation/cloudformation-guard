@@ -1,0 +1,24 @@
+###
+# The input of the `test` cell for a gate whose deciding error is a refusal, with a second refusal settled
+# beside it. `M1` and `M2` each hold an intrinsic beside the compared entry (a refused selection), so each
+# gated rule of the rules file fails closed on a refusal with the other one joined to its sentence. Both
+# expectations are PASS, so both are unmet, and the reason on each line is the rule's sentence.
+###
+---
+- name: a refusal head with a second refusal settled beside it
+  input:
+    Resources:
+      M1:
+        Tags:
+          Env: dev
+          ENV:
+            Ref: Stage
+      M2:
+        Tags:
+          Env: dev
+          ENV:
+            Ref: Release
+  expectations:
+    rules:
+      opened_by_some: PASS
+      opened_by_all: PASS

@@ -1,0 +1,9 @@
+# FAIL asserted on a rule that passes, so this file contributes an unmet expectation and nothing else.
+- name: An expectation that is not met
+  input:
+    Resources:
+      ExampleS3:
+        Type: AWS::S3::Bucket
+  expectations:
+    rules:
+      always_passes: FAIL

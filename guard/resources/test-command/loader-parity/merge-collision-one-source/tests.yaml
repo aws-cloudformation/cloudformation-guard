@@ -1,0 +1,14 @@
+- name: one merge source whose keys read as one name keeps the last value
+  input:
+    Resources:
+      B:
+        Type: AWS::S3::Bucket
+        Properties:
+          <<:
+            1: a
+            "1": b
+  expectations:
+    rules:
+      last_merged_value_wins: PASS
+      first_merged_value_is_not_read: PASS
+      merge_key_is_folded: PASS

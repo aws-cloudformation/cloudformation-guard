@@ -1,0 +1,3 @@
+# Under a wildcard the enclosing scope is the resource: `Wanted` is the map's own `Wanted: alpha`,
+# where earlier versions read the resource's `Wanted: beta` beside the map.
+rule func_key_wildcard { Resources.*.Map[ keys == to_lower(Wanted) ] == 1 }

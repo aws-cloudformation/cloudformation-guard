@@ -5,7 +5,7 @@ advanced_regex_negative_lookbehind_rule.guard/default    FAIL
 Evaluation of rules advanced_regex_negative_lookbehind_rule.guard against data advanced_regex_negative_lookbehind_non_compliant.yaml
 --
 Property [/NotAwsAccessKey] in data [advanced_regex_negative_lookbehind_non_compliant.yaml] is not compliant with [advanced_regex_negative_lookbehind_rule.guard/default] because provided value ["AKIAIOSFODNN7EXAMPLE"] did match expected value ["/(?<![A-Z0-9])[A-Z0-9]{20}(?![A-Z0-9])/"]. Error Message []
-Property [/NotSecretAccessKey] in data [advanced_regex_negative_lookbehind_non_compliant.yaml] is not compliant with [advanced_regex_negative_lookbehind_rule.guard/default] because provided value ["wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"] did match expected value ["/(?<![A-Za-z0-9\\/+=])[A-Za-z0-9\\/+=]{40}(?![A-Za-z0-9\\/+=])/"]. Error Message []
+Property [/NotSecretAccessKey] in data [advanced_regex_negative_lookbehind_non_compliant.yaml] is not compliant with [advanced_regex_negative_lookbehind_rule.guard/default] because provided value ["wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"] did match expected value ["/(?<![A-Za-z0-9/+=])[A-Za-z0-9/+=]{40}(?![A-Za-z0-9/+=])/"]. Error Message []
 --
 s3-public-read-prohibited-template-compliant.yaml Status = FAIL
 FAILED rules
@@ -13,24 +13,44 @@ advanced_regex_negative_lookbehind_rule.guard/default    FAIL
 ---
 Evaluating data s3-public-read-prohibited-template-compliant.yaml against rules advanced_regex_negative_lookbehind_rule.guard
 Number of non-compliant resources 0
+Findings that belong to no resource:
+  advanced_regex_negative_lookbehind_rule.guard/default: NotAwsAccessKey not EQUALS  "/(?<![A-Z0-9])[A-Z0-9]{20}(?![A-Z0-9])/"
+    Check was not compliant as property [NotAwsAccessKey] to compare from is missing. Value traversed to [Path=[L:5,C:1]...
+  advanced_regex_negative_lookbehind_rule.guard/default: NotSecretAccessKey not EQUALS  "/(?<![A-Za-z0-9/+=])[A-Za-z0-9/+=]{40}(?![A-Za-z0-9/+=])/"
+    Check was not compliant as property [NotSecretAccessKey] to compare from is missing. Value traversed to [Path=[L:5,C:1]...
 s3-public-read-prohibited-template-non-compliant.yaml Status = FAIL
 FAILED rules
 advanced_regex_negative_lookbehind_rule.guard/default    FAIL
 ---
 Evaluating data s3-public-read-prohibited-template-non-compliant.yaml against rules advanced_regex_negative_lookbehind_rule.guard
 Number of non-compliant resources 0
+Findings that belong to no resource:
+  advanced_regex_negative_lookbehind_rule.guard/default: NotAwsAccessKey not EQUALS  "/(?<![A-Z0-9])[A-Z0-9]{20}(?![A-Z0-9])/"
+    Check was not compliant as property [NotAwsAccessKey] to compare from is missing. Value traversed to [Path=[L:5,C:1]...
+  advanced_regex_negative_lookbehind_rule.guard/default: NotSecretAccessKey not EQUALS  "/(?<![A-Za-z0-9/+=])[A-Za-z0-9/+=]{40}(?![A-Za-z0-9/+=])/"
+    Check was not compliant as property [NotSecretAccessKey] to compare from is missing. Value traversed to [Path=[L:5,C:1]...
 s3-server-side-encryption-template-compliant.yaml Status = FAIL
 FAILED rules
 advanced_regex_negative_lookbehind_rule.guard/default    FAIL
 ---
 Evaluating data s3-server-side-encryption-template-compliant.yaml against rules advanced_regex_negative_lookbehind_rule.guard
 Number of non-compliant resources 0
+Findings that belong to no resource:
+  advanced_regex_negative_lookbehind_rule.guard/default: NotAwsAccessKey not EQUALS  "/(?<![A-Z0-9])[A-Z0-9]{20}(?![A-Z0-9])/"
+    Check was not compliant as property [NotAwsAccessKey] to compare from is missing. Value traversed to [Path=[L:5,C:1]...
+  advanced_regex_negative_lookbehind_rule.guard/default: NotSecretAccessKey not EQUALS  "/(?<![A-Za-z0-9/+=])[A-Za-z0-9/+=]{40}(?![A-Za-z0-9/+=])/"
+    Check was not compliant as property [NotSecretAccessKey] to compare from is missing. Value traversed to [Path=[L:5,C:1]...
 s3-server-side-encryption-template-non-compliant.yaml Status = FAIL
 FAILED rules
 advanced_regex_negative_lookbehind_rule.guard/default    FAIL
 ---
 Evaluating data s3-server-side-encryption-template-non-compliant.yaml against rules advanced_regex_negative_lookbehind_rule.guard
 Number of non-compliant resources 0
+Findings that belong to no resource:
+  advanced_regex_negative_lookbehind_rule.guard/default: NotAwsAccessKey not EQUALS  "/(?<![A-Z0-9])[A-Z0-9]{20}(?![A-Z0-9])/"
+    Check was not compliant as property [NotAwsAccessKey] to compare from is missing. Value traversed to [Path=[L:5,C:1]...
+  advanced_regex_negative_lookbehind_rule.guard/default: NotSecretAccessKey not EQUALS  "/(?<![A-Za-z0-9/+=])[A-Za-z0-9/+=]{40}(?![A-Za-z0-9/+=])/"
+    Check was not compliant as property [NotSecretAccessKey] to compare from is missing. Value traversed to [Path=[L:5,C:1]...
 s3-public-read-prohibited-template-compliant.yaml Status = FAIL
 FAILED rules
 s3_bucket_logging_enabled.guard/S3_BUCKET_LOGGING_ENABLED    FAIL
@@ -47,16 +67,16 @@ Resource = MyBucket {
           Fix: Set the S3 Bucket property LoggingConfiguration to start logging into S3 bucket.
         }
         RequiredPropertyError {
-          PropertyPath = /Resources/MyBucket/Properties[L:8,C:6]
+          PropertyPath = /Resources/MyBucket/Properties[L:9,C:7]
           MissingProperty = LoggingConfiguration
-          Reason = Could not find key LoggingConfiguration inside struct at path /Resources/MyBucket/Properties[L:8,C:6]
+          Reason = Could not find key LoggingConfiguration inside struct at path /Resources/MyBucket/Properties[L:9,C:7]
           Code:
-                6.  MyBucket:
                 7.    Type: AWS::S3::Bucket
                 8.    Properties:
                 9.      PublicAccessBlockConfiguration:
                10.        BlockPublicAcls: true
                11.        BlockPublicPolicy: true
+               12.        IgnorePublicAcls: true
         }
       }
     }
@@ -78,16 +98,16 @@ Resource = MyBucket {
           Fix: Set the S3 Bucket property LoggingConfiguration to start logging into S3 bucket.
         }
         RequiredPropertyError {
-          PropertyPath = /Resources/MyBucket/Properties[L:13,C:6]
+          PropertyPath = /Resources/MyBucket/Properties[L:14,C:7]
           MissingProperty = LoggingConfiguration
-          Reason = Could not find key LoggingConfiguration inside struct at path /Resources/MyBucket/Properties[L:13,C:6]
+          Reason = Could not find key LoggingConfiguration inside struct at path /Resources/MyBucket/Properties[L:14,C:7]
           Code:
-               11.      #   BlockPublicPolicy: true
                12.      #   IgnorePublicAcls: true
                13.      #   RestrictPublicBuckets: true
                14.      BucketEncryption:
                15.        ServerSideEncryptionConfiguration:
                16.          - ServerSideEncryptionByDefault:
+               17.              SSEAlgorithm: AES256
         }
       }
     }
@@ -109,16 +129,16 @@ Resource = MyBucket {
           Fix: Set the S3 Bucket property LoggingConfiguration to start logging into S3 bucket.
         }
         RequiredPropertyError {
-          PropertyPath = /Resources/MyBucket/Properties[L:8,C:6]
+          PropertyPath = /Resources/MyBucket/Properties[L:9,C:7]
           MissingProperty = LoggingConfiguration
-          Reason = Could not find key LoggingConfiguration inside struct at path /Resources/MyBucket/Properties[L:8,C:6]
+          Reason = Could not find key LoggingConfiguration inside struct at path /Resources/MyBucket/Properties[L:9,C:7]
           Code:
-                6.  MyBucket:
                 7.    Type: AWS::S3::Bucket
                 8.    Properties:
                 9.      PublicAccessBlockConfiguration:
                10.        BlockPublicAcls: true
                11.        BlockPublicPolicy: true
+               12.        IgnorePublicAcls: true
         }
       }
     }
@@ -140,16 +160,16 @@ Resource = MyBucket {
           Fix: Set the S3 Bucket property LoggingConfiguration to start logging into S3 bucket.
         }
         RequiredPropertyError {
-          PropertyPath = /Resources/MyBucket/Properties[L:8,C:6]
+          PropertyPath = /Resources/MyBucket/Properties[L:9,C:7]
           MissingProperty = LoggingConfiguration
-          Reason = Could not find key LoggingConfiguration inside struct at path /Resources/MyBucket/Properties[L:8,C:6]
+          Reason = Could not find key LoggingConfiguration inside struct at path /Resources/MyBucket/Properties[L:9,C:7]
           Code:
-                6.  MyBucket:
                 7.    Type: AWS::S3::Bucket
                 8.    Properties:
                 9.      PublicAccessBlockConfiguration:
                10.        BlockPublicAcls: true
                11.        BlockPublicPolicy: true
+               12.        IgnorePublicAcls: true
         }
       }
     }
@@ -167,58 +187,58 @@ Resource = MyBucket {
     ALL {
       Check =  %s3_bucket_public_read_prohibited[*].Properties.PublicAccessBlockConfiguration EXISTS   {
         RequiredPropertyError {
-          PropertyPath = /Resources/MyBucket/Properties[L:13,C:6]
+          PropertyPath = /Resources/MyBucket/Properties[L:14,C:7]
           MissingProperty = PublicAccessBlockConfiguration
-          Reason = Could not find key PublicAccessBlockConfiguration inside struct at path /Resources/MyBucket/Properties[L:13,C:6]
+          Reason = Could not find key PublicAccessBlockConfiguration inside struct at path /Resources/MyBucket/Properties[L:14,C:7]
           Code:
-               11.      #   BlockPublicPolicy: true
                12.      #   IgnorePublicAcls: true
                13.      #   RestrictPublicBuckets: true
                14.      BucketEncryption:
                15.        ServerSideEncryptionConfiguration:
                16.          - ServerSideEncryptionByDefault:
+               17.              SSEAlgorithm: AES256
         }
       }
       Check =  %s3_bucket_public_read_prohibited[*].Properties.PublicAccessBlockConfiguration.BlockPublicAcls EQUALS  true {
         RequiredPropertyError {
-          PropertyPath = /Resources/MyBucket/Properties[L:13,C:6]
+          PropertyPath = /Resources/MyBucket/Properties[L:14,C:7]
           MissingProperty = PublicAccessBlockConfiguration.BlockPublicAcls
-          Reason = Could not find key PublicAccessBlockConfiguration inside struct at path /Resources/MyBucket/Properties[L:13,C:6]
+          Reason = Could not find key PublicAccessBlockConfiguration inside struct at path /Resources/MyBucket/Properties[L:14,C:7]
           Code:
-               11.      #   BlockPublicPolicy: true
                12.      #   IgnorePublicAcls: true
                13.      #   RestrictPublicBuckets: true
                14.      BucketEncryption:
                15.        ServerSideEncryptionConfiguration:
                16.          - ServerSideEncryptionByDefault:
+               17.              SSEAlgorithm: AES256
         }
       }
       Check =  %s3_bucket_public_read_prohibited[*].Properties.PublicAccessBlockConfiguration.BlockPublicPolicy EQUALS  true {
         RequiredPropertyError {
-          PropertyPath = /Resources/MyBucket/Properties[L:13,C:6]
+          PropertyPath = /Resources/MyBucket/Properties[L:14,C:7]
           MissingProperty = PublicAccessBlockConfiguration.BlockPublicPolicy
-          Reason = Could not find key PublicAccessBlockConfiguration inside struct at path /Resources/MyBucket/Properties[L:13,C:6]
+          Reason = Could not find key PublicAccessBlockConfiguration inside struct at path /Resources/MyBucket/Properties[L:14,C:7]
           Code:
-               11.      #   BlockPublicPolicy: true
                12.      #   IgnorePublicAcls: true
                13.      #   RestrictPublicBuckets: true
                14.      BucketEncryption:
                15.        ServerSideEncryptionConfiguration:
                16.          - ServerSideEncryptionByDefault:
+               17.              SSEAlgorithm: AES256
         }
       }
       Check =  %s3_bucket_public_read_prohibited[*].Properties.PublicAccessBlockConfiguration.IgnorePublicAcls EQUALS  true {
         RequiredPropertyError {
-          PropertyPath = /Resources/MyBucket/Properties[L:13,C:6]
+          PropertyPath = /Resources/MyBucket/Properties[L:14,C:7]
           MissingProperty = PublicAccessBlockConfiguration.IgnorePublicAcls
-          Reason = Could not find key PublicAccessBlockConfiguration inside struct at path /Resources/MyBucket/Properties[L:13,C:6]
+          Reason = Could not find key PublicAccessBlockConfiguration inside struct at path /Resources/MyBucket/Properties[L:14,C:7]
           Code:
-               11.      #   BlockPublicPolicy: true
                12.      #   IgnorePublicAcls: true
                13.      #   RestrictPublicBuckets: true
                14.      BucketEncryption:
                15.        ServerSideEncryptionConfiguration:
                16.          - ServerSideEncryptionByDefault:
+               17.              SSEAlgorithm: AES256
         }
       }
       Check =  %s3_bucket_public_read_prohibited[*].Properties.PublicAccessBlockConfiguration.RestrictPublicBuckets EQUALS  true {
@@ -227,16 +247,16 @@ Resource = MyBucket {
           Fix: Set S3 Bucket PublicAccessBlockConfiguration properties for BlockPublicAcls, BlockPublicPolicy, IgnorePublicAcls, RestrictPublicBuckets parameters to true.
         }
         RequiredPropertyError {
-          PropertyPath = /Resources/MyBucket/Properties[L:13,C:6]
+          PropertyPath = /Resources/MyBucket/Properties[L:14,C:7]
           MissingProperty = PublicAccessBlockConfiguration.RestrictPublicBuckets
-          Reason = Could not find key PublicAccessBlockConfiguration inside struct at path /Resources/MyBucket/Properties[L:13,C:6]
+          Reason = Could not find key PublicAccessBlockConfiguration inside struct at path /Resources/MyBucket/Properties[L:14,C:7]
           Code:
-               11.      #   BlockPublicPolicy: true
                12.      #   IgnorePublicAcls: true
                13.      #   RestrictPublicBuckets: true
                14.      BucketEncryption:
                15.        ServerSideEncryptionConfiguration:
                16.          - ServerSideEncryptionByDefault:
+               17.              SSEAlgorithm: AES256
         }
       }
     }
@@ -258,11 +278,10 @@ Resource = MyBucket {
           Fix: Set the S3 Bucket property BucketEncryption.ServerSideEncryptionConfiguration.ServerSideEncryptionByDefault.SSEAlgorithm to either "aws:kms" or "AES256"
         }
         RequiredPropertyError {
-          PropertyPath = /Resources/MyBucket/Properties/BucketEncryption[L:13,C:23]
+          PropertyPath = /Resources/MyBucket/Properties/BucketEncryption[L:14,C:24]
           MissingProperty = ServerSideEncryptionConfiguration[*].ServerSideEncryptionByDefault.SSEAlgorithm
-          Reason = Attempting to retrieve from key ServerSideEncryptionConfiguration but type is not an struct type at path /Resources/MyBucket/Properties/BucketEncryption[L:13,C:23], Type = String, Value = String((Path("/Resources/MyBucket/Properties/BucketEncryption", Location { line: 13, col: 23 }), ""))
+          Reason = Attempting to retrieve from key ServerSideEncryptionConfiguration but type is not an struct type at path /Resources/MyBucket/Properties/BucketEncryption[L:14,C:24], Type = null, Value = Null(Path("/Resources/MyBucket/Properties/BucketEncryption", Location { line: 14, col: 24 }))
           Code:
-               11.        BlockPublicPolicy: true
                12.        IgnorePublicAcls: true
                13.        RestrictPublicBuckets: true
                14.      BucketEncryption:

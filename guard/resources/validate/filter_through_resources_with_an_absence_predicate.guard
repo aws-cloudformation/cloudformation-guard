@@ -1,0 +1,13 @@
+#
+# `Resources` bound and filtered through the variable with an ABSENCE predicate, the shape the docs
+# recommend for "every resource has tags": `%r[ Properties.Tags empty ] empty` selects the resources
+# whose tags are missing or empty and asserts there are none. On a compliant template the walk selects
+# nothing, and the predicate also holds on the `Resources` map itself -- vacuously, because `Resources`
+# has no `Properties` key for `empty` to look at. That vacuous pass is not a selection the previous
+# release made use of: the rule PASSed there and PASSes now. No notice.
+#
+let r = Resources
+
+rule EVERY_RESOURCE_HAS_TAGS {
+  %r[ Properties.Tags empty ] empty
+}

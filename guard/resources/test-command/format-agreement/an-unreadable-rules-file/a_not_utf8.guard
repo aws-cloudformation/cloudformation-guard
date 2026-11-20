@@ -1,0 +1,5 @@
+# A rules file whose bytes are not UTF-8, as a file saved in a single-byte encoding is.
+# The word here is "encrypté" in Latin-1, which is what makes read_file_content fail.
+rule a {
+  Resources exists
+}

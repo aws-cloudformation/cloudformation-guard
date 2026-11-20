@@ -1,0 +1,5 @@
+# The rules file of the `test` cell for a rule that fails closed on ONE refusal, with nothing joined to its
+# sentence: the `when` holds one read, a filter over `M1`'s `Tags`, and the body cannot refuse anything (it
+# never runs, since a `when` that fails closed closes the rule). Over a document where that `Tags` is a
+# scalar, the filter's read is refused and that refusal alone is the rule's sentence.
+rule check when Resources.M1.Tags[ Key == 'Env' ] exists { Resources exists }

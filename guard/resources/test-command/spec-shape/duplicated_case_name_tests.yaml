@@ -1,0 +1,23 @@
+# Two cases that share a name, an input and a set of expectations: an unquoted 1.5 and a quoted "1.5"
+# spell one name, and the second case is a paste of the first. Both run, and the command warns on
+# stderr naming both positions (reports tell cases apart by name). The third case draws no warning.
+- name: 1.5
+  input:
+    A: 1
+  expectations:
+    rules:
+      a_is_one: PASS
+
+- name: "1.5"
+  input:
+    A: 1
+  expectations:
+    rules:
+      a_is_one: PASS
+
+- name: a name of its own
+  input:
+    A: 1
+  expectations:
+    rules:
+      a_is_one: PASS

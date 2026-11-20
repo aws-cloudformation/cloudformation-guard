@@ -1,0 +1,12 @@
+# One policy document twice: embedded as JSON text, for a `let` bound to `json_parse` of it, and as a
+# YAML map under a key, for the control rule that filters the same map through the literal spelling.
+Resources:
+  Q:
+    Type: AWS::SQS::QueuePolicy
+    Properties:
+      PolicyText: '{"Version": "2012-10-17", "Statement": [{"Effect": "Allow", "Action": "sqs:SendMessage"}]}'
+      Doc:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Action: sqs:SendMessage

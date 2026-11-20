@@ -1,0 +1,7 @@
+#
+# The block spelling over every resource's `Cfg`, handed on whole by `[*]`: over `R1.Cfg`, a map whose
+# own key `Limits` names a member and no member holds a `Limits` of its own (`Other` among them), the
+# block is refused for that one value and the other two resources' maps are evaluated and reported
+# beside it.
+#
+rule r { Resources.*.Cfg[*] { Limits exists  Tier == 'gold' } }

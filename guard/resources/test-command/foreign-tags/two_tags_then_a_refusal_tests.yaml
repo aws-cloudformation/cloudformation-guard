@@ -1,0 +1,16 @@
+# The two tags of two_tags_tests.yaml, in a file the loader then refuses: the last line opens a flow
+- name: !!python/str the first tagged case
+  input:
+    A: 1
+  expectations:
+    rules:
+      a_is_one: PASS
+# sequence it never closes. The comment lines between the cases are PADDING holding the second tag on
+# a two-digit line, as in two_tags_tests.yaml; the tests scan this file for the tag lines.
+- name: !!python/str the second tagged case
+  input:
+    A: 1
+  expectations:
+    rules:
+      a_is_one: PASS
+- [

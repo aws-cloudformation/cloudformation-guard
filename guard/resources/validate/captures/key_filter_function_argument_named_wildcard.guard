@@ -1,0 +1,5 @@
+# The argument's named wildcard `Wanted[ w ]` binds `%w` to the elements the read walked. The read is
+# the map's, so `%w` holds the map's `alpha` only; the root's `Wanted: [beta]` is never read into it.
+rule capture_is_the_maps when Resources.Cfg.Map[ keys == to_lower(Wanted[ w ]) ] == 1 {
+  %w == 'alpha'
+}

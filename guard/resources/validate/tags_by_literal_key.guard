@@ -1,0 +1,3 @@
+rule all_values_after_literal_key { Cfg.Tags.A.* exists }
+rule filter_after_literal_key { Cfg.Tags.A[ x == 1 ] exists }
+rule key_filter_after_literal_key { Cfg.Tags.A[ keys == 'x' ] == 1 }

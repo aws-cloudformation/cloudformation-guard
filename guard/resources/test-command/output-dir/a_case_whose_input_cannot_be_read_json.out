@@ -1,0 +1,69 @@
+{
+  "rule_file": "resources/test-command/rule-dir/a_case_whose_input_cannot_be_read.guard",
+  "test_cases": [
+    {
+      "name": "a bucket named something other than expected",
+      "passed_rules": [
+        {
+          "name": "bucket_is_named_expected",
+          "evaluated": "FAIL"
+        }
+      ],
+      "failed_rules": [],
+      "skipped_rules": []
+    },
+    {
+      "name": "an input whose merge key is given a scalar",
+      "error": "Parser Error when parsing `the merge key `<<` at L:24,C:9 must be given a mapping, or a sequence of mappings, because its value's keys become keys of the mapping that carries it (https://yaml.org/type/merge.html)`",
+      "passed_rules": [],
+      "failed_rules": [],
+      "skipped_rules": []
+    },
+    {
+      "name": "an input whose merge key is given a sequence holding a scalar",
+      "error": "Parser Error when parsing `the merge key `<<` at L:37,C:25 must be given a mapping, or a sequence of mappings, because its value's keys become keys of the mapping that carries it (https://yaml.org/type/merge.html)`",
+      "passed_rules": [],
+      "failed_rules": [],
+      "skipped_rules": []
+    },
+    {
+      "name": "an input whose quoted merge key is given a scalar",
+      "passed_rules": [
+        {
+          "name": "bucket_is_named_expected",
+          "evaluated": "PASS"
+        }
+      ],
+      "failed_rules": [],
+      "skipped_rules": []
+    },
+    {
+      "name": "an input with a null key",
+      "error": "Parser Error when parsing `non string type detected for key in a map at L:64,C:5, where the key is null. Quote it to make it a string, cfn-guard only supports keys that are string types`",
+      "passed_rules": [],
+      "failed_rules": [],
+      "skipped_rules": []
+    },
+    {
+      "name": "an input with a sequence key",
+      "error": "Parser Error when parsing `non string type detected for key in a map at L:77,C:7, where the key is a sequence. Quote it to make it a string, cfn-guard only supports keys that are string types`",
+      "passed_rules": [],
+      "failed_rules": [],
+      "skipped_rules": []
+    },
+    {
+      "name": "an input holding a tagged integer that is not one",
+      "error": "Parser Error when parsing `Bad Value encountered parsing incoming file Value = !!int not-a-number, Loc = L:92,C:12`",
+      "passed_rules": [],
+      "failed_rules": [],
+      "skipped_rules": []
+    },
+    {
+      "name": "an input holding a sequence tagged with an intrinsic under two bangs",
+      "error": "Parser Error when parsing `cfn-guard does not read the tag `!!If` at L:107,C:11. An intrinsic function is written with one `!`, as `!If`.`",
+      "passed_rules": [],
+      "failed_rules": [],
+      "skipped_rules": []
+    }
+  ]
+}

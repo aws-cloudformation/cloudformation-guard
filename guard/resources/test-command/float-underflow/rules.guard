@@ -1,0 +1,8 @@
+#
+# Three probes on one value. Against `1e-400`, a float literal too small to represent, `validate`
+# answers FAIL (a refused comparison), PASS, FAIL: the literal keeps its text. Against `0.0` it
+# answers PASS, FAIL, PASS. The paired specs expect those answers from `test`.
+#
+rule zero { A == 0 }
+rule is_str { A is_string }
+rule is_flt { A is_float }

@@ -1,0 +1,6 @@
+# Two failing clauses on paths under `Resources` that name no CloudFormation resource, at two
+# different depths -- the console reporter takes a different branch for each.
+rule nested_values_are_right {
+    Resources.Nested.inner.key == "right"
+    Resources.AlsoNested.a.b.c == "right"
+}

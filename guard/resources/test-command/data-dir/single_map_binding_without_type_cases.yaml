@@ -1,0 +1,67 @@
+###
+# The two shapes of single_map_binding_cases.yaml (an authentication block with a password and one
+# without) for a resource whose logical id is `Metadata`, with the scalar `Type` entry left out. The
+# rules file is `resources/validate/filter_through_a_single_map_binding.guard`.
+#
+# Here the `Metadata` map has no scalar entry and the predicate names `AWS::CloudFormation::Authentication`,
+# a key the map holds itself and none of its map-valued entries holds. A map with no scalar entry whose
+# own key the predicate names is one object, as the map with the `Type` entry is: the filter through
+# `%cfn_authentication_rule` tests the map itself, the predicate holds, the map is selected and the rule
+# applies: FAIL with a password, PASS without, the verdicts cfn-guard 3.2.1 gives (observed on its
+# binary; its reporter then exits 101 on the password shape). The author's `[*]` does not read this shape
+# the same way: over a map with no scalar entry whose own key the predicate names it runs its own-key
+# enumeration and refuses the filter. No notice is written for either case.
+###
+---
+- name: Authentication block with a password, no Type entry
+  input:
+    Resources:
+      RootRole:
+        Type: "AWS::IAM::Role"
+        Properties:
+          AssumeRolePolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: "Allow"
+                Principal:
+                  Service:
+                    - "ec2.amazonaws.com"
+                Action:
+                  - "sts:AssumeRole"
+      Metadata:
+        AWS::CloudFormation::Authentication:
+          testBasic:
+            type: "basic"
+            username: "testUsername1"
+            password: "sensitive_password"
+            uris:
+              - "http://www.example.com/test"
+  expectations:
+    rules:
+      CFN_AUTHENTICATION_RULE: FAIL
+
+- name: Authentication block without a password, no Type entry
+  input:
+    Resources:
+      RootRole:
+        Type: "AWS::IAM::Role"
+        Properties:
+          AssumeRolePolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: "Allow"
+                Principal:
+                  Service:
+                    - "ec2.amazonaws.com"
+                Action:
+                  - "sts:AssumeRole"
+      Metadata:
+        AWS::CloudFormation::Authentication:
+          testS3:
+            type: "s3"
+            roleName: !Ref RootRole
+            buckets:
+              - "somebucket333"
+  expectations:
+    rules:
+      CFN_AUTHENTICATION_RULE: PASS

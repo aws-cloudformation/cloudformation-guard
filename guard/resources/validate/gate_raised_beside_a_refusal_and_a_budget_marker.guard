@@ -1,0 +1,11 @@
+# The own-key filter `Sub[*][ s | <own key> !exists ]` under `A` refuses its walk and the `Cfg[*]` loop
+# places the refusal's marker into `x` beside the keys the first clause bound. The key filter over `Maps.M`
+# spends the regex budget on the thirty-`a` key and leaves a marker no one registers. The `when` gate
+# `some %x NOT IN <that marker>` is raised on the refusal first and the budget marker's reason after it,
+# `(1) <refusal> (2) <budget>`: the rule fails closed, the run continues, and the record is flagged a
+# refusal's by the bit the raise carries, so the console prints the whole text, the refusal's remedy and
+# the budget's sentence included, where a text test over the numbered parts cut it at the console's bound
+# for every other recorded message.
+rule gate_beside_a_marker when Cfg[ x | Kind == 'k' ] !empty  Cfg[*][ x | Mode exists or Kind == 'k' ].Sub[*][ s | R1_the_own_key_of_the_sub_map_whose_name_is_long_enough_to_carry_the_refusal_past_the_bound !exists ] !empty or Cfg.Fallback exists  some %x NOT IN Maps.M[ keys == /(?!x)((a+)+)b/ ] {
+    Cfg exists
+}

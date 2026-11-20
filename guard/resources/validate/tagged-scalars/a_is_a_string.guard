@@ -1,0 +1,3 @@
+rule a_is_a_string {
+    A is_string
+}

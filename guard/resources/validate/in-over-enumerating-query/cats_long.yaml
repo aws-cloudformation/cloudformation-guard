@@ -1,0 +1,5 @@
+Resources:
+  R:
+    Type: Custom::Subject
+    Properties:
+      Cats: [aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa]

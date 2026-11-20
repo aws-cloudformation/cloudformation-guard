@@ -66,6 +66,38 @@ We designed `cfn-guard` to be plugged into your build processes.
 If CloudFormation Guard validates the templates successfully, it gives you an exit status (`$?` in bash) of `0`. If CloudFormation Guard identifies a rule violation, it gives you a status report of the rules that failed.
 Use the verbose flag `-v` to see the detailed evaluation tree that shows how CloudFormation Guard evaluated each rule.
 
+## Exit codes
+
+`validate`, `parse-tree` and `rulegen` use these:
+
+| Code | Meaning |
+|---|---|
+| `0` | Success. Everything evaluated, and nothing failed. |
+| `5` | An input file cannot be used. For `validate` that is a rules file with a syntax error or one that names a variable, rule or parameterized rule that nothing declares, or a data file, an `--input-params` file or a `--payload` document that is not valid JSON or YAML; the message names the file. For `parse-tree` it is the rules file. For `rulegen` it is the template: it could not be read as JSON or YAML, has no usable `Resources` section, produced no rules, or produced rules cfn-guard could not read back. |
+| `19` | The rules were evaluated and the data failed at least one of them. `validate` only. This is the code a policy gate should treat as a violation. |
+
+`test` reports in its own two codes, because "an expectation was not met" is not the same result as "a template was non-compliant":
+
+| Code | Meaning |
+|---|---|
+| `0` | Every expectation was met. |
+| `1` | An expectation could not be evaluated, or a rules or test file could not be read. |
+| `7` | An expectation was evaluated and not met. |
+
+Every subcommand answers a bad set of arguments with `2`:
+
+| Code | Meaning |
+|---|---|
+| `2` | The arguments cannot be honoured: a flag was passed twice over, two flags contradict each other, a required one is missing, or a value is not one this command accepts. Nothing was evaluated. Fix the command line. |
+
+This is the code the argument parser has always used for a conflict it detects itself, such as `--payload` beside `--rules`. Combinations rejected after parsing — `--show-summary all` beside a machine-readable `--output-format`, say — now report `2` as well, so one class of mistake has one code however it is caught.
+
+Any other code means CloudFormation Guard itself failed rather than reaching a verdict. `255` is the usual one, and it also covers a path that does not exist. Distinguish `5` from `255` in a build step: the first is your file, the second is a defect worth reporting.
+
+When several rules files are given, the most severe code wins, and `5` is more severe than `19` — a ruleset that could not be evaluated is a different answer from one that returned a verdict you can waive.
+
+`0` does not by itself mean anything was checked. A `--rules` argument that yields no rules file, a `--data` argument that yields no data file, and a `--payload` with an empty `rules` or `data` list all exit `0`, because nothing failed. Each writes a warning to stderr saying that nothing was checked; a build step that cares about the difference should read stderr or assert that findings were produced.
+
 ## Modes of Operation
 
 `cfn-guard` has five modes of operation:
@@ -75,32 +107,40 @@ Use the verbose flag `-v` to see the detailed evaluation tree that shows how Clo
 `validate` (like the example above) validates data against rules.
 
 ```bash
-Usage: cfn-guard validate [OPTIONS] <--rules [<rules>...]|--payload>
+Evaluates rules against the data files to determine success or failure.
+You can point rules flag to a rules directory and point data flag to a data directory.
+When pointed to a directory it will read all rules in the directory file and evaluate
+them against the data files found in the directory. The command can also point to a
+single file and it would work as well.
+Note - When pointing the command to a directory, the directory may not contain a mix of
+rules and data files. The directory being pointed to must contain only data files,
+or rules files.
+
+
+Usage: cfn-guard validate [OPTIONS] <--rules <RULES>...|--payload>
 
 Options:
-  -r, --rules [<rules>...]
+  -r, --rules <RULES>...
           Provide a rules file or a directory of rules files. Supports passing multiple values by using this option repeatedly.
           Example:
            --rules rule1.guard --rules ./rules-dir1 --rules rule2.guard
           For directory arguments such as `rules-dir1` above, scanning is only supported for files with following extensions: .guard, .ruleset
-  -d, --data [<data>...]
+  -d, --data [<DATA>...]
           Provide a data file or directory of data files in JSON or YAML. Supports passing multiple values by using this option repeatedly.
           Example:
            --data template1.yaml --data ./data-dir1 --data template2.yaml
           For directory arguments such as `data-dir1` above, scanning is only supported for files with following extensions: .yaml, .yml, .json, .jsn, .template
-  -i, --input-parameters [<input-parameters>...]
+  -i, --input-params [<INPUT_PARAMS>...]
           Provide a parameter file or directory of parameter files in JSON or YAML that specifies any additional parameters to use along with data files to be used as a combined context. All the parameter files passed as input get merged and this combined context is again merged with each file passed as an argument for `data`. Due to this, every file is expected to contain mutually exclusive properties, without any overlap. Supports passing multiple values by using this option repeatedly.
           Example:
-           --input-parameters param1.yaml --input-parameters ./param-dir1 --input-parameters param2.yaml
+           --input-params param1.yaml --input-params ./param-dir1 --input-params param2.yaml
           For directory arguments such as `param-dir1` above, scanning is only supported for files with following extensions: .yaml, .yml, .json, .jsn, .template
   -t, --type <type>
           Specify the type of data file used for improved messaging - ex: CFNTemplate [possible values: CFNTemplate]
-  -o, --output-format <output-format>
-          Specify the format in which the output should be displayed [default: single-line-summary] [possible values: json, yaml, single-line-summary, junit, sarif]
-  -S, --show-summary <show-summary>
-          Controls if the summary table needs to be displayed. --show-summary fail (default) or --show-summary pass,fail (only show rules that did pass/fail) or --show-summary none (to turn it off) or --show-summary all (to show all the rules that pass, fail or skip) [default: fail] [possible values: none, all, pass, fail, skip]
-  -s, --show-clause-failures
-          Show clause failure along with summary
+  -o, --output-format <OUTPUT_FORMAT>
+          Specify the format in which the output should be displayed [default: single-line-summary] [possible values: single-line-summary, json, yaml, junit, sarif]
+  -S, --show-summary <SHOW_SUMMARY>
+          Controls if the summary table needs to be displayed. The default is fail, or none when --output-format is json, yaml, junit or sarif, because the summary table and the report share stdout. The list is applied left to right and none clears the kinds listed before it, so fail,none means none. --show-summary pass,fail (only show rules that did pass/fail) or --show-summary none (to turn it off) or --show-summary all (to show all the rules that pass, fail or skip) [possible values: all, pass, fail, skip, none]
   -a, --alphabetical
           Validate files in a directory ordered alphabetically
   -m, --last-modified
@@ -108,7 +148,7 @@ Options:
   -v, --verbose
           Verbose logging
   -p, --print-json
-          Print output in json format
+          Print the parse tree in a json format. This can be used to get more details on how the clauses were evaluated
   -P, --payload
           Provide rules and data in the following JSON format via STDIN,
           {"rules":["<rules 1>", "<rules 2>", ...], "data":["<data 1>", "<data 2>", ...]}, where,
@@ -130,30 +170,25 @@ Options:
 `rulegen` takes a JSON- or YAML-formatted CloudFormation template file and autogenerates a set of `cfn-guard` rules that match the properties of its resources. This is a useful way to get started with rule-writing or just create ready-to-use rules from known-good templates.
 
 ```bash
-cfn-guard-rulegen
 Autogenerate rules from an existing JSON- or YAML- formatted data. (Currently works with only CloudFormation templates)
 
-USAGE:
-    cfn-guard rulegen [OPTIONS] --template <template>
+Usage: cfn-guard rulegen [OPTIONS] --template <TEMPLATE>
 
-FLAGS:
-    -h, --help       Prints help information
-    -V, --version    Prints version information
-
-OPTIONS:
-    -o, --output <output>        Write to output file
-    -t, --template <template>    Provide path to a CloudFormation template file in JSON or YAML
+Options:
+  -o, --output <OUTPUT>      Write to output file
+  -t, --template <TEMPLATE>  Provide path to a CloudFormation template file in JSON or YAML
+  -h, --help                 Print help
 ```
 
 For example, using the same template (template.json) from the above example:
 
 ```bash
 $ cfn-guard rulegen --template template.json
-let aws_ec2_volume_resources = Resources.*[ Type == 'AWS::EC2::Volume' ]
+let aws_ec2_volume_resources = Resources.*[ Type == "AWS::EC2::Volume" ]
 rule aws_ec2_volume when %aws_ec2_volume_resources !empty {
-    %aws_ec2_volume_resources.Properties.Size IN [500, 100]
-    %aws_ec2_volume_resources.Properties.AvailabilityZone IN ["us-west-2b", "us-west-2c"]
-    %aws_ec2_volume_resources.Properties.Encrypted == false
+  %aws_ec2_volume_resources.Properties.AvailabilityZone IN ["us-west-2b", "us-west-2c"]
+  %aws_ec2_volume_resources.Properties.Encrypted == false
+  %aws_ec2_volume_resources.Properties.Size IN [100, 500]
 }
 ```
 
@@ -168,15 +203,14 @@ cfn-guard rulegen --template template.json --output rules.guard
 `parse-tree` command generates a parse tree for the rules defined in a rules file. Use the `--output` flag to write the generated tree to a file.
 
 ```bash
-cfn-guard-parse-tree
 Prints out the parse tree for the rules defined in the file.
 
 Usage: cfn-guard parse-tree [OPTIONS]
 
 Options:
-  -r, --rules <rules>    Provide a rules file
-  -o, --output <output>  Write to output file
-  -p, --print-json       Print output in JSON format. Use -p going forward, as the short flag -j is on deprecation path.
+  -r, --rules <RULES>    Provide a rules file
+  -o, --output <OUTPUT>  Write to output file
+  -p, --print-json       Print output in JSON format. Use -p as the short flag
   -y, --print-yaml       Print output in YAML format
   -h, --help             Print help
 ```
@@ -186,23 +220,22 @@ Options:
 Use the `test` command to write unit tests in JSON or YAML format for your rules
 
 ```bash
-cfn-guard-test
 Built in unit testing capability to validate a Guard rules file against
 unit tests specified in YAML format to determine each individual rule's success
 or failure testing.
 
+
 Usage: cfn-guard test [OPTIONS]
 
 Options:
-  -r, --rules-file <rules-file>  Provide a rules file
-  -t, --test-data <test-data>    Provide a file or dir for data files in JSON or YAML
-  -d, --dir <dir>                Provide the root directory for rules
-  -a, --alphabetical             Sort alphabetically inside a directory
-  -m, --last-modified            Sort by last modified times within a directory
-  -v, --verbose                  Verbose logging
-  -h, --help                     Print help
-  -o, --output-format <output-format>
-          Specify the format in which the output should be displayed [default: single-line-summary] [possible values: json, yaml, single-line-summary, junit]
+  -r, --rules-file <rules-file>        Provide a rules file
+  -t, --test-data <test-data>          Provide a file or dir for data files in JSON or YAML
+  -d, --dir <dir>                      Provide the root directory for rules
+  -a, --alphabetical                   Sort alphabetically inside a directory
+  -m, --last-modified                  Sort by last modified times within a directory
+  -v, --verbose                        Verbose logging
+  -o, --output-format <OUTPUT_FORMAT>  Specify the format in which the output should be displayed [default: single-line-summary] [possible values: single-line-summary, json, yaml, junit]
+  -h, --help                           Print help
 ```
 
 For example, given a rules file (rules.guard) as:

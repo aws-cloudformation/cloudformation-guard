@@ -1,0 +1,5 @@
+# The mirror: "A" must NOT be what the capture binds. A's Public is false.
+rule public_bucket_is_not_named_a {
+    Resources[ nm | Properties.Public == true ] !empty
+    some %nm == "A"
+}

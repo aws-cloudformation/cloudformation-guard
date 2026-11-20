@@ -1,6 +1,6 @@
 use crate::functions::key::key;
 use crate::path_value::{Path, PathAwareValue};
-use crate::{QueryResult, UnResolved};
+use crate::{QueryResult, UnResolved, UnResolvedKind};
 use std::rc::Rc;
 
 fn resolved(path: &str) -> QueryResult {
@@ -68,6 +68,7 @@ fn skips_unresolved_queries() {
         ))),
         remaining_query: "Properties.Tags".to_string(),
         reason: None,
+        kind: UnResolvedKind::Absent,
     });
 
     assert_eq!(

@@ -1,0 +1,8 @@
+Resources:
+  A:
+    Type: AWS::S3::Bucket
+    Properties:
+      Env: alpha
+      Mappings:
+        ALPHA: 1
+        BETA: 2

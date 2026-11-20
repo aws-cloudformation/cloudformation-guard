@@ -1,0 +1,6 @@
+# An allowlist of tag keys read from the template, two strings, so the key filter is membership. The
+# tag key `Env` is a strict substring of `Environment`: the earlier reading, a string on the right as
+# text the key could be contained in, selected it, and the equality reading does not, so the filter
+# draws the containment notice on every template whose resource carries that tag.
+let allowed = Mappings.Allowed.Keys[*]
+rule tags_allowed { Resources.*.Properties.Tags[ keys IN %allowed ] !empty }

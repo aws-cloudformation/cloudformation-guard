@@ -1,0 +1,5 @@
+#
+# A long query under an own-key refusal that carries the member spellings: the spellings sit before the
+# path, and the console summary prints both whole.
+#
+rule r { Resources.A.Properties.Rules[*][ R1 exists ] !empty }

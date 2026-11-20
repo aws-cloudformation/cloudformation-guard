@@ -1,0 +1,17 @@
+# Test files under a tests/ directory in the pinned aws-guard-rules-registry corpus that no .guard
+# file claims, so nothing runs them. Paths are relative to the rules directory passed to
+# `cfn-guard test -d`, with forward slashes so one list holds for the Windows job too.
+#
+# Listed here because an orphaned test file moves nothing: no verdict, no failure count, and no exit
+# code. A rules file renamed without its tests, or a tests/ file whose stem stopped matching, reads
+# as a clean run everywhere else. So this is the only thing that would notice a fourth one.
+#
+# A rules file is paired with a test file by longest matching filename stem, so these three are
+# orphaned for two different reasons. The first two have no .guard file with a matching stem at all.
+# The third begins with a literal space -- the file is named " cloudfront_accesslogs_enabled_tests.yml"
+# -- which is why its stem matches nothing; leave the space alone, it is the defect being recorded,
+# and renaming the file upstream is what removes this line.
+
+aws/amazon_rds/tests/rds_instance_logging_enabled_tests.yml
+aws/amazon_s3/tests/s3_bucket_default_lock_enable_tests.yml
+aws/cloudfront/tests/ cloudfront_accesslogs_enabled_tests.yml

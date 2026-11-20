@@ -1,0 +1,6 @@
+let tiers = Mappings.Regulated.Tiers[*]
+
+rule regulated_volumes_encrypted {
+    Resources.*[ Type == 'Custom::Volume'
+                 Properties.Tier IN %tiers ].Properties.Encrypted == true
+}

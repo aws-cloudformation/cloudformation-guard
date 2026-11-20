@@ -1,0 +1,3 @@
+# Not a CloudFormation template. `Name` is a string, which is the operand shape whose `NOT IN` answer
+# changes in a later release. Paired with `incomparable_membership_clause.guard`.
+Name: "50"

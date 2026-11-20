@@ -1,0 +1,4 @@
+Resources:
+  F:
+    Properties:
+      Mode: !!int 0o755

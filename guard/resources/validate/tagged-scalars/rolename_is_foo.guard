@@ -1,0 +1,3 @@
+rule rolename_is_foo {
+    Resources.Role.Properties.RoleName == "Foo"
+}

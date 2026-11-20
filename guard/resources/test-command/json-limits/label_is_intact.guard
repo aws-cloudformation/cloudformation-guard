@@ -1,0 +1,9 @@
+#
+# A rule that holds only when `Label` is three characters with `a` and `b` around the middle one: the
+# spec it pairs with writes a raw control character there, which the reader rewrites as an escape
+# before reading the text, and the rule says whether the character came through. The spec is not in
+# this directory: the test that uses this file writes it at test time, because the fixture tree is
+# kept free of raw control bytes.
+#
+rule a_is_one { A == 1 }
+rule label_is_intact { Label == /^a.b$/ }

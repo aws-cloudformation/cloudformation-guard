@@ -34,8 +34,7 @@ pub const DATA: (&str, char) = ("data", 'd');
 pub const LAST_MODIFIED: (&str, char) = ("last-modified", 'm');
 #[allow(dead_code)]
 pub const OUTPUT_FORMAT: (&str, char) = ("output-format", 'o');
-#[allow(dead_code)]
-pub const INPUT_PARAMETERS: (&str, char) = ("input-parameters", 'i');
+pub const INPUT_PARAMETERS: (&str, char) = ("input-params", 'i');
 pub const PAYLOAD: (&str, char) = ("payload", 'P');
 pub const PRINT_JSON: (&str, char) = ("print-json", 'p');
 pub const SHOW_SUMMARY: (&str, char) = ("show-summary", 'S');

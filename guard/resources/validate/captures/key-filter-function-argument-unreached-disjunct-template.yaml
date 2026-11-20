@@ -1,0 +1,12 @@
+Wanted: beta
+Resources:
+  A:
+    Type: AWS::S3::Bucket
+    Name: a
+  B:
+    Type: AWS::SQS::Queue
+  Cfg:
+    Map:
+      Wanted: alpha
+      alpha: 1
+      beta: 2

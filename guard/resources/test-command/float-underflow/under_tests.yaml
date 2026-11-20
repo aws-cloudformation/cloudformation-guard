@@ -1,0 +1,17 @@
+- name: a float literal that underflowed to zero keeps its text
+  input:
+    A: 1e-400
+  expectations:
+    rules:
+      zero: FAIL
+      is_str: PASS
+      is_flt: FAIL
+
+- name: a genuine zero is a float that equals 0
+  input:
+    A: 0.0
+  expectations:
+    rules:
+      zero: PASS
+      is_str: FAIL
+      is_flt: PASS

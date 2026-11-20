@@ -1,0 +1,16 @@
+# A property whose name holds a backslash followed by an ordinary letter, `a\nb`: two characters,
+# not a line ending. rulegen quotes the name and doubles the backslash, `Properties."a\\nb" == 1`,
+# and the crate's string literal reader turns that back into a\nb. The round-trip test reads the
+# clause through that same reader, so however rulegen spells the escape, the name the test compares
+# is the name validate evaluates.
+Resources:
+  One:
+    Type: AWS::EC2::Volume
+    Properties:
+      'a\nb': 1
+      Size: 10
+  Two:
+    Type: AWS::EC2::Volume
+    Properties:
+      'a\nb': 1
+      Size: 10

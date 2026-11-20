@@ -1,0 +1,5 @@
+rule module_is_encrypted {
+    My::Org::Mod::MODULE {
+        Properties.Encrypted == true
+    }
+}

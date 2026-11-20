@@ -1,0 +1,3 @@
+# A list-valued argument: `Wanted[*]` is the map's own `Wanted` list, so `alpha` and `beta` are
+# selected, both with value 1.
+rule func_key_list { Resources.Cfg.Map[ keys IN to_lower(Wanted[*]) ] == 1 }

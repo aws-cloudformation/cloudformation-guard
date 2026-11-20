@@ -1,0 +1,44 @@
+# Case names that are not strings. The loader resolves them, and the command reports each with the
+# spelling the file has: `1.50` stays `1.50`, `1e3` stays `1e3`, `0x1F` stays `0x1F` and `True` stays
+# `True`. Names reach JUnit ids and the JSON report, so a name is never re-rendered from its value.
+- name: 1.0
+  input:
+    A: 1
+  expectations:
+    rules:
+      a_is_one: PASS
+
+- name: 1.50
+  input:
+    A: 1
+  expectations:
+    rules:
+      a_is_one: PASS
+
+- name: 1e3
+  input:
+    A: 1
+  expectations:
+    rules:
+      a_is_one: PASS
+
+- name: 0x1F
+  input:
+    A: 1
+  expectations:
+    rules:
+      a_is_one: PASS
+
+- name: 2024
+  input:
+    A: 1
+  expectations:
+    rules:
+      a_is_one: PASS
+
+- name: True
+  input:
+    A: 1
+  expectations:
+    rules:
+      a_is_one: PASS

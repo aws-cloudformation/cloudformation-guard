@@ -1,0 +1,8 @@
+# The kept-scalar arm of the pass-over refusal under a `when` gate with a long real query: `Settings`
+# holds `Mode` and `Level`, both handed to the predicate for its `this exists` arm and both kept through
+# the absence of `ServerSideEncryptionConfiguration`, which a scalar holds for want of any key; the filter
+# is refused whatever the `this` arm decided, and the console shows the whole text, the definition of `X`
+# and the remedy (the key asked of the map itself, the `this` clause of its entries) first.
+rule r when Resources.WebServer.Properties.Configuration.Settings[ ServerSideEncryptionConfiguration !exists or this exists ] !empty {
+    Resources.WebServer.Type == 'X'
+}

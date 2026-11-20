@@ -1,0 +1,19 @@
+###
+# Pairs with `../declares_nothing.guard`, and is byte-identical to the suite under
+# `../../first/tests/` so the two runs differ only in how the rules file is named.
+#
+# Under `tests/` and named for the rules file's stem, because `OrderedTestDirectory` only claims a
+# test file whose parent directory is `tests` and whose name starts with a rules file's `prefix`. A
+# rules file with no test files is skipped by both directory walks before any expectation is read,
+# which would make this fixture report nothing for a reason that is not the defect.
+#
+# One expectation, naming a rule the file does not declare -- which with no rules declared is every
+# rule. There is nothing to compare it against, so the run must say so and exit non-zero.
+###
+---
+- name: An expectation against a file that declares nothing
+  input:
+    Name: "50"
+  expectations:
+    rules:
+      some_rule: PASS

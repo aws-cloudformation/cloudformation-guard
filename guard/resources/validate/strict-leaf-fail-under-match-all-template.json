@@ -1,0 +1,10 @@
+{
+    "Cfg2": {
+        "Mode": { "Ref": "ModeParam" },
+        "Other": { "Kind": "k" },
+        "C": { "Kind": "k", "Sub": { "R1": { "Ref": "P" }, "P": { "Kind": "k" }, "Q": { "Kind": "k" } } },
+        "D": { "Kind": "k", "Sub": { "R1": { "Ref": "P" }, "P": { "Kind": "k" }, "Q": { "Kind": "k" } } }
+    },
+    "Items": { "I1": { "Name": "n1" }, "I2": { "Name": "n2" } },
+    "Maps": { "M": { "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": 1, "PROD": 1 } }
+}

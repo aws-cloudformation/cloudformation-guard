@@ -1,0 +1,5 @@
+# Under a wildcard the enclosing scope is the resource. `this.Wanted` is still the map's own `Wanted`
+# and nothing else: a map without one leaves the argument unresolved and the filter fails closed,
+# whatever `Wanted` the resource beside the map holds; the plain `to_lower(Wanted)` is the spelling that
+# falls back to the resource's.
+rule func_key_this_wildcard { Resources.*.Map[ keys == to_lower(this.Wanted) ] == 1 }

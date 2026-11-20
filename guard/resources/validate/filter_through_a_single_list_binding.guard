@@ -1,0 +1,9 @@
+#
+# A single list bound by a plain key path and filtered through the variable. A filter over a list
+# has always tested each element, through a variable or on the literal path, so this selects the one
+# element above 80 in the previous release and now. A control for the single-map notice: no notice here.
+#
+let l = Cfg.Items
+rule FILTER_THROUGH_A_SINGLE_LIST_BINDING {
+  %l[ this > 80 ] !empty
+}

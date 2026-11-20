@@ -5,7 +5,7 @@ use std::{
 };
 
 #[derive(Ord, PartialOrd, Eq, PartialEq)]
-pub(crate) struct Tag(pub(in crate::libyaml) Box<[u8]>);
+pub struct Tag(pub(in crate::libyaml) Box<[u8]>);
 
 impl Tag {
     fn as_string(&self) -> String {
@@ -15,7 +15,7 @@ impl Tag {
         }
     }
 
-    pub(crate) fn get_handle(&self) -> String {
+    pub fn get_handle(&self) -> String {
         self.as_string()
             .chars()
             .take_while(|c| *c == '!')
@@ -29,7 +29,7 @@ impl Tag {
     /// # Arguments
     /// * `offset` - A usize indicating the number of characters which belong to the prefix
     ///
-    pub(crate) fn get_suffix(&self, offset: usize) -> String {
+    pub fn get_suffix(&self, offset: usize) -> String {
         self.as_string()
             .chars()
             .enumerate()

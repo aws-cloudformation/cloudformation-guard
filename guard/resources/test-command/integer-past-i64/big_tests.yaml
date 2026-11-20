@@ -1,0 +1,23 @@
+# The same two cases as big_tests.json, as a YAML spec. The integers are wider than i64, so the loader
+# keeps their digits as text, and the cases read them as `validate` reads a template holding them.
+- name: two distinct integers past u64::MAX keep their digits
+  input:
+    A: 18446744073709551616
+    B: 18446744073709551617
+  expectations:
+    rules:
+      eq: FAIL
+      gt: FAIL
+      is_str: PASS
+      is_flt: FAIL
+
+- name: an ordinary integer is still an integer
+  input:
+    A: 5
+    B: 6
+  expectations:
+    rules:
+      eq: FAIL
+      gt: PASS
+      is_str: FAIL
+      is_flt: FAIL

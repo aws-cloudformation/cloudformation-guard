@@ -1,0 +1,3 @@
+rule action_is_granted {
+    Resources.*.Properties.Action IN Mappings.Policy.Statement[*].Action
+}

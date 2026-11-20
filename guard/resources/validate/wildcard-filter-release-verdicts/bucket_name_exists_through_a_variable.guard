@@ -1,0 +1,2 @@
+let r = Resources
+rule r { %r[ Type == 'AWS::S3::Bucket' ].Properties.BucketName exists }

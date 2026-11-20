@@ -1,0 +1,4 @@
+# The same refused walk with no earlier clause binding `x`: `%x` holds the refusal's marker alone, so
+# `Cfg.Mode.Ref IN %x` compares nothing and is raised on the refusal's reason in every role, the assertion
+# included. The rule fails, the run continues, and the console prints the refusal whole.
+rule strict_raise { Cfg[*][ x | Mode exists or Kind == 'k' ].Sub[*][ s | R1_the_own_key_of_the_sub_map_whose_name_is_long_enough_to_carry_the_refusal_past_the_bound !exists ] !empty or Cfg.Fallback exists  Cfg.Mode.Ref IN %x }

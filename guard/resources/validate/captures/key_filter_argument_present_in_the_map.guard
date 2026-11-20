@@ -1,0 +1,4 @@
+# The map holds `Wanted`, so the argument is the map's own entry whatever it resolves to: an empty
+# list, or a list whose members lack `Name`. Neither reads the resource's `Wanted` beside the map.
+rule r { Resources.*.Map[ keys == to_lower(Wanted) ] == 2 }
+rule r_members { Resources.*.Map[ keys == to_lower(Wanted[*].Name) ] == 2 }

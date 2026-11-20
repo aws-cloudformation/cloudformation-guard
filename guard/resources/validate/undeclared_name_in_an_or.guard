@@ -1,0 +1,1 @@
+rule r { %nosuch == 1 or Resources exists }

@@ -1,0 +1,51 @@
+# Two isomorphic subtrees holding identical values.
+#
+# `Outer` is reachable by plain key descent. `Wrapper.Only` holds the same values but is reachable
+# only through a wildcard and a filter. A rule that reads one and a rule that reads the other are
+# therefore asking the same question of the same data, which is what makes them comparable: any
+# difference in the answer is the engine responding to how the query was written rather than to what
+# it found.
+#
+# Three shapes are present because the reserved-slot decision reaches them differently.
+#
+# - `Nested` is a map whose entry is itself a map, so a filter can apply to that entry. The
+#   predicate key is NOT a key of `Nested`, so testing the whole map selects nothing.
+# - `Config` is a map whose entry is a scalar, so a filter cannot apply to the entry -- and the
+#   predicate key IS a key of `Config`, so testing the whole map matches. Those two facts together
+#   invert which spelling produces the useful answer, which is why `Config` needs its own pair.
+# - `Tags` is a list, where `[*]` enumerates instead of passing through, so consuming and walking
+#   the slot differ for every tail rather than only for a filter.
+# - `Groups` is a list whose single entry is `Tags` again. It is the one shape in this file that a
+#   *projecting* binding can hold: `Groups[0]` and `Groups[*]` both leave that inner list in hand, and
+#   they differ only in whether `query_projects` calls the binding projecting, because `part_projects`
+#   counts an expansion and not an index. Every other pair here reaches its value through a wildcard
+#   and then descends a key, so its last act is a `Key` and neither side projects -- which is why
+#   `Groups` had to be added rather than reusing `Tags`.
+#
+# `Marker` exists only to give the filter something to select on, and is a string rather than `yes`
+# so that no YAML boolean coercion sits between the fixture and the predicate.
+Outer:
+  Nested:
+    Entry:
+      Type: Match
+      Value: present
+  Config:
+    Status: Enabled
+  Tags:
+    - Key: Name
+      Value: alpha
+  Groups:
+    - - Key: Name
+        Value: alpha
+Wrapper:
+  Only:
+    Marker: selected
+    Nested:
+      Entry:
+        Type: Match
+        Value: present
+    Config:
+      Status: Enabled
+    Tags:
+      - Key: Name
+        Value: alpha

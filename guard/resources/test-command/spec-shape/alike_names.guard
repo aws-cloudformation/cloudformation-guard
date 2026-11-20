@@ -1,0 +1,6 @@
+#
+# Two rules over two properties, so that a pair of cases can share an input and still differ in
+# their expectations. The paired specs are about cases that share a name.
+#
+rule a_is_one { A == 1 }
+rule b_is_two { B == 2 }

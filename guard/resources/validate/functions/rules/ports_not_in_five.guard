@@ -1,0 +1,3 @@
+rule ports_not_five {
+    Resources.*.Properties.Ports not in 5
+}

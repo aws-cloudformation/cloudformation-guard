@@ -1,0 +1,3 @@
+rule threshold_is_zero {
+    Threshold == 0
+}

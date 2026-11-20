@@ -1,0 +1,13 @@
+Resources:
+  Cfg:
+    Enabled: true
+    MustBeTrue: false
+    aaaaaaaaaaaaaaaaaa: 1
+  Other:
+    Type: X
+    Properties:
+      Cfg:
+        x: 1
+Mappings:
+  Exempt:
+    Names: [ Cfg ]

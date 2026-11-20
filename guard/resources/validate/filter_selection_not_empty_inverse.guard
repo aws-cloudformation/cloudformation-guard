@@ -1,0 +1,3 @@
+rule r {
+    not Items[ Name == 'zzz' ] empty
+}

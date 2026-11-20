@@ -1,0 +1,11 @@
+# The second case is an alias to a name no node before it anchors. A case that is not a mapping has
+# no `input:` to run, so the file is refused, and the message carries the alias's refusal beside the
+# field it stood in for. The ordinary case before it is not reported, because the file was refused.
+- name: an ordinary case
+  input:
+    A: 1
+  expectations:
+    rules:
+      a_is_one: PASS
+
+- *nope

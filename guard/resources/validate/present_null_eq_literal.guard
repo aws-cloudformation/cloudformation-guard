@@ -1,0 +1,5 @@
+# A present null is not `true`, so `==` fails -- as a decided inequality now, where it used to fail as a
+# refusal.
+rule present_null_equals_true {
+    Resources.Db.Properties.PubliclyAccessible == true
+}

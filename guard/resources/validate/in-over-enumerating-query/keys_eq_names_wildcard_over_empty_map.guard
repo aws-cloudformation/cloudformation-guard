@@ -1,0 +1,7 @@
+# `Names[*]` where `Names` is missing from an EMPTY map: the retrieval stops at `Exempt: {}` looking for
+# `Names`, with the enumeration still ahead of it. An absent key, not an empty collection: fails closed.
+let names = Mappings.Exempt.Names[*]
+
+rule named_keys_are_two {
+    Resources.*.Map[ keys == %names ] == 2
+}

@@ -1,0 +1,27 @@
+# Two pairs of cases named alike over one input: the pair named `b` first, then the pair named `a`.
+- name: b
+  input:
+    A: 1
+  expectations:
+    rules:
+      a_is_one: PASS
+- name: b
+  input:
+    A: 1
+  expectations:
+    rules:
+      a_is_one: PASS
+- name: a
+  input:
+    A: 1
+  expectations:
+    rules:
+      a_is_one: PASS
+- name: a
+  input:
+    A: 1
+  expectations:
+    rules:
+      a_is_one: PASS
+# A text sort of the two warnings puts `a` before `b`; the document has `b` first. The tests assert
+# the name positions L:2 and L:8 for `b` and L:14 and L:20 for `a`.

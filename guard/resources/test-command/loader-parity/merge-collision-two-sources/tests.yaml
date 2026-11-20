@@ -1,0 +1,14 @@
+- name: two merge sources whose keys read as one name keep the earlier source's value
+  input:
+    Resources:
+      B:
+        Type: AWS::S3::Bucket
+        Properties:
+          <<:
+            - 1: a
+            - "1": b
+  expectations:
+    rules:
+      earlier_source_wins: PASS
+      later_source_is_not_read: PASS
+      merge_key_is_folded: PASS

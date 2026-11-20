@@ -1,0 +1,9 @@
+# A rule named twice under `rules:`. Two expectations for one rule cannot both be checked, so the
+# case fails with a message naming the rule and both positions.
+- name: a rule expected twice
+  input:
+    A: 1
+  expectations:
+    rules:
+      a_is_one: PASS
+      a_is_one: FAIL

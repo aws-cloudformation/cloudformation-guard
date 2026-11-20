@@ -1,0 +1,6 @@
+#
+# The same refusal as a `when` condition: the condition site's wrapper is counted first, so the console
+# summary shows the key's definition and the bracket spellings and cuts before the definition of `X`; the
+# member spellings are read from the JSON report.
+#
+rule r when Resources.A.Properties.Rules[*][ R1 exists ] !empty { Resources.A.Type == 'X' }

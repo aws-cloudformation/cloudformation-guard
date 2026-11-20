@@ -1,0 +1,8 @@
+Resources:
+  B:
+    Type: AWS::S3::Bucket
+    Properties:
+      <<:
+        1: merged_number
+        "1": merged_string
+      "1": explicit

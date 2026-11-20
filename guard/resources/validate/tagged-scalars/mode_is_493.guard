@@ -1,0 +1,3 @@
+rule mode_is_493 {
+    Resources.*.Properties.Mode == 493
+}

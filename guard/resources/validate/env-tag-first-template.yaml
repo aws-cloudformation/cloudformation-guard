@@ -1,0 +1,14 @@
+# The first of two templates for `tags_allowed_by_containment.guard`: one bucket tagged `Env`, a key the
+# allowlist holds only by containment (`Environment`). The filter's containment notice is drawn here
+# first and written beside this file.
+Mappings:
+  Allowed:
+    Keys:
+      - Environment
+      - Owner
+Resources:
+  First:
+    Type: AWS::S3::Bucket
+    Properties:
+      Tags:
+        Env: prod

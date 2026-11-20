@@ -1,0 +1,11 @@
+# Two query arguments of one call, both held by the map and both differing at the root: `Wanted` and
+# `Pattern`. The map's `xlpha` with `^x` replaced by `a` is `alpha`, the entry whose value is 1.
+Wanted: beta
+Pattern: '^y'
+Resources:
+  Cfg:
+    Map:
+      Wanted: xlpha
+      Pattern: '^x'
+      alpha: 1
+      beta: 2

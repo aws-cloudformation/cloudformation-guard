@@ -1,0 +1,15 @@
+# A property whose name holds a quote. rulegen cannot write it bare, so it quotes the name and
+# escapes the quote inside it: `Properties."a\"b" == 1`. The round-trip test reads the clause back
+# and has to unescape what rulegen escaped, or it reads the name as `a\` and reports the clause as
+# one the template never called for.
+Resources:
+  One:
+    Type: AWS::EC2::Volume
+    Properties:
+      'a"b': 1
+      Size: 10
+  Two:
+    Type: AWS::EC2::Volume
+    Properties:
+      'a"b': 1
+      Size: 10

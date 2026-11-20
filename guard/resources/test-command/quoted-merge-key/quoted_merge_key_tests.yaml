@@ -1,0 +1,27 @@
+- name: a quoted merge key is the ordinary key YAML says it is
+  input:
+    Resources:
+      A:
+        Type: X
+        Properties:
+          "<<":
+            hoisted: "yes"
+          kept: 1
+  expectations:
+    rules:
+      quoted_key_is_literal: PASS
+      hoisted_is_absent: PASS
+
+- name: a plain merge key still merges
+  input:
+    Resources:
+      A:
+        Type: X
+        Properties:
+          <<:
+            hoisted: "yes"
+          kept: 1
+  expectations:
+    rules:
+      quoted_key_is_literal: FAIL
+      hoisted_is_absent: FAIL

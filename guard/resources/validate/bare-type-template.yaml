@@ -1,0 +1,5 @@
+Resources:
+  R:
+    Type: My::Org::Mod
+    Properties:
+      Encrypted: false

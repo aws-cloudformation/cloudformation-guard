@@ -1,0 +1,4 @@
+# A `when` condition over `some Names[*] NOT IN %x`, the capture holding keys beside a refused walk's
+# marker: every name equals a key, so every value is a decided NO (a value that matches a denied value),
+# the condition is not applicable and the refused read is reported on stderr rather than raised.
+rule r when Cfg[ x | Kind == 'k' ] !empty  Cfg[*][ x | Mode exists or Kind == 'k' ].Sub[*][ s | R1 !exists ] !empty or Cfg.Fallback exists  some Names[*] NOT IN %x { Cfg.Mode.Ref == 'ModeParam' }

@@ -1,0 +1,2 @@
+let p = Resources.B.Properties
+rule r { %p[ Tags !exists ] !empty }

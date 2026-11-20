@@ -1,0 +1,8 @@
+#
+# A collision inside a `!If`-tagged sequence item. The tag puts the item under its long function
+# name, so the value is at /List/0/Fn::If/1/1, and validate reports the collision at that path
+# ("Warning: duplicate key /List/0/Fn::If/1/1 in data file <name>, first at L:2,C:24 and again at
+# L:2,C:32. The last value is the one evaluated."), counting the tagged item as the one sequence
+# item it is.
+#
+rule explicit_value_stands { List[*]."Fn::If"[1]."1" == "b" }

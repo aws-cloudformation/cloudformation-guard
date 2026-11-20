@@ -1,0 +1,22 @@
+# The role of two-properties-maps-one-with-image-template.yaml under a top-level `Parameters` key, and no
+# instance. Last in a run that passes input-parameters-dir/db_params.yaml with `-i`: that file's own
+# top-level `Parameters` merges into the first two templates, which have none, and collides with this
+# one's, so this template's merge fails before anything is evaluated. The first two templates drew the
+# filter site; the trailer they earned must be written before that merge error goes back.
+Parameters:
+  Owner:
+    Type: String
+    Default: "nobody"
+Resources:
+  RootRole:
+    Type: "AWS::IAM::Role"
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: "Allow"
+            Principal:
+              Service:
+                - "ec2.amazonaws.com"
+            Action:
+              - "sts:AssumeRole"

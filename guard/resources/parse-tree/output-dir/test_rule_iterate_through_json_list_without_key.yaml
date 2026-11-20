@@ -33,7 +33,7 @@ guard_rules:
         access_clause:
           query:
             query:
-            - Key: '%aws_serverless_functions'
+            - Variable: aws_serverless_functions
             match_all: true
           comparator:
           - Empty
@@ -50,7 +50,7 @@ guard_rules:
       value:
         AccessClause:
           query:
-          - Key: '%aws_serverless_functions'
+          - Variable: aws_serverless_functions
           - AllIndices: null
           - Key: Properties
           - Key: Tags
@@ -61,6 +61,9 @@ guard_rules:
                 Value:
                   path: ''
                   value: /^(?i)first([-|_])?name$/
+              location:
+                line: 8
+                column: 56
           match_all: true
     conjunctions:
     - - Clause:
@@ -68,7 +71,7 @@ guard_rules:
             access_clause:
               query:
                 query:
-                - Key: '%aws_serverless_functions'
+                - Variable: aws_serverless_functions
                 - AllIndices: null
                 - Key: Properties
                 - Key: Tags
@@ -87,7 +90,7 @@ guard_rules:
             access_clause:
               query:
                 query:
-                - Key: '%aws_serverless_functions'
+                - Variable: aws_serverless_functions
                 - AllIndices: null
                 - Key: Properties
                 - Key: Tags
@@ -106,7 +109,7 @@ guard_rules:
             access_clause:
               query:
                 query:
-                - Key: '%aws_serverless_functions'
+                - Variable: aws_serverless_functions
                 - AllIndices: null
                 - Key: Properties
                 - Key: Tags
@@ -129,7 +132,7 @@ guard_rules:
             access_clause:
               query:
                 query:
-                - Key: '%key'
+                - Variable: key
                 match_all: true
               comparator:
               - Empty

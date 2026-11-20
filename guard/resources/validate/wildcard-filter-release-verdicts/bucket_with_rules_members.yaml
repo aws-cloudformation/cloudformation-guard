@@ -1,0 +1,9 @@
+Resources:
+  Bucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      Rules:
+        A:
+          Type: X
+        B:
+          Name: q

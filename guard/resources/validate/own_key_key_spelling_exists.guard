@@ -1,0 +1,6 @@
+#
+# The key spelling after the wildcard, as an assertion with a unary operator: over a `resources` map
+# whose own key `limits` names a member another lacks, the read is refused and the refusal, remedy
+# included, is printed whole on the console and carried by the JSON report.
+#
+rule r { resources[*].limits exists }

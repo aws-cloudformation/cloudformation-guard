@@ -1,0 +1,17 @@
+# Not a CloudFormation template. `Cat` holds one thirty-character string of `a`s, which is the length
+# at which `(?!x)((a+)+)b` exhausts `fancy_regex`'s backtracking budget -- so a `NOT IN` against that
+# pattern is a comparison with no answer rather than a comparison that said no.
+#
+# `MustBeTrue` is false so the guarded body has a real violation to report if it is ever reached, and
+# `Region` gives the unrelated rule something to fail on. `Resources.A` repeats the same undecidable
+# value one level down, so the filter-predicate spelling can be asked the same question.
+Region: us-east-1
+Cat:
+  - aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+MustBeTrue: false
+Resources:
+  A:
+    Type: AWS::S3::Bucket
+    Properties:
+      Cat: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+      MustBeTrue: false

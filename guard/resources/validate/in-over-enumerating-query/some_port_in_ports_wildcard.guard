@@ -1,0 +1,3 @@
+rule some_port_is_allowed {
+    some Resources.*.Properties.Port IN Mappings.Allowed.Ports[*]
+}

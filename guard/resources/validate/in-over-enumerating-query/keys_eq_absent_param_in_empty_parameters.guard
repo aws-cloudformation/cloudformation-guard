@@ -1,0 +1,8 @@
+# A right-hand side that stops at a MISSING key inside an empty map: `Parameters` is present and holds no
+# parameter at all, so `TargetBucket.Default` is a path the template does not have, not a collection with
+# nothing in it. The filter fails closed, as it does when `Parameters` holds other parameters.
+let name = Parameters.TargetBucket.Default
+
+rule named_key_is_two {
+    Resources.*.Map[ keys == %name ] == 2
+}

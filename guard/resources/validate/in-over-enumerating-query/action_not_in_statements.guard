@@ -1,0 +1,3 @@
+rule action_is_not_granted {
+    Resources.*.Properties.Action NOT IN Mappings.Policy.Statement[*].Action
+}
