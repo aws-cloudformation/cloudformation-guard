@@ -874,6 +874,7 @@ fn in_cmp(not_in: bool) -> impl Fn(&PathAwareValue, &PathAwareValue) -> Result<b
 
 fn report_value<'r, 'value: 'r, 'loc: 'value>(
     each_res: &ComparisonResult,
+    lhs_origin: ValueOrigin,
     cmp: (CmpOperator, bool),
     context: String,
     custom_message: Option<String>,
@@ -934,6 +935,7 @@ fn report_value<'r, 'value: 'r, 'loc: 'value>(
                 custom_message,
                 message: reason,
                 status: Status::FAIL,
+                from_origin: lhs_origin,
             })),
         )?;
         (lhs_value, Status::FAIL)
@@ -942,6 +944,7 @@ fn report_value<'r, 'value: 'r, 'loc: 'value>(
 
 fn report_all_values<'r, 'value: 'r, 'loc: 'value>(
     comparisons: Vec<ComparisonResult>,
+    lhs_origin: ValueOrigin,
     cmp: (CmpOperator, bool),
     context: String,
     custom_message: Option<String>,
@@ -951,6 +954,7 @@ fn report_all_values<'r, 'value: 'r, 'loc: 'value>(
     for each_res in comparisons {
         status.push(report_value(
             &each_res,
+            lhs_origin,
             cmp,
             context.clone(),
             custom_message.clone(),
@@ -962,6 +966,7 @@ fn report_all_values<'r, 'value: 'r, 'loc: 'value>(
 
 fn report_at_least_one<'r, 'value: 'r, 'loc: 'value>(
     rhs_comparisons: Vec<ComparisonResult>,
+    lhs_origin: ValueOrigin,
     cmp: (CmpOperator, bool),
     context: String,
     custom_message: Option<String>,
@@ -1033,6 +1038,8 @@ fn report_at_least_one<'r, 'value: 'r, 'loc: 'value>(
                         custom_message: custom_message.clone(),
                         status: Status::FAIL,
                         comparison: cmp,
+                        from_origin: lhs_origin,
+                        report_location: None,
                     })),
                 )?;
                 statues.push((QueryResult::Resolved(Rc::clone(lhs)), Status::FAIL))
@@ -1055,9 +1062,11 @@ where
 /// `role` decides what a positive comparison against an empty reference reports: it
 /// is unsatisfiable, so it fails as an [`ClauseRole::Assertion`] but must stay a SKIP
 /// as a [`ClauseRole::Gate`]. See [`ClauseRole`] for why failing a gate is unsafe.
+#[allow(clippy::too_many_arguments)]
 fn binary_operation<'value, 'loc: 'value>(
     lhs_query: &'value [QueryPart<'loc>],
     rhs: &[QueryResult],
+    rhs_origin: ValueOrigin,
     cmp: (CmpOperator, bool),
     context: String,
     custom_message: Option<String>,
@@ -1065,6 +1074,7 @@ fn binary_operation<'value, 'loc: 'value>(
     role: ClauseRole,
 ) -> Result<EvaluationResult> {
     let lhs = eval_context.query(lhs_query)?;
+    let lhs_origin = eval_context.query_origin(lhs_query);
     // Checked before the comparison rather than after, because the answer is not recoverable from the
     // result: the not-flag has already turned "no element matched" into a success by then, and a
     // success from an incomparable operand looks exactly like a real one. Only `NOT IN` reaches this,
@@ -1201,6 +1211,7 @@ fn binary_operation<'value, 'loc: 'value>(
                                     comparison: cmp,
                                     from: QueryResult::UnResolved(ur.clone()),
                                     to: None,
+                                    from_origin: lhs_origin,
                                 },
                             )),
                         )?;
@@ -1221,6 +1232,7 @@ fn binary_operation<'value, 'loc: 'value>(
                                     comparison: cmp,
                                     from: QueryResult::Resolved(Rc::clone(&lhs)),
                                     to: Some(QueryResult::UnResolved(urhs)),
+                                    from_origin: lhs_origin,
                                 },
                             )),
                         )?;
@@ -1239,8 +1251,9 @@ fn binary_operation<'value, 'loc: 'value>(
                                     message: Some(nc.reason),
                                     custom_message: custom_message.clone(),
                                     comparison: cmp,
-                                    from: nc.pair.lhs_query_result(),
+                                    from: QueryResult::Resolved(Rc::clone(&nc.pair.lhs)),
                                     to: Some(QueryResult::Resolved(nc.pair.rhs)),
+                                    from_origin: lhs_origin,
                                 },
                             )),
                         )?;
@@ -1302,8 +1315,9 @@ fn binary_operation<'value, 'loc: 'value>(
                                         message: None,
                                         custom_message: custom_message.clone(),
                                         comparison: cmp,
-                                        from: pair.lhs_query_result(),
+                                        from: QueryResult::Resolved(Rc::clone(&pair.lhs)),
                                         to: Some(QueryResult::Resolved(pair.rhs)),
+                                        from_origin: lhs_origin,
                                     },
                                 )),
                             )?;
@@ -1323,6 +1337,8 @@ fn binary_operation<'value, 'loc: 'value>(
                                         comparison: cmp,
                                         from: QueryResult::Resolved(Rc::clone(&pair.lhs)),
                                         to: vec![QueryResult::Resolved(pair.rhs)],
+                                        from_origin: lhs_origin,
+                                        report_location: None,
                                     },
                                 )),
                             )?;
@@ -1342,6 +1358,8 @@ fn binary_operation<'value, 'loc: 'value>(
                                         comparison: cmp,
                                         from: QueryResult::Resolved(Rc::clone(&lin.lhs)),
                                         to: vec![QueryResult::Resolved(lin.rhs)],
+                                        from_origin: lhs_origin,
+                                        report_location: None,
                                     },
                                 )),
                             )?;
@@ -1356,6 +1374,23 @@ fn binary_operation<'value, 'loc: 'value>(
                                 .cloned()
                                 .map(QueryResult::Resolved)
                                 .collect::<Vec<_>>();
+                            let diff_origin = match qin.diff_from_rhs {
+                                true => rhs_origin,
+                                false => lhs_origin,
+                            };
+                            let compared_input_location = match qin.diff_from_rhs {
+                                true if lhs_origin == ValueOrigin::Input => {
+                                    qin.lhs.first().map(|value| value.self_path().1)
+                                }
+                                false if rhs_origin == ValueOrigin::Input => {
+                                    qin.rhs.first().map(|value| value.self_path().1)
+                                }
+                                _ => None,
+                            };
+                            let report_location = match diff_origin {
+                                ValueOrigin::Input => None,
+                                _ => compared_input_location,
+                            };
 
                             for lhs in qin.diff {
                                 eval_context.start_record(&context)?;
@@ -1369,6 +1404,8 @@ fn binary_operation<'value, 'loc: 'value>(
                                             comparison: cmp,
                                             from: QueryResult::Resolved(Rc::clone(&lhs)),
                                             to: rhs.clone(),
+                                            from_origin: diff_origin,
+                                            report_location,
                                         },
                                     )),
                                 )?;
@@ -1392,6 +1429,7 @@ fn binary_operation<'value, 'loc: 'value>(
 /// mattered.
 pub(super) fn real_binary_operation<'value, 'loc: 'value>(
     lhs: &[QueryResult],
+    lhs_origin: ValueOrigin,
     rhs: &[QueryResult],
     cmp: MapKeyComparator,
     context: String,
@@ -1416,6 +1454,7 @@ pub(super) fn real_binary_operation<'value, 'loc: 'value>(
                         comparison: recorded_cmp,
                         from: each.clone(),
                         to: None,
+                        from_origin: lhs_origin,
                     })),
                 )?;
                 statues.push((each.clone(), Status::FAIL));
@@ -1442,6 +1481,7 @@ pub(super) fn real_binary_operation<'value, 'loc: 'value>(
                     MapKeyComparator::In | MapKeyComparator::NotIn => {
                         statues.extend(report_at_least_one(
                             r,
+                            lhs_origin,
                             recorded_cmp,
                             context.clone(),
                             custom_message.clone(),
@@ -1452,6 +1492,7 @@ pub(super) fn real_binary_operation<'value, 'loc: 'value>(
                     MapKeyComparator::Eq | MapKeyComparator::NotEq => {
                         let status = report_all_values(
                             r,
+                            lhs_origin,
                             recorded_cmp,
                             context.clone(),
                             custom_message.clone(),
@@ -1489,13 +1530,14 @@ pub(crate) fn eval_guard_access_clause<'value, 'loc: 'value>(
             role,
         )
     } else {
-        let (rhs, _) = match &gac.access_clause.compare_with {
+        let (rhs, rhs_origin) = match &gac.access_clause.compare_with {
             Some(val) => match val {
-                LetValue::Value(rhs_val) => {
-                    (vec![QueryResult::Literal(Rc::new(rhs_val.clone()))], true)
-                }
+                LetValue::Value(rhs_val) => (
+                    vec![QueryResult::Literal(Rc::new(rhs_val.clone()))],
+                    ValueOrigin::RulesFile,
+                ),
                 LetValue::AccessClause(acc_querty) => match resolver.query(&acc_querty.query) {
-                    Ok(result) => (result, false),
+                    Ok(result) => (result, resolver.query_origin(&acc_querty.query)),
                     Err(e) => {
                         resolver.end_record(
                             &blk_context,
@@ -1511,7 +1553,7 @@ pub(crate) fn eval_guard_access_clause<'value, 'loc: 'value>(
                 LetValue::FunctionCall(FunctionExpr {
                     parameters, name, ..
                 }) => match resolve_function(name, parameters, resolver) {
-                    Ok(result) => (result, false),
+                    Ok(result) => result,
                     Err(e) => {
                         resolver.end_record(
                             &blk_context,
@@ -1560,6 +1602,7 @@ pub(crate) fn eval_guard_access_clause<'value, 'loc: 'value>(
         binary_operation(
             &gac.access_clause.query.query,
             &rhs,
+            rhs_origin,
             comparator,
             format!("{}", gac),
             gac.access_clause.custom_message.clone(),
@@ -1827,7 +1870,9 @@ pub(crate) fn eval_general_block_clause<'value, 'loc: 'value, T, E>(
 where
     E: Fn(&'value T, &mut dyn EvalContext<'value, 'loc>) -> Result<Status>,
 {
-    let mut block_scope = block_scope(block, resolver.root(), resolver);
+    let root = resolver.root();
+    let root_origin = resolver.root_origin();
+    let mut block_scope = block_scope(block, root, root_origin, resolver);
     eval_conjunction_clauses(&block.conjunctions, &mut block_scope, eval_fn)
 }
 
@@ -1855,6 +1900,7 @@ pub(crate) fn eval_guard_block_clause<'value, 'loc: 'value>(
             return Err(e);
         }
     };
+    let block_values_origin = resolver.query_origin(&block_clause.query.query);
     if block_values.is_empty() {
         let status = if block_clause.not_empty {
             Status::FAIL
@@ -1897,6 +1943,7 @@ pub(crate) fn eval_guard_block_clause<'value, 'loc: 'value>(
             QueryResult::Literal(rv) | QueryResult::Resolved(rv) => {
                 let mut val_resolver = ValueScope {
                     root: rv,
+                    root_origin: block_values_origin,
                     parent: resolver,
                 };
                 match eval_general_block_clause(&block_clause.block, &mut val_resolver, |gc, r| {
@@ -2094,7 +2141,7 @@ fn eval_when_condition_block<'value, 'loc: 'value>(
 
 struct ResolvedParameterContext<'eval, 'value, 'loc: 'value> {
     call_rule: &'value ParameterizedNamedRuleClause<'loc>,
-    resolved_parameters: HashMap<&'value str, Vec<QueryResult>>,
+    resolved_parameters: HashMap<&'value str, (Vec<QueryResult>, ValueOrigin)>,
     parent: &'eval mut dyn EvalContext<'value, 'loc>,
 }
 
@@ -2122,7 +2169,7 @@ impl<'eval, 'value, 'loc: 'value> EvalContext<'value, 'loc>
 
     fn resolve_variable(&mut self, variable_name: &'value str) -> Result<Vec<QueryResult>> {
         match self.resolved_parameters.get(variable_name) {
-            Some(res) => Ok(res.clone()),
+            Some((res, _)) => Ok(res.clone()),
             None => self.parent.resolve_variable(variable_name),
         }
     }
@@ -2131,8 +2178,25 @@ impl<'eval, 'value, 'loc: 'value> EvalContext<'value, 'loc>
         &mut self,
         variable_name: &'value str,
         key: Rc<PathAwareValue>,
+        origin: ValueOrigin,
     ) -> Result<()> {
-        self.parent.add_variable_capture_key(variable_name, key)
+        self.parent
+            .add_variable_capture_key(variable_name, key, origin)
+    }
+
+    fn root_origin(&mut self) -> ValueOrigin {
+        self.parent.root_origin()
+    }
+
+    fn variable_origin(&mut self, variable_name: &'value str) -> ValueOrigin {
+        match self.resolved_parameters.get(variable_name) {
+            Some((_, origin)) => *origin,
+            None => self.parent.variable_origin(variable_name),
+        }
+    }
+
+    fn query_origin(&mut self, query: &'value [QueryPart<'loc>]) -> ValueOrigin {
+        self.parent.query_origin(query)
     }
 }
 
@@ -2184,26 +2248,20 @@ pub(crate) fn eval_parameterized_rule_call<'value, 'loc: 'value>(
 
     let mut resolved_parameters = HashMap::with_capacity(call_rule.parameters.len());
     for (idx, each) in call_rule.parameters.iter().enumerate() {
-        match each {
-            LetValue::Value(val) => {
-                resolved_parameters.insert(
-                    (param_rule.parameter_names[idx]).as_str(),
-                    vec![QueryResult::Resolved(Rc::new(val.clone()))],
-                );
-            }
+        let resolved = match each {
+            LetValue::Value(val) => (
+                vec![QueryResult::Resolved(Rc::new(val.clone()))],
+                ValueOrigin::RulesFile,
+            ),
             LetValue::AccessClause(query) => {
-                resolved_parameters.insert(
-                    (param_rule.parameter_names[idx]).as_str(),
-                    resolver.query(&query.query)?,
-                );
+                let values = resolver.query(&query.query)?;
+                (values, resolver.query_origin(&query.query))
             }
             LetValue::FunctionCall(FunctionExpr {
                 parameters, name, ..
-            }) => {
-                let result = resolve_function(name, parameters, resolver)?;
-                resolved_parameters.insert((param_rule.parameter_names[idx]).as_str(), result);
-            }
-        }
+            }) => resolve_function(name, parameters, resolver)?,
+        };
+        resolved_parameters.insert((param_rule.parameter_names[idx]).as_str(), resolved);
     }
     let mut eval = ResolvedParameterContext {
         parent: resolver,
@@ -2348,6 +2406,7 @@ pub(crate) fn eval_type_block_clause<'value, 'loc: 'value>(
             return Err(e);
         }
     };
+    let values_origin = resolver.query_origin(&type_block.query);
     if values.is_empty() {
         resolver.end_record(
             &context,
@@ -2391,6 +2450,7 @@ pub(crate) fn eval_type_block_clause<'value, 'loc: 'value>(
 
                 let mut val_resolver = ValueScope {
                     root: Rc::clone(rv),
+                    root_origin: values_origin,
                     parent: resolver,
                 };
 

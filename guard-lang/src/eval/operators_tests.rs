@@ -1131,59 +1131,78 @@ fn test_operator_not_eq() -> crate::Result<()> {
     Ok(())
 }
 
-fn failed_pairs(result: EvalResult) -> Vec<LhsRhsPair> {
-    let results = match result {
-        EvalResult::Result(results) => results,
-        other => panic!("expected comparison results, got {:?}", other),
-    };
-    results
-        .into_iter()
-        .map(|result| match result {
-            ValueEvalResult::ComparisonResult(ComparisonResult::Fail(Compare::Value(pair))) => pair,
-            other => panic!("expected a failed value comparison, got {:?}", other),
+fn resolved_strings(path: &str, values: &[&str]) -> Vec<QueryResult> {
+    values
+        .iter()
+        .enumerate()
+        .map(|(index, value)| {
+            QueryResult::Resolved(Rc::new(PathAwareValue::String((
+                Path::new(format!("{}/{}", path, index), index, 0),
+                (*value).to_string(),
+            ))))
         })
         .collect()
 }
 
-#[test]
-fn failed_comparisons_keep_literal_provenance_of_each_flattened_lhs_element() -> crate::Result<()> {
-    let literal_list = PathAwareValue::try_from(crate::values::read_from("[10, 20]")?)?;
-    let input_value = PathAwareValue::Int((Path::new("/Limit".to_string(), 3, 7), 5));
-    let lhs = vec![QueryResult::Literal(Rc::new(literal_list))];
-    let rhs = vec![QueryResult::Resolved(Rc::new(input_value))];
-
-    let pairs = failed_pairs((CmpOperator::Lt, false).compare(&lhs, &rhs)?);
-
-    assert_eq!(pairs.len(), 2);
-    for pair in pairs {
-        assert!(
-            matches!(pair.lhs_query_result(), QueryResult::Literal(_)),
-            "lost literal provenance of {}",
-            pair.lhs
-        );
+fn failed_query_in(result: EvalResult) -> QueryIn {
+    match result {
+        EvalResult::Result(mut results) => match results.pop() {
+            Some(ValueEvalResult::ComparisonResult(ComparisonResult::Fail(Compare::QueryIn(
+                qin,
+            )))) if results.is_empty() => qin,
+            other => panic!("expected one failed query comparison, got {:?}", other),
+        },
+        other => panic!("expected comparison results, got {:?}", other),
     }
+}
+
+#[test]
+fn query_equality_reports_which_side_the_difference_was_taken_from() -> crate::Result<()> {
+    let longer = resolved_strings("/Longer", &["a", "b"]);
+    let shorter = resolved_strings("/Shorter", &["c"]);
+
+    let from_lhs = failed_query_in((CmpOperator::Eq, false).compare(&longer, &shorter)?);
+    let from_rhs = failed_query_in((CmpOperator::Eq, false).compare(&shorter, &longer)?);
+
+    assert!(!from_lhs.diff_from_rhs);
+    assert!(from_lhs
+        .diff
+        .iter()
+        .all(|v| v.self_path().0.starts_with("/Longer")));
+    assert!(from_rhs.diff_from_rhs);
+    assert!(from_rhs
+        .diff
+        .iter()
+        .all(|v| v.self_path().0.starts_with("/Longer")));
     Ok(())
 }
 
 #[test]
-fn failed_comparisons_mark_an_input_lhs_at_the_document_origin_as_input() -> crate::Result<()> {
-    let input_at_origin = Rc::new(PathAwareValue::String((
-        Path::new("".to_string(), 0, 0),
-        "Wrong".to_string(),
-    )));
-    let input_rhs = Rc::new(PathAwareValue::String((
-        Path::new("/Expected".to_string(), 1, 10),
-        "Different".to_string(),
-    )));
-    let lhs = vec![QueryResult::Resolved(input_at_origin)];
-    let rhs = vec![QueryResult::Resolved(input_rhs)];
+fn negated_query_equality_reports_which_side_the_difference_was_taken_from() -> crate::Result<()> {
+    let lhs = resolved_strings("/Lhs", &["a"]);
+    let rhs = resolved_strings("/Rhs", &["a", "b"]);
 
-    let pairs = failed_pairs((CmpOperator::Lt, false).compare(&lhs, &rhs)?);
+    let qin = failed_query_in((CmpOperator::Eq, true).compare(&lhs, &rhs)?);
 
-    assert_eq!(pairs.len(), 1);
-    assert!(matches!(
-        pairs[0].lhs_query_result(),
-        QueryResult::Resolved(_)
-    ));
+    assert!(qin.diff_from_rhs);
+    assert!(qin.diff.iter().all(|v| v.self_path().0.starts_with("/Rhs")));
+    Ok(())
+}
+
+#[test]
+fn query_membership_takes_the_difference_from_the_left() -> crate::Result<()> {
+    let lhs = resolved_strings("/Lhs", &["a", "z"]);
+    let rhs = resolved_strings("/Rhs", &["a", "b", "c"]);
+
+    let qin = failed_query_in((CmpOperator::In, false).compare(&lhs, &rhs)?);
+    let negated = failed_query_in((CmpOperator::In, true).compare(&lhs, &rhs)?);
+
+    assert!(!qin.diff_from_rhs);
+    assert!(qin.diff.iter().all(|v| v.self_path().0.starts_with("/Lhs")));
+    assert!(!negated.diff_from_rhs);
+    assert!(negated
+        .diff
+        .iter()
+        .all(|v| v.self_path().0.starts_with("/Lhs")));
     Ok(())
 }

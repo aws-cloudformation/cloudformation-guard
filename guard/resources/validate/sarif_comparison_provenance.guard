@@ -1,0 +1,21 @@
+let limits = {min: 2}
+let two = parse_int("2")
+let max = Resources.Bucket.Properties.MaxSize
+let enabled = "Enabled"
+let disabled = "Disabled"
+let lower_name = to_lower(Resources.Bucket.Properties.BucketName)
+
+rule MAX_SIZE_REFERENCE { Resources.Bucket.Properties.MaxSize >= 5 }
+rule RULES_MAP_MEMBER { %limits.min <= %max }
+rule PARSED_LITERAL { %two <= %max }
+rule BLOCK_OVER_LITERAL { %limits { min <= %max } }
+
+rule at_most_max(value) { %value <= %max }
+rule LITERAL_PARAMETER { at_most_max(2) }
+
+rule MODES_REFERENCE { Resources.Bucket.Properties.Modes == ["Enabled"] }
+rule LITERAL_IN_INPUT_LIST { %enabled IN Resources.Bucket.Properties.Modes }
+rule LITERAL_NOT_IN_INPUT_LIST { %disabled NOT IN Resources.Bucket.Properties.Modes }
+
+rule NAME_REFERENCE { Resources.Bucket.Properties.BucketName == "other" }
+rule INPUT_FUNCTION { %lower_name == "other" }

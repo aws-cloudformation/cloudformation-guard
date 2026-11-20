@@ -294,7 +294,9 @@ pub(super) fn extract_name_info_from_record<'record>(
         },
 
         Some(RecordType::ClauseValueCheck(ClauseCheck::Comparison(check))) => match &check.from {
-            QueryResult::Literal(res) | QueryResult::Resolved(res) => {
+            QueryResult::Literal(_) => unreachable!(),
+
+            QueryResult::Resolved(res) => {
                 let (path, provided): (String, serde_json::Value) = (&**res).try_into()?;
                 let expected: Option<(String, serde_json::Value)> = match &check.to {
                     Some(to) => match to {

@@ -1656,6 +1656,66 @@ mod validate_tests {
     }
 
     #[test]
+    fn test_sarif_regions_of_failed_comparisons_against_rules_values_point_at_the_template_value() {
+        let mut reader = Reader::default();
+        let mut writer = Writer::new(WBVec(vec![])).expect("Failed to create writer.");
+
+        let status_code = ValidateTestRunner::default()
+            .rules(vec!["sarif_comparison_provenance.guard"])
+            .data(vec!["sarif-comparison-provenance-template.yaml"])
+            .show_summary(vec!["none"])
+            .output_format(Option::from("sarif"))
+            .structured()
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(StatusCode::VALIDATION_ERROR, status_code);
+
+        let output = writer.stripped().expect("failed to read the writer");
+        let report: serde_json::Value =
+            serde_json::from_str(&output).expect("the sarif report is not valid JSON");
+        let region_of = |rule_id: &str| {
+            let results = report["runs"][0]["results"].as_array().unwrap();
+            let result = results
+                .iter()
+                .find(|result| result["ruleId"] == rule_id)
+                .unwrap_or_else(|| panic!("no result for {} in {}", rule_id, output));
+            result["locations"][0]["physicalLocation"]["region"].clone()
+        };
+
+        // Each reference rule compares the template value itself. The other rules compare a value
+        // written in the rules file, or derived from one, against that same template value, so
+        // they must point at it too rather than at the start of the file.
+        let expectations = [
+            (
+                "MAX_SIZE_REFERENCE",
+                vec![
+                    "RULES_MAP_MEMBER",
+                    "PARSED_LITERAL",
+                    "BLOCK_OVER_LITERAL",
+                    "LITERAL_PARAMETER",
+                ],
+            ),
+            (
+                "MODES_REFERENCE",
+                vec!["LITERAL_IN_INPUT_LIST", "LITERAL_NOT_IN_INPUT_LIST"],
+            ),
+            ("NAME_REFERENCE", vec!["INPUT_FUNCTION"]),
+        ];
+        for (reference, rules) in expectations {
+            let expected = region_of(reference);
+            assert_ne!(
+                serde_json::json!({"startLine": 1, "startColumn": 1}),
+                expected,
+                "{} must point at the template value",
+                reference
+            );
+            for rule in rules {
+                assert_eq!(expected, region_of(rule), "region of {}", rule);
+            }
+        }
+    }
+
+    #[test]
     fn test_structured_output_payload() {
         let mut reader = Reader::new(ReadCursor(Cursor::new(Vec::from(
             COMPLIANT_PAYLOAD.as_bytes(),

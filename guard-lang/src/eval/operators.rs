@@ -4,75 +4,23 @@ use crate::errors::Error;
 use crate::path_value::*;
 use crate::{CmpOperator, QueryResult, UnResolved};
 
-/// Where a left-hand comparison value came from. Rules-file literals have no position in the
-/// input data, so failure records keep them distinguishable from input values.
-#[derive(Clone, Copy, Debug)]
-enum OperandOrigin {
-    RulesLiteral,
-    Input,
-}
-
-#[derive(Clone, Debug)]
-struct Operand {
-    value: Rc<PathAwareValue>,
-    origin: OperandOrigin,
-}
-
-impl Operand {
-    fn rules_literal(value: Rc<PathAwareValue>) -> Operand {
-        Operand {
-            value,
-            origin: OperandOrigin::RulesLiteral,
-        }
-    }
-
-    fn input(value: Rc<PathAwareValue>) -> Operand {
-        Operand {
-            value,
-            origin: OperandOrigin::Input,
-        }
-    }
-
-    /// An element of this operand, such as an item of a flattened list, keeps its origin.
-    fn with_value(&self, value: Rc<PathAwareValue>) -> Operand {
-        Operand {
-            value,
-            origin: self.origin,
-        }
-    }
-}
-
 #[derive(Clone, Debug)]
 pub(crate) struct LhsRhsPair {
     pub(crate) lhs: Rc<PathAwareValue>,
     pub(crate) rhs: Rc<PathAwareValue>,
-    lhs_origin: OperandOrigin,
 }
 
 impl LhsRhsPair {
     fn new(lhs: Rc<PathAwareValue>, rhs: Rc<PathAwareValue>) -> LhsRhsPair {
-        LhsRhsPair::with_lhs_operand(Operand::input(lhs), rhs)
-    }
-
-    fn with_lhs_operand(lhs: Operand, rhs: Rc<PathAwareValue>) -> LhsRhsPair {
-        LhsRhsPair {
-            lhs: lhs.value,
-            rhs,
-            lhs_origin: lhs.origin,
-        }
-    }
-
-    pub(crate) fn lhs_query_result(&self) -> QueryResult {
-        match self.lhs_origin {
-            OperandOrigin::RulesLiteral => QueryResult::Literal(Rc::clone(&self.lhs)),
-            OperandOrigin::Input => QueryResult::Resolved(Rc::clone(&self.lhs)),
-        }
+        LhsRhsPair { lhs, rhs }
     }
 }
 
 #[derive(Clone, Debug)]
 pub(crate) struct QueryIn {
     pub(crate) diff: Vec<Rc<PathAwareValue>>,
+    /// Whether `diff` holds values of the right-hand side rather than the left-hand side.
+    pub(crate) diff_from_rhs: bool,
     pub(crate) lhs: Vec<Rc<PathAwareValue>>,
     pub(crate) rhs: Vec<Rc<PathAwareValue>>,
 }
@@ -80,10 +28,16 @@ pub(crate) struct QueryIn {
 impl QueryIn {
     fn new(
         diff: Vec<Rc<PathAwareValue>>,
+        diff_from_rhs: bool,
         lhs: Vec<Rc<PathAwareValue>>,
         rhs: Vec<Rc<PathAwareValue>>,
     ) -> QueryIn {
-        QueryIn { lhs, rhs, diff }
+        QueryIn {
+            lhs,
+            rhs,
+            diff,
+            diff_from_rhs,
+        }
     }
 }
 
@@ -203,38 +157,6 @@ where
     })
 }
 
-fn selected_operands<U>(query_results: &[QueryResult], mut on_unresolved: U) -> Vec<Operand>
-where
-    U: FnMut(&UnResolved),
-{
-    let mut aggregated = Vec::with_capacity(query_results.len());
-    for each in query_results {
-        match each {
-            QueryResult::Literal(l) => aggregated.push(Operand::rules_literal(Rc::clone(l))),
-            QueryResult::Resolved(r) => aggregated.push(Operand::input(Rc::clone(r))),
-            QueryResult::UnResolved(ur) => on_unresolved(ur),
-        }
-    }
-    aggregated
-}
-
-fn flattened_operands<U>(query_results: &[QueryResult], on_unresolved: U) -> Vec<Operand>
-where
-    U: FnMut(&UnResolved),
-{
-    let mut aggregated = Vec::with_capacity(query_results.len());
-    for operand in selected_operands(query_results, on_unresolved) {
-        match &*operand.value {
-            PathAwareValue::List((_, list)) => aggregated.extend(
-                list.iter()
-                    .map(|element| operand.with_value(Rc::new(element.clone()))),
-            ),
-            _ => aggregated.push(operand),
-        }
-    }
-    aggregated
-}
-
 impl Comparator for CommonOperator {
     fn compare<'value>(
         &self,
@@ -242,21 +164,21 @@ impl Comparator for CommonOperator {
         rhs: &[QueryResult],
     ) -> crate::Result<EvalResult> {
         let mut results = Vec::with_capacity(lhs.len());
-        let lhs_flattened = flattened_operands(lhs, |ur| {
+        let lhs_flattened = flattened(lhs, |ur| {
             results.push(ValueEvalResult::LhsUnresolved(ur.clone()))
         });
         let rhs_flattened = flattened(rhs, |ur| {
             results.extend(lhs_flattened.iter().map(|lhs| {
                 ValueEvalResult::ComparisonResult(ComparisonResult::RhsUnresolved(
                     ur.clone(),
-                    Rc::clone(&lhs.value),
+                    lhs.clone(),
                 ))
             }))
         });
         let rhs = &rhs_flattened;
         for each_lhs in lhs_flattened {
             for each_rhs in rhs {
-                results.push(match_operand(
+                results.push(match_value(
                     each_lhs.clone(),
                     each_rhs.clone(),
                     self.comparator,
@@ -267,27 +189,30 @@ impl Comparator for CommonOperator {
     }
 }
 
-fn match_operand<C>(
-    each_lhs: Operand,
+fn match_value<C>(
+    each_lhs: Rc<PathAwareValue>,
     each_rhs: Rc<PathAwareValue>,
     comparator: C,
 ) -> ValueEvalResult
 where
     C: Fn(&PathAwareValue, &PathAwareValue) -> crate::Result<bool>,
 {
-    let outcome = comparator(&each_lhs.value, &each_rhs);
-    let pair = LhsRhsPair::with_lhs_operand(each_lhs, each_rhs);
-    match outcome {
-        Ok(true) => {
-            ValueEvalResult::ComparisonResult(ComparisonResult::Success(Compare::Value(pair)))
+    match comparator(&each_lhs, &each_rhs) {
+        Ok(cmp) => {
+            if cmp {
+                success(each_lhs, each_rhs)
+            } else {
+                fail(each_lhs, each_rhs)
+            }
         }
-        Ok(false) => {
-            ValueEvalResult::ComparisonResult(ComparisonResult::Fail(Compare::Value(pair)))
-        }
+
         Err(Error::NotComparable(reason)) => {
             ValueEvalResult::ComparisonResult(ComparisonResult::NotComparable(NotComparable {
                 reason,
-                pair,
+                pair: LhsRhsPair {
+                    lhs: each_lhs,
+                    rhs: each_rhs,
+                },
             }))
         }
 
@@ -320,29 +245,29 @@ fn string_in(lhs_value: Rc<PathAwareValue>, rhs_value: Rc<PathAwareValue>) -> Va
 
 fn not_comparable(lhs: Rc<PathAwareValue>, rhs: Rc<PathAwareValue>) -> ValueEvalResult {
     ValueEvalResult::ComparisonResult(ComparisonResult::NotComparable(NotComparable {
-        pair: LhsRhsPair::new(Rc::clone(&lhs), Rc::clone(&rhs)),
+        pair: LhsRhsPair {
+            lhs: Rc::clone(&lhs),
+            rhs: Rc::clone(&rhs),
+        },
         reason: format!("Type not comparable, {}, {}", lhs, rhs),
     }))
 }
 
 fn success(lhs: Rc<PathAwareValue>, rhs: Rc<PathAwareValue>) -> ValueEvalResult {
-    ValueEvalResult::ComparisonResult(ComparisonResult::Success(Compare::Value(LhsRhsPair::new(
-        lhs, rhs,
-    ))))
+    ValueEvalResult::ComparisonResult(ComparisonResult::Success(Compare::Value(LhsRhsPair {
+        lhs,
+        rhs,
+    })))
 }
 
 fn fail(lhs: Rc<PathAwareValue>, rhs: Rc<PathAwareValue>) -> ValueEvalResult {
-    ValueEvalResult::ComparisonResult(ComparisonResult::Fail(Compare::Value(LhsRhsPair::new(
-        lhs, rhs,
-    ))))
+    ValueEvalResult::ComparisonResult(ComparisonResult::Fail(Compare::Value(LhsRhsPair {
+        lhs,
+        rhs,
+    })))
 }
 
 fn contained_in(lhs_value: Rc<PathAwareValue>, rhs_value: Rc<PathAwareValue>) -> ValueEvalResult {
-    contained_in_operand(Operand::input(lhs_value), rhs_value)
-}
-
-fn contained_in_operand(lhs: Operand, rhs_value: Rc<PathAwareValue>) -> ValueEvalResult {
-    let lhs_value = Rc::clone(&lhs.value);
     match &*lhs_value {
         PathAwareValue::List((_, lhsl)) => match &*rhs_value {
             PathAwareValue::List((_, rhsl)) => {
@@ -382,7 +307,10 @@ fn contained_in_operand(lhs: Operand, rhs_value: Rc<PathAwareValue>) -> ValueEva
 
             _ => {
                 ValueEvalResult::ComparisonResult(ComparisonResult::NotComparable(NotComparable {
-                    pair: LhsRhsPair::with_lhs_operand(lhs, Rc::clone(&rhs_value)),
+                    pair: LhsRhsPair {
+                        lhs: lhs_value.clone(),
+                        rhs: rhs_value.clone(),
+                    },
                     reason: format!("Can not compare type {}, {}", lhs_value, rhs_value),
                 }))
             }
@@ -401,11 +329,7 @@ fn contained_in_operand(lhs: Operand, rhs_value: Rc<PathAwareValue>) -> ValueEva
                 }
             }
 
-            rhs_rest => match_operand(
-                lhs.with_value(Rc::new(rest.clone())),
-                Rc::new(rhs_rest.clone()),
-                compare_eq,
-            ),
+            rhs_rest => match_value(Rc::new(rest.clone()), Rc::new(rhs_rest.clone()), compare_eq),
         },
     }
 }
@@ -437,12 +361,8 @@ impl Comparator for InOperation {
                 );
 
                 if rhs.iter().any(|elem| elem.is_list()) {
-                    rhs.into_iter().for_each(|r| {
-                        results.push(contained_in_operand(
-                            Operand::rules_literal(Rc::clone(l)),
-                            r,
-                        ))
-                    });
+                    rhs.into_iter()
+                        .for_each(|r| results.push(contained_in(Rc::clone(l), r)));
                 } else if let PathAwareValue::List((_, list)) = &**l {
                     let diff = list
                         .iter()
@@ -455,6 +375,7 @@ impl Comparator for InOperation {
                         results.push(ValueEvalResult::ComparisonResult(
                             ComparisonResult::Success(Compare::QueryIn(QueryIn {
                                 diff,
+                                diff_from_rhs: false,
                                 rhs,
                                 lhs: vec![Rc::clone(l)],
                             })),
@@ -463,6 +384,7 @@ impl Comparator for InOperation {
                         results.push(ValueEvalResult::ComparisonResult(ComparisonResult::Fail(
                             Compare::QueryIn(QueryIn {
                                 diff,
+                                diff_from_rhs: false,
                                 rhs,
                                 lhs: vec![Rc::clone(l)],
                             }),
@@ -470,10 +392,7 @@ impl Comparator for InOperation {
                     }
                 } else {
                     rhs.iter().for_each(|rhs_elem| {
-                        results.push(contained_in_operand(
-                            Operand::rules_literal(Rc::clone(l)),
-                            Rc::clone(rhs_elem),
-                        ))
+                        results.push(contained_in(Rc::clone(l), rhs_elem.clone()))
                     });
                 }
             }
@@ -534,11 +453,11 @@ impl Comparator for InOperation {
 
                 results.push(if diff.is_empty() {
                     ValueEvalResult::ComparisonResult(ComparisonResult::Success(Compare::QueryIn(
-                        QueryIn::new(diff, lhs_selected, rhs_selected),
+                        QueryIn::new(diff, false, lhs_selected, rhs_selected),
                     )))
                 } else {
                     ValueEvalResult::ComparisonResult(ComparisonResult::Fail(Compare::QueryIn(
-                        QueryIn::new(diff, lhs_selected, rhs_selected),
+                        QueryIn::new(diff, false, lhs_selected, rhs_selected),
                     )))
                 });
             }
@@ -556,11 +475,7 @@ impl Comparator for EqOperation {
         let mut results = Vec::with_capacity(lhs.len());
         match (is_literal(lhs), is_literal(rhs)) {
             (Some(ref l), Some(ref r)) => {
-                results.push(match_operand(
-                    Operand::rules_literal(Rc::clone(l)),
-                    Rc::clone(r),
-                    compare_eq,
-                ));
+                results.push(match_value(Rc::clone(l), Rc::clone(r), compare_eq));
             }
 
             (Some(l), None) => {
@@ -577,11 +492,7 @@ impl Comparator for EqOperation {
                 match &*l {
                     PathAwareValue::List(_) => {
                         for each in rhs {
-                            results.push(match_operand(
-                                Operand::rules_literal(Rc::clone(&l)),
-                                each,
-                                compare_eq,
-                            ));
+                            results.push(match_value(Rc::clone(&l), each, compare_eq));
                         }
                     }
 
@@ -590,8 +501,8 @@ impl Comparator for EqOperation {
                             match &*eachr {
                                 PathAwareValue::List((_, rhsl)) => {
                                     for each_rhs in rhsl {
-                                        results.push(match_operand(
-                                            Operand::rules_literal(Rc::new(single_value.clone())),
+                                        results.push(match_value(
+                                            Rc::new(single_value.clone()),
                                             Rc::new(each_rhs.clone()),
                                             compare_eq,
                                         ));
@@ -599,8 +510,8 @@ impl Comparator for EqOperation {
                                 }
 
                                 rest_rhs => {
-                                    results.push(match_operand(
-                                        Operand::rules_literal(Rc::new(single_value.clone())),
+                                    results.push(match_value(
+                                        Rc::new(single_value.clone()),
                                         Rc::new(rest_rhs.clone()),
                                         compare_eq,
                                     ));
@@ -612,36 +523,38 @@ impl Comparator for EqOperation {
             }
 
             (None, Some(r)) => {
-                let lhs_flattened = selected_operands(lhs, |ur| {
-                    results.push(ValueEvalResult::LhsUnresolved(ur.clone()))
-                });
+                let lhs_flattened = selected(
+                    lhs,
+                    |ur| results.push(ValueEvalResult::LhsUnresolved(ur.clone())),
+                    Vec::push,
+                );
                 match &*r {
                     PathAwareValue::List((_, rhsl)) => {
                         for each in lhs_flattened {
-                            if each.value.is_scalar() && rhsl.len() == 1 {
-                                results.push(match_operand(
+                            if each.is_scalar() && rhsl.len() == 1 {
+                                results.push(match_value(
                                     each,
                                     Rc::new(rhsl[0].clone()),
                                     compare_eq,
                                 ))
                             } else {
-                                results.push(match_operand(each, Rc::clone(&r), compare_eq));
+                                results.push(match_value(each, Rc::clone(&r), compare_eq));
                             }
                         }
                     }
 
                     single_value => {
                         for each in lhs_flattened {
-                            if let PathAwareValue::List((_, lhs_list)) = &*each.value {
+                            if let PathAwareValue::List((_, lhs_list)) = &*each {
                                 for each_lhs in lhs_list {
-                                    results.push(match_operand(
-                                        each.with_value(Rc::new(each_lhs.clone())),
+                                    results.push(match_value(
+                                        Rc::new(each_lhs.clone()),
                                         Rc::new(single_value.clone()),
                                         compare_eq,
                                     ));
                                 }
                             } else {
-                                results.push(match_operand(
+                                results.push(match_value(
                                     each.clone(),
                                     Rc::clone(&r.clone()),
                                     compare_eq,
@@ -671,7 +584,8 @@ impl Comparator for EqOperation {
                     Vec::push,
                 );
 
-                let diff = if lhs_selected.len() > rhs_selected.len() {
+                let diff_from_rhs = lhs_selected.len() <= rhs_selected.len();
+                let diff = if !diff_from_rhs {
                     lhs_selected
                         .iter()
                         .filter(|e| !rhs_selected.contains(*e))
@@ -687,11 +601,11 @@ impl Comparator for EqOperation {
 
                 results.push(if diff.is_empty() {
                     ValueEvalResult::ComparisonResult(ComparisonResult::Success(Compare::QueryIn(
-                        QueryIn::new(diff, lhs_selected, rhs_selected),
+                        QueryIn::new(diff, diff_from_rhs, lhs_selected, rhs_selected),
                     )))
                 } else {
                     ValueEvalResult::ComparisonResult(ComparisonResult::Fail(Compare::QueryIn(
-                        QueryIn::new(diff, lhs_selected, rhs_selected),
+                        QueryIn::new(diff, diff_from_rhs, lhs_selected, rhs_selected),
                     )))
                 });
             }
@@ -812,9 +726,9 @@ impl Comparator for (crate::CmpOperator, bool) {
                                 ValueEvalResult::ComparisonResult(ComparisonResult::Fail(c)) => {
                                     match c {
                                         Compare::QueryIn(qin) => {
-                                            let reverse_diff = if rhs.len() >= lhs.len()
-                                                && matches!(self.0, crate::CmpOperator::Eq)
-                                            {
+                                            let diff_from_rhs = rhs.len() >= lhs.len()
+                                                && matches!(self.0, crate::CmpOperator::Eq);
+                                            let reverse_diff = if diff_from_rhs {
                                                 reverse_diff(qin.diff, &qin.rhs)
                                             } else {
                                                 reverse_diff(qin.diff, &qin.lhs)
@@ -825,6 +739,7 @@ impl Comparator for (crate::CmpOperator, bool) {
                                                     ComparisonResult::Success(Compare::QueryIn(
                                                         QueryIn::new(
                                                             reverse_diff,
+                                                            diff_from_rhs,
                                                             qin.lhs,
                                                             qin.rhs,
                                                         ),
@@ -835,6 +750,7 @@ impl Comparator for (crate::CmpOperator, bool) {
                                                     ComparisonResult::Fail(Compare::QueryIn(
                                                         QueryIn::new(
                                                             reverse_diff,
+                                                            diff_from_rhs,
                                                             qin.lhs,
                                                             qin.rhs,
                                                         ),
@@ -891,7 +807,12 @@ impl Comparator for (crate::CmpOperator, bool) {
                                             reverse_diff.extend(qin.lhs.clone());
                                             ValueEvalResult::ComparisonResult(
                                                 ComparisonResult::Fail(Compare::QueryIn(
-                                                    QueryIn::new(reverse_diff, qin.lhs, qin.rhs),
+                                                    QueryIn::new(
+                                                        reverse_diff,
+                                                        false,
+                                                        qin.lhs,
+                                                        qin.rhs,
+                                                    ),
                                                 )),
                                             )
                                         }

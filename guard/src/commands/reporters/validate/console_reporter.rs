@@ -206,6 +206,7 @@ fn pprint_failed_sub_tree(
                     from,
                     status: Status::FAIL,
                     to,
+                    ..
                 }) => {
                     let custom_message = custom_message.as_ref().map_or("".to_string(), |s| {
                         format!(" Message = [{}]", s.replace('\n', ";"))
@@ -239,6 +240,7 @@ fn pprint_failed_sub_tree(
                     };
 
                     match from {
+                        QueryResult::Literal(_) => unreachable!(),
                         QueryResult::UnResolved(to_unres) => {
                             writeln!(
                                 writer,
@@ -252,7 +254,7 @@ fn pprint_failed_sub_tree(
                             )?;
                         }
 
-                        QueryResult::Literal(res) | QueryResult::Resolved(res) => {
+                        QueryResult::Resolved(res) => {
                             writeln!(
                                 writer,
                                 "{}{}Check was not compliant as property value [{from}] {op_msg} value [{to}].{err}{msg}",
