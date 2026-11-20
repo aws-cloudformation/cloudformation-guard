@@ -1,4 +1,4 @@
 pytest
 mypy
 black
-ruff
+ruff>=0.16.4,<0.17
