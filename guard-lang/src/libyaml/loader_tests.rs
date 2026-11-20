@@ -60,8 +60,9 @@ fn test_handle_bool_happy_path(#[case] arg: &str, #[case] expected: bool) -> Res
             assert!(map.len() == 1);
             let (.., result) = map.first().unwrap();
 
-            if let MarkedValue::Bool(result, ..) = *result {
-                assert_eq!(result, expected);
+            match *result {
+                MarkedValue::Bool(result, ..) => assert_eq!(result, expected),
+                ref other => panic!("expected `{}` to load as a bool, got {:?}", arg, other),
             }
         }
         _ => unreachable!("this isn't possible"),
