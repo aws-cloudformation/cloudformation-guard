@@ -1008,6 +1008,7 @@ fn block_guard_pass() -> Result<()> {
                                         comparison: (CmpOperator::Eq, true),
                                         from: QueryResult::Resolved(from_q),
                                         to: Some(QueryResult::Resolved(_)),
+                                        ..
                                     },
                                 )) => {
                                     assert_eq!(msg, "No wildcard allowed for Principals");

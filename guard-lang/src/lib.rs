@@ -25,6 +25,7 @@ pub use parser::{rules_file, Span};
 pub use errors::Error;
 
 use crate::exprs::{ParameterizedRule, QueryPart};
+use crate::path_value::Location;
 pub use crate::path_value::{Path, PathAwareValue};
 use crate::values::CmpOperator;
 use colored::*;
@@ -203,6 +204,25 @@ impl QueryResult {
     }
 }
 
+/// Where an evaluated value came from. Rules-file values carry placeholder locations, so only a
+/// value proven to come from the input data may supply a report location.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ValueOrigin {
+    Input,
+    RulesFile,
+    Unknown,
+}
+
+impl ValueOrigin {
+    pub(crate) fn merge(self, other: ValueOrigin) -> ValueOrigin {
+        if self == other {
+            self
+        } else {
+            ValueOrigin::Unknown
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct ComparisonClauseCheck {
     pub comparison: (CmpOperator, bool),
@@ -211,6 +231,8 @@ pub struct ComparisonClauseCheck {
     pub message: Option<String>,
     pub custom_message: Option<String>,
     pub status: Status,
+    #[serde(skip)]
+    pub(crate) from_origin: ValueOrigin,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -221,6 +243,10 @@ pub struct InComparisonCheck {
     pub message: Option<String>,
     pub custom_message: Option<String>,
     pub status: Status,
+    #[serde(skip)]
+    pub(crate) from_origin: ValueOrigin,
+    #[serde(skip)]
+    pub(crate) report_location: Option<Location>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -387,11 +413,29 @@ pub(crate) trait EvalContext<'value, 'loc: 'value>: RecordTracer<'value> {
     /// and from a gate are two different questions.
     fn rule_status(&mut self, rule_name: &'value str, role: eval::ClauseRole) -> Result<Status>;
     fn resolve_variable(&mut self, variable_name: &'value str) -> Result<Vec<QueryResult>>;
+    /// `origin` is where the map holding `key` came from.
     fn add_variable_capture_key(
         &mut self,
         variable_name: &'value str,
         key: Rc<PathAwareValue>,
+        origin: ValueOrigin,
     ) -> Result<()>;
+    /// Origin of the values `root` returns.
+    fn root_origin(&mut self) -> ValueOrigin {
+        ValueOrigin::Unknown
+    }
+    /// Origin of the values `resolve_variable` last returned for `variable_name`.
+    fn variable_origin(&mut self, _variable_name: &'value str) -> ValueOrigin {
+        ValueOrigin::Unknown
+    }
+    /// Origin of the values `query` returns for `query`. Every value a query returns is taken from
+    /// the value it starts at, so it shares that value's origin.
+    fn query_origin(&mut self, query: &'value [QueryPart<'loc>]) -> ValueOrigin {
+        match query.first().and_then(QueryPart::variable) {
+            Some(variable_name) => self.variable_origin(variable_name),
+            None => self.root_origin(),
+        }
+    }
     /// Note that a clause took a path whose answer is going to change, without changing this run's
     /// answer.
     ///

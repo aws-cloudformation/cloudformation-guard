@@ -19,6 +19,8 @@ impl LhsRhsPair {
 #[derive(Clone, Debug)]
 pub(crate) struct QueryIn {
     pub(crate) diff: Vec<Rc<PathAwareValue>>,
+    /// Whether `diff` holds values of the right-hand side rather than the left-hand side.
+    pub(crate) diff_from_rhs: bool,
     pub(crate) lhs: Vec<Rc<PathAwareValue>>,
     pub(crate) rhs: Vec<Rc<PathAwareValue>>,
 }
@@ -26,10 +28,16 @@ pub(crate) struct QueryIn {
 impl QueryIn {
     fn new(
         diff: Vec<Rc<PathAwareValue>>,
+        diff_from_rhs: bool,
         lhs: Vec<Rc<PathAwareValue>>,
         rhs: Vec<Rc<PathAwareValue>>,
     ) -> QueryIn {
-        QueryIn { lhs, rhs, diff }
+        QueryIn {
+            lhs,
+            rhs,
+            diff,
+            diff_from_rhs,
+        }
     }
 }
 
@@ -367,6 +375,7 @@ impl Comparator for InOperation {
                         results.push(ValueEvalResult::ComparisonResult(
                             ComparisonResult::Success(Compare::QueryIn(QueryIn {
                                 diff,
+                                diff_from_rhs: false,
                                 rhs,
                                 lhs: vec![Rc::clone(l)],
                             })),
@@ -375,6 +384,7 @@ impl Comparator for InOperation {
                         results.push(ValueEvalResult::ComparisonResult(ComparisonResult::Fail(
                             Compare::QueryIn(QueryIn {
                                 diff,
+                                diff_from_rhs: false,
                                 rhs,
                                 lhs: vec![Rc::clone(l)],
                             }),
@@ -443,11 +453,11 @@ impl Comparator for InOperation {
 
                 results.push(if diff.is_empty() {
                     ValueEvalResult::ComparisonResult(ComparisonResult::Success(Compare::QueryIn(
-                        QueryIn::new(diff, lhs_selected, rhs_selected),
+                        QueryIn::new(diff, false, lhs_selected, rhs_selected),
                     )))
                 } else {
                     ValueEvalResult::ComparisonResult(ComparisonResult::Fail(Compare::QueryIn(
-                        QueryIn::new(diff, lhs_selected, rhs_selected),
+                        QueryIn::new(diff, false, lhs_selected, rhs_selected),
                     )))
                 });
             }
@@ -574,7 +584,8 @@ impl Comparator for EqOperation {
                     Vec::push,
                 );
 
-                let diff = if lhs_selected.len() > rhs_selected.len() {
+                let diff_from_rhs = lhs_selected.len() <= rhs_selected.len();
+                let diff = if !diff_from_rhs {
                     lhs_selected
                         .iter()
                         .filter(|e| !rhs_selected.contains(*e))
@@ -590,11 +601,11 @@ impl Comparator for EqOperation {
 
                 results.push(if diff.is_empty() {
                     ValueEvalResult::ComparisonResult(ComparisonResult::Success(Compare::QueryIn(
-                        QueryIn::new(diff, lhs_selected, rhs_selected),
+                        QueryIn::new(diff, diff_from_rhs, lhs_selected, rhs_selected),
                     )))
                 } else {
                     ValueEvalResult::ComparisonResult(ComparisonResult::Fail(Compare::QueryIn(
-                        QueryIn::new(diff, lhs_selected, rhs_selected),
+                        QueryIn::new(diff, diff_from_rhs, lhs_selected, rhs_selected),
                     )))
                 });
             }
@@ -715,9 +726,9 @@ impl Comparator for (crate::CmpOperator, bool) {
                                 ValueEvalResult::ComparisonResult(ComparisonResult::Fail(c)) => {
                                     match c {
                                         Compare::QueryIn(qin) => {
-                                            let reverse_diff = if rhs.len() >= lhs.len()
-                                                && matches!(self.0, crate::CmpOperator::Eq)
-                                            {
+                                            let diff_from_rhs = rhs.len() >= lhs.len()
+                                                && matches!(self.0, crate::CmpOperator::Eq);
+                                            let reverse_diff = if diff_from_rhs {
                                                 reverse_diff(qin.diff, &qin.rhs)
                                             } else {
                                                 reverse_diff(qin.diff, &qin.lhs)
@@ -728,6 +739,7 @@ impl Comparator for (crate::CmpOperator, bool) {
                                                     ComparisonResult::Success(Compare::QueryIn(
                                                         QueryIn::new(
                                                             reverse_diff,
+                                                            diff_from_rhs,
                                                             qin.lhs,
                                                             qin.rhs,
                                                         ),
@@ -738,6 +750,7 @@ impl Comparator for (crate::CmpOperator, bool) {
                                                     ComparisonResult::Fail(Compare::QueryIn(
                                                         QueryIn::new(
                                                             reverse_diff,
+                                                            diff_from_rhs,
                                                             qin.lhs,
                                                             qin.rhs,
                                                         ),
@@ -794,7 +807,12 @@ impl Comparator for (crate::CmpOperator, bool) {
                                             reverse_diff.extend(qin.lhs.clone());
                                             ValueEvalResult::ComparisonResult(
                                                 ComparisonResult::Fail(Compare::QueryIn(
-                                                    QueryIn::new(reverse_diff, qin.lhs, qin.rhs),
+                                                    QueryIn::new(
+                                                        reverse_diff,
+                                                        false,
+                                                        qin.lhs,
+                                                        qin.rhs,
+                                                    ),
                                                 )),
                                             )
                                         }

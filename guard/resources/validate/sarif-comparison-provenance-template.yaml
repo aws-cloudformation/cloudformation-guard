@@ -1,0 +1,7 @@
+Resources:
+  Bucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: MyBucket
+      MaxSize: 1
+      Modes: [Disabled, "Off"]
