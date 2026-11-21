@@ -86,7 +86,7 @@ impl Loader {
                 Ok(i) => MarkedValue::Int(i, location),
                 Err(_) => match val.parse::<f64>() {
                     Ok(f) => MarkedValue::Float(f, location),
-                    Err(_) => match self.parse_bool(&val) {
+                    Err(_) => match parse_bool(&val) {
                         Some(b) => MarkedValue::Bool(b, location),
                         None => match val.to_lowercase().as_str() {
                             "~" | "null" => MarkedValue::Null(location),
@@ -98,30 +98,6 @@ impl Loader {
         };
 
         self.stack.push(path_value);
-    }
-    // YAML 1.1 booleans may be written in lowercase, Capitalized or UPPERCASE form
-    fn is_bool_true(&self, s: &str) -> bool {
-        matches!(
-            s,
-            "true" | "True" | "TRUE" | "yes" | "Yes" | "YES" | "on" | "On" | "ON" | "y" | "Y"
-        )
-    }
-
-    fn is_bool_false(&self, s: &str) -> bool {
-        matches!(
-            s,
-            "false" | "False" | "FALSE" | "no" | "No" | "NO" | "off" | "Off" | "OFF" | "n" | "N"
-        )
-    }
-
-    fn parse_bool(&self, val: &str) -> Option<bool> {
-        if self.is_bool_true(val) {
-            Some(true)
-        } else if self.is_bool_false(val) {
-            Some(false)
-        } else {
-            None
-        }
     }
 
     fn handle_sequence_end(&mut self) {
@@ -230,11 +206,24 @@ fn handle_sequence_value_func_ref(loc: Location, fn_ref: &str) -> Option<MarkedV
     None
 }
 
+// YAML 1.1 booleans may be written in lowercase, Capitalized or UPPERCASE form
+fn parse_bool(val: &str) -> Option<bool> {
+    match val {
+        "true" | "True" | "TRUE" | "yes" | "Yes" | "YES" | "on" | "On" | "ON" | "y" | "Y" => {
+            Some(true)
+        }
+        "false" | "False" | "FALSE" | "no" | "No" | "NO" | "off" | "Off" | "OFF" | "n" | "N" => {
+            Some(false)
+        }
+        _ => None,
+    }
+}
+
 fn handle_type_ref(val: String, loc: Location, type_ref: &str) -> MarkedValue {
     match type_ref {
-        "tag:yaml.org,2002:bool" => match val.parse::<bool>() {
-            Err(_) => MarkedValue::String(val, loc),
-            Ok(v) => MarkedValue::Bool(v, loc),
+        "tag:yaml.org,2002:bool" => match parse_bool(&val) {
+            None => MarkedValue::String(val, loc),
+            Some(v) => MarkedValue::Bool(v, loc),
         },
         "tag:yaml.org,2002:int" => match val.parse::<i64>() {
             Err(_) => MarkedValue::BadValue(val, loc),

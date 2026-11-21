@@ -51,8 +51,12 @@ fn yaml_loader() -> Result<()> {
 #[case::yaml_off_uppercase("OFF", false)]
 #[case::yaml_n_lowercase("n", false)]
 #[case::yaml_n_uppercase("N", false)]
-fn test_handle_bool_happy_path(#[case] arg: &str, #[case] expected: bool) -> Result<()> {
-    let docs = format!("check: {arg}");
+fn test_handle_bool_happy_path(
+    #[case] arg: &str,
+    #[case] expected: bool,
+    #[values("", "!!bool ")] tag: &str,
+) -> Result<()> {
+    let docs = format!("check: {tag}{arg}");
 
     let mut loader = Loader::new();
     match loader.load(String::from(docs))? {
@@ -62,7 +66,31 @@ fn test_handle_bool_happy_path(#[case] arg: &str, #[case] expected: bool) -> Res
 
             match *result {
                 MarkedValue::Bool(result, ..) => assert_eq!(result, expected),
-                ref other => panic!("expected `{}` to load as a bool, got {:?}", arg, other),
+                ref other => panic!(
+                    "expected `{}{}` to load as a bool, got {:?}",
+                    tag, arg, other
+                ),
+            }
+        }
+        _ => unreachable!("this isn't possible"),
+    }
+
+    Ok(())
+}
+
+#[rstest::rstest]
+#[case::mixed_case("tRUE")]
+#[case::not_a_bool("maybe")]
+fn test_handle_bool_invalid_spelling_with_tag_loads_as_string(#[case] arg: &str) -> Result<()> {
+    let docs = format!("check: !!bool {arg}");
+
+    let mut loader = Loader::new();
+    match loader.load(docs)? {
+        MarkedValue::Map(map, ..) => {
+            let (.., result) = map.first().unwrap();
+            match result {
+                MarkedValue::String(result, ..) => assert_eq!(result, arg),
+                other => panic!("expected `{}` to load as a string, got {:?}", arg, other),
             }
         }
         _ => unreachable!("this isn't possible"),
