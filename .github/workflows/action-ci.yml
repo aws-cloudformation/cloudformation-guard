@@ -21,7 +21,9 @@ jobs:
       - uses: actions/setup-node@v4.0.2
         with:
           node-version: "20"
-      - run: npm install
+      - name: Upgrade npm to match the committed lockfile
+        run: npm install -g npm@11
+      - run: npm ci
       - run: npm run lint
       - run: npm run format:check
       - run: npm run test

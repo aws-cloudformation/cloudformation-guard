@@ -87,6 +87,9 @@ jobs:
           cache: npm
           cache-dependency-path: guard/package-lock.json
 
+      - name: Upgrade npm to match the committed lockfiles
+        run: npm install -g npm@11
+
       - name: Configure git
         run: |
           git config user.name "github-actions[bot]"
