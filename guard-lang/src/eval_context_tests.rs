@@ -64,12 +64,7 @@ impl<'record, 'value, 'loc: 'value> EvalContext<'value, 'loc>
     fn resolve_variable(&mut self, _: &str) -> Result<Vec<QueryResult>> {
         todo!()
     }
-    fn add_variable_capture_key(
-        &mut self,
-        _: &'value str,
-        _: Rc<PathAwareValue>,
-        _: ValueOrigin,
-    ) -> Result<()> {
+    fn add_variable_capture_key(&mut self, _: &'value str, _: Rc<PathAwareValue>) -> Result<()> {
         todo!()
     }
 }
@@ -658,9 +653,9 @@ fn failed_comparison_location(rules: &str, data: &str, failed_value: &str) -> Re
     let rules_file = RulesFile::try_from(rules)?;
     let root = PathAwareValue::try_from(crate::values::read_from(data)?)?;
     let mut scope = root_scope(&rules_file, Rc::new(root));
+    scope.enable_provenance_tracking();
     crate::eval::eval_rules_file(&rules_file, &mut scope, None)?;
-    let records = scope.reset_recorder().extract();
-    let report = simplified_json_from_root(&records)?;
+    let report = scope.reset_recorder().into_file_report()?;
 
     let failed_value_marker = format!("Value=\"{}\"]", failed_value);
     let messages = report
@@ -720,40 +715,55 @@ fn failed_comparison_between_input_values_is_located_at_the_left_value_at_the_do
 
 #[derive(Debug)]
 enum FailedCheck {
-    Comparison(ComparisonClauseCheck),
-    InComparison(InComparisonCheck),
+    Comparison(ComparisonClauseCheck, Option<ReportProvenance>),
+    InComparison(InComparisonCheck, Option<ReportProvenance>),
 }
 
 impl FailedCheck {
     fn origin(&self) -> ValueOrigin {
-        match self {
-            FailedCheck::Comparison(check) => check.from_origin,
-            FailedCheck::InComparison(check) => check.from_origin,
-        }
+        let provenance = match self {
+            FailedCheck::Comparison(_, provenance) | FailedCheck::InComparison(_, provenance) => {
+                provenance
+            }
+        };
+        provenance
+            .unwrap_or_else(|| panic!("a failed comparison must keep its provenance: {:?}", self))
+            .from_origin
     }
 
     fn left(&self) -> &QueryResult {
         match self {
-            FailedCheck::Comparison(check) => &check.from,
-            FailedCheck::InComparison(check) => &check.from,
+            FailedCheck::Comparison(check, _) => &check.from,
+            FailedCheck::InComparison(check, _) => &check.from,
         }
     }
 }
 
-fn collect_failed_checks(record: &EventRecord<'_>, checks: &mut Vec<FailedCheck>) {
-    for child in &record.children {
-        collect_failed_checks(child, checks);
+fn collect_failed_checks(
+    record: &EventRecord<'_>,
+    provenance: &ProvenanceRecord,
+    checks: &mut Vec<FailedCheck>,
+) {
+    assert_eq!(record.children.len(), provenance.children.len());
+    for (child, child_provenance) in record.children.iter().zip(&provenance.children) {
+        collect_failed_checks(child, child_provenance, checks);
     }
     match &record.container {
         Some(RecordType::ClauseValueCheck(ClauseCheck::Comparison(check)))
             if check.status == Status::FAIL =>
         {
-            checks.push(FailedCheck::Comparison(check.clone()))
+            checks.push(FailedCheck::Comparison(
+                check.clone(),
+                provenance.provenance,
+            ))
         }
         Some(RecordType::ClauseValueCheck(ClauseCheck::InComparison(check)))
             if check.status == Status::FAIL =>
         {
-            checks.push(FailedCheck::InComparison(check.clone()))
+            checks.push(FailedCheck::InComparison(
+                check.clone(),
+                provenance.provenance,
+            ))
         }
         _ => {}
     }
@@ -768,11 +778,17 @@ fn evaluate_failures(rules: &str, data: &str) -> Result<Evaluated> {
     let rules_file = RulesFile::try_from(rules)?;
     let root = PathAwareValue::try_from(crate::values::read_from(data)?)?;
     let mut scope = root_scope(&rules_file, Rc::new(root));
+    scope.enable_provenance_tracking();
     crate::eval::eval_rules_file(&rules_file, &mut scope, None)?;
-    let records = scope.reset_recorder().extract();
+    let tracker = scope.reset_recorder();
     let mut checks = vec![];
-    collect_failed_checks(&records, &mut checks);
-    let locations = simplified_json_from_root(&records)?
+    collect_failed_checks(
+        tracker.final_event.as_ref().unwrap(),
+        tracker.final_provenance.as_ref().unwrap(),
+        &mut checks,
+    );
+    let locations = tracker
+        .into_file_report()?
         .not_compliant
         .iter()
         .flat_map(ClauseReport::get_message)
@@ -894,7 +910,7 @@ fn a_count_of_nothing_is_not_an_input_value() -> Result<()> {
     )?;
     let count_check = checks
         .iter()
-        .find(|check| matches!(check, FailedCheck::Comparison(c) if c.comparison == (CmpOperator::Ge, false)))
+        .find(|check| matches!(check, FailedCheck::Comparison(c, _) if c.comparison == (CmpOperator::Ge, false)))
         .expect("the count comparison fails");
     assert_eq!(ValueOrigin::RulesFile, count_check.origin());
     Ok(())
@@ -1063,7 +1079,7 @@ fn a_query_difference_taken_from_the_right_keeps_the_right_origin() -> Result<()
 
     let differences = checks
         .iter()
-        .filter(|check| matches!(check, FailedCheck::InComparison(_)))
+        .filter(|check| matches!(check, FailedCheck::InComparison(..)))
         .collect::<Vec<_>>();
     assert_eq!(2, differences.len(), "{:?}", checks);
     for check in differences {
@@ -1083,7 +1099,7 @@ fn a_rules_side_query_difference_is_located_at_the_input_query() -> Result<()> {
 
     let differences = checks
         .iter()
-        .filter(|check| matches!(check, FailedCheck::InComparison(_)))
+        .filter(|check| matches!(check, FailedCheck::InComparison(..)))
         .collect::<Vec<_>>();
     assert_eq!(1, differences.len(), "{:?}", checks);
     assert_eq!(ValueOrigin::RulesFile, differences[0].origin());
@@ -1137,7 +1153,7 @@ fn an_input_key_at_the_document_origin_is_input() -> Result<()> {
 }
 
 #[test]
-fn the_origin_of_a_failed_comparison_is_not_serialized_or_displayed() -> Result<()> {
+fn provenance_changes_only_the_provenance_aware_report_location() -> Result<()> {
     let literal = Rc::new(PathAwareValue::String((
         Path::new("".to_string(), 0, 0),
         "Enabled".to_string(),
@@ -1146,18 +1162,17 @@ fn the_origin_of_a_failed_comparison_is_not_serialized_or_displayed() -> Result<
         Path::new("/Status".to_string(), 5, 16),
         "Suspended".to_string(),
     )));
-    let comparison = |from_origin| {
+    let comparison = || {
         RecordType::ClauseValueCheck(ClauseCheck::Comparison(ComparisonClauseCheck {
             comparison: (CmpOperator::Eq, false),
-            from: QueryResult::Resolved(Rc::clone(&literal)),
-            to: Some(QueryResult::Resolved(Rc::clone(&input))),
+            from: QueryResult::Resolved(Rc::clone(&input)),
+            to: Some(QueryResult::Resolved(Rc::clone(&literal))),
             message: None,
             custom_message: None,
             status: Status::FAIL,
-            from_origin,
         }))
     };
-    let membership = |from_origin, report_location| {
+    let membership = || {
         RecordType::ClauseValueCheck(ClauseCheck::InComparison(InComparisonCheck {
             comparison: (CmpOperator::In, false),
             from: QueryResult::Resolved(Rc::clone(&literal)),
@@ -1165,27 +1180,292 @@ fn the_origin_of_a_failed_comparison_is_not_serialized_or_displayed() -> Result<
             message: None,
             custom_message: None,
             status: Status::FAIL,
-            from_origin,
-            report_location,
         }))
     };
-
-    let same_output = |rules_file: RecordType<'_>, input: RecordType<'_>| -> Result<()> {
-        assert_eq!(
-            serde_json::to_value(&input)?,
-            serde_json::to_value(&rules_file)?
-        );
-        assert_eq!(input.to_string(), rules_file.to_string());
-        Ok(())
+    let tracked = |record: RecordType<'static>, provenance: Option<ReportProvenance>| {
+        let mut tracker = RecordTracker::with_provenance_tracking(true);
+        tracker.start_record("file")?;
+        tracker.start_record("rule")?;
+        tracker.start_record("clause")?;
+        match provenance {
+            Some(provenance) => tracker.end_record_with_provenance("clause", record, provenance)?,
+            None => tracker.end_record("clause", record)?,
+        }
+        tracker.end_record(
+            "rule",
+            RecordType::RuleCheck(NamedStatus {
+                name: "rule",
+                status: Status::FAIL,
+                message: None,
+            }),
+        )?;
+        tracker.end_record(
+            "file",
+            RecordType::FileCheck(NamedStatus {
+                name: "file",
+                status: Status::FAIL,
+                message: None,
+            }),
+        )?;
+        Ok::<_, Error>(tracker)
     };
-    same_output(
-        comparison(ValueOrigin::RulesFile),
-        comparison(ValueOrigin::Input),
-    )?;
-    same_output(
-        membership(ValueOrigin::RulesFile, Some(Location::new(5, 16))),
-        membership(ValueOrigin::Input, None),
-    )
+    let located = |tracker: RecordTracker<'static>| -> Result<(EventRecord<'static>, Location)> {
+        let record = tracker.final_event.clone().unwrap();
+        let report = tracker.into_file_report()?;
+        let location = report
+            .not_compliant
+            .iter()
+            .flat_map(ClauseReport::get_message)
+            .find_map(|messages| messages.location)
+            .expect("the failed comparison is reported");
+        Ok((record, location))
+    };
+    let assert_raw_unchanged = |plain: &EventRecord<'_>, with_provenance: &EventRecord<'_>| {
+        assert_eq!(plain, with_provenance);
+        assert_eq!(
+            serde_json::to_value(plain).unwrap(),
+            serde_json::to_value(with_provenance).unwrap()
+        );
+        let container = |record: &EventRecord<'_>| {
+            record.children[0].children[0]
+                .container
+                .as_ref()
+                .unwrap()
+                .to_string()
+        };
+        assert_eq!(container(plain), container(with_provenance));
+    };
+
+    let plain = tracked(comparison(), None)?;
+    let plain_report = simplified_json_from_root(plain.final_event.as_ref().unwrap())?;
+    let (plain_record, plain_location) = located(plain)?;
+    let (record, location) = located(tracked(
+        comparison(),
+        Some(ReportProvenance {
+            from_origin: ValueOrigin::Input,
+            report_location: None,
+        }),
+    )?)?;
+    assert_raw_unchanged(&plain_record, &record);
+    assert_eq!(Location::new(0, 0), plain_location);
+    assert_eq!(
+        Some(plain_location),
+        plain_report
+            .not_compliant
+            .iter()
+            .flat_map(ClauseReport::get_message)
+            .find_map(|messages| messages.location)
+    );
+    assert_eq!(Location::new(5, 16), location);
+
+    let (plain_record, plain_location) = located(tracked(membership(), None)?)?;
+    let (record, location) = located(tracked(
+        membership(),
+        Some(ReportProvenance {
+            from_origin: ValueOrigin::RulesFile,
+            report_location: None,
+        }),
+    )?)?;
+    assert_raw_unchanged(&plain_record, &record);
+    assert_eq!(Location::new(0, 0), plain_location);
+    assert_eq!(Location::new(5, 16), location);
+    Ok(())
+}
+
+#[test]
+fn provenance_is_not_applied_to_a_record_whose_shape_changed() -> Result<()> {
+    let literal = Rc::new(PathAwareValue::String((
+        Path::new("".to_string(), 0, 0),
+        "Enabled".to_string(),
+    )));
+    let input = Rc::new(PathAwareValue::String((
+        Path::new("/Status".to_string(), 5, 16),
+        "Suspended".to_string(),
+    )));
+    let tracked = || -> Result<RecordTracker<'static>> {
+        let mut tracker = RecordTracker::with_provenance_tracking(true);
+        tracker.start_record("file")?;
+        tracker.start_record("rule")?;
+        tracker.start_record("clause")?;
+        tracker.end_record_with_provenance(
+            "clause",
+            RecordType::ClauseValueCheck(ClauseCheck::Comparison(ComparisonClauseCheck {
+                comparison: (CmpOperator::Eq, false),
+                from: QueryResult::Resolved(Rc::clone(&input)),
+                to: Some(QueryResult::Resolved(Rc::clone(&literal))),
+                message: None,
+                custom_message: None,
+                status: Status::FAIL,
+            })),
+            ReportProvenance {
+                from_origin: ValueOrigin::Input,
+                report_location: None,
+            },
+        )?;
+        tracker.end_record(
+            "rule",
+            RecordType::RuleCheck(NamedStatus {
+                name: "rule",
+                status: Status::FAIL,
+                message: None,
+            }),
+        )?;
+        tracker.end_record(
+            "file",
+            RecordType::FileCheck(NamedStatus {
+                name: "file",
+                status: Status::FAIL,
+                message: None,
+            }),
+        )?;
+        Ok(tracker)
+    };
+    let located = |tracker: RecordTracker<'static>| -> Result<Location> {
+        Ok(tracker
+            .into_file_report()?
+            .not_compliant
+            .iter()
+            .flat_map(ClauseReport::get_message)
+            .find_map(|messages| messages.location)
+            .expect("the failed comparison is reported"))
+    };
+
+    assert_eq!(Location::new(5, 16), located(tracked()?)?);
+
+    let mut reshaped = tracked()?;
+    let rule = &mut reshaped.final_event.as_mut().unwrap().children[0];
+    rule.children.insert(0, EventRecord::default());
+    assert_eq!(Location::new(0, 0), located(reshaped)?);
+
+    let mut renamed = tracked()?;
+    renamed.final_event.as_mut().unwrap().children[0].children[0].context = "other".to_string();
+    assert_eq!(Location::new(0, 0), located(renamed)?);
+    Ok(())
+}
+
+fn failed_comparison_location_with_input_parameters(
+    rules: &str,
+    parameters: &str,
+    register_parameters: bool,
+) -> Result<Location> {
+    let rules_file = RulesFile::try_from(rules)?;
+    let parameters = PathAwareValue::try_from(crate::values::read_from(parameters)?)?;
+    let template = PathAwareValue::try_from(crate::values::read_from(VERSIONING_TEMPLATE)?)?;
+    let root = parameters.clone().merge(template)?;
+    let mut scope = root_scope(&rules_file, Rc::new(root));
+    scope.enable_provenance_tracking();
+    if register_parameters {
+        scope.register_input_parameters(&parameters);
+    }
+    crate::eval::eval_rules_file(&rules_file, &mut scope, None)?;
+    let report = scope.reset_recorder().into_file_report()?;
+
+    let messages = report
+        .not_compliant
+        .iter()
+        .flat_map(ClauseReport::get_message)
+        .collect::<Vec<_>>();
+    assert_eq!(1, messages.len(), "{:?}", messages);
+    Ok(messages[0]
+        .location
+        .expect("a failed comparison must carry a location"))
+}
+
+#[test]
+fn failed_comparison_with_an_input_parameter_is_located_at_the_template_value() -> Result<()> {
+    let parameters = "\n\n\n\n\n\n\n\nExpectedStatus: Enabled\n";
+    let parameter_location = Location::new(8, 16);
+    let cases = [
+        r#"rule parameter_on_the_right {
+            Resources.*.Properties.VersioningConfiguration.Status == ExpectedStatus
+        }"#,
+        r#"rule parameter_on_the_left {
+            ExpectedStatus == Resources.*.Properties.VersioningConfiguration.Status
+        }"#,
+        r#"rule parameter_in_template_value {
+            ExpectedStatus IN Resources.*.Properties.VersioningConfiguration.Status
+        }"#,
+    ];
+
+    for rules in cases {
+        assert_eq!(
+            VERSIONING_STATUS_LOCATION,
+            failed_comparison_location_with_input_parameters(rules, parameters, true)?,
+            "{}",
+            rules
+        );
+    }
+    assert_eq!(
+        parameter_location,
+        failed_comparison_location_with_input_parameters(cases[0], parameters, false)?,
+        "without registered parameters the merged root is all input"
+    );
+    Ok(())
+}
+
+#[test]
+fn failed_comparison_with_only_rules_and_parameter_operands_has_no_data_file_location() -> Result<()>
+{
+    let parameters =
+        "\n\n\n\n\n\n\n\nExpectedStatus: Enabled\nCurrentStatus: Suspended\nAllowedStatuses: [Enabled]\n";
+    let cases = [
+        r#"rule parameter_only_scalar {
+            CurrentStatus == ExpectedStatus
+        }"#,
+        r#"rule parameter_only_membership {
+            CurrentStatus IN AllowedStatuses
+        }"#,
+        r#"rule parameter_versus_rules_literal {
+            CurrentStatus == "Enabled"
+        }"#,
+        r#"let suspended = "Suspended"
+        rule rules_literal_versus_parameter {
+            %suspended == ExpectedStatus
+        }"#,
+        r#"rule parameter_in_rules_literal {
+            CurrentStatus IN ["Enabled"]
+        }"#,
+        r#"let suspended = "Suspended"
+        rule rules_literal_in_parameter {
+            %suspended IN AllowedStatuses
+        }"#,
+    ];
+
+    for rules in cases {
+        assert_eq!(
+            Location::default(),
+            failed_comparison_location_with_input_parameters(rules, parameters, true)?,
+            "{}",
+            rules
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn evaluation_without_provenance_tracking_records_no_provenance() -> Result<()> {
+    let rules = r#"let enabled = "Enabled"
+    rule versioning_enabled {
+        %enabled == Resources.*.Properties.VersioningConfiguration.Status
+        %enabled IN Resources.*.Properties.VersioningConfiguration.Status
+    }"#;
+    let rules_file = RulesFile::try_from(rules)?;
+    let root = PathAwareValue::try_from(crate::values::read_from(VERSIONING_TEMPLATE)?)?;
+    let mut scope = root_scope(&rules_file, Rc::new(root));
+    crate::eval::eval_rules_file(&rules_file, &mut scope, None)?;
+
+    assert!(scope.value_origins.is_none());
+    let tracker = scope.reset_recorder();
+    assert!(!tracker.track_provenance);
+    assert!(tracker.provenance.is_empty());
+    assert!(tracker.final_provenance.is_none());
+
+    let baseline = simplified_json_from_root(tracker.final_event.as_ref().unwrap())?;
+    assert_eq!(
+        serde_json::to_value(&baseline).unwrap(),
+        serde_json::to_value(&tracker.into_file_report()?).unwrap()
+    );
+    Ok(())
 }
 
 #[test]
@@ -1227,9 +1507,100 @@ fn not_comparable_in_comparison_with_a_list_literal_on_the_left_is_located_at_th
 
     assert_eq!(ValueOrigin::RulesFile, check.origin());
     assert!(
-        matches!(&check, FailedCheck::Comparison(c) if c.message.is_some()),
+        matches!(&check, FailedCheck::Comparison(c, _) if c.message.is_some()),
         "expected a not-comparable record"
     );
     assert_eq!(Location::new(10, 16), location);
+    Ok(())
+}
+
+const MIXED_CAPTURE_DATA: &str = r#"Inputs:
+  InputOnly:
+    Type: Selected
+Different:
+  - Other
+Allowed:
+  - InputOnly
+  - RuleOnly
+"#;
+
+const INPUT_ONLY_KEY_LOCATION: Location = Location { line: 1, col: 2 };
+
+#[test]
+fn a_capture_name_reused_across_rules_and_input_maps_keeps_each_value_origin() -> Result<()> {
+    let expectations = [
+        ("==", "Different[*]", Location::new(4, 4)),
+        ("!=", "Allowed[*]", Location::new(6, 4)),
+        ("IN", "Different[*]", Location::new(4, 4)),
+        ("NOT IN", "Allowed[*]", Location::new(6, 4)),
+    ];
+    for (operator, compared_with, compared_location) in expectations {
+        let rules = format!(
+            r#"let rules_root = {{"Container": {{"RuleOnly": {{"Type": "Selected"}}}}}}
+            rule mixed {{
+                %rules_root {{ Container[ captured | Type == "Selected" ] !empty }}
+                Inputs[ captured | Type == "Selected" ] !empty
+                %captured {} {}
+            }}"#,
+            operator, compared_with
+        );
+        let Evaluated { checks, locations } = evaluate_failures(&rules, MIXED_CAPTURE_DATA)?;
+
+        let origin_of = |key: &str| {
+            checks
+                .iter()
+                .find(|check| {
+                    check.left().resolved().is_some_and(
+                        |value| matches!(&*value, PathAwareValue::String((_, s)) if s == key),
+                    )
+                })
+                .unwrap_or_else(|| panic!("{}: no failure for {} in {:?}", operator, key, checks))
+                .origin()
+        };
+        assert_eq!(ValueOrigin::Input, origin_of("InputOnly"), "{}", operator);
+        assert_eq!(
+            ValueOrigin::RulesFile,
+            origin_of("RuleOnly"),
+            "{}",
+            operator
+        );
+        assert_eq!(
+            vec![compared_location, INPUT_ONLY_KEY_LOCATION],
+            locations,
+            "{}",
+            operator
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn an_element_wise_function_over_mixed_captures_keeps_each_value_origin() -> Result<()> {
+    let rules = r#"let rules_root = {"Container": {"RuleOnly": {"Type": "Selected"}}}
+    rule mixed {
+        %rules_root { Container[ captured | Type == "Selected" ] !empty }
+        Inputs[ captured | Type == "Selected" ] !empty
+        let lowered = to_lower(%captured)
+        %lowered == Different[*]
+    }"#;
+    let Evaluated { checks, locations } = evaluate_failures(rules, MIXED_CAPTURE_DATA)?;
+
+    let origin_of = |key: &str| {
+        checks
+            .iter()
+            .find(|check| {
+                check.left().resolved().is_some_and(
+                    |value| matches!(&*value, PathAwareValue::String((_, s)) if s == key),
+                )
+            })
+            .unwrap_or_else(|| panic!("no failure for {} in {:?}", key, checks))
+            .origin()
+    };
+    assert_eq!(ValueOrigin::Input, origin_of("inputonly"));
+    assert_eq!(ValueOrigin::RulesFile, origin_of("ruleonly"));
+    assert_eq!(
+        vec![Location::new(4, 4), INPUT_ONLY_KEY_LOCATION],
+        locations
+    );
     Ok(())
 }

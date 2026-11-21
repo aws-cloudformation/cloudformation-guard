@@ -1,0 +1,41 @@
+let status = Resources.LogsBucket.Properties.VersioningConfiguration.Status
+
+rule STATUS_REFERENCE {
+    %status == "Enabled"
+}
+
+rule PARAMETER_ON_THE_RIGHT {
+    %status == ExpectedStatus
+}
+
+rule PARAMETER_ON_THE_LEFT {
+    ExpectedStatus == %status
+}
+
+rule PARAMETER_IN_TEMPLATE_VALUE {
+    ExpectedStatus IN %status
+}
+
+rule TEMPLATE_VALUE_IN_PARAMETER {
+    %status IN AllowedStatuses
+}
+
+rule PARAMETER_NOT_EQUAL_ON_THE_RIGHT {
+    %status != CurrentStatus
+}
+
+rule PARAMETER_NOT_EQUAL_ON_THE_LEFT {
+    CurrentStatus != %status
+}
+
+rule TEMPLATE_VALUE_NOT_IN_PARAMETER {
+    %status NOT IN ForbiddenStatuses
+}
+
+rule PARAMETER_NOT_IN_TEMPLATE_VALUE {
+    CurrentStatus NOT IN %status
+}
+
+rule PARAMETER_ONLY_MEMBERSHIP {
+    CurrentStatus IN AllowedStatuses
+}

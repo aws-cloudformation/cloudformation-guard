@@ -1716,6 +1716,58 @@ mod validate_tests {
     }
 
     #[test]
+    fn test_sarif_regions_of_failed_comparisons_with_input_parameters_point_at_the_template_value()
+    {
+        let mut reader = Reader::default();
+        let mut writer = Writer::new(WBVec(vec![])).expect("Failed to create writer.");
+
+        let status_code = ValidateTestRunner::default()
+            .rules(vec!["sarif_comparison_input_parameter.guard"])
+            .data(vec!["sarif-comparison-input-parameter-template.yaml"])
+            .input_parameters(vec!["sarif-comparison-input-parameter-params.yaml"])
+            .show_summary(vec!["none"])
+            .output_format(Option::from("sarif"))
+            .structured()
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(StatusCode::VALIDATION_ERROR, status_code);
+
+        let output = writer.stripped().expect("failed to read the writer");
+        let report: serde_json::Value =
+            serde_json::from_str(&output).expect("the sarif report is not valid JSON");
+        let region_of = |rule_id: &str| {
+            let results = report["runs"][0]["results"].as_array().unwrap();
+            let result = results
+                .iter()
+                .find(|result| result["ruleId"] == rule_id)
+                .unwrap_or_else(|| panic!("no result for {} in {}", rule_id, output));
+            result["locations"][0]["physicalLocation"]["region"].clone()
+        };
+
+        // The parameter values sit below the last line of the template, so a region taken from the
+        // parameter file would name a line the template does not have.
+        let expected = serde_json::json!({"startLine": 5, "startColumn": 16});
+        assert_eq!(expected, region_of("STATUS_REFERENCE"));
+        for rule in [
+            "PARAMETER_ON_THE_RIGHT",
+            "PARAMETER_ON_THE_LEFT",
+            "PARAMETER_IN_TEMPLATE_VALUE",
+            "TEMPLATE_VALUE_IN_PARAMETER",
+            "PARAMETER_NOT_EQUAL_ON_THE_RIGHT",
+            "PARAMETER_NOT_EQUAL_ON_THE_LEFT",
+            "TEMPLATE_VALUE_NOT_IN_PARAMETER",
+            "PARAMETER_NOT_IN_TEMPLATE_VALUE",
+        ] {
+            assert_eq!(expected, region_of(rule), "region of {}", rule);
+        }
+        // With no template value compared, the region falls back to the start of the template.
+        assert_eq!(
+            serde_json::json!({"startLine": 1, "startColumn": 1}),
+            region_of("PARAMETER_ONLY_MEMBERSHIP")
+        );
+    }
+
+    #[test]
     fn test_structured_output_payload() {
         let mut reader = Reader::new(ReadCursor(Cursor::new(Vec::from(
             COMPLIANT_PAYLOAD.as_bytes(),

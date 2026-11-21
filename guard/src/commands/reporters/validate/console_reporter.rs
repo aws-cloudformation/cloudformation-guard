@@ -206,7 +206,6 @@ fn pprint_failed_sub_tree(
                     from,
                     status: Status::FAIL,
                     to,
-                    ..
                 }) => {
                     let custom_message = custom_message.as_ref().map_or("".to_string(), |s| {
                         format!(" Message = [{}]", s.replace('\n', ";"))
