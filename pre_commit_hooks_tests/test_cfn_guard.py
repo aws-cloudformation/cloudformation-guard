@@ -5,9 +5,9 @@ cfn-guard args and returns the expected error code
 
 from __future__ import annotations
 
-from pre_commit_hooks.cfn_guard import main
-
 import os.path
+
+from pre_commit_hooks.cfn_guard import main
 
 
 def get_guard_resource_path(relative_path):
