@@ -6,12 +6,14 @@
 # to the last installed binary.
 #
 # Environment:
-#   GITHUB_TOKEN            when set, authenticates the release lookup. The anonymous GitHub API
-#                           allows 60 requests per hour per source IP, shared by everyone behind the
-#                           same address, so a corporate NAT, a VPN or a CI runner can exhaust it
-#                           through no fault of the caller. An authenticated request is counted
-#                           against the token instead. The `gh` CLI, if installed and logged in, is
-#                           preferred over this and needs no setup.
+#   GITHUB_TOKEN, GH_TOKEN  when set, authenticates the release lookup; GITHUB_TOKEN wins if both
+#                           are. The anonymous GitHub API allows 60 requests per hour per source IP,
+#                           shared by everyone behind the same address, so a corporate NAT, a VPN or
+#                           a CI runner can exhaust it through no fault of the caller. An
+#                           authenticated request is counted against the token instead. The `gh`
+#                           CLI, if installed and logged in, is preferred over both and needs no
+#                           setup -- GH_TOKEN is read because that is the variable `gh` itself
+#                           documents, so a caller who set it up for `gh` has already set it.
 #   GUARD_DOWNLOAD_BASE_URL overrides where release archives are fetched from. Defaults to the
 #                           GitHub releases URL. Set it to a file:// or https:// prefix to install
 #                           an archive built locally, which is how the install scripts are tested
@@ -20,6 +22,13 @@
 #                           but nothing here verifies a checksum or a signature, so whatever this
 #                           points at is installed as-is: over plaintext that is anyone on the
 #                           network path, not just the host you meant.
+#   GUARD_API_BASE_URL      overrides where the release tag is looked up. Defaults to the GitHub
+#                           REST API. Its reason to exist is the same as the variable above's:
+#                           the retry and backoff below run only for responses the real API sends
+#                           when its quota is already spent, which is not a state a test can ask
+#                           for, so the responses have to come from somewhere a test controls.
+#                           GITHUB_TOKEN is deliberately NOT sent when this points anywhere other
+#                           than api.github.com -- see api_token_for.
 
 # Total seconds we are willing to spend waiting across all retries. A primary rate limit can be up
 # to an hour from reset, and an installer that appears to hang for an hour is worse than one that
@@ -29,7 +38,8 @@ MAX_TOTAL_WAIT=300
 MAX_ATTEMPTS=5
 BASE_DELAY=2
 
-GITHUB_API="https://api.github.com/repos/aws-cloudformation/cloudformation-guard"
+DEFAULT_GITHUB_API="https://api.github.com/repos/aws-cloudformation/cloudformation-guard"
+GITHUB_API="${GUARD_API_BASE_URL:-$DEFAULT_GITHUB_API}"
 DEFAULT_DOWNLOAD_BASE_URL="https://github.com/aws-cloudformation/cloudformation-guard/releases/download"
 
 main() {
@@ -178,14 +188,14 @@ github_api() {
 	_hdr=$(mktemp) || err "unable to create a temporary file"
 	_body=$(mktemp) || err "unable to create a temporary file"
 
+	_token=$(api_token_for "$_url")
+
 	while :; do
 		# The token goes in a config file on stdin rather than on the command line. An
 		# Authorization header in argv is readable from `ps` by anyone else on the host for
-		# the life of the request, which matters on shared build machines. Only ever sent to
-		# api.github.com: the release archive redirects to a separate download host and a
-		# credential has no business travelling there.
-		if [ -n "${GITHUB_TOKEN:-}" ]; then
-			_code=$(printf 'header = "Authorization: Bearer %s"\n' "$GITHUB_TOKEN" |
+		# the life of the request, which matters on shared build machines.
+		if [ -n "$_token" ]; then
+			_code=$(printf 'header = "Authorization: Bearer %s"\n' "$_token" |
 				curl -sS -K - -o "$_body" -D "$_hdr" -w '%{http_code}' "$_url" 2>/dev/null)
 		else
 			_code=$(curl -sS -o "$_body" -D "$_hdr" -w '%{http_code}' "$_url" 2>/dev/null)
@@ -217,6 +227,25 @@ github_api() {
 		_attempt=$((_attempt + 1))
 		_delay=$((_delay * 2))
 	done
+}
+
+# The bearer token to send to $1, which is empty for every host but the GitHub API.
+#
+# The host is checked rather than assumed. GUARD_API_BASE_URL can point this script's release lookup
+# at any origin, and a token that followed it there would be handed to whoever controls that origin
+# -- so the check is what keeps that variable a testing and mirroring convenience rather than a way
+# to exfiltrate a credential. The same reasoning already kept the token away from the archive
+# download, which redirects to a separate storage host.
+#
+# The prefix match is on `https://api.github.com/` with the trailing slash: without it,
+# `https://api.github.com.example.invalid/` would match.
+api_token_for() {
+	case "$1" in
+	https://api.github.com/*)
+		printf '%s' "${GITHUB_TOKEN:-${GH_TOKEN:-}}"
+		;;
+	*) ;;
+	esac
 }
 
 # Seconds to wait before the next attempt, from the response headers when they say, else $2.

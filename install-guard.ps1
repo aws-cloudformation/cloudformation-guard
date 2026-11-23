@@ -6,11 +6,13 @@
 #              limited. Mirrors -v in install-guard.sh.
 #
 # Environment:
-#   GITHUB_TOKEN            when set, authenticates the release lookup. The anonymous GitHub API
-#                           allows 60 requests per hour per source IP, shared by everyone behind
-#                           the same address, so a corporate NAT, a VPN or a CI runner can exhaust
-#                           it through no fault of the caller. The `gh` CLI, if installed and
-#                           logged in, is preferred over this and needs no setup.
+#   GITHUB_TOKEN, GH_TOKEN  when set, authenticates the release lookup; GITHUB_TOKEN wins if both
+#                           are. The anonymous GitHub API allows 60 requests per hour per source IP,
+#                           shared by everyone behind the same address, so a corporate NAT, a VPN or
+#                           a CI runner can exhaust it through no fault of the caller. The `gh` CLI,
+#                           if installed and logged in, is preferred over both and needs no setup --
+#                           GH_TOKEN is read because that is the variable `gh` itself documents, so
+#                           a caller who set it up for `gh` has already set it.
 #   GUARD_DOWNLOAD_BASE_URL overrides where release archives are fetched from. Defaults to the
 #                           GitHub releases URL. Set it to a file:// or https:// prefix to install
 #                           an archive built locally, which is how this script is tested against
@@ -19,6 +21,13 @@
 #                           nothing here verifies a checksum or a signature, so whatever this
 #                           points at is installed as-is: over plaintext that is anyone on the
 #                           network path, not just the host you meant.
+#   GUARD_API_BASE_URL      overrides where the release tag is looked up. Defaults to the GitHub
+#                           REST API. Its reason to exist is the same as the variable above's: the
+#                           retry and backoff below run only for responses the real API sends when
+#                           its quota is already spent, which is not a state a test can ask for, so
+#                           the responses have to come from somewhere a test controls. The token is
+#                           deliberately NOT sent when this points anywhere other than
+#                           api.github.com -- see Get-ApiTokenFor.
 param(
   [string]$Version
 )
@@ -31,7 +40,8 @@ $script:MaxTotalWaitSeconds = 300
 $script:MaxAttempts = 5
 $script:BaseDelaySeconds = 2
 
-$script:GitHubApi = "https://api.github.com/repos/aws-cloudformation/cloudformation-guard"
+$script:DefaultGitHubApi = "https://api.github.com/repos/aws-cloudformation/cloudformation-guard"
+$script:GitHubApi = if ($env:GUARD_API_BASE_URL) { $env:GUARD_API_BASE_URL } else { $script:DefaultGitHubApi }
 $script:DefaultDownloadBaseUrl = "https://github.com/aws-cloudformation/cloudformation-guard/releases/download"
 
 function main {
@@ -154,8 +164,9 @@ function Invoke-GitHubApiWithBackoff {
   param([string]$Uri)
 
   $headers = @{ "Accept" = "application/vnd.github+json"; "User-Agent" = "install-guard" }
-  if ($env:GITHUB_TOKEN) {
-    $headers["Authorization"] = "Bearer $env:GITHUB_TOKEN"
+  $token = Get-ApiTokenFor -Uri $Uri
+  if ($token) {
+    $headers["Authorization"] = "Bearer $token"
   }
 
   $attempt = 1
@@ -188,6 +199,27 @@ function Invoke-GitHubApiWithBackoff {
       $delay = $delay * 2
     }
   }
+}
+
+# The bearer token to send to $Uri, which is $null for every host but the GitHub API.
+#
+# The host is checked rather than assumed. GUARD_API_BASE_URL can point this script's release lookup
+# at any origin, and a token that followed it there would be handed to whoever controls that origin
+# -- so the check is what keeps that variable a testing and mirroring convenience rather than a way
+# to exfiltrate a credential. The same reasoning already kept the token away from the archive
+# download, which redirects to a separate storage host.
+#
+# The prefix match is on "https://api.github.com/" with the trailing slash: without it,
+# "https://api.github.com.example.invalid/" would match.
+function Get-ApiTokenFor {
+  param([string]$Uri)
+
+  if (-not $Uri.StartsWith("https://api.github.com/", [System.StringComparison]::Ordinal)) {
+    return $null
+  }
+  if ($env:GITHUB_TOKEN) { return $env:GITHUB_TOKEN }
+  if ($env:GH_TOKEN) { return $env:GH_TOKEN }
+  return $null
 }
 
 # Seconds to wait before the next attempt, from the response headers when they say, else $Fallback.
