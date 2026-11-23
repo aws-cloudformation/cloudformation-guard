@@ -51,7 +51,7 @@ jobs:
     steps:
       - uses: actions/checkout@v2
       - name: Shellcheck
-        run: shellcheck install-guard.sh
+        run: shellcheck install-guard.sh install-tests/test-install-guard-backoff.sh
 
   # The PowerShell counterpart to shellcheck. install-guard.ps1 had no static analysis, which is
   # how a WMI cmdlet that PowerShell 6 removed sat in it unnoticed -- this workflow runs pwsh 7,
@@ -66,16 +66,22 @@ jobs:
       - name: Install PSScriptAnalyzer
         shell: pwsh
         run: Install-Module -Name PSScriptAnalyzer -Scope CurrentUser -Force -AcceptLicense
-      - name: Analyze install-guard.ps1
+      # One call per file: Invoke-ScriptAnalyzer's -Path is a single string, so passing a list
+      # analyses only the first and reports nothing about the rest -- a silently narrowed gate.
+      - name: Analyze the PowerShell scripts
         shell: pwsh
         run: |
-          $findings = Invoke-ScriptAnalyzer -Path install-guard.ps1 `
-            -Settings .github/PSScriptAnalyzerSettings.psd1
+          $targets = @('install-guard.ps1', 'install-tests/Test-InstallGuardBackoff.ps1')
+          $findings = @()
+          foreach ($target in $targets) {
+            $findings += Invoke-ScriptAnalyzer -Path $target `
+              -Settings .github/PSScriptAnalyzerSettings.psd1
+          }
           if ($findings) {
-            $findings | Format-Table -AutoSize Severity, Line, RuleName, Message | Out-String -Width 200 | Write-Host
+            $findings | Format-Table -AutoSize Severity, ScriptName, Line, RuleName, Message | Out-String -Width 200 | Write-Host
             throw "PSScriptAnalyzer reported $($findings.Count) finding(s)"
           }
-          Write-Host "PSScriptAnalyzer: no findings"
+          Write-Host "PSScriptAnalyzer: no findings in $($targets -join ', ')"
 
   formatting:
     name: Formatting check (cargo fmt)
@@ -192,6 +198,44 @@ jobs:
             throw "installed binary ($installed) does not match this branch's build ($built)"
           }
           Write-Host "installed binary matches this branch's build ($built)"
+
+  # The two jobs above pin the installer to an explicit version and a local archive, which is what
+  # makes them independent of the network -- and also what makes them blind to the rate-limit
+  # handling: get_version returns before github_api is entered, so nothing in either job reaches
+  # Retry-After parsing, X-RateLimit-Reset parsing, or the retry ceiling. A regression in any of
+  # those three left CI green.
+  #
+  # These jobs drive the same entry point with no version pinned, against a stub API on localhost
+  # that returns a scripted 403/429 sequence. That makes the responses an input: the real API cannot
+  # be asked for a 429, and waiting for a genuine limit would be neither fast nor deterministic.
+  #
+  # No Rust build. The lookup is what is under test, and the archive the recovery path installs is a
+  # stub, so requiring a compile would add several minutes and pin nothing further.
+  installScriptBackoff:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    name: Install script rate-limit handling (install-guard.sh)
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+      - name: Assert the backoff paths honour the API's own signals
+        run: sh install-tests/test-install-guard-backoff.sh
+
+  installScriptBackoffWindows:
+    runs-on: windows-latest
+    name: Install script rate-limit handling (install-guard.ps1)
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+      - name: Assert the backoff paths honour the API's own signals
+        shell: pwsh
+        run: ./install-tests/Test-InstallGuardBackoff.ps1
 
   linting:
     name: Linting check (clippy)
