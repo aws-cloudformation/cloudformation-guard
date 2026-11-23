@@ -15,7 +15,6 @@ pub mod rulegen;
 pub mod test;
 pub mod validate;
 
-mod aws_meta_appender;
 mod common_test_helpers;
 pub mod completions;
 pub mod reporters;
