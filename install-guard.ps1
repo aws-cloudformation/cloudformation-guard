@@ -192,11 +192,31 @@ function Invoke-GitHubApiWithBackoff {
       $response = $_.Exception.Response
       $status = 0
       if ($response) { $status = [int]$response.StatusCode }
+
+      # A rejected token is not retried: drop it and ask once anonymously.
+      if ($status -eq 401 -and $headers.ContainsKey("Authorization")) {
+        Write-Host "GitHub rejected the token (HTTP 401); retrying without it"
+        $headers.Remove("Authorization")
+        continue
+      }
+
+      # Only transient failures are retried: no response, 429, 5xx, and a 403 that is a rate limit
+      # (remaining 0 or a retry-after). Any other 4xx will not change on retry.
+      $retryable = $false
+      if ($status -eq 0 -or $status -eq 429 -or $status -ge 500) {
+        $retryable = $true
+      }
+      elseif ($status -eq 403) {
+        $remaining = Get-HeaderValue -Response $response -Name "X-RateLimit-Remaining"
+        $retryAfterHeader = Get-HeaderValue -Response $response -Name "Retry-After"
+        if ($remaining -eq "0" -or $retryAfterHeader) { $retryable = $true }
+      }
+
       $sleep = Get-BackoffDelay -Response $response -Fallback $delay
 
-      if ($attempt -ge $script:MaxAttempts -or ($waited + $sleep) -gt $script:MaxTotalWaitSeconds) {
+      if (-not $retryable -or $attempt -ge $script:MaxAttempts -or ($waited + $sleep) -gt $script:MaxTotalWaitSeconds) {
         Write-Host "GitHub API request failed with HTTP $status after $attempt attempt(s)."
-        if ($status -eq 403 -or $status -eq 429) {
+        if ($retryable -and ($status -eq 403 -or $status -eq 429)) {
           Write-Host "This is a rate limit rather than a problem with the release."
           Write-Host "Authenticate to raise it: set GITHUB_TOKEN, or run 'gh auth login',"
           Write-Host "or pass -Version <tag> to skip the lookup entirely."

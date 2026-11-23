@@ -406,6 +406,45 @@ function test_exponential_fallback {
 }
 
 # -------------------------------------------------------------------------------------------------
+# A bare 403 fails at once.
+#
+# A 403 with neither X-RateLimit-Remaining: 0 nor Retry-After is a permission answer, not a quota, and
+# retrying it only delays the failure. Exactly one request, a nonzero exit, and the one-attempt message.
+# -------------------------------------------------------------------------------------------------
+function test_bare_403_fails_fast {
+    $stub = start_stub 'forbidden'
+    try {
+        $run = run_installer $stub
+        $requests = @(stub_requests $stub)
+        $output = "$($run.Stdout)`n$($run.Stderr)"
+
+        if ($run.ExitCode -eq 0) {
+            fail 'forbidden: a bare 403 must fail the install, got exit 0'
+        }
+        else {
+            pass "forbidden: exited $($run.ExitCode)"
+        }
+
+        if ($requests.Count -ne 1) {
+            fail "forbidden: the stub saw $($requests.Count) requests, expected exactly 1 -- a bare 403 is not retried."
+        }
+        else {
+            pass 'forbidden: exactly one request'
+        }
+
+        if ($output -notmatch [regex]::Escape('GitHub API request failed with HTTP 403 after 1 attempt(s)')) {
+            fail "forbidden: output did not report the single failed attempt; output:`n$output"
+        }
+        else {
+            pass 'forbidden: reported HTTP 403 after 1 attempt'
+        }
+
+        assert_no_auth_reached_stub 'forbidden' $requests
+    }
+    finally { stop_stub $stub }
+}
+
+# -------------------------------------------------------------------------------------------------
 # Retries are bounded, and exhaustion is reported as a rate limit.
 #
 # A 429 to every request. The script must stop at MaxAttempts -- exactly 5 requests, not 4 and not a
@@ -586,6 +625,7 @@ try {
     test_retry_after_is_honoured
     test_ratelimit_reset_is_honoured
     test_exponential_fallback
+    test_bare_403_fails_fast
     test_exhaustion_is_bounded_and_explained
     test_single_429_is_survived
     test_an_unusable_reset_header_still_explains_itself
