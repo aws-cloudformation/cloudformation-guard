@@ -214,9 +214,9 @@ github_api() {
 		# sends no token, so nothing here needs to follow one.
 		if [ -n "$_token" ]; then
 			_code=$(printf 'header = "Authorization: Bearer %s"\n' "$_token" |
-				curl -sS -K - -o "$_body" -D "$_hdr" -w '%{http_code}' -- "$_url" 2>/dev/null)
+				curl -sS --connect-timeout 10 --max-time 60 -K - -o "$_body" -D "$_hdr" -w '%{http_code}' -- "$_url" 2>/dev/null)
 		else
-			_code=$(curl -sS -o "$_body" -D "$_hdr" -w '%{http_code}' -- "$_url" 2>/dev/null)
+			_code=$(curl -sS --connect-timeout 10 --max-time 60 -o "$_body" -D "$_hdr" -w '%{http_code}' -- "$_url" 2>/dev/null)
 		fi
 
 		if [ "$_code" = "200" ]; then
@@ -371,10 +371,10 @@ retry_wget() {
 	while :; do
 		# The exit status decides, not emptiness; `$?` is captured on the next line.
 		if [ -n "$_wget_token" ]; then
-			_out=$(wget -S -qO- --header="Authorization: Bearer $_wget_token" -- "$_url" 2>"$_errf")
+			_out=$(wget -S -qO- --timeout=30 --tries=1 --header="Authorization: Bearer $_wget_token" -- "$_url" 2>"$_errf")
 			_rc=$?
 		else
-			_out=$(wget -S -qO- -- "$_url" 2>"$_errf")
+			_out=$(wget -S -qO- --timeout=30 --tries=1 -- "$_url" 2>"$_errf")
 			_rc=$?
 		fi
 		if [ "$_rc" -eq 0 ]; then
@@ -450,7 +450,9 @@ download() {
 	while :; do
 		_retry=0
 		if check_cmd curl; then
-			_code=$(curl -sSL -o "$_out" -w '%{http_code}' -- "$_url" 2>/dev/null)
+			# No overall --max-time: a large archive on a slow link must finish. A stall is bounded
+			# instead, as under 1 KiB/s for 30 seconds.
+			_code=$(curl -sSL --connect-timeout 10 --speed-limit 1024 --speed-time 30 -o "$_out" -w '%{http_code}' -- "$_url" 2>/dev/null)
 			_rc=$?
 			if [ "$_rc" -eq 0 ]; then
 				case "$_code" in
@@ -465,7 +467,7 @@ download() {
 			fi
 		else
 			_errf=$(mktemp) || err "unable to create a temporary file"
-			wget -S -qO "$_out" -- "$_url" 2>"$_errf" && {
+			wget -S -qO "$_out" --timeout=30 --tries=1 -- "$_url" 2>"$_errf" && {
 				rm -f "$_errf"
 				return 0
 			}

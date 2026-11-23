@@ -187,7 +187,7 @@ function Invoke-GitHubApiWithBackoff {
       # the release *asset* that redirects to a storage host, and that download is a separate function
       # which sends no token. A redirect here would be a change at the API, and failing loudly on one
       # is better than following it with a credential attached.
-      return Invoke-RestMethod -Uri $Uri -Headers $headers -MaximumRedirection 0 -ErrorAction Stop
+      return Invoke-RestMethod -Uri $Uri -Headers $headers -MaximumRedirection 0 -TimeoutSec 60 -ErrorAction Stop
     } catch {
       $response = $_.Exception.Response
       $status = 0
@@ -355,10 +355,29 @@ function download_file_to_path {
     $delay = $script:BaseDelaySeconds
     $waited = 0
 
+    # WebClient has no timeout of its own, so a stalled connection would hang the install. This
+    # subclass bounds the connect/response wait and every stream read to 30 seconds, which a slow
+    # but moving download never reaches and a stall always does.
+    if (-not ('GuardTimeoutWebClient' -as [type])) {
+      Add-Type -TypeDefinition @"
+using System;
+using System.Net;
+public class GuardTimeoutWebClient : WebClient {
+  protected override WebRequest GetWebRequest(Uri address) {
+    WebRequest request = base.GetWebRequest(address);
+    request.Timeout = 30000;
+    HttpWebRequest http = request as HttpWebRequest;
+    if (http != null) { http.ReadWriteTimeout = 30000; }
+    return request;
+  }
+}
+"@
+    }
+
     while ($true) {
       try {
         Write-Host "Downloading $url to $outputFile"
-        $webClient = New-Object System.Net.WebClient
+        $webClient = New-Object GuardTimeoutWebClient
         $webClient.DownloadFile($url, $outputFile)
         return
       } catch {

@@ -134,13 +134,9 @@ pass() {
 	echo "ok: $1"
 }
 
-# `gh` is installed and authenticated on a GitHub runner, and get_latest_release prefers it over the
-# REST API -- so without this the stub would never be contacted and every case would pass without
-# testing anything. A stub `gh` that fails `auth status` puts the script on the REST path, which is
-# the path with the backoff in it.
-#
-# Placed on PATH ahead of the real one rather than removing it, so the test does not depend on how
-# the runner installed gh.
+# A second safeguard: run_installer always sets GUARD_API_BASE_URL, which already makes the installer
+# skip `gh`. This stub `gh` fails `auth status` and sits ahead of the real one on PATH, so the REST
+# path is used even if that skip were ever lost.
 make_gh_absent() {
 	mkdir -p "$WORK/bin"
 	printf '#!/bin/sh\nexit 1\n' >"$WORK/bin/gh"
@@ -355,8 +351,8 @@ $(cat "$WORK/retry-after/stdout")"
 # ---------------------------------------------------------------------------------------------
 # X-RateLimit-Reset is honoured when there is no Retry-After.
 #
-# One 403 with `X-RateLimit-Remaining: 0` and a reset one second out. The delay has to be derived
-# from that epoch. A script that only looked at Retry-After would fall back to 2.
+# One 403 with `X-RateLimit-Remaining: 0` and a reset four seconds out. The delay has to be derived
+# from that epoch (4-5s); a script that ignored it would fall back to 2s.
 # ---------------------------------------------------------------------------------------------
 test_ratelimit_reset_is_honoured() {
 	start_stub ratelimit-reset
