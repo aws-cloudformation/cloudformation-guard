@@ -109,7 +109,11 @@ class StubServer(ThreadingHTTPServer):
 def build_handler(responses, log_path, counter):
     class Handler(BaseHTTPRequestHandler):
         # Quiet: the default logs every request to stderr, which the callers capture and assert on.
-        def log_message(self, fmt, *args):
+        #
+        # The parameter is `format`, shadowing the builtin, because that is what the base class
+        # calls it and a name mismatch in an override is a finding for a type checker that compares
+        # them positionally by name. Nothing here reads it.
+        def log_message(self, format, *args):
             pass
 
         def do_GET(self):
@@ -127,9 +131,7 @@ def build_handler(responses, log_path, counter):
             for name, value in spec.get("headers", {}).items():
                 self.send_header(name, value)
             if "reset_in" in spec:
-                self.send_header(
-                    "X-RateLimit-Reset", str(int(time.time()) + spec["reset_in"])
-                )
+                self.send_header("X-RateLimit-Reset", str(int(time.time()) + spec["reset_in"]))
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
@@ -143,7 +145,7 @@ def build_handler(responses, log_path, counter):
             # Written after the response so the recorded time is when the caller could first have
             # seen it, and flushed because the caller reads this file while the server still runs.
             with counter["lock"], open(log_path, "a", encoding="utf-8") as log:
-                log.write("%d %d %s\n" % (int(time.monotonic() * 1000), status, auth))
+                log.write(f"{int(time.monotonic() * 1000)} {status} {auth}\n")
                 log.flush()
 
     return Handler
@@ -168,7 +170,7 @@ def main():
     with open(args.port_file, "w", encoding="utf-8") as handle:
         handle.write(str(port))
 
-    print("stub api listening on 127.0.0.1:%d (%s)" % (port, args.scenario), file=sys.stderr)
+    print(f"stub api listening on 127.0.0.1:{port} ({args.scenario})", file=sys.stderr)
     try:
         server.serve_forever()
     except KeyboardInterrupt:
