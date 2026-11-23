@@ -29,6 +29,7 @@ import socketserver
 import sys
 import threading
 import time
+from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 # Each scenario is a list of responses, applied in order. The last entry repeats once the list is
@@ -162,6 +163,26 @@ def build_handler(responses, log_path, counter):
         def log_message(self, format, *args):
             pass
 
+        # A whole response written to the socket, bypassing `send_response` and `send_header`.
+        #
+        # Used only for the case that needs `Name:value` with no space after the colon. HTTP permits
+        # that spelling and `send_header` cannot produce it -- it always writes `Name: value` -- so a
+        # deliberately non-conforming header is exactly where the convenience wrapper is the wrong tool.
+        #
+        # Written out here rather than by appending to the buffer `send_header` fills. That buffer is a
+        # private attribute of the base class, so reaching for it is both a type-checker error and the
+        # kind of thing a reviewer of a test helper has to stop and ask about. This costs six lines and
+        # depends on nothing but the socket.
+        #
+        # `latin-1` because that is the encoding the HTTP header line is defined over, and it is what
+        # the base class uses for the same job.
+        def write_response_without_helpers(self, status, header_pairs):
+            reason = BaseHTTPRequestHandler.responses[HTTPStatus(status)][0]
+            lines = [f"{self.protocol_version} {status} {reason}"]
+            lines += [f"{name}:{value}" for name, value in header_pairs]
+            raw = "\r\n".join(lines) + "\r\n\r\n"
+            self.wfile.write(raw.encode("latin-1", "strict"))
+
         def do_GET(self):
             with counter["lock"]:
                 index = counter["n"]
@@ -173,23 +194,20 @@ def build_handler(responses, log_path, counter):
             if status == 200:
                 body = json.dumps({"tag_name": STUB_TAG}).encode()
 
-            self.send_response(status)
-            for name, value in spec.get("headers", {}).items():
-                self.send_header(name, value)
-
-            # `Name:value` with no space, which HTTP permits and `send_header` cannot produce -- it
-            # always writes `Name: value`. Appended to the same buffer `send_header` fills, so it goes
-            # out in order with the rest and `end_headers` flushes it.
-            if spec.get("no_space"):
-                for name, value in spec.get("raw_headers", []):
-                    self._headers_buffer.append(
-                        f"{name}:{value}\r\n".encode("latin-1", "strict")
-                    )
+            headers = list(spec.get("headers", {}).items())
             if "reset_in" in spec:
-                self.send_header("X-RateLimit-Reset", str(int(time.time()) + spec["reset_in"]))
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Content-Length", str(len(body)))
-            self.end_headers()
+                headers.append(("X-RateLimit-Reset", str(int(time.time()) + spec["reset_in"])))
+            headers.append(("Content-Type", "application/json"))
+            headers.append(("Content-Length", str(len(body))))
+
+            if spec.get("no_space"):
+                self.write_response_without_helpers(status, spec["raw_headers"] + headers)
+            else:
+                self.send_response(status)
+                for name, value in headers:
+                    self.send_header(name, value)
+                self.end_headers()
+
             if body:
                 self.wfile.write(body)
 

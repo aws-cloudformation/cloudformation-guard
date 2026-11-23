@@ -22,6 +22,23 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 REPO=$(cd "$HERE/.." && pwd)
 SCRIPT="$REPO/install-guard.sh"
 
+# Which shell runs the installer under test. Defaults to `sh`, which is what a caller gets.
+#
+# Overridable because `sh` is not one shell. install-guard.sh declares `#!/bin/sh` and the behavior of
+# some of its constructs differs by implementation: arithmetic on a non-numeric value is harmless in
+# bash and fatal in dash, and dash is `/bin/sh` on Debian and Ubuntu. A host whose `/bin/sh` is bash
+# therefore cannot exercise the case the header-validation guards exist for, and a suite that only ever
+# runs one shell reports coverage it does not have.
+#
+# Measured, with the probe `_reset=not-a-number; _now=100; echo $((_reset - _now + 1))`:
+# bash prints -99 and exits 0; dash 0.5.13.5 exits 2 with "Illegal number: not-a-number"; ksh exits 1
+# with "not: parameter not set".
+INSTALLER_SH="${GUARD_TEST_SH:-sh}"
+command -v "$INSTALLER_SH" >/dev/null 2>&1 || {
+	echo "FAIL: GUARD_TEST_SH=$INSTALLER_SH is not executable" >&2
+	exit 1
+}
+
 PYTHON=python3
 command -v "$PYTHON" >/dev/null 2>&1 || PYTHON=python
 
@@ -180,7 +197,7 @@ run_installer() {
 		GUARD_API_BASE_URL="$STUB_URL" \
 		GUARD_DOWNLOAD_BASE_URL="file://$WORK/artifacts" \
 		GITHUB_TOKEN="stub-token-must-not-be-sent-to-a-non-github-host" \
-		sh "$SCRIPT" >"$_outdir/stdout" 2>"$_outdir/stderr"
+		"$INSTALLER_SH" "$SCRIPT" >"$_outdir/stdout" 2>"$_outdir/stderr"
 	RUN_STATUS=$?
 	set -e
 }
@@ -467,6 +484,42 @@ $(cat "$WORK/$_scenario/stderr")"
 the table above this function for why the two cases differ"
 		else
 			pass "$_scenario: made $_requests request(s), which is what this header implies"
+		fi
+
+		# The discriminating assertion, and the one the first version of this test lacked.
+		#
+		# Whether the guidance prints does NOT separate the guarded version from the unguarded one:
+		# measured under dash without the guard, the arithmetic aborts inside the command
+		# substitution that calls backoff_seconds, the subshell's death is contained, and the retry
+		# loop still reaches the guidance. What it loses is the backoff itself -- `_sleep` comes back
+		# empty, `sleep ""` fails, and all five attempts fire back to back against a quota that is
+		# already spent. Verbatim, four times over:
+		#
+		#     install-guard.sh: 281: Illegal number: not-a-number
+		#     attempt 2 of 5 got HTTP 403; retrying in s
+		#     sleep: invalid time interval ''
+		#
+		# So the delay is what has to be asserted. Only the multi-attempt case can carry it; the
+		# overflow case makes one request by design and has no gap to measure.
+		if [ "$_expected_requests" -gt 1 ]; then
+			_first_gap=$(request_gaps_ms "$STUB_LOG" | head -n 1)
+			if [ -z "$_first_gap" ] || [ "$_first_gap" -lt 1500 ]; then
+				fail "$_scenario: the first retry came after ${_first_gap:-0}ms. An unusable reset \
+header must fall back to BASE_DELAY, so the gap should be about 2000ms -- a gap near zero means the \
+delay was never computed and the retries are hammering an exhausted quota with no wait at all."
+			else
+				pass "$_scenario: fell back to a real delay (~${_first_gap}ms), not to no delay"
+			fi
+		fi
+
+		# A shell that refuses the arithmetic says so on stderr, and those lines are the visible
+		# symptom a caller reports. Asserted separately from the delay because they are separable: a
+		# shell could in principle compute nothing and stay quiet.
+		if grep -qE "Illegal number|invalid time interval|parameter not set" "$WORK/$_scenario/stderr"; then
+			fail "$_scenario: the shell complained about a header value; stderr:
+$(cat "$WORK/$_scenario/stderr")"
+		else
+			pass "$_scenario: no shell arithmetic complaint on stderr"
 		fi
 
 		stop_stub

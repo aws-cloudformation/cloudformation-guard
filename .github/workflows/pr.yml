@@ -225,6 +225,31 @@ jobs:
       - name: Assert the backoff paths honour the API's own signals
         run: sh install-tests/test-install-guard-backoff.sh
 
+  # The same suite with dash as the shell under test, because `sh` is not one shell and the difference
+  # is load-bearing here.
+  #
+  # install-guard.sh declares `#!/bin/sh`, and dash is `/bin/sh` on Debian and Ubuntu -- so dash is what
+  # a large share of callers actually run it under. Arithmetic on a non-numeric value is the case that
+  # separates them: bash evaluates the words as unset names and carries on, while dash refuses with
+  # "Illegal number" and the command substitution around it returns empty, which leaves the retry loop
+  # with no delay at all and hammers an exhausted quota five times in under a second. Measured both
+  # ways; the guards in backoff_seconds are what stop it, and only a dash run can show that.
+  #
+  # ubuntu-latest already provides dash as /bin/sh, so this needs no install step -- GUARD_TEST_SH names
+  # it explicitly rather than relying on what /bin/sh happens to be on the runner.
+  installScriptBackoffDash:
+    runs-on: ubuntu-latest
+    name: Install script rate-limit handling (install-guard.sh under dash)
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+      - name: Assert the backoff paths hold under a strict POSIX shell
+        env:
+          GUARD_TEST_SH: dash
+        run: sh install-tests/test-install-guard-backoff.sh
+
   installScriptBackoffWindows:
     runs-on: windows-latest
     name: Install script rate-limit handling (install-guard.ps1)
