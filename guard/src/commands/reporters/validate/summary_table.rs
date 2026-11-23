@@ -8,7 +8,6 @@ use crate::rules::RecordType;
 use crate::rules::{NamedStatus, Status};
 use colored::*;
 use enumflags2::{bitflags, BitFlags};
-use itertools::Itertools;
 use std::io::Write;
 
 #[bitflags]
@@ -75,79 +74,6 @@ fn print_summary(
 }
 
 impl<'r> Reporter for SummaryTable<'r> {
-    fn report(
-        &self,
-        writer: &mut dyn Write,
-        status: Option<Status>,
-        failed_rules: &[&StatusContext],
-        passed_or_skipped: &[&StatusContext],
-        longest_rule_name: usize,
-        rules_file_name: &str,
-        data_file_name: &str,
-        _data: &Traversal<'_>,
-        _output_format_type: OutputFormatType,
-    ) -> crate::rules::Result<()> {
-        let as_vec = passed_or_skipped.iter().copied().collect_vec();
-        let (skipped, passed): (Vec<&StatusContext>, Vec<&StatusContext>) =
-            as_vec.iter().partition(|status| match status.status {
-                // This uses the dereference deep trait of Rust
-                Some(Status::SKIP) => true,
-                _ => false,
-            });
-
-        let mut wrote_header_line = false;
-        if self.summary_type.contains(SummaryType::SKIP) && !skipped.is_empty() {
-            writeln!(
-                writer,
-                "{} Status = {}",
-                data_file_name,
-                colored_string(status)
-            )?;
-            wrote_header_line = true;
-            writeln!(writer, "{}", "SKIP rules".bold())?;
-            print_partition(writer, rules_file_name, &skipped, longest_rule_name)?;
-        }
-
-        if self.summary_type.contains(SummaryType::PASS) && !passed.is_empty() {
-            writeln!(
-                writer,
-                "{} Status = {}",
-                data_file_name,
-                colored_string(status)
-            )?;
-            wrote_header_line = true;
-            writeln!(writer, "{}", "PASS rules".bold())?;
-            print_partition(writer, rules_file_name, &passed, longest_rule_name)?;
-        }
-
-        if self.summary_type.contains(SummaryType::FAIL) && !failed_rules.is_empty() {
-            writeln!(
-                writer,
-                "{} Status = {}",
-                data_file_name,
-                colored_string(status)
-            )?;
-            wrote_header_line = true;
-            writeln!(writer, "{}", "FAILED rules".bold())?;
-            print_partition(writer, rules_file_name, failed_rules, longest_rule_name)?;
-        }
-
-        if wrote_header_line {
-            writeln!(writer, "---")?;
-        }
-        self.next.report(
-            writer,
-            status,
-            failed_rules,
-            passed_or_skipped,
-            longest_rule_name,
-            rules_file_name,
-            data_file_name,
-            _data,
-            _output_format_type,
-        )
-    }
-
     fn report_eval<'value>(
         &self,
         _write: &mut dyn Write,
