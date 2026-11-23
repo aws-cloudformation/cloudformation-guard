@@ -277,14 +277,29 @@ backoff_seconds() {
 	# `_reset` is checked for being a number before it reaches the arithmetic below, the same way
 	# `_retry_after` is above. It is a response header, so it is text this script did not write.
 	#
-	# How much this guard buys depends on the shell, and only one half is measured. Under bash,
-	# `$((_reset - _now + 1))` with `_reset=not-a-number` evaluates the words as unset names, yields a
-	# negative result, and falls through to the exponential fallback -- so removing this guard changes
-	# nothing there, measured. A stricter POSIX shell treats the same expression as a syntax error, and
-	# `#!/bin/sh` is dash on Debian and Ubuntu, where an aborted script would end the install with an
-	# arithmetic complaint instead of the rate-limit guidance this function exists to feed. That is the
-	# case the guard is for and it is not reproducible on a host whose `/bin/sh` is bash; the ubuntu CI
-	# job is what exercises it.
+	# What this guard prevents is the loss of the backoff itself, and the harm is bigger than the
+	# diagnostic. Both halves are now measured.
+	#
+	# Under bash, `$((_reset - _now + 1))` with `_reset=not-a-number` evaluates the words as unset names
+	# and yields a negative result, so the fallback runs and removing this guard changes nothing. Under
+	# dash -- which is `#!/bin/sh` on Debian and Ubuntu, so most Linux callers and most CI runners --
+	# the same expression is `Illegal number: not-a-number` and the arithmetic aborts.
+	#
+	# The abort is contained, which is what makes it dangerous rather than loud. It happens inside the
+	# command substitution that calls this function, so the subshell dies, the caller gets an empty
+	# string, and the retry loop carries on. The rate-limit guidance still prints. What is gone is the
+	# wait: `sleep ""` fails, and all five attempts fire back to back in under a second against a quota
+	# that is already spent. So the script hammers the limiter it exists to respect while its output
+	# still reads as correct. Measured, unguarded under dash, four times over:
+	#
+	#     install-guard.sh: Illegal number: not-a-number
+	#     attempt 2 of 5 got HTTP 403; retrying in s
+	#     sleep: invalid time interval ''
+	#
+	# That is why the test asserts the measured gap between requests and not just that the guidance
+	# appeared -- the guidance survives the defect intact, so watching it cannot detect this. The dash
+	# CI job is what exercises the case; removing this guard makes the first retry arrive in about 27ms
+	# where roughly 2000ms is required.
 	_remaining=$(header_value "$_hdrfile" x-ratelimit-remaining)
 	_reset=$(header_value "$_hdrfile" x-ratelimit-reset)
 	if [ "$_remaining" = "0" ] && [ -n "$_reset" ] && [ "$_reset" -ge 0 ] 2>/dev/null; then
