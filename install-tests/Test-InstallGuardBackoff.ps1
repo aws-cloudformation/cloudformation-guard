@@ -98,9 +98,14 @@ function start_stub {
     Set-Content -Path $logFile -Value '' -NoNewline
     $portFile = Join-Path $dir 'port'
     $stubErr = Join-Path $dir 'stub.err'
+    $stubOut = Join-Path $dir 'stub.out'
 
+    # stdout is captured as well as stderr. A python that cannot start says so on either channel
+    # depending on why -- the Windows Store interpreter alias writes its "not found, install from
+    # the Store" notice to stdout -- and a diagnostic that reports only stderr prints an empty
+    # string for a failure that did explain itself.
     $proc = Start-Process -FilePath $script:Python -PassThru -NoNewWindow `
-        -RedirectStandardError $stubErr `
+        -RedirectStandardError $stubErr -RedirectStandardOutput $stubOut `
         -ArgumentList @(
         (Join-Path $script:Here 'stub_github_api.py'),
         '--scenario', $Scenario,
@@ -109,25 +114,40 @@ function start_stub {
     )
 
     # The port file is written only once the socket is listening, so its appearance means a request
-    # will not be refused. 100 x 100ms is 10s: far longer than an interpreter start, still bounded.
+    # will not be refused.
     #
-    # The diagnostic distinguishes a stub that died from one still starting, because an empty
-    # stderr does not: a crash leaves a traceback, while a stall leaves nothing at all -- which is
-    # what a reverse DNS lookup in HTTPServer.server_bind did until StubServer overrode it.
+    # 300 x 100ms is 30s. It was 10s, which a cold interpreter start on windows-latest exceeded once
+    # -- the process was alive and had simply not got there yet, on a commit whose diff touched
+    # nothing before the port file is written. 30s still reports a genuinely dead stub quickly, and
+    # the reason for keeping it tight is gone: that was to avoid masking a stall inside
+    # HTTPServer.server_bind, which StubServer now fixes at the source rather than waiting out.
+    #
+    # The diagnostic distinguishes a stub that died from one still starting, because an empty stderr
+    # does not: a crash leaves a traceback, while a stall leaves nothing at all.
     $tries = 0
-    while (-not (Test-Path $portFile) -or -not (Get-Content $portFile -Raw).Trim()) {
+    while (-not (Test-Path $portFile) -or -not "$(Get-Content $portFile -Raw)".Trim()) {
+        # A stub that has exited is never going to become ready, so there is nothing to wait for.
+        # The port file is re-tested first because the process could in principle have written it
+        # and then died between the loop condition and here.
+        $dead = $proc.HasExited -and -not (Test-Path $portFile)
         $tries = $tries + 1
-        if ($tries -gt 100) {
-            $detail = if (Test-Path $stubErr) { Get-Content $stubErr -Raw } else { '(no stderr)' }
-            $state = if ($proc.HasExited) { "exited with $($proc.ExitCode)" } else { 'still running, so stalled before becoming ready' }
-            throw "stub for $Scenario never came up ($state); its stderr was:`n$detail"
+        if ($dead -or $tries -gt 300) {
+            $err = if (Test-Path $stubErr) { Get-Content $stubErr -Raw } else { '(no stderr)' }
+            $out = if (Test-Path $stubOut) { Get-Content $stubOut -Raw } else { '(no stdout)' }
+            $state = if ($proc.HasExited) {
+                "exited with $($proc.ExitCode) before becoming ready"
+            }
+            else {
+                'still running after 30s, so stalled before becoming ready rather than crashed'
+            }
+            throw "stub for $Scenario never came up ($state);`nstdout was:`n$out`nstderr was:`n$err"
         }
         Start-Sleep -Milliseconds 100
     }
 
     return [pscustomobject]@{
         Process = $proc
-        Uri     = "http://127.0.0.1:$((Get-Content $portFile -Raw).Trim())"
+        Uri     = "http://127.0.0.1:$("$(Get-Content $portFile -Raw)".Trim())"
         Log     = $logFile
         Dir     = $dir
     }

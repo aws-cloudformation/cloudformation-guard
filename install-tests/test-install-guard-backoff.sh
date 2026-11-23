@@ -70,6 +70,16 @@ make_gh_absent() {
 	export PATH
 }
 
+# Both of the stub's output channels, for a failure diagnostic. Reported together because which one
+# carries the explanation depends on why it failed, and a report naming only stderr prints an empty
+# string for a failure that did explain itself on stdout.
+report_stub_output() {
+	echo "its stdout was:" >&2
+	cat "$1/stub.out" >&2
+	echo "its stderr was:" >&2
+	cat "$1/stub.err" >&2
+}
+
 # Start the stub on an OS-chosen port and wait until it is listening. Sets STUB_URL and STUB_LOG.
 start_stub() {
 	_scenario="$1"
@@ -79,34 +89,44 @@ start_stub() {
 	: >"$STUB_LOG"
 	_portfile="$_dir/port"
 
+	# stdout is captured as well as stderr. A python that cannot start says so on either channel
+	# depending on why -- a Windows Store interpreter alias writes its "not found, install from the
+	# Store" notice to stdout -- and a diagnostic that reports only stderr prints an empty string
+	# for a failure that did explain itself.
 	"$PYTHON" "$HERE/stub_github_api.py" \
 		--scenario "$_scenario" \
 		--port-file "$_portfile" \
 		--log-file "$STUB_LOG" \
-		2>"$_dir/stub.err" &
+		>"$_dir/stub.out" 2>"$_dir/stub.err" &
 	STUB_PID=$!
 
 	# The port file is written only after the socket is listening, so its appearance means a
-	# request will not be refused. 100 x 0.1s is 10s, which is far longer than an interpreter
-	# start and still bounded.
+	# request will not be refused.
+	#
+	# 300 x 0.1s is 30s. It was 10s, which a cold interpreter start on a Windows runner exceeded
+	# once -- the process was alive and had simply not got there yet. 30s is still a bounded wait
+	# that reports a genuinely dead stub quickly, and the reason for keeping it tight is gone:
+	# that was to avoid masking a stall inside HTTPServer.server_bind, which StubServer now fixes
+	# at the source rather than by waiting it out.
 	#
 	# The diagnostic reports whether the process is still alive, because the two ways this can
-	# fail need different fixes and an empty stderr does not tell them apart: a stub that died
-	# has a traceback to read, while a stub that is still running has stalled inside startup --
-	# which is what a reverse DNS lookup in HTTPServer.server_bind did on macOS, silently, until
-	# StubServer overrode it.
+	# fail need different fixes and an empty stderr does not tell them apart: a stub that died has
+	# a traceback to read, while one still running has stalled inside startup.
 	_tries=0
 	while [ ! -s "$_portfile" ]; do
+		# A stub that has exited is never going to become ready, so there is nothing to wait
+		# for. The port file is re-tested first because the process could in principle have
+		# written it and then died between the loop condition and here.
+		if ! kill -0 "$STUB_PID" 2>/dev/null && [ ! -s "$_portfile" ]; then
+			echo "stub for $_scenario exited before becoming ready." >&2
+			report_stub_output "$_dir"
+			exit 1
+		fi
 		_tries=$((_tries + 1))
-		if [ "$_tries" -gt 100 ]; then
-			if kill -0 "$STUB_PID" 2>/dev/null; then
-				echo "stub for $_scenario is still running but never became ready:" >&2
-				echo "  it is stalled before writing $_portfile, not crashed." >&2
-			else
-				echo "stub for $_scenario exited before becoming ready." >&2
-			fi
-			echo "its stderr was:" >&2
-			cat "$_dir/stub.err" >&2
+		if [ "$_tries" -gt 300 ]; then
+			echo "stub for $_scenario is still running but never became ready in 30s:" >&2
+			echo "  it is stalled before writing $_portfile, not crashed." >&2
+			report_stub_output "$_dir"
 			exit 1
 		fi
 		sleep 0.1

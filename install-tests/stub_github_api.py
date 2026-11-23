@@ -95,9 +95,12 @@ class StubServer(ThreadingHTTPServer):
     nothing had failed yet. It just had not returned.
 
     `server_name` is only used to build the CGI environment, which nothing here does, so the
-    lookup buys this stub nothing and is skipped. Written out rather than worked around with a
-    longer timeout: the timeout is there to catch a stub that is genuinely broken, and stretching
-    it to cover a resolver stall would make a real failure take half a minute to report.
+    lookup buys this stub nothing and is skipped.
+
+    Fixed here rather than by waiting it out. The callers' readiness timeout was later raised to
+    30s for an unrelated reason -- a cold interpreter start on a Windows runner -- which would
+    have hidden this stall instead of removing it, and a resolver that took longer than 30s would
+    have brought it straight back.
     """
 
     def server_bind(self):
