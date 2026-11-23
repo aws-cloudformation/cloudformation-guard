@@ -77,6 +77,19 @@ jobs:
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
 
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          target: wasm32-unknown-unknown
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: guard/package-lock.json
+
+      - name: Upgrade npm to match the committed lockfiles
+        run: npm install -g npm@11
+
       - name: Configure git
         run: |
           git config user.name "github-actions[bot]"
@@ -121,6 +134,36 @@ jobs:
 
           # Update lockfile to reflect new versions
           cargo check
+
+      - name: Install TypeScript library dependencies
+        working-directory: guard
+        run: npm ci
+
+      - name: Build TypeScript library
+        working-directory: guard
+        run: |
+          WASM_OUTPUT="$(mktemp -d "$RUNNER_TEMP/cfn-guard-wasm.XXXXXX")"
+          ./node_modules/.bin/wasm-pack build \
+            --target nodejs \
+            --out-name guard \
+            --out-dir "$WASM_OUTPUT" \
+            --no-pack \
+            --release
+          cp \
+            "$WASM_OUTPUT/guard.js" \
+            "$WASM_OUTPUT/guard.d.ts" \
+            "$WASM_OUTPUT/guard_bg.wasm" \
+            "$WASM_OUTPUT/guard_bg.wasm.d.ts" \
+            ts-lib/
+          npm run build:typescript
+
+      - name: Install GitHub Action dependencies
+        working-directory: action
+        run: npm ci
+
+      - name: Build GitHub Action
+        working-directory: action
+        run: npm run package
 
       - name: Commit & tag
         run: |
@@ -238,7 +281,7 @@ jobs:
           retention-days: 1
 
   build-ts-lib:
-    name: Build TypeScript library
+    name: Package TypeScript library
     needs: [validate, version-bump]
     runs-on: ubuntu-latest
     env:
@@ -251,10 +294,6 @@ jobs:
         with:
           ref: ${{ needs.validate.outputs.version }}
 
-      - uses: actions-rust-lang/setup-rust-toolchain@v1
-        with:
-          target: wasm32-unknown-unknown
-
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
@@ -263,23 +302,6 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
-
-      - name: Build TypeScript library
-        run: |
-          WASM_OUTPUT="$(mktemp -d "$RUNNER_TEMP/cfn-guard-wasm.XXXXXX")"
-          ./node_modules/.bin/wasm-pack build \
-            --target nodejs \
-            --out-name guard \
-            --out-dir "$WASM_OUTPUT" \
-            --no-pack \
-            --release
-          cp \
-            "$WASM_OUTPUT/guard.js" \
-            "$WASM_OUTPUT/guard.d.ts" \
-            "$WASM_OUTPUT/guard_bg.wasm" \
-            "$WASM_OUTPUT/guard_bg.wasm.d.ts" \
-            ts-lib/
-          npm run build:typescript
 
       - name: Lint and test
         run: |
@@ -290,7 +312,7 @@ jobs:
         run: |
           cd ts-lib
           npm pack
-          mv "cfn-guard-${VERSION}.tgz" "../../cfn-guard-ts-lib-${VERSION}.tgz"
+          mv "aws-cloudformation-guard-${VERSION}.tgz" "../../cfn-guard-ts-lib-${VERSION}.tgz"
 
       - name: Upload TypeScript library artifact
         uses: actions/upload-artifact@v6
@@ -388,6 +410,9 @@ jobs:
     needs: [validate, version-bump, github-release]
     if: ${{ !inputs.dry_run && !inputs.skip_crates }}
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
     defaults:
       run:
         shell: bash
@@ -400,9 +425,13 @@ jobs:
 
       - uses: actions-rust-lang/setup-rust-toolchain@v1
 
+      - name: Authenticate with crates.io
+        id: crates-io-auth
+        uses: rust-lang/crates-io-auth-action@v1.0.5
+
       - name: Publish cloudformation-guard-lang
         env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN_GUARD_LANG }}
+          CARGO_REGISTRY_TOKEN: ${{ steps.crates-io-auth.outputs.token }}
         run: |
           cd guard-lang
           cargo publish --no-verify 2>&1 | tee /tmp/publish.log || {
@@ -515,4 +544,35 @@ jobs:
             .
           docker push "$PREFIX:$VERSION"
           docker push "$PREFIX:latest"
+
+  # ---------------------------------------------------------------------------
+  # 7. Publish TypeScript library to npm
+  # ---------------------------------------------------------------------------
+  publish-npm:
+    name: Publish to npm
+    needs: [validate, github-release]
+    if: ${{ !inputs.dry_run }}
+    runs-on: ubuntu-latest
+    environment: release-npm
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      VERSION: ${{ needs.validate.outputs.version }}
+    steps:
+      - uses: actions/download-artifact@v7
+        with:
+          name: cfn-guard-ts-lib
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          registry-url: "https://registry.npmjs.org"
+          package-manager-cache: false
+
+      - name: Upgrade npm for trusted publishing
+        run: npm install -g npm@11
+
+      - name: Publish @aws/cloudformation-guard
+        run: npm publish "./cfn-guard-ts-lib-${VERSION}.tgz" --access public --provenance
 

@@ -242,7 +242,7 @@ pub enum BudgetScope {
 /// policies.
 ///
 /// The marker is its own variant and not `MarkedValue::BadValue`, which `handle_type_ref` writes for
-/// a `!!int`, `!!float` or `!!bool` whose payload is not one. That mark carries the scalar's own
+/// a `!!int` or `!!float` whose payload is not one. That mark carries the scalar's own
 /// text, and when the two shared a variant a `<<: !!int abc` was refused as "abc", the text forwarded
 /// as though it were a refusal, where a plain `<<: abc` says the merge key must be given a mapping.
 /// `fill_mapping` and `apply_merges` forward a `Refused` node's message and give a `BadValue` the key
@@ -1273,9 +1273,7 @@ impl Loader {
                         // section of docs/CLAUSES.md.
                         //
                         // By exact spelling. This lowercased the scalar first, so `nUlL` and `NuLL`
-                        // were null, while the boolean arm above had been narrowed to three casings
-                        // with the note that matching case-insensitively would accept spellings no
-                        // schema makes boolean. Null was the one scalar still resolved that way.
+                        // were null, while the boolean arm above matches exact spellings only.
                         // YAML 1.2 core resolves `null | Null | NULL | ~` and nothing else, and
                         // `is_null_spelling` is the set the `!!null` arm reads, so the two agree.
                         None if is_null_spelling(&val) => MarkedValue::Null(location),
@@ -2492,60 +2490,22 @@ fn resolve_int(val: &str) -> IntScalar<'_> {
     }
 }
 
-/// The spellings a plain scalar is read as boolean: the YAML 1.2 core schema's set, which is the
-/// whole of `true | True | TRUE | false | False | FALSE`
-/// (<https://yaml.org/spec/1.2.2/#103-core-schema>, which resolves every other spelling to `str`).
-///
-/// Three casings of each word and no others, so `tRuE` is a string. Matching case-insensitively
-/// would have been shorter and would have accepted spellings no schema makes boolean.
-///
-/// YAML 1.1's set of 22 (<https://yaml.org/type/bool.html>) adds `y`, `Y`, `n`, `N`, `yes`, `no`,
-/// `on`, `off` and their casings; those are strings here. Three separate readers of the same document
-/// agree with the 1.2 set and not with 1.1's:
-///
-///   - `rules::parser::parse_bool`, which reads a boolean literal in cfn-guard's own grammar,
-///     accepts exactly the six spellings above. Reading `yes` as a boolean here would compare
-///     `Enabled == true` and a document writing `Enabled: yes` across two different vocabularies.
-///   - `serde_yaml`, which was the loader `guard test` and the public `run_checks` reached on the same
-///     bytes, is 1.2 core. A rule proved correct under `guard test` could fail under `validate`.
-///   - libyaml, whose parser this file wraps, does not resolve the single letters either; neither
-///     does PyYAML, the other widely used 1.1 implementation. The 1.1 *type page* lists them, but
-///     the implementations do not.
-///
-/// The concrete harm was not hypothetical. `AttributeType: N` is what the DynamoDB documentation
-/// shows for a numeric attribute, unquoted, and it resolved to `false`: a rule asserting
-/// `AttributeType IN ["S","N","B"]` failed, and the same value inside a filter selected nothing and
-/// skipped the rule at exit 0. Every GitHub Actions workflow in this repository was unreadable for
-/// the same reason -- `on:` resolved to a boolean, and a boolean is not a valid mapping key, so the
-/// whole file was refused.
-///
-/// The cost runs the other direction: a document that writes `Encrypted: yes` meaning true yields
-/// the string "yes", and a clause comparing it to `true` reports the type mismatch instead of
-/// passing. That is the trade, and it is the right way round -- the tool says it cannot decide
-/// rather than deciding by a rule none of its other three readers share. No
-/// `.guard` file in the rules registry or this repository writes a bare 1.1-only spelling as a
-/// literal, and no data fixture in either writes one as a value.
+// YAML 1.1 booleans may be written in lowercase, Capitalized or UPPERCASE form
 fn parse_bool(val: &str) -> Option<bool> {
-    if is_bool_true(val) {
-        Some(true)
-    } else if is_bool_false(val) {
-        Some(false)
-    } else {
-        None
+    match val {
+        "true" | "True" | "TRUE" | "yes" | "Yes" | "YES" | "on" | "On" | "ON" | "y" | "Y" => {
+            Some(true)
+        }
+        "false" | "False" | "FALSE" | "no" | "No" | "NO" | "off" | "Off" | "OFF" | "n" | "N" => {
+            Some(false)
+        }
+        _ => None,
     }
-}
-
-fn is_bool_true(s: &str) -> bool {
-    matches!(s, "true" | "True" | "TRUE")
-}
-
-fn is_bool_false(s: &str) -> bool {
-    matches!(s, "false" | "False" | "FALSE")
 }
 
 /// The spellings that resolve to the null node: the YAML 1.2 core schema's `null | Null | NULL | ~`
 /// (<https://yaml.org/spec/1.2.2/#103-core-schema>) and the empty scalar, which both YAML versions
-/// resolve to null. Three casings of the word and no others, as for the booleans above.
+/// resolve to null. Three casings of the word and no others.
 fn is_null_spelling(s: &str) -> bool {
     matches!(s, "" | "~" | "null" | "Null" | "NULL")
 }
@@ -2637,22 +2597,8 @@ fn handle_type_ref(
     warnings: &mut Vec<UnreadTag>,
 ) -> MarkedValue {
     match type_ref {
-        // Through the same set as a plain scalar, and refused when the payload is outside it.
-        //
-        // This read `str::parse::<bool>`, which takes `true` and `false` and nothing else, so an
-        // explicit tag was stricter than the untagged resolution it should have agreed with. Moving
-        // it to `parse_bool` fixed that half but left the other one: a payload outside the set fell
-        // back to a *string*, which is the one answer that neither reads the node as the boolean the
-        // author asked for nor says it could not be read as one. `!!bool yes` became the string
-        // "yes", silently, where `!!int abc` next door is a loud `BadValue`.
-        //
-        // Measured, `serde_yaml` accepts exactly these six spellings under `!!bool` and refuses every
-        // other payload outright, `y`, `on`, `off`, `no`, `0`, `1` and `tRuE` included. So refusing here is
-        // what makes the two agree. PyYAML errors on an out-of-set payload too, though it takes the
-        // YAML 1.1 words: it is a 1.1 implementation, and following it would put the boolean
-        // vocabulary of a document under the control of whether a tag was written.
         "tag:yaml.org,2002:bool" => match parse_bool(&val) {
-            None => refused_type_ref(type_ref, &val, loc),
+            None => MarkedValue::String(val, loc),
             Some(v) => MarkedValue::Bool(v, loc),
         },
         // Through `resolve_int`, the resolver a plain scalar gets, and refused when it does not resolve.
@@ -2716,8 +2662,8 @@ fn handle_type_ref(
         // The YAML 1.2 core null set, and refused outside it.
         //
         // This returned `Null` without reading the payload, so `IsLogging: !!null false` was a null
-        // and the `false` was gone with no diagnostic, where `!!bool abc` and `!!int abc` next door are
-        // both `BadValue`s. A rule `IsLogging == false` then reported "not comparable null, bool" for
+        // and the `false` was gone with no diagnostic, where `!!int abc` next door is
+        // a `BadValue`. A rule `IsLogging == false` then reported "not comparable null, bool" for
         // a document whose author had written `false`, and nothing in any output said why. PyYAML
         // answers None for any `!!null` payload, which is where the old behavior came from; the core
         // schema's own regex for the type does not resolve a payload outside the set, and refusing
@@ -2734,7 +2680,7 @@ fn handle_type_ref(
         // `!!merge` is the merge key's own type. Over `<<` it is a merge key, which
         // `handle_scalar_event` records (the index is decided there, where the style is known) and
         // `handle_mapping_end` folds; the scalar itself is the key's text. Over anything else it names
-        // a type the payload cannot be, as `!!bool maybe` does, and is refused the same way.
+        // a type the payload cannot be, as `!!int maybe` does, and is refused the same way.
         "tag:yaml.org,2002:merge" if val == MERGE_KEY => MarkedValue::String(val, loc),
         "tag:yaml.org,2002:merge" => refused_type_ref(type_ref, &val, loc),
         // Any other `!!` tag: refused if it spells an intrinsic, read as text with a warning if not.
@@ -2799,7 +2745,7 @@ fn looks_like_an_intrinsic_name(short: &str) -> bool {
 }
 
 /// The `BadValue` for a payload a `!!` type tag cannot read: the node as the document wrote it, tag
-/// included, so `!!bool maybe` rather than `maybe`.
+/// included, so `!!int maybe` rather than `maybe`.
 ///
 /// A refusal carrying the payload alone would build the report "Bad Value encountered parsing
 /// incoming file Value = maybe", which does not say that a tag is what made the text unreadable. A
@@ -2808,7 +2754,7 @@ fn refused_type_ref(type_ref: &str, val: &str, loc: Location) -> MarkedValue {
     MarkedValue::BadValue(type_ref_as_written(type_ref, val), None, loc)
 }
 
-/// The node as the document wrote it, tag included: `!!bool maybe`, or just `!!bool` for an empty
+/// The node as the document wrote it, tag included: `!!int maybe`, or just `!!int` for an empty
 /// payload.
 fn type_ref_as_written(type_ref: &str, val: &str) -> String {
     let short = type_ref.strip_prefix(TYPE_REF_PREFIX).unwrap_or(type_ref);

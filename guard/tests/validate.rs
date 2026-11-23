@@ -777,24 +777,13 @@ mod validate_tests {
         assert_eq!(expected_status_code, status_code);
     }
 
-    /// The control for the case above, and the reason the set is six spellings rather than anything
-    /// that looks like one. A scalar YAML resolves to a string stays a string and stays incomparable
-    /// to a boolean, so the boolean set does not quietly answer comparisons that have no answer.
-    /// Asserting the reported reason and not only the exit code is what separates this from a clause
-    /// that failed on the merits -- which is exactly the distinction the YAML 1.1 spellings need,
-    /// since `PublicAccess: no` makes this clause undecidable rather than deciding it false, and
-    /// both exit 0.
+    /// The control for the case above. A scalar outside the boolean set stays a string and stays
+    /// incomparable to a boolean, so comparisons without an answer are reported rather than quietly
+    /// decided. Asserting the reported reason and not only the exit code is what separates this from
+    /// a clause that failed on the merits.
     #[rstest::rstest]
     #[case::mixed_case_true("tRuE")]
     #[case::a_word_outside_the_set("enabled")]
-    #[case::yaml_1_1_yes("yes")]
-    #[case::yaml_1_1_yes_uppercase("YES")]
-    #[case::yaml_1_1_on("on")]
-    #[case::yaml_1_1_y("y")]
-    #[case::yaml_1_1_no("no")]
-    #[case::yaml_1_1_off("off")]
-    #[case::yaml_1_1_n("n")]
-    #[case::yaml_1_1_n_uppercase("N")]
     fn test_a_non_boolean_string_is_still_not_comparable_to_a_boolean(#[case] spelling: &str) {
         let data = format!(
             indoc! {r#"
@@ -12879,10 +12868,10 @@ mod validate_tests {
     /// included, so on the alias row `Base`, `X` and `Y` all hold the key `1` at the anchor's position;
     /// only `X` merged a colliding `"1"` beside it, and only /Resources/X/1 is reported. Red with the
     /// loader's record keyed by the held key's position alone, which printed three notices, for
-    /// /Base/1 and /Resources/Y/1 as well, each naming a "repeated" position inside `X`; green with
+    /// /Base/1 and /Resources/Z/1 as well, each naming a "repeated" position inside `X`; green with
     /// the merging mapping's position in the key. When the mapping that merged is itself aliased
-    /// (`X: &x { <<: [...] }` then `Y: *x`) the copy carries `X`'s position too and the notice is
-    /// printed once per copy, /X/1 and /Y/1, as a duplicate pair inside an aliased mapping is. A
+    /// (`X: &x { <<: [...] }` then `Z: *x`) the copy carries `X`'s position too and the notice is
+    /// printed once per copy, /X/1 and /Z/1, as a duplicate pair inside an aliased mapping is. A
     /// source that is itself a mapping that merged (`<<: { <<: [...] }`, anchored or not) is taken
     /// apart by the enclosing merge and never walked, so its record is carried over with its entries
     /// and printed for the enclosing mapping, /R/1, and for every mapping that merges the anchored
@@ -12951,7 +12940,7 @@ mod validate_tests {
         &[
             "duplicate key /X/1 in data file <name>, first at L:1,C:12 and again at L:2,C:19. \
              The first value is the one evaluated.",
-            "duplicate key /Y/1 in data file <name>, first at L:1,C:12 and again at L:2,C:19. \
+            "duplicate key /Z/1 in data file <name>, first at L:1,C:12 and again at L:2,C:19. \
              The first value is the one evaluated."
         ]
     )]

@@ -1,6 +1,6 @@
 [package]
 name = "cloudformation-guard-lang"
-version = "3.2.1"
+version = "3.3.0"
 edition = "2018"
 rust-version = "1.77.2"
 description = "Parser, AST, and evaluation types for the AWS CloudFormation Guard DSL"

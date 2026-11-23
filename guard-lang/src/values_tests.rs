@@ -521,6 +521,9 @@ Resources:
 ///
 ///   - `0b101`. YAML 1.2 core has no binary form -- it is 1.1's -- so following `serde_yaml`'s
 ///     extension would re-add a 1.1-ism the boolean set dropped. A choice, not a limit.
+///   - the YAML 1.1 boolean spellings `yes`, `no`, `on`, `off`, `y` and `n`, in any of the casings the
+///     boolean set accepts. Since upstream #782 the libyaml loader loads them as `Bool`, while
+///     `serde_yaml` 0.9 loads them as `String`, so they are kept out of this document on purpose.
 ///
 /// **Not closable at this boundary.** `serde_yaml::Value` is a *resolved* value model: it has already
 /// discarded how each scalar was written, and anchors with it, before this conversion sees anything. So
@@ -585,9 +588,6 @@ Resources:
       bool_true: true
       bool_TRUE: TRUE
       bool_mixed: tRuE
-      not_a_bool_yes: yes
-      not_a_bool_n: N
-      not_a_bool_off: off
       hex: 0x1F
       octal: 0o17
       leading_zero: 0755
