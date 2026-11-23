@@ -25,6 +25,7 @@ appear before making its first request.
 
 import argparse
 import json
+import socketserver
 import sys
 import threading
 import time
@@ -84,6 +85,27 @@ SCENARIOS = {
 STUB_TAG = "3.1.4-stub"
 
 
+class StubServer(ThreadingHTTPServer):
+    """ThreadingHTTPServer without the reverse DNS lookup its bind performs.
+
+    `HTTPServer.server_bind` calls `socket.getfqdn()` on the bind address to fill in
+    `server_name`. That is a reverse DNS lookup, and on a macOS CI runner 127.0.0.1 has no PTR
+    record to find, so the call blocks until the resolver gives up -- measured as longer than the
+    ten seconds the callers were willing to wait for the port file, with nothing on stderr because
+    nothing had failed yet. It just had not returned.
+
+    `server_name` is only used to build the CGI environment, which nothing here does, so the
+    lookup buys this stub nothing and is skipped. Written out rather than worked around with a
+    longer timeout: the timeout is there to catch a stub that is genuinely broken, and stretching
+    it to cover a resolver stall would make a real failure take half a minute to report.
+    """
+
+    def server_bind(self):
+        socketserver.TCPServer.server_bind(self)
+        self.server_name = "127.0.0.1"
+        self.server_port = self.server_address[1]
+
+
 def build_handler(responses, log_path, counter):
     class Handler(BaseHTTPRequestHandler):
         # Quiet: the default logs every request to stderr, which the callers capture and assert on.
@@ -138,7 +160,7 @@ def main():
     handler = build_handler(SCENARIOS[args.scenario], args.log_file, counter)
 
     # Port 0 lets the OS pick, so two of these can run at once on one runner.
-    server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    server = StubServer(("127.0.0.1", 0), handler)
     port = server.server_address[1]
 
     # Written last, and only once the socket is already listening, so its existence is the caller's

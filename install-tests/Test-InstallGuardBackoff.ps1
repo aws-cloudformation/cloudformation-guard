@@ -110,12 +110,17 @@ function start_stub {
 
     # The port file is written only once the socket is listening, so its appearance means a request
     # will not be refused. 100 x 100ms is 10s: far longer than an interpreter start, still bounded.
+    #
+    # The diagnostic distinguishes a stub that died from one still starting, because an empty
+    # stderr does not: a crash leaves a traceback, while a stall leaves nothing at all -- which is
+    # what a reverse DNS lookup in HTTPServer.server_bind did until StubServer overrode it.
     $tries = 0
     while (-not (Test-Path $portFile) -or -not (Get-Content $portFile -Raw).Trim()) {
         $tries = $tries + 1
         if ($tries -gt 100) {
             $detail = if (Test-Path $stubErr) { Get-Content $stubErr -Raw } else { '(no stderr)' }
-            throw "stub for $Scenario never came up; its stderr was:`n$detail"
+            $state = if ($proc.HasExited) { "exited with $($proc.ExitCode)" } else { 'still running, so stalled before becoming ready' }
+            throw "stub for $Scenario never came up ($state); its stderr was:`n$detail"
         }
         Start-Sleep -Milliseconds 100
     }
@@ -204,6 +209,13 @@ function announced_delays {
         ForEach-Object { [int]$_.Groups[1].Value })
 }
 
+# The three collection helpers below are each called as `@(helper ...)`, and the `@()` is not
+# decoration. PowerShell unrolls a returned array into the pipeline, so a one-element array comes
+# back as a bare scalar no matter that the function wrote `return @(...)`; under
+# `Set-StrictMode -Version Latest` the `.Count` the callers then read throws
+# ParentContainsErrorRecordException rather than answering 1. That is measured, not theoretical: it
+# is how the ratelimit-reset case failed on windows-latest, where two requests yield exactly one
+# gap. Wrapping at the call site is what guarantees an array of any length, including zero.
 function stub_requests {
     param($Stub)
     $lines = @(Get-Content $Stub.Log -ErrorAction SilentlyContinue | Where-Object { $_.Trim() })
@@ -243,14 +255,14 @@ function test_retry_after_is_honoured {
     $stub = start_stub 'retry-after'
     try {
         $run = run_installer $stub
-        $requests = stub_requests $stub
+        $requests = @(stub_requests $stub)
 
         if ($run.ExitCode -ne 0) {
             fail "retry-after: expected the install to recover and exit 0, got $($run.ExitCode); output:`n$($run.Stdout)`n$($run.Stderr)"
             return
         }
 
-        $delays = announced_delays $run
+        $delays = @(announced_delays $run)
         if (($delays -join ' ') -ne '1 1') {
             fail "retry-after: announced delays were '$($delays -join ' ')', expected '1 1'. 2 and 4 would mean Retry-After was ignored and the exponential fallback used instead."
         }
@@ -267,7 +279,7 @@ function test_retry_after_is_honoured {
             # may return marginally early and the stub timestamps the response.
             $index = 0
             $allOk = $true
-            foreach ($gap in request_gaps_ms $requests) {
+            foreach ($gap in @(request_gaps_ms $requests)) {
                 $index = $index + 1
                 if ($gap -lt 900) {
                     fail "retry-after: gap $index was ${gap}ms, expected at least ~1000ms -- the script did not actually wait the second it announced."
@@ -306,14 +318,14 @@ function test_ratelimit_reset_is_honoured {
     $stub = start_stub 'ratelimit-reset'
     try {
         $run = run_installer $stub
-        $requests = stub_requests $stub
+        $requests = @(stub_requests $stub)
 
         if ($run.ExitCode -ne 0) {
             fail "ratelimit-reset: expected the install to recover and exit 0, got $($run.ExitCode); output:`n$($run.Stdout)`n$($run.Stderr)"
             return
         }
 
-        $announced = (announced_delays $run) -join ' '
+        $announced = @(announced_delays $run) -join ' '
         if ($announced -eq '2') {
             fail 'ratelimit-reset: announced 2, which is BaseDelaySeconds -- the reset epoch was not read and the exponential fallback was used instead.'
         }
@@ -324,7 +336,7 @@ function test_ratelimit_reset_is_honoured {
             fail "ratelimit-reset: announced delays were '$announced', expected '4' or '5'"
         }
 
-        $gaps = request_gaps_ms $requests
+        $gaps = @(request_gaps_ms $requests)
         if ($gaps.Count -lt 1) {
             fail 'ratelimit-reset: the stub saw only one request, so no retry happened'
         }
@@ -353,14 +365,14 @@ function test_exponential_fallback {
     $stub = start_stub 'exponential'
     try {
         $run = run_installer $stub
-        $requests = stub_requests $stub
+        $requests = @(stub_requests $stub)
 
         if ($run.ExitCode -ne 0) {
             fail "exponential: expected the install to recover and exit 0, got $($run.ExitCode); output:`n$($run.Stdout)`n$($run.Stderr)"
             return
         }
 
-        $delays = announced_delays $run
+        $delays = @(announced_delays $run)
         if (($delays -join ' ') -ne '2 4') {
             fail "exponential: announced delays were '$($delays -join ' ')', expected '2 4' -- with no header to read the delay must double from BaseDelaySeconds."
         }
@@ -384,7 +396,7 @@ function test_exhaustion_is_bounded_and_explained {
     $stub = start_stub 'exhaustion'
     try {
         $run = run_installer $stub
-        $requests = stub_requests $stub
+        $requests = @(stub_requests $stub)
         $output = "$($run.Stdout)`n$($run.Stderr)"
 
         if ($run.ExitCode -eq 0) {
@@ -436,7 +448,7 @@ function test_single_429_is_survived {
     $stub = start_stub 'succeed-after-one-429'
     try {
         $run = run_installer $stub
-        $requests = stub_requests $stub
+        $requests = @(stub_requests $stub)
 
         if ($run.ExitCode -ne 0) {
             fail "single-429: one 429 must not fail the install, got exit $($run.ExitCode); output:`n$($run.Stdout)`n$($run.Stderr)"

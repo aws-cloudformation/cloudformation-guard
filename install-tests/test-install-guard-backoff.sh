@@ -89,11 +89,23 @@ start_stub() {
 	# The port file is written only after the socket is listening, so its appearance means a
 	# request will not be refused. 100 x 0.1s is 10s, which is far longer than an interpreter
 	# start and still bounded.
+	#
+	# The diagnostic reports whether the process is still alive, because the two ways this can
+	# fail need different fixes and an empty stderr does not tell them apart: a stub that died
+	# has a traceback to read, while a stub that is still running has stalled inside startup --
+	# which is what a reverse DNS lookup in HTTPServer.server_bind did on macOS, silently, until
+	# StubServer overrode it.
 	_tries=0
 	while [ ! -s "$_portfile" ]; do
 		_tries=$((_tries + 1))
 		if [ "$_tries" -gt 100 ]; then
-			echo "stub for $_scenario never came up; its stderr was:" >&2
+			if kill -0 "$STUB_PID" 2>/dev/null; then
+				echo "stub for $_scenario is still running but never became ready:" >&2
+				echo "  it is stalled before writing $_portfile, not crashed." >&2
+			else
+				echo "stub for $_scenario exited before becoming ready." >&2
+			fi
+			echo "its stderr was:" >&2
 			cat "$_dir/stub.err" >&2
 			exit 1
 		fi
