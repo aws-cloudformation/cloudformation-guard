@@ -401,7 +401,7 @@ of the 2s fallback"
 }
 
 # ---------------------------------------------------------------------------------------------
-# With no backoff headers, the delay doubles from BASE_DELAY.
+# Two bare 429s (no backoff headers), then success: the delay doubles from BASE_DELAY.
 #
 # This is the fallback the two cases above must NOT take, so it needs its own positive control:
 # without it, a script that always slept 1s would pass both of them.
@@ -426,6 +426,41 @@ read the delay must double from BASE_DELAY."
 	fi
 
 	assert_no_auth_reached_stub "exponential" "$STUB_LOG"
+	stop_stub
+}
+
+# ---------------------------------------------------------------------------------------------
+# A bare 403 fails at once.
+#
+# A 403 with neither X-RateLimit-Remaining: 0 nor Retry-After is a permission answer, not a quota,
+# and retrying it only delays the failure. Exactly one request, a nonzero exit, and the one-attempt
+# message.
+# ---------------------------------------------------------------------------------------------
+test_bare_403_fails_fast() {
+	start_stub forbidden
+	run_installer "$WORK/forbidden"
+
+	if [ "$RUN_STATUS" -eq 0 ]; then
+		fail "forbidden: a bare 403 must fail the install, got exit 0"
+	else
+		pass "forbidden: exited $RUN_STATUS"
+	fi
+
+	_requests=$(request_count "$STUB_LOG")
+	if [ "$_requests" -ne 1 ]; then
+		fail "forbidden: the stub saw $_requests requests, expected exactly 1 -- a bare 403 is not retried."
+	else
+		pass "forbidden: exactly one request"
+	fi
+
+	if ! grep -q "GitHub API request failed with HTTP 403 after 1 attempt(s)" "$WORK/forbidden/stderr"; then
+		fail "forbidden: stderr did not report the single failed attempt; stderr:
+$(cat "$WORK/forbidden/stderr")"
+	else
+		pass "forbidden: reported HTTP 403 after 1 attempt"
+	fi
+
+	assert_no_auth_reached_stub "forbidden" "$STUB_LOG"
 	stop_stub
 }
 
@@ -656,6 +691,7 @@ stage_archive 3.1.4-stub
 test_retry_after_is_honoured
 test_ratelimit_reset_is_honoured
 test_exponential_fallback
+test_bare_403_fails_fast
 test_exhaustion_is_bounded_and_explained
 test_single_429_is_survived
 test_an_unusable_reset_header_still_explains_itself

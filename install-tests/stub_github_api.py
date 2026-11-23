@@ -59,13 +59,18 @@ SCENARIOS = {
         {"status": 403, "headers": {"X-RateLimit-Remaining": "0"}, "reset_in": 4},
         {"status": 200},
     ],
-    # No backoff headers at all, so the caller has nothing to read and must fall back to doubling
-    # from BASE_DELAY. Success on the third attempt keeps this to 2s + 4s; going all the way to
-    # exhaustion here would add 8s and 16s to prove nothing further about the progression.
+    # A quota answer with no delay header: the caller has nothing to read and must fall back to
+    # doubling from BASE_DELAY. A bare 429 is transient by status alone (a bare 403 is not, see
+    # `forbidden`). Success on the third attempt keeps this to 2s + 4s.
     "exponential": [
-        {"status": 403},
-        {"status": 403},
+        {"status": 429},
+        {"status": 429},
         {"status": 200},
+    ],
+    # A bare 403: no rate-limit or retry-after header, so it is a permission answer that retrying
+    # cannot change. The caller must fail on the first request.
+    "forbidden": [
+        {"status": 403},
     ],
     # Never succeeds. The caller must stop at MAX_ATTEMPTS and fail rather than loop, and must say
     # the failure was a rate limit. `Retry-After: 1` keeps the whole run to about four seconds; the
