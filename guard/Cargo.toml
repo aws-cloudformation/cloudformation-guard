@@ -1,6 +1,6 @@
 [package]
 name = "cfn-guard"
-version = "3.2.2"
+version = "3.3.0"
 edition = "2018"
 authors = ["Diwakar Chakravarthy", "John Tompkins", "Omkar Hegde", "Priya Padmanaban",
     "Bryan Ayala", "Kexiang Wang", "Akshay Rane", "Tyler Southwick", "Josh Fried", "aws-cloudformation-developers <aws-cloudformation-developers@amazon.com>"]
@@ -17,7 +17,7 @@ path = "src/lib.rs"
 crate-type = ["rlib", "cdylib"]
 
 [dependencies]
-guard-lang = { package = "cloudformation-guard-lang", version = "3.2.2", path = "../guard-lang", features = ["junit"] }
+guard-lang = { package = "cloudformation-guard-lang", version = "3.3.0", path = "../guard-lang", features = ["junit"] }
 nom = "7.0.0"
 indexmap = { version = "1.6.0", features = ["serde-1"] }
 clap_complete = "4.1.2"
