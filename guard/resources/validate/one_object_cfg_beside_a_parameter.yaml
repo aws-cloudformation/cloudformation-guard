@@ -1,0 +1,15 @@
+# A Cfg map read as one object (a scalar `Mode` beside one sub-map `A`) with no `Kind` of its own, and a
+# Parameters section a rules file's `let k = Parameters.K.Default` resolves to, for
+# one_object_filter_through_a_query_bound_variable.guard.
+Parameters:
+  K:
+    Type: String
+    Default: k
+Resources:
+  R:
+    Type: AWS::Custom::Thing
+    Properties:
+      Cfg:
+        Mode: fast
+        A:
+          Owner: o

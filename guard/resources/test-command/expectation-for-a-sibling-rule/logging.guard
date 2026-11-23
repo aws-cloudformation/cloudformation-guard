@@ -1,0 +1,3 @@
+rule LOGGING_ON {
+    Resources.ExampleS3.Properties.LoggingConfiguration EXISTS
+}

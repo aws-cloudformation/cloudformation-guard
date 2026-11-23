@@ -1,0 +1,19 @@
+#
+# A parameterized rule beside the top-level rule that invokes it.
+#
+# `eval_rules_file` walks `guard_rules` only. A parameterized rule is evaluated where a clause
+# invokes it, which records it as a child of the invoking rule rather than of the file, so
+# `cfn-guard test` has no top-level verdict to match an expectation against and an expectation
+# naming `encryption_is_on` checks nothing.
+#
+# The file does define it, though, which is why this fixture exists: the sentence for a name the
+# file does not have would be false here, and that sentence is now the stated reason for a failing
+# run rather than a note.
+#
+rule encryption_is_on(resource_type) {
+    Resources.*[ Type == %resource_type ].Properties.Encrypted == true
+}
+
+rule S3_BUCKET_ENCRYPTION_ON {
+    encryption_is_on("AWS::S3::Bucket")
+}

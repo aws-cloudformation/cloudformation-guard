@@ -1,0 +1,3 @@
+rule ENCRYPTION_ON {
+    Resources.ExampleS3.Properties.Encrypted == true
+}

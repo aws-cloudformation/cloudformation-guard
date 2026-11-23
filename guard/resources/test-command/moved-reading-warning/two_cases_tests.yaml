@@ -1,0 +1,36 @@
+# Two cases reach the one call site. Each case is evaluated in a scope of its own, so the moved
+# reading is recorded once per case; the command prints it once per call site and spec file, keeping
+# the first case's line, and the line names the case and the file it was drawn from, since the `test`
+# command reads no data file. The two-map case comes first here, so the printed line carries the
+# count and names this case; `two_cases_swapped_tests.yaml` has the same cases the other way round.
+- name: first case, two maps
+  input:
+    Resources:
+      First:
+        Wanted: beta
+        Map:
+          Wanted: alpha
+          alpha: 1
+          beta: 2
+      Second:
+        Wanted: gamma
+        Map:
+          Wanted: alpha
+          alpha: 1
+          gamma: 2
+  expectations:
+    rules:
+      func_key_per_resource: PASS
+
+- name: second case, one map
+  input:
+    Resources:
+      Cfg:
+        Wanted: beta
+        Map:
+          Wanted: alpha
+          alpha: 1
+          beta: 2
+  expectations:
+    rules:
+      func_key_per_resource: PASS

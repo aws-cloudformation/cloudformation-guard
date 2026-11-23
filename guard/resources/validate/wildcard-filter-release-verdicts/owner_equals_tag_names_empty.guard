@@ -1,0 +1,6 @@
+# A filter predicate comparing `Owner` against a `let` that holds a resolved tag pair beside the twin's
+# refusal marker: the resolved mismatch decides the predicate, the bucket is deselected and the rule
+# passes, with the refused read reported on stderr rather than raised.
+let wanted = Mappings.Wanted.Keys
+let names = Resources.*.Properties.Tags[*][ Key IN %wanted ]
+rule r { Resources.*[ Type == 'AWS::S3::Bucket' ][ Properties.Owner == %names ] empty }

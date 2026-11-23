@@ -1,0 +1,27 @@
+#
+# An embedded string json_parse cannot read is a policy failure, not a broken tool.
+#
+# Both strings come from the template. The parse error used to propagate as YamlError, which
+# is_unevaluatable does not recognise, so the evaluation aborted with "bailing" and the run exited 255.
+# REAL_VIOLATION below is reported either way -- only the exit code changed, and that is the code a CI
+# wrapper reads to tell "block the deploy" from "the tool broke".
+#
+# Neither message named the property, so an author with several embedded strings had to guess which one
+# was at fault. The non-string-key one was worse: it printed an empty path, "for key in a map at ,".
+#
+let template = Resources.*[ Type == 'AWS::New::Service' ]
+let sg = Resources.*[ Type == 'AWS::EC2::SecurityGroup' ]
+
+rule REAL_VIOLATION when %sg !empty {
+    %sg.Properties.CidrIp != "0.0.0.0/0"
+}
+
+rule DUPLICATE_KEY when %template !empty {
+    let parsed = json_parse(%template.Properties.DuplicateKey)
+    %parsed.a == 999
+}
+
+rule NON_STRING_KEY when %template !empty {
+    let parsed = json_parse(%template.Properties.NonStringKey)
+    %parsed == "unreachable"
+}

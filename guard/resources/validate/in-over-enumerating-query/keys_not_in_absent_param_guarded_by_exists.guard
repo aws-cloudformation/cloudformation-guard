@@ -1,0 +1,8 @@
+# The escape hatch for an OPTIONAL exemption list: the filter fails closed over a reference the document
+# lacks, so a rule meant to run only when the list is there guards it. Over a template without the
+# parameter the condition is not met and the rule is not applicable; over one with it the check runs.
+let exempt = Parameters.ExemptBuckets.Default
+
+rule others_are_encrypted when %exempt exists {
+    Resources[ keys NOT IN %exempt ].Properties.Encrypted == true
+}

@@ -1,0 +1,17 @@
+# The resource's type arrives through an alias of a mapping anchored beside the resources. Every
+# route resolves it: this spec, the same document given to `validate` as a template, and the library
+# entry point; see docs/UNIT_TESTING.md.
+- name: the type arrives through an alias
+  input:
+    Base: &base {Type: X}
+    Resources: {A: *base}
+  expectations:
+    rules:
+      a_type_is_x: PASS
+
+- name: the type is written out
+  input:
+    Resources: {A: {Type: Y}}
+  expectations:
+    rules:
+      a_type_is_x: FAIL

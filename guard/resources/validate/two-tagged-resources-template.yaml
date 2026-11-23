@@ -1,0 +1,16 @@
+# Two resources, both tagged: a compliant template for a rule that asserts no resource lacks tags.
+Resources:
+  Bucket:
+    Type: "AWS::S3::Bucket"
+    Properties:
+      BucketName: "example-bucket"
+      Tags:
+        - Key: Name
+          Value: example
+  Queue:
+    Type: "AWS::SQS::Queue"
+    Properties:
+      QueueName: "example-queue"
+      Tags:
+        - Key: Name
+          Value: example

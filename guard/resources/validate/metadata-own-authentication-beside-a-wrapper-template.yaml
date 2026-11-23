@@ -1,0 +1,21 @@
+# One instance whose Metadata map has no scalar entry and holds an authentication block itself, beside a
+# `Wrapper` entry that holds an authentication block of its own. The map's own block carries a password;
+# the Wrapper's does not, so a rule that reads the password of whatever a filter selected tells the map
+# (FAIL) from the Wrapper entry (PASS). Paired with
+# filter_through_a_variable_over_an_own_key_a_member_also_holds.guard.
+Resources:
+  Box:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t2.micro
+    Metadata:
+      AWS::CloudFormation::Authentication:
+        testBasic:
+          type: basic
+          username: testUsername1
+          password: sensitive_password
+      Wrapper:
+        AWS::CloudFormation::Authentication:
+          testBasic:
+            type: basic
+            username: testUsername2

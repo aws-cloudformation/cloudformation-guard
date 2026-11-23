@@ -1,0 +1,4 @@
+# `join` depends on order: the map's `Parts: [a, b]` joins to `a-b`, where the root's `[b, a]` joined
+# to `b-a`, so the selected key moved and the reading is named even though the two lists hold the same
+# elements.
+rule func_key_join { Resources.Cfg.Map[ keys == join(Parts[*], "-") ] == 1 }

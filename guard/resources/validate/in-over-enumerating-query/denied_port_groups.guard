@@ -1,0 +1,3 @@
+rule no_denied_port {
+    Resources.*.Properties.Port NOT IN Mappings.DenyGroups.*
+}

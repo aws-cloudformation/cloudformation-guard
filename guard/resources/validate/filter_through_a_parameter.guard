@@ -1,0 +1,21 @@
+#
+# The filtered variable is a parameterized rule's parameter. The predicate names a key the `Metadata` map
+# holds itself, so the map is one object whether or not it holds a scalar entry: over
+# single-map-binding-with-password-template.yaml (a scalar `Type` beside the authentication block) and over
+# single-map-binding-without-type-template.yaml (the authentication block alone) the filter tests the map
+# as a whole, selects it, and the rule FAILs on the password with no notice. Over the first template
+# `%m[*][ ... ]` reads the map the same way; over the second it runs its own-key enumeration instead and
+# refuses the filter (a map with no scalar entry whose own key the predicate names), so the two
+# spellings part there and the parameter keeps the reading cfn-guard 3.2.1 gave it.
+#
+# The parameter's notice, which names the parameter, its rule and the query the call site bound it to, is
+# drawn by a filter that walks the entries and loses its selection: see
+# walking_filter_through_a_parameter.guard.
+#
+rule has_no_password(m) {
+  %m[ "AWS::CloudFormation::Authentication" exists ]."AWS::CloudFormation::Authentication".*.password !exists
+}
+
+rule FILTER_THROUGH_A_PARAMETER {
+  has_no_password(Resources.Metadata)
+}

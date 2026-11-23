@@ -1,0 +1,6 @@
+outer:
+  <<:
+    inner:
+      <<: { 1: a }
+      "1": b
+  inner: explicit

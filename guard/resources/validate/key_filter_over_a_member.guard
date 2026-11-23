@@ -1,0 +1,23 @@
+# Each filter in the first four rules runs over one map named by its key and names a key of that map
+# in its predicate. The filter selects among the map's own entries, and the predicate holds on none of
+# them: the author meant the map's property, and the clause is refused. To test the map's own property
+# write `X[*] { Key == value }` or `X[*].Key == value`, where `X` is the query before the filter
+# (`Resources.B1[*] { Type == value }` for the first rule) and `Key` the key the predicate read; both read
+# one map and a list of them alike, where `K { Key == value }` reads nothing over a list. The fifth rule
+# names the longest key a template is likely to hold, so the console line is measured to carry every
+# spelling and the definition of `X` for it. The rules after them are decided beside the refusals: a
+# predicate naming a key the map lacks is some other question, and a filter over the collection or over
+# a list selects among members.
+rule key_over_a_member { Resources.B1[ Type == 'AWS::S3::Bucket' ] exists }
+rule key_over_a_member_negated { Resources.B1[ Type == 'AWS::S3::Bucket' ] !exists }
+rule key_over_a_map_of_scalars { Resources.B1.Properties.Tags[ Name == 'alpha' ] exists }
+rule key_over_a_member_inside_a_block {
+    Resources {
+        B1[ Type == 'AWS::S3::Bucket' ] exists
+    }
+}
+rule long_key_over_a_member { Resources.B1.Properties.BucketEncryption[ ServerSideEncryptionConfiguration exists ] exists }
+rule the_predicate_names_a_key_the_member_lacks { Resources.B1[ Owner == 'x' ] exists }
+rule key_over_the_collection { Resources[ Type == 'AWS::S3::Bucket' ] exists }
+rule key_over_a_list { Resources.B1.Properties.Rules[ Action == 'allow' ] exists }
+rule beside_them_and_decided { Resources.B1.Type == 'AWS::S3::Bucket' }

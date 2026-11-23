@@ -1,0 +1,3 @@
+# A filter inside the argument: `Wanted[ Use == true ].Name` is the map's own `Wanted`, filtered, so
+# `alpha` is selected. The filter records once, because the map's read is the only read made.
+rule func_key_filtered { Resources.Cfg.Map[ keys == to_lower(Wanted[ Use == true ].Name) ] == 1 }

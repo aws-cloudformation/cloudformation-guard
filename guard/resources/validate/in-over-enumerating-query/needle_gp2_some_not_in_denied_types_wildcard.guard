@@ -1,0 +1,5 @@
+let needle = "gp2"
+
+rule some_denied_type_is_not_the_needle {
+    some %needle NOT IN Mappings.Denied.Types[*]
+}

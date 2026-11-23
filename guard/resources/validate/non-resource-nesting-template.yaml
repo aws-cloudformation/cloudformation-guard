@@ -1,0 +1,14 @@
+# A `Resources` section whose entries are not CloudFormation resources: no `Type`, and nested deeper
+# than a resource's properties. Guard validates plain YAML and JSON as well as templates, so this is a
+# document it is expected to handle, not a malformed one.
+#
+# `Nested.inner.key` is four path segments under the root, which is what sends the console reporter
+# down its aggregate-by-resource path.
+Resources:
+  Nested:
+    inner:
+      key: wrong
+  AlsoNested:
+    a:
+      b:
+        c: wrong

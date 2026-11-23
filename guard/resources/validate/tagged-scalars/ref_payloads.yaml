@@ -1,0 +1,7 @@
+Resources:
+  R:
+    Type: AWS::X::Y
+    Properties:
+      P: !Ref 123
+      Q: !Ref
+      S: !Ref Foo

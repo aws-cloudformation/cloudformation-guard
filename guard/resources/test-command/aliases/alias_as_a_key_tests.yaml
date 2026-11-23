@@ -1,0 +1,19 @@
+# An alias standing where a key should be, inside the second case's `input:`. No node before it
+# anchors `later`, so the loader marks the alias unreadable, and a mapping whose key it cannot read
+# is unreadable too. The case fails with the alias's own refusal, which names the alias and says that
+# nothing before it declares the anchor, not with the refusal of a key that is not a string, whose
+# advice to quote the alias would make a key named `*later`. The case before it keeps its verdict.
+- name: a case before the alias
+  input:
+    A: 1
+  expectations:
+    rules:
+      a_is_one: PASS
+
+- name: an undeclared alias used as a key
+  input:
+    A: 1
+    *later: 1
+  expectations:
+    rules:
+      a_is_one: PASS

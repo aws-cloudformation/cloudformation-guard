@@ -1,0 +1,1 @@
+rule capture_after_an_index { Resources.B1.Properties.Rules[0][ nm | Action == 'allow' ] exists }

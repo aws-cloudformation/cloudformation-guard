@@ -1,0 +1,34 @@
+# Each `this[ f ]` here runs over a member map and names a key of that member in its predicate. Inside
+# the block `this` is the member itself, so the filter selects among the member's own entries, and the
+# predicate holds on none of them: the author meant the member's property, and the clause is refused.
+# To test the member's own property, write `{ Key == value }` in the block; from outside the block,
+# `X[*] { Key == value }` or `X[*].Key == value`, where `X` is the collection the member came from,
+# reads one map and a list of them alike. The last rule is decided beside them.
+rule this_over_a_member {
+    Resources.B1.Properties.Rules[0] {
+        this[ Action == 'allow' ] exists
+    }
+}
+rule this_over_a_member_negated {
+    Resources.B1.Properties.Rules[0] {
+        this[ Action == 'allow' ] !exists
+    }
+}
+rule this_in_a_wildcard_block_over_members {
+    Resources.B1.Properties.Rules[*] {
+        this[ Action == 'allow' ] exists
+    }
+}
+rule this_over_a_resource_whose_type_the_predicate_names {
+    Resources.B1 {
+        this[ Type == 'AWS::S3::Bucket' ] exists
+    }
+}
+# A long key: the console summary prints the refusal whole, and both suggested spellings show
+# whatever the author named.
+rule this_over_properties_with_a_long_key {
+    Resources.B1.Properties {
+        this[ ServerSideEncryptionConfiguration.SSEAlgorithm == 'aws:kms' ] exists
+    }
+}
+rule beside_them_and_decided { Resources.B1.Type == 'AWS::S3::Bucket' }

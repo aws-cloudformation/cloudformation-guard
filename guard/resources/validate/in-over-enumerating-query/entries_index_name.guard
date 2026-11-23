@@ -1,0 +1,3 @@
+rule name_in_first_entry {
+    Resources.*.Properties.Name IN Mappings.Allowed.Entries[0].Name
+}

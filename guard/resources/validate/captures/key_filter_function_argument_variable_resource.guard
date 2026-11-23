@@ -1,0 +1,6 @@
+# The resources bound to a variable, and the key filter spelled under it. The argument is read from
+# the map, `Map`'s own `Wanted: alpha`, where the enclosing scope, the resource `%resource` holds, has
+# `Wanted: beta` beside the map: the reading moved from the resource to the map, as it does for
+# `Resources.*.Map[ keys == to_lower(Wanted) ]`.
+let resource = Resources.*
+rule func_key_variable_resource { %resource.Map[ keys == to_lower(Wanted) ] == 1 }

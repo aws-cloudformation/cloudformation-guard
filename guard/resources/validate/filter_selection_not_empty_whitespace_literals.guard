@@ -1,0 +1,7 @@
+rule two_spaces {
+    Items[ Name == 'a  b' ] !empty
+}
+
+rule one_space {
+    Items[ Name == 'a b' ] !empty
+}

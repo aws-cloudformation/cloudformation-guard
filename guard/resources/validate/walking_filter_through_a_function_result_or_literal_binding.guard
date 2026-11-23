@@ -1,0 +1,24 @@
+#
+# A variable bound to a function's result (the map `json_parse` returns) and a variable bound to a map
+# written out in the rules file, each filtered through the variable and gated on the selection. Over
+# bound-collection-from-a-function-or-literal-template.yaml both maps are collections: no entry is a
+# scalar, `Sid` is not a key of the map itself, and every entry carries a `Sid`. The filter through the
+# variable walks the entries, `Sid !exists` rejects every one, and nothing is kept, while the predicate
+# holds on the map read as one value, because the map lacks the key. The selection is lost, so each
+# `when` gate does not apply (both rules SKIP, exit 0) and each filter site is announced once, naming
+# the binding as written: the function call for `doc`, `let policy = { ... }` for the literal, which
+# does not repeat the literal's body.
+#
+# A map with a scalar entry beside its sub-maps is one object and draws no notice
+# (filter_through_a_function_result_binding.guard, filter_through_a_literal_map_binding.guard).
+#
+let doc = json_parse(Resources.Q.Properties.PolicyText)
+let policy = { "Read": { "Sid": "r" }, "Write": { "Sid": "w" } }
+
+rule WALKING_PARSED_POLICY_HAS_NO_SID when %doc[ Sid !exists ] !empty {
+    %doc exists
+}
+
+rule WALKING_LITERAL_POLICY_HAS_NO_SID when %policy[ Sid !exists ] !empty {
+    %policy exists
+}

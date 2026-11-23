@@ -1,0 +1,11 @@
+b:
+  &k x: 1
+  *k: 3
+  x: 2
+#
+# The name `x` three times: anchored, through the alias, then plain. The plain spelling is written
+# last, so `2` stands at line 4. The alias's write of the anchored entry is named at its own line, 3,
+# with the standing value's line ("first at L:2,C:3 and again at L:3,C:3. The value written at L:4,C:3
+# is the one evaluated."), and the pair of entries as lines 2 and 4 with the last standing ("first at
+# L:2,C:3 and again at L:4,C:3. The last value is the one evaluated."). Two notices, in that order.
+#

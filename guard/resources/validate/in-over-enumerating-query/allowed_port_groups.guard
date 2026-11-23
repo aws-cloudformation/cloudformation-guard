@@ -1,0 +1,3 @@
+rule listed_port {
+    Resources.*.Properties.Port IN Mappings.DenyGroups.*
+}

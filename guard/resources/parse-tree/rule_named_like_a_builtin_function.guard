@@ -1,0 +1,9 @@
+let buckets = Resources.*[ Type == "AWS::S3::Bucket" ]
+
+rule count(items) {
+    %items exists
+}
+
+rule r {
+    count(%buckets)
+}

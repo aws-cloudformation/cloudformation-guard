@@ -1,0 +1,7 @@
+# The kept-null arm of the pass-over refusal under a `when` gate with a long real query and a two-clause
+# predicate: `Nulls` holds the scalar `Mode` beside the bare key `B`, a null that both absence clauses keep in
+# the map's place, and no sub-map holds either key, so `[*]` would read `Nulls` as one object; the filter is
+# refused, and the console shows the whole text, the definition of `X` and the one-object remedy first.
+rule r when Resources.WebServer.Properties.Configuration.Nulls[ ServerSideEncryptionConfiguration !exists LoggingConfiguration !exists ] !empty {
+    Resources.WebServer.Type == 'X'
+}

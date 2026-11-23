@@ -1,0 +1,11 @@
+# The second spec file of the directory; see a_tests.yaml.
+- name: the case in file b
+  input:
+    Resources:
+      B1:
+        Type: AWS::S3::Bucket
+        Properties:
+          BucketName: b
+  expectations:
+    rules:
+      capture_after_this: FAIL

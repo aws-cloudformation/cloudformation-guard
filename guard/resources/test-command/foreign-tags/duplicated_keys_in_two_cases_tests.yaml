@@ -1,0 +1,18 @@
+# Two cases that each write `A` twice inside `input:`. The warnings name the positions, which the
+- name: the first case with a key written twice
+  input:
+    A: 2
+    A: 1
+  expectations:
+    rules:
+      a_is_one: PASS
+# tests assert (L:4 and L:5 above, L:14 and L:15 below): the comment lines are PADDING that puts the
+# second pair on two-digit lines, so a text sort puts the second case's warning before the first's
+# while the document reads them the other way round.
+- name: the second case with a key written twice
+  input:
+    A: 2
+    A: 1
+  expectations:
+    rules:
+      a_is_one: PASS

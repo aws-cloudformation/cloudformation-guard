@@ -9,6 +9,10 @@ const RULE_FILE_SUPPORTED_EXTENSIONS = ['.guard', '.ruleset'];
 const formatOutput = ({ result, rulesNames, dataNames }) => {
     const dataPattern = /DATA_STDIN\[(\d+)\]/g;
     const rulesPattern = /RULES_STDIN\[(\d+)\]\/DEFAULT/g;
+    // The core names a rules file it was given through the payload RULES_STDIN[n] wherever it
+    // mentions it, including the notification for a file that did not parse. After the ruleId pass
+    // above, any remaining mention gets the file name the caller supplied.
+    const rulesFilePattern = /RULES_STDIN\[(\d+)\]/g;
     const isWindows = process.platform === 'win32';
     const output = JSON.parse(JSON.stringify(result).replace(dataPattern, (match, index) => {
         const fileIndex = parseInt(index, 10) - 1;
@@ -22,6 +26,12 @@ const formatOutput = ({ result, rulesNames, dataNames }) => {
             return fileNameWithoutExtension.toUpperCase();
         }
         return match;
+    }).replace(rulesFilePattern, (match, index) => {
+        const ruleIndex = parseInt(index, 10) - 1;
+        const ruleName = rulesNames[ruleIndex];
+        // The substitution happens inside a JSON-encoded string, so a Windows path separator has to
+        // become `/` here as it does for data names above.
+        return ruleName ? (isWindows ? ruleName.split('\\').join('/') : ruleName) : match;
     }));
     return JSON.parse(output);
 };

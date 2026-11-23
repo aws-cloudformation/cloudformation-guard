@@ -1,0 +1,9 @@
+rule p_ref_is_the_text_123 {
+    Resources.R.Properties.P.Ref is_string
+    Resources.R.Properties.P.Ref == "123"
+}
+
+rule q_ref_is_the_empty_text {
+    Resources.R.Properties.Q.Ref is_string
+    Resources.R.Properties.Q.Ref == ""
+}

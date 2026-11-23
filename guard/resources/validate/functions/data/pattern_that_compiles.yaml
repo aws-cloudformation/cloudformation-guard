@@ -1,0 +1,10 @@
+Resources:
+  Thing:
+    Type: AWS::New::Service
+    Properties:
+      Name: prod-database-01
+      Pattern: "database"
+  Bucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: open-bucket

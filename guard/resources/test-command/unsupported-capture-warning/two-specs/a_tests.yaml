@@ -1,0 +1,10 @@
+# One of two spec files in this directory, each with one case refusing the one capture: one warning
+# line per spec file, each naming its own case and file.
+- name: the case in file a
+  input:
+    Resources:
+      B1:
+        Type: AWS::S3::Bucket
+  expectations:
+    rules:
+      capture_after_this: FAIL

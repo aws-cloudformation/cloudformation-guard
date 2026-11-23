@@ -1,0 +1,7 @@
+[
+  {
+    "name": "a missing comma between two members, which is neither JSON nor YAML",
+    "input": {"A": 1 "B": 2},
+    "expectations": {"rules": {"a_is_one": "PASS"}}
+  }
+]

@@ -1,0 +1,30 @@
+# A shared base merged through `<<: *m` is a copy of the anchored mapping, counted against the
+# expansion budget like any other alias, and the budget is spent per test case. The second case holds
+# a base built on a 111,111-node chain and merges it seven times in one merge sequence: the aliases
+# that build the chain and the alias of the chain inside the base charge 234,551 nodes (recording an
+# anchor is not charged), each merge 111,113 more, six fit (901,229) and the seventh would reach
+# 1,012,342. The case fails with the alias's refusal,
+# naming `*m` and the node budget, not with a complaint that the merge key was given something other
+# than a mapping, and the case before it keeps its verdict. The same merges spread over separate
+# cases load, one copy per case; shared_input_across_a_hundred_cases_tests.yaml is that shape.
+- name: a case before the merges
+  input:
+    A: 1
+  expectations:
+    rules:
+      a_is_one: PASS
+
+- name: seven merges of a base holding the chain
+  input:
+    a: &a [x, x, x, x, x, x, x, x, x, x]
+    b: &b [*a, *a, *a, *a, *a, *a, *a, *a, *a, *a]
+    c: &c [*b, *b, *b, *b, *b, *b, *b, *b, *b, *b]
+    d: &d [*c, *c, *c, *c, *c, *c, *c, *c, *c, *c]
+    e: &e [*d, *d, *d, *d, *d, *d, *d, *d, *d, *d]
+    m: &m
+      A: 1
+      Shared: *e
+    <<: [*m, *m, *m, *m, *m, *m, *m]
+  expectations:
+    rules:
+      a_is_one: PASS

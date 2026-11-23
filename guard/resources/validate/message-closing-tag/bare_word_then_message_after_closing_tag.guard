@@ -1,0 +1,8 @@
+rule other {
+    Resources.A.Type == "x"
+}
+rule r {
+    Resources.A.Type == "x" << a message >> other <<
+    why
+    >>
+}

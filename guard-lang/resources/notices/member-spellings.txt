@@ -1,0 +1,1 @@
+For each member's own `Key`: `X.*.Key` or `X.* { Key == value }`.

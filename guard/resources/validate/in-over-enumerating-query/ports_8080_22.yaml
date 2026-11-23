@@ -1,0 +1,12 @@
+Mappings:
+  Allowed:
+    Ports: [22, 443]
+Resources:
+  A:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      Port: 8080
+  B:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      Port: 22

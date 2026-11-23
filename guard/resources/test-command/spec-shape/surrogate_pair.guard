@@ -1,0 +1,7 @@
+#
+# The second rule compares against the character itself, written in UTF-8. The paired JSON spec
+# writes the same character as a surrogate-pair escape, the way Python's json.dumps does, and the two
+# must meet.
+#
+rule a_is_one { A == 1 }
+rule label_is_the_emoji { Label == "😀" }

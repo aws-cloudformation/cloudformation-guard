@@ -1,0 +1,15 @@
+#
+# The binding of filter_through_a_metadata_projection.guard, filtered at two sites that different
+# templates reach: the `testBasic !exists` site loses its selection on every template whose instance
+# carries an authentication block, the `config !exists` site only on a template whose instance also
+# carries an Init block. Over metadata-maps-authentication-without-init-template.yaml then
+# metadata-maps-authentication-and-init-other-id-template.yaml, the first site is drawn by both files and
+# the second by the second file alone, so the single-line output writes one line per site and one
+# trailer, for the first site, naming the second file. Each clause reads a key below its selection: PASS.
+let blocks = Resources.*[ Metadata exists ].Metadata
+rule AUTHENTICATION_SITE {
+  %blocks[ testBasic !exists ]."AWS::CloudFormation::Authentication" !exists
+}
+rule INIT_SITE {
+  %blocks[ config !exists ]."AWS::CloudFormation::Init" !exists
+}

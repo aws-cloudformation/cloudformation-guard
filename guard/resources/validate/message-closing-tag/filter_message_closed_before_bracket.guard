@@ -1,0 +1,5 @@
+rule r {
+    Resources.*[ Type == "x" <<
+    a message
+    >> ] exists
+}

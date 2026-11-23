@@ -1,0 +1,6 @@
+rule r {
+    Resources.A.Type == "x" <<
+    Expected: List<List<String>>
+    >>
+    Resources.B.Properties.Encrypted == true
+}

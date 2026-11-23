@@ -1,0 +1,11 @@
+Resources:
+  BucketA:
+    Type: AWS::S3::Bucket
+    Properties:
+      Tags: a
+  BucketC:
+    Type: AWS::S3::Bucket
+    Properties:
+      Tags: c
+  MyRole:
+    Type: AWS::IAM::Role

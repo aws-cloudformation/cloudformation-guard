@@ -1,0 +1,10 @@
+# First in walk order, and its suite asserts FAIL on a rule that passes: TEST_COMMAND_FAILURE (7).
+#
+# The file that has to come first for the merge defect to show. `handle_plaintext_directory` merged
+# each file's code with `if exit_code == SUCCESS_STATUS_CODE`, which keeps whatever it already has, so
+# the 7 from this file survived the 1 from `b_unchecked.guard` and the walk exited 7 -- where the
+# structured walk over the same directory exited 1, because `get_exit_code` promotes a failure to an
+# error. Each file on its own already agreed across the formats.
+rule always_passes {
+  Resources exists
+}

@@ -1,0 +1,3 @@
+rule no_denied_instance_types {
+    Resources.*.Properties.InstanceType NOT IN Mappings.Denied.Types[*]
+}

@@ -1,0 +1,23 @@
+Parameters:
+  VolType:
+    Type: String
+    AllowedValues: [gp2]
+  BackupType:
+    Type: String
+    AllowedValues: [gp3]
+Mappings:
+  Regions:
+    useast1:
+      Types: [gp2]
+    uswest2:
+      Types: [gp3]
+Resources:
+  Policy:
+    Type: Custom::Policy
+    Properties:
+      AllowedTypes: [gp2, gp3]
+      DeniedTypes: [gp2]
+  V:
+    Type: AWS::EC2::Volume
+    Properties:
+      VolumeType: io1

@@ -1,0 +1,6 @@
+rule r {
+    Resources.A.Type == "x" << forgot
+    Resources.B.Properties.Encrypted == true <<
+    must be encrypted
+    >> # see runbook
+}

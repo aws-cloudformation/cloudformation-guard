@@ -22,11 +22,12 @@ nom = "7.0.0"
 indexmap = { version = "1.6.0", features = ["serde-1"] }
 clap_complete = "4.1.2"
 clap = { version = "4.5.0", features = ["derive"] }
-strip-ansi-escapes = "0.1.1"
 serde = { version = "1.0", features = ["derive", "rc"] }
 serde_yaml = "0.9.10"
 walkdir = "2.3.1"
 colored = "2.2.0"
+# The SARIF reporter URL-encodes artifact location segments.
+urlencoding = "2.1.0"
 heck = "0.3.1"
 lazy_static = "1.4.0"
 itertools = "0.4.7"
@@ -41,9 +42,17 @@ wasm-bindgen = "0.2.92"
 
 [dev-dependencies]
 pretty_assertions = "1.4.0"
+# The tests compare evaluator records; the `testing` feature compiles the record types' equality,
+# which the library withholds from ordinary consumers.
+guard-lang = { package = "cloudformation-guard-lang", version = "3.2.1", path = "../guard-lang", features = ["testing"] }
+# The docs citation checker in the integration tests reads this crate's sources as Rust, not as text.
+syn = { version = "2.0.98", features = ["full", "visit"] }
+proc-macro2 = { version = "1.0.93", features = ["span-locations"] }
 
 [dependencies.serde_json]
 version = "1.0.85"
-features = ["preserve_order"]
+# `unbounded_depth` lets the JSON shape check in `rules::values` run without serde_json's own
+# recursion limit of 128, which sat below the loader's nesting bound; the loader enforces depth.
+features = ["preserve_order", "unbounded_depth"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html

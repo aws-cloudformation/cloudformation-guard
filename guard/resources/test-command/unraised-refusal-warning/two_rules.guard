@@ -1,0 +1,6 @@
+# Two rules with one clause spelling: each clause is its own site, so each writes its own line, and the
+# position each line ends with is what tells them apart.
+let wanted = Mappings.Wanted.Keys
+let names = Resources.*.Properties.Tags[*][ Key IN %wanted ]
+rule owner_unset_one { Resources.*[ Type == 'AWS::S3::Bucket' ][ Properties.Owner == %names ] empty }
+rule owner_unset_two { Resources.*[ Type == 'AWS::S3::Bucket' ][ Properties.Owner == %names ] empty }

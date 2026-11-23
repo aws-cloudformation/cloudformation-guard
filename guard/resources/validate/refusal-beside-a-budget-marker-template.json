@@ -1,0 +1,11 @@
+{
+    "Cfg": {
+        "Mode": { "Ref": "ModeParam" },
+        "Fallback": { "Kind": "k" },
+        "A": { "Kind": "k", "Sub": { "R1_the_own_key_of_the_sub_map_whose_name_is_long_enough_to_carry_the_refusal_past_the_bound": { "Ref": "P" }, "P": { "Kind": "k" }, "Q": { "Kind": "k" } } },
+        "B": { "Kind": "k", "Sub": { "R1_the_own_key_of_the_sub_map_whose_name_is_long_enough_to_carry_the_refusal_past_the_bound": { "Ref": "P" }, "P": { "Kind": "k" }, "Q": { "Kind": "k" } } }
+    },
+    "Maps": {
+        "M": { "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": 1, "PROD": 1 }
+    }
+}

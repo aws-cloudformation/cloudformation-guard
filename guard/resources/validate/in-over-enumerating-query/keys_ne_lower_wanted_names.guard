@@ -1,0 +1,2 @@
+# The `!=` twin: every key but the lowered names.
+rule r_members { Resources.*.Map[ keys != to_lower(Wanted[*].Name) ] == 2 }

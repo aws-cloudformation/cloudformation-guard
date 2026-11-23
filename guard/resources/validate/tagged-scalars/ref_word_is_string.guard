@@ -1,0 +1,4 @@
+rule s_ref_is_the_string_foo {
+    Resources.R.Properties.S.Ref is_string
+    Resources.R.Properties.S.Ref == "Foo"
+}

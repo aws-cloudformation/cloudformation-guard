@@ -1,0 +1,3 @@
+rule mode_is_7 {
+    Resources.*.Properties.Mode == 7
+}

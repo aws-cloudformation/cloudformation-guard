@@ -1,0 +1,6 @@
+Resources:
+  Cfg:
+    Wanted: 42
+    Map:
+      alpha: 2
+      x: 2

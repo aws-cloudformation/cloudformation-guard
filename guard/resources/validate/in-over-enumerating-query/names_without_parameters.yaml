@@ -1,0 +1,7 @@
+Resources:
+  A:
+    Properties:
+      Name: a
+  B:
+    Properties:
+      Name: b

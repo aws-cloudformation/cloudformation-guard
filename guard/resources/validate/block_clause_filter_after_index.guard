@@ -1,0 +1,5 @@
+rule r {
+    Resources.*.Properties.Tags[0][ Key == 'Name' ] {
+        Value == 'prod'
+    }
+}

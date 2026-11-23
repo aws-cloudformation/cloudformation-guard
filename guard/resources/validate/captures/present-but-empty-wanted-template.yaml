@@ -1,0 +1,7 @@
+Resources:
+  Cfg:
+    Wanted: [x]
+    Map:
+      Wanted: []
+      alpha: 1
+      x: 2

@@ -1,0 +1,16 @@
+# A case whose `name` is a sequence, which the command cannot read as a name, beside an ordinary
+# case. The case fails with the reason, and its expectation is still read, so a rules file that
+# declares no rules reports both the case and the expectation it left unchecked.
+- name: an ordinary case
+  input:
+    A: 1
+  expectations:
+    rules:
+      a_is_one: PASS
+
+- name: [oops]
+  input:
+    A: 1
+  expectations:
+    rules:
+      a_is_one: PASS

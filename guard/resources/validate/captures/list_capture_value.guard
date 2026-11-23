@@ -1,0 +1,4 @@
+rule r {
+  Resources.*.Properties.Tags[*][ t | Key == 'Name' ] !empty
+  %t.Value == 'dev'
+}

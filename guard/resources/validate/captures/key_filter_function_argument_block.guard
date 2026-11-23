@@ -1,0 +1,7 @@
+# Inside a block clause the enclosing scope is the block's value: `Wanted` is the map's own
+# `Wanted: alpha`, where earlier versions read the resource's `Wanted: beta` beside the map.
+rule func_key_block {
+  Resources.Cfg {
+    Map[ keys == to_lower(Wanted) ] == 1
+  }
+}

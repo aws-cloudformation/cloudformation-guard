@@ -1,0 +1,8 @@
+# The clause-side control for the key-filter rows: the same right-hand side compared by a clause, whose
+# reading of an empty collection the key filter does not change. Over `Names: []` every comparator fails
+# on the empty collection; over `Names: [x]` the verdict is the comparison's own.
+let names = Mappings.Allowed.Names[*]
+
+rule tag_keys_equal {
+    Resources.*.Tags[*].Key == %names
+}

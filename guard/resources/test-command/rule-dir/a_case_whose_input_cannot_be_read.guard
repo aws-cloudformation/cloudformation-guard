@@ -1,0 +1,9 @@
+#
+# One ordinary rule. Nothing here is broken; the paired spec is what carries the defect, in one of its
+# two cases.
+#
+rule bucket_is_named_expected {
+    Resources.*[ Type == 'AWS::S3::Bucket' ] {
+        Properties.BucketName == 'expected'
+    }
+}

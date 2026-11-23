@@ -1,0 +1,39 @@
+###
+# Both conditions in one run: FAIL = 1, unchecked = 1. The cell this fixture set exists for.
+#
+# The run owes 1, not 7, and that is a decision rather than an accident. An expectation naming a rule
+# that produced no verdict was never evaluated -- there was nothing to compare it against -- which is
+# the same answer as a case that could not run, and both are asked before a failure so they win over
+# one elsewhere in the file. See the argument at `guard/src/commands/reporters/test/structured.rs`,
+# where `TestResult::get_exit_code` orders them.
+#
+# It is worth pinning because the shape invites the opposite reading. The write for an unchecked
+# expectation is the last of the three in the generic reporter's per-case loop and carries no guard,
+# so it looks like an oversight clobbering the 7 -- and the 7 really does disappear. Anyone who
+# "fixes" that gets a run whose exit code depends on how the corpus is split across files, because
+# across files the reason is gone and only the number survives the merge.
+#
+# The genuine unmet expectation is in the first case and the unchecked one in the second, since the
+# code is accumulated across cases in the order they are read. That ordering is what makes the cell
+# reachable at all.
+###
+---
+- name: genuine unmet expectation
+  input:
+    Resources:
+      Thing:
+        Properties:
+          Encrypted: false
+  expectations:
+    rules:
+      R_ONE: PASS
+
+- name: expectation naming a rule that does not exist
+  input:
+    Resources:
+      Thing:
+        Properties:
+          Encrypted: true
+  expectations:
+    rules:
+      R_TYPO: PASS

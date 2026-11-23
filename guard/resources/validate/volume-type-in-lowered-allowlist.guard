@@ -1,0 +1,7 @@
+# A case-insensitive allowlist: the mapping's entries lowercased, and the volume type looked up among
+# them. The function answers one string per entry, and `IN` compares against those entries as it
+# compares against the bare list -- by membership, so a volume type that is only a prefix of an
+# allowed value is not allowed.
+rule volume_type_is_allowed {
+    Resources.Vol.Properties.VolumeType IN to_lower(Mappings.Allowed.Types)
+}

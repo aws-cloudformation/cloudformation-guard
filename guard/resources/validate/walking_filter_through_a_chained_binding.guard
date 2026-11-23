@@ -1,0 +1,18 @@
+#
+# The filtered variable is bound to another variable, not to a path, and the filter walks the map's
+# entries. Over the `Metadata` map of single-map-binding-without-type-template.yaml, which holds only the
+# authentication block (no scalar entry, and `testBasic` is not a key of the map itself), the filter
+# keeps the walk. The one entry carries `testBasic`, so `testBasic !exists` rejects it and nothing is
+# kept, while the predicate holds on the map read as one value, because the map lacks the key. The
+# selection is lost, so the rule's `when` gate does not apply (SKIP, exit 0) and the notice names the
+# `let` the author wrote for the filtered name, `let b = %a`, not the query behind the chain.
+#
+# The same chain with a predicate that names the map's own key is one object and is tested as a whole
+# (filter_through_a_chained_binding.guard), with no notice.
+#
+let a = Resources.Metadata
+let b = %a
+
+rule FILTER_THROUGH_A_CHAINED_BINDING when %b[ testBasic !exists ] !empty {
+  %b exists
+}

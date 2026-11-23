@@ -1,0 +1,13 @@
+# An every-entry block whose body raises beside a refused read for one entry, asserted at top level: the
+# own-key filter `Sub[*][ s | R1 !exists ]` refuses its walk and the `Cfg2[*]` loop places the refusal's
+# marker into `y` beside the keys; `some %y NOT IN %m` under `I1`'s guard is undecided beside that marker
+# (`%m` is a key filter's budget marker), so the comparison is raised on the refusal and the access clause
+# fails at its own leaf. `I2` fails `Name == 'n1'`, so the block fails on both entries: the leaf's record
+# carries the refusal, the console prints its sentence once, and no refused-read line is written for it,
+# since the refusal is the rule's own failure and not a read some sibling decided past.
+rule gate { Cfg2[ y | Kind == 'k' ] !empty  Cfg2[*][ y | Mode exists or Kind == 'k' ].Sub[*][ s | R1 !exists ] !empty or Cfg2.Other exists
+let m = Maps.M[ keys == /(?!x)((a+)+)b/ ]
+Items.* {
+ when Name == 'n1' {
+ some %y NOT IN %m }
+ Name == 'n1' } }

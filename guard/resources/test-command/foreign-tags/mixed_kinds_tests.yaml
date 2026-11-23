@@ -1,0 +1,25 @@
+# Two kinds of positioned warning in one file: a key written twice in the first case's `input:`
+- name: a case with a key written twice
+  input:
+    A: 2
+    A: 1
+  expectations:
+    rules:
+      a_is_one: PASS
+# (L:4 and L:5), and a `!!` tag on the second case's name. The comment lines are PADDING that puts
+# the tag on L:20, after the duplicated key in the document. The lines are grouped by kind, each kind
+# in document order: the tag line is written before the duplicate-key line although it sits later in
+# the file, as `validate` writes a data file's tag lines before its duplicate-key lines. A change to
+# strict position order turns the test that pins this red.
+#
+#
+#
+#
+#
+#
+- name: !!python/str a tagged case
+  input:
+    A: 1
+  expectations:
+    rules:
+      a_is_one: PASS

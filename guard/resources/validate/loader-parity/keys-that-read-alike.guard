@@ -1,0 +1,8 @@
+#
+# The same rules the `test` command's keys-that-read-alike spec uses, so the data file beside this one
+# and the spec under resources/test-command/loader-parity/keys-that-read-alike hold one document on two
+# routes.
+#
+rule tag_is_second { Resources.B.Properties.Tags.* == "second" }
+rule flag_is_second { Resources.B.Properties.Flags.* == "second" }
+rule tag_is_first { Resources.B.Properties.Tags.* == "first" }

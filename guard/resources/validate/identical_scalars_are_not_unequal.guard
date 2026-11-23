@@ -1,0 +1,3 @@
+rule identical_scalars_are_not_unequal {
+    Resources.Vol.Properties.Threshold != Resources.Vol.Properties.Ceiling
+}

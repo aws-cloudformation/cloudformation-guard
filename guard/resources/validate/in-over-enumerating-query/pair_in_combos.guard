@@ -1,0 +1,3 @@
+rule allowed_pair {
+    Resources.*.Properties.Pair IN Mappings.Combos.*.Pair
+}

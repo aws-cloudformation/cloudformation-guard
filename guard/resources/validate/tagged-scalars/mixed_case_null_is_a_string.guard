@@ -1,0 +1,4 @@
+rule mixed_case_null_is_a_string {
+    A is_string
+    B is_string
+}

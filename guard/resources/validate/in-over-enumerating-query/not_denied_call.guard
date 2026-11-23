@@ -1,0 +1,7 @@
+rule is_denied(p) {
+    %p IN Mappings.Denied.Protocols[*]
+}
+
+rule protocol_is_not_denied {
+    not is_denied(Resources.*.Properties.Protocol)
+}

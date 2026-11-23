@@ -1,0 +1,3 @@
+rule allowed_ports {
+    Resources.*.Properties.Ports IN Mappings.AllowGroups.*
+}

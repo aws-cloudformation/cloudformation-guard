@@ -1,0 +1,29 @@
+rule index_then_filter { Resources.B1.Properties.Rules[0][ Action == 'allow' ] exists }
+rule index_then_filter_then_key { Resources.B1.Properties.Rules[0][ Action == 'allow' ].Name == 'first' }
+rule index_then_filter_rejects { Resources.B1.Properties.Rules[1][ Action == 'allow' ] !exists }
+rule numeric_key_then_filter { Resources.B1.Properties.Rules."0"[ Action == 'allow' ] exists }
+rule filter_then_filter { Resources.B1.Properties.Rules[*][ Action == 'allow' ][ Name == 'first' ] exists }
+rule this_over_the_collection {
+    Resources {
+        this[ Type == 'AWS::S3::Bucket' ].Properties.Encrypted == true
+    }
+}
+rule this_over_a_member {
+    Resources.B1.Properties.Rules[0] {
+        this[ Action == 'allow' ] exists
+    }
+}
+rule this_in_a_wildcard_block_over_members {
+    Resources.B1.Properties.Rules[*] {
+        this[ Action == 'allow' ] exists
+    }
+}
+rule index_then_filter_on_a_scalar { Resources.B1.Properties.Names[0][ this == 'a' ] exists }
+rule index_then_filter_rejects_a_scalar { Resources.B1.Properties.Names[0][ this == 'x' ] !exists }
+rule key_then_filter_on_a_scalar { Resources.B1.Properties.Scalar[ this == 'x' ] !exists }
+rule key_filter_then_filter_on_scalar_entries { Resources.B1.Properties.Statement[ keys == /.*/ ][ Effect == 'Allow' ].Action != 's3:*' }
+rule key_filter_then_filter_on_the_selected_entry { Resources.B1.Properties.Tags[ keys == 'Name' ][ this == 'alpha' ] exists }
+rule key_filter_then_filter_rejects_the_selected_entry { Resources.B1.Properties.Tags[ keys == 'Name' ][ this == 'beta' ] exists }
+rule key_filter_matching_two_keys_then_filter { Resources.B1.Properties.Tags[ keys == /^N/ ][ this == 'alpha' ] exists }
+rule p(props) when %props.Kind == 'bucket' { %props.Encrypted == false }
+rule negated_rule_reference_in_a_filter { Resources.*[ not p(Properties) ].Type == 'AWS::S3::Bucket' }

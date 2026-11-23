@@ -1,0 +1,11 @@
+# A settings map of two scalars under a long query: a key filter about the absence of two keys passes both
+# scalars over and keeps nothing, so it is refused, and the refusal's text under a `when` gate shows whole
+# in the console summary, the definition of `X` and the remedy first.
+Resources:
+  WebServer:
+    Type: X
+    Properties:
+      Configuration:
+        Settings:
+          Mode: fast
+          Level: 3

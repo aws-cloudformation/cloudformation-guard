@@ -1,0 +1,7 @@
+Resources:
+  A:
+    Type: Outer::Resource
+    B:
+      Type: Nested::Child
+  "A/B":
+    Type: Flat::Resource

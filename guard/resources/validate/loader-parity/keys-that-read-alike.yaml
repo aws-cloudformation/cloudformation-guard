@@ -1,0 +1,10 @@
+Resources:
+  B:
+    Type: AWS::S3::Bucket
+    Properties:
+      Tags:
+        1: first
+        "1": second
+      Flags:
+        true: first
+        "true": second

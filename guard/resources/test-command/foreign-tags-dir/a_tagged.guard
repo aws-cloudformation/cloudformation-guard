@@ -1,0 +1,5 @@
+#
+# The first of two rules files in a directory whose spec files each carry two `!!` tags, so a walk
+# over the directory can show the warnings coming out file by file, each file in document order.
+#
+rule a_is_one { A == 1 }

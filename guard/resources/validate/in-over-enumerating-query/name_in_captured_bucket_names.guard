@@ -1,0 +1,4 @@
+rule name_is_a_bucket_name {
+    Resources[ buckets | Type == 'AWS::S3::Bucket' ] !empty
+    Resources.*[ Type == 'Custom::Cfg' ].Properties.Name IN Resources.%buckets.Properties.BucketName
+}

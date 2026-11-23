@@ -1,0 +1,20 @@
+rule capture_after_this_over_a_list {
+    Resources.B1.Properties.Rules {
+        this[ r | Action == 'allow' ] !empty
+        %r.Name == 'first'
+    }
+}
+rule capture_after_this_over_a_list_tests_the_bound_member {
+    Resources.B1.Properties.Rules {
+        this[ r | Action == 'deny' ] !empty
+        %r.Name == 'first'
+    }
+}
+rule capture_after_a_key_over_the_same_list {
+    Resources.B1.Properties.Rules[ r | Action == 'allow' ] !empty
+    %r.Name == 'first'
+}
+rule capture_after_a_key_over_the_same_list_tests_the_bound_member {
+    Resources.B1.Properties.Rules[ r | Action == 'deny' ] !empty
+    %r.Name == 'first'
+}

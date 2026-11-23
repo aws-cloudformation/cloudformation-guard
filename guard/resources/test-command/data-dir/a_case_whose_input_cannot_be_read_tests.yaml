@@ -1,0 +1,115 @@
+# The first case is ordinary and decidable. Each case after it holds an `input:` this file got wrong
+# in a different way, and each is that case's mistake, not the tool breaking: the case reports the
+# refusal as its error, the other cases keep their verdicts, and the run exits 1.
+#
+# Five of these shapes (the two merge keys, the null key, the sequence key, the `!!If` sequence) are
+# refused by the loader while it reads the document, and the same bytes refuse a data file whole under
+# `validate`; a spec file reads such a node as an unreadable value so that only its own case fails and
+# the first case's verdict is still reported. A quoted `"<<"` is an ordinary key and its case runs.
+- name: a bucket named something other than expected
+  input:
+    Resources:
+      BucketA:
+        Type: AWS::S3::Bucket
+        Properties:
+          BucketName: wrong
+  expectations:
+    rules:
+      bucket_is_named_expected: FAIL
+
+# The merge key is given a scalar, and a merge value's keys have to become keys of the mapping
+# carrying it, so there is nothing to merge.
+- name: an input whose merge key is given a scalar
+  input:
+    <<: not a mapping
+    Resources:
+      BucketA:
+        Type: AWS::S3::Bucket
+        Properties:
+          BucketName: expected
+  expectations:
+    rules:
+      bucket_is_named_expected: PASS
+
+# The merge key is given a sequence, which is allowed, but one of its items is a scalar.
+- name: an input whose merge key is given a sequence holding a scalar
+  input:
+    <<: [{Shared: yes}, not a mapping]
+    Resources:
+      BucketA:
+        Type: AWS::S3::Bucket
+        Properties:
+          BucketName: expected
+  expectations:
+    rules:
+      bucket_is_named_expected: PASS
+
+# A quoted "<<" is an ordinary key whose name happens to be `<<`, so this input reads and the case
+# runs: the merge key is resolved from a plain scalar only.
+- name: an input whose quoted merge key is given a scalar
+  input:
+    "<<": not a mapping
+    Resources:
+      BucketA:
+        Type: AWS::S3::Bucket
+        Properties:
+          BucketName: expected
+  expectations:
+    rules:
+      bucket_is_named_expected: PASS
+
+# A null key has no text either naming convention agrees on.
+- name: an input with a null key
+  input:
+    null: 1
+    Resources:
+      BucketA:
+        Type: AWS::S3::Bucket
+        Properties:
+          BucketName: expected
+  expectations:
+    rules:
+      bucket_is_named_expected: PASS
+
+# A sequence key has no JSON representation at all.
+- name: an input with a sequence key
+  input:
+    ? [a, b]
+    : 1
+    Resources:
+      BucketA:
+        Type: AWS::S3::Bucket
+        Properties:
+          BucketName: expected
+  expectations:
+    rules:
+      bucket_is_named_expected: PASS
+
+# The loader reads this one and the conversion refuses it: a scalar tagged `!!int` whose payload is
+# not an integer. It was always a per-case failure once the catch-all was fixed.
+- name: an input holding a tagged integer that is not one
+  input:
+    Count: !!int not-a-number
+    Resources:
+      BucketA:
+        Type: AWS::S3::Bucket
+        Properties:
+          BucketName: expected
+  expectations:
+    rules:
+      bucket_is_named_expected: PASS
+
+# A sequence tagged `!!If`, which is `!If` with one `!` too many. The loader will not model a
+# container under that tag, so it is an unreadable value and the whole `input:` is this case's
+# mistake; the scalar form of the typo, `!!Ref Foo`, fails its case the same way.
+- name: an input holding a sequence tagged with an intrinsic under two bangs
+  input:
+    Cond: !!If [IsProd, a, b]
+    Resources:
+      BucketA:
+        Type: AWS::S3::Bucket
+        Properties:
+          BucketName: expected
+  expectations:
+    rules:
+      bucket_is_named_expected: PASS

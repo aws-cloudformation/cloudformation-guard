@@ -1,0 +1,14 @@
+# An allowlist of volume types spelled in upper case, and a volume whose type is a prefix of one of
+# them but not a member. Fixture for `in_over_a_lowered_allowlist_is_membership`: `VolumeType IN
+# to_lower(Mappings.Allowed.Types)` must fail `gp`, as `VolumeType IN Mappings.Allowed.Types` fails
+# `GP`, rather than pass it by containment in `gp2`.
+Mappings:
+  Allowed:
+    Types:
+      - GP2
+      - GP3
+Resources:
+  Vol:
+    Type: AWS::EC2::Volume
+    Properties:
+      VolumeType: gp

@@ -1,0 +1,14 @@
+# One of two spec files run together over `rules.guard`: one case, one map. The moved reading is kept
+# once per call site and spec file, so this file's line is printed beside the other file's.
+- name: one map in file a
+  input:
+    Resources:
+      Cfg:
+        Wanted: beta
+        Map:
+          Wanted: alpha
+          alpha: 1
+          beta: 2
+  expectations:
+    rules:
+      func_key_per_resource: PASS

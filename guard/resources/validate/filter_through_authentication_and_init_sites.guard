@@ -1,0 +1,16 @@
+#
+# The binding of filter_through_a_metadata_projection.guard filtered at two sites: `testBasic !exists`
+# (the Authentication block carries it) and `config !exists` (the Init block carries it). A template
+# whose instance carries both blocks draws both sites, each filter rejecting one block and keeping the
+# other; metadata-maps-authentication-without-init-template.yaml draws the first alone and
+# metadata-maps-init-without-authentication-template.yaml the second alone. So a run over the templates
+# with both followed by those two gives the two sites later-file lists that share their first names and
+# their count and differ only in the last file: shortened, the two trailers would read the same, so each
+# is told apart by the first file its list lacks. Each clause reads a key below its selection: PASS.
+let blocks = Resources.*[ Metadata exists ].Metadata
+rule AUTHENTICATION_SITE {
+  %blocks[ testBasic !exists ]."AWS::CloudFormation::Authentication" !exists
+}
+rule INIT_SITE {
+  %blocks[ config !exists ]."AWS::CloudFormation::Init" !exists
+}

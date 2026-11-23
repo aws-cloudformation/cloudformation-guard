@@ -1,0 +1,10 @@
+#
+# A rule whose `or` is decided by its second disjunct after the first failed on a key the resource
+# lacks, beside a clause that fails for real. The rule FAILs on that clause alone: the console summary
+# and the structured report's `not_compliant` entry list the `InstanceType` clause and nothing beneath
+# the passing disjunction, since a disjunct a sibling decided past is no part of the rule's failure.
+#
+rule OR_DECIDED_BY_ITS_SECOND_DISJUNCT {
+    Resources.EC2I4LBA1.Properties.Missing exists or Resources.EC2I4LBA1.Type == 'AWS::EC2::Instance'
+    Resources.EC2I4LBA1.Properties.InstanceType == 'no-such-type'
+}

@@ -1,0 +1,29 @@
+nested-map-with-type-key-template.yaml Status = FAIL
+FAILED rules
+codebuild_compute_type_is_small.guard/codebuild_compute_type_is_small    FAIL
+---
+Evaluating data nested-map-with-type-key-template.yaml against rules codebuild_compute_type_is_small.guard
+Number of non-compliant resources 1
+Resource = Build {
+  Type      = AWS::CodeBuild::Project
+  Rule = codebuild_compute_type_is_small {
+    ALL {
+      Check =  Resources.*.Properties.Environment.ComputeType EQUALS  "BUILD_GENERAL1_SMALL" {
+        ComparisonError {
+          Error            = Check was not compliant as property value [Path=/Resources/Build/Properties/Environment/ComputeType[L:7,C:22] Value="BUILD_GENERAL1_LARGE"] not equal to value [Path=[L:0,C:0] Value="BUILD_GENERAL1_SMALL"].
+          PropertyPath    = /Resources/Build/Properties/Environment/ComputeType[L:7,C:22]
+          Operator        = EQUAL
+          Value           = "BUILD_GENERAL1_LARGE"
+          ComparedWith    = "BUILD_GENERAL1_SMALL"
+          Code:
+                5.      Environment:
+                6.        Type: LINUX_CONTAINER
+                7.        ComputeType: BUILD_GENERAL1_LARGE
+                8.        Image: aws/codebuild/standard:7.0
+                9.      ServiceRole: arn:aws:iam::123456789012:role/build
+
+        }
+      }
+    }
+  }
+}

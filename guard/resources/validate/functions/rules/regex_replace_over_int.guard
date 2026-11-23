@@ -1,0 +1,10 @@
+#
+# A string function fed an integer. The pattern is fine; the input is not a string, and the report
+# must say so and name the property, rather than saying the variable resolved to nothing.
+#
+let t = Resources.Fn.Properties.Timeout
+
+rule REPLACE_OVER_INT {
+    let r = regex_replace(%t, "database", "db")
+    %r == "db"
+}

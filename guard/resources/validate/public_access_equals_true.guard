@@ -1,0 +1,11 @@
+#
+# The same comparison written as a plain clause rather than a gate, so that the type mismatch is
+# reported instead of being absorbed by a condition that simply does not fire. This is what pins
+# the other direction of the boolean set: a scalar YAML resolves to a string has to stay a string
+# and stay incomparable to a boolean, so that widening the set does not make everything boolean.
+#
+# At the resources/validate root for the same reason as public_access_gate_on_encryption.guard.
+#
+rule public_access_is_true {
+    Resources.B.Properties.PublicAccess == true
+}

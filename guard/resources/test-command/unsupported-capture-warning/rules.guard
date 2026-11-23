@@ -1,0 +1,4 @@
+# A capture after `this` over a map with entries: nothing can bind it, the clause is held and fails,
+# and the refusal is announced once per clause on the warning channel, naming the input it was found
+# in. Under `test` that is the case and its spec file, as the moved-reading warning names its positions.
+rule capture_after_this { Resources.B1 { this[ nm | Type == 'AWS::S3::Bucket' ] exists } }

@@ -1,0 +1,5 @@
+rule r when Resources.A.Type == "x" <<
+    why
+    >> {
+    Resources.B.Properties.Encrypted == true
+}

@@ -10,58 +10,58 @@ Resource = MyBucket {
     ALL {
       Check =  %s3_bucket_public_read_prohibited[*].Properties.PublicAccessBlockConfiguration EXISTS   {
         RequiredPropertyError {
-          PropertyPath = /Resources/MyBucket/Properties[L:13,C:6]
+          PropertyPath = /Resources/MyBucket/Properties[L:14,C:7]
           MissingProperty = PublicAccessBlockConfiguration
-          Reason = Could not find key PublicAccessBlockConfiguration inside struct at path /Resources/MyBucket/Properties[L:13,C:6]
+          Reason = Could not find key PublicAccessBlockConfiguration inside struct at path /Resources/MyBucket/Properties[L:14,C:7]
           Code:
-               11.      #   BlockPublicPolicy: true
                12.      #   IgnorePublicAcls: true
                13.      #   RestrictPublicBuckets: true
                14.      BucketEncryption:
                15.        ServerSideEncryptionConfiguration:
                16.          - ServerSideEncryptionByDefault:
+               17.              SSEAlgorithm: AES256
         }
       }
       Check =  %s3_bucket_public_read_prohibited[*].Properties.PublicAccessBlockConfiguration.BlockPublicAcls EQUALS  true {
         RequiredPropertyError {
-          PropertyPath = /Resources/MyBucket/Properties[L:13,C:6]
+          PropertyPath = /Resources/MyBucket/Properties[L:14,C:7]
           MissingProperty = PublicAccessBlockConfiguration.BlockPublicAcls
-          Reason = Could not find key PublicAccessBlockConfiguration inside struct at path /Resources/MyBucket/Properties[L:13,C:6]
+          Reason = Could not find key PublicAccessBlockConfiguration inside struct at path /Resources/MyBucket/Properties[L:14,C:7]
           Code:
-               11.      #   BlockPublicPolicy: true
                12.      #   IgnorePublicAcls: true
                13.      #   RestrictPublicBuckets: true
                14.      BucketEncryption:
                15.        ServerSideEncryptionConfiguration:
                16.          - ServerSideEncryptionByDefault:
+               17.              SSEAlgorithm: AES256
         }
       }
       Check =  %s3_bucket_public_read_prohibited[*].Properties.PublicAccessBlockConfiguration.BlockPublicPolicy EQUALS  true {
         RequiredPropertyError {
-          PropertyPath = /Resources/MyBucket/Properties[L:13,C:6]
+          PropertyPath = /Resources/MyBucket/Properties[L:14,C:7]
           MissingProperty = PublicAccessBlockConfiguration.BlockPublicPolicy
-          Reason = Could not find key PublicAccessBlockConfiguration inside struct at path /Resources/MyBucket/Properties[L:13,C:6]
+          Reason = Could not find key PublicAccessBlockConfiguration inside struct at path /Resources/MyBucket/Properties[L:14,C:7]
           Code:
-               11.      #   BlockPublicPolicy: true
                12.      #   IgnorePublicAcls: true
                13.      #   RestrictPublicBuckets: true
                14.      BucketEncryption:
                15.        ServerSideEncryptionConfiguration:
                16.          - ServerSideEncryptionByDefault:
+               17.              SSEAlgorithm: AES256
         }
       }
       Check =  %s3_bucket_public_read_prohibited[*].Properties.PublicAccessBlockConfiguration.IgnorePublicAcls EQUALS  true {
         RequiredPropertyError {
-          PropertyPath = /Resources/MyBucket/Properties[L:13,C:6]
+          PropertyPath = /Resources/MyBucket/Properties[L:14,C:7]
           MissingProperty = PublicAccessBlockConfiguration.IgnorePublicAcls
-          Reason = Could not find key PublicAccessBlockConfiguration inside struct at path /Resources/MyBucket/Properties[L:13,C:6]
+          Reason = Could not find key PublicAccessBlockConfiguration inside struct at path /Resources/MyBucket/Properties[L:14,C:7]
           Code:
-               11.      #   BlockPublicPolicy: true
                12.      #   IgnorePublicAcls: true
                13.      #   RestrictPublicBuckets: true
                14.      BucketEncryption:
                15.        ServerSideEncryptionConfiguration:
                16.          - ServerSideEncryptionByDefault:
+               17.              SSEAlgorithm: AES256
         }
       }
       Check =  %s3_bucket_public_read_prohibited[*].Properties.PublicAccessBlockConfiguration.RestrictPublicBuckets EQUALS  true {
@@ -70,16 +70,16 @@ Resource = MyBucket {
           Fix: Set S3 Bucket PublicAccessBlockConfiguration properties for BlockPublicAcls, BlockPublicPolicy, IgnorePublicAcls, RestrictPublicBuckets parameters to true.
         }
         RequiredPropertyError {
-          PropertyPath = /Resources/MyBucket/Properties[L:13,C:6]
+          PropertyPath = /Resources/MyBucket/Properties[L:14,C:7]
           MissingProperty = PublicAccessBlockConfiguration.RestrictPublicBuckets
-          Reason = Could not find key PublicAccessBlockConfiguration inside struct at path /Resources/MyBucket/Properties[L:13,C:6]
+          Reason = Could not find key PublicAccessBlockConfiguration inside struct at path /Resources/MyBucket/Properties[L:14,C:7]
           Code:
-               11.      #   BlockPublicPolicy: true
                12.      #   IgnorePublicAcls: true
                13.      #   RestrictPublicBuckets: true
                14.      BucketEncryption:
                15.        ServerSideEncryptionConfiguration:
                16.          - ServerSideEncryptionByDefault:
+               17.              SSEAlgorithm: AES256
         }
       }
     }

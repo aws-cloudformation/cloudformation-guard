@@ -1,0 +1,23 @@
+# Two cases, both refusing the one capture. Each case is evaluated in a scope of its own, so the
+# warning is recorded once per case; the command prints it once per clause and spec file, keeping the
+# first case's line and counting the second case as a further case that refuses the capture. The
+# capture has no maps and no differing value, so the count must not speak of either.
+- name: first case
+  input:
+    Resources:
+      B1:
+        Type: AWS::S3::Bucket
+  expectations:
+    rules:
+      capture_after_this: FAIL
+
+- name: second case
+  input:
+    Resources:
+      B1:
+        Type: AWS::S3::Bucket
+        Properties:
+          BucketName: second
+  expectations:
+    rules:
+      capture_after_this: FAIL

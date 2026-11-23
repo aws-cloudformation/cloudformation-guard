@@ -1,0 +1,13 @@
+# A filter predicate over a key filter nobody can decide fails the enclosing clause closed for the entry
+# whose filter could not be decided, and that entry alone: the siblings are tested, so a sibling whose own
+# violation the template holds is named in the report beside the undecidable entry's reason, whatever
+# order the entries come in. The key filter's argument reads `Tags` in the map being filtered; a map whose
+# `Tags` is a string leaves the argument unresolved and the filter undecidable.
+rule r { Resources.*[ Properties.M[ keys == to_upper(Tags[ Key == 'Env' ].Value) ] !empty ].Type == 'X' }
+
+# The entry nobody could decide reaches a capture the filter declares as the same marker, so a clause
+# that reads the capture alone fails closed on it, whether the capture is a file-level assignment's or a
+# `some` gate's that the decided entry opened.
+let sel = Resources[ b | Properties.M[ keys == to_upper(Tags[ Key == 'Env' ].Value) ] !empty ]
+rule capture_read_alone { Resources.%b.Type exists }
+rule gate_decided_by_some when some Resources[ s | Properties.M[ keys == to_upper(Tags[ Key == 'Env' ].Value) ] !empty ] !empty { Resources.%s.Type exists }

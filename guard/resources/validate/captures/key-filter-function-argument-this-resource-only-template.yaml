@@ -1,0 +1,6 @@
+Resources:
+  Cfg:
+    Wanted: alpha
+    Map:
+      alpha: 1
+      beta: 2

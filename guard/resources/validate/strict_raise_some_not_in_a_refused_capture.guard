@@ -1,0 +1,7 @@
+# The own-key filter `Sub[*][ s | <own key> !exists ]` under `A` refuses its walk; the `Cfg[*]` loop places
+# the refusal's marker into `x` beside the keys the first clause bound. `some Cfg.Mode.Ref NOT IN %x`
+# asserted beside that marker is undecided (the pass against the keys may be against the value the marker
+# hides), so the clause is raised on the refusal's reason: the rule fails, the run continues, and the
+# console prints the refusal whole, its remedy and its path included. The own key is long so that the
+# sentence, which quotes it, is longer than the console's bound for every other recorded message.
+rule strict_raise { Cfg[ x | Kind == 'k' ] !empty  Cfg[*][ x | Mode exists or Kind == 'k' ].Sub[*][ s | R1_the_own_key_of_the_sub_map_whose_name_is_long_enough_to_carry_the_refusal_past_the_bound !exists ] !empty or Cfg.Fallback exists  some Cfg.Mode.Ref NOT IN %x }

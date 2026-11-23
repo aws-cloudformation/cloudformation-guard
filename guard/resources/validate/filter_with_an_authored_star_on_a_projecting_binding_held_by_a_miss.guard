@@ -1,0 +1,17 @@
+#
+# A projecting binding read with the author's own `[*]` before the filter, `%b[*][ ... ]`, whose
+# predicate names no key of the held map: `Nope !exists` holds on the role's Properties map itself by a
+# miss, and the map, holding only maps and lists, is the collection its shape says, so nothing is
+# refused and the walk enumerates its entries, keeping each one the predicate holds on (every one of
+# them). The previous release consumed the slot and tested the map as a whole, selected it on the same
+# miss, and ran the body; the body runs now too, over the entries, so the gated rule passes either way,
+# and the selection that moved off the map is announced once on stderr with the filter spelled as the
+# author wrote it. Paired with filter_with_an_authored_star_on_a_projecting_binding.guard, whose predicate
+# names a key of the map itself and is refused before any notice logic runs: this file is the one that
+# keeps the notice gate for an authored star pinned.
+#
+let b = Resources.*[ Type == 'AWS::IAM::Role' ].Properties
+
+rule AUTHORED_STAR_HELD_BY_A_MISS when %b[*][ Nope !exists ] !empty {
+  %b.AssumeRolePolicyDocument.Version == '2012-10-17'
+}

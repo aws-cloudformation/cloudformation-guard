@@ -1,0 +1,7 @@
+# The exemption direction against the `.*` spelling of the right-hand side: over `Names: []` and over
+# `Names: {}` nothing is exempt and every key is selected, so the assertion runs over all of them.
+let names = Mappings.Allowed.Names.*
+
+rule unexempted_keys_are_two {
+    Resources.*.Map[ keys NOT IN %names ] == 2
+}

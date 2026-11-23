@@ -1,0 +1,8 @@
+Mappings:
+  Denied:
+    Protocols: ssh
+Resources:
+  R:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      Protocol: ssh

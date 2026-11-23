@@ -1,0 +1,4 @@
+# One resource and no Parameters section, which is what makes a query for Parameters fail at the root.
+Resources:
+  One:
+    Type: AWS::S3::Bucket

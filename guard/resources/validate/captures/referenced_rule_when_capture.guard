@@ -1,0 +1,7 @@
+# Both rules capture under the name `b` in their `when` condition. `main` references `helper`
+# before reading its own capture, which must still be exactly the one role.
+rule helper when Resources[ b | Type == 'AWS::S3::Bucket' ] !empty { Resources exists }
+rule main when Resources[ b | Type == 'AWS::IAM::Role' ] !empty {
+  helper
+  %b == "MyRole"
+}

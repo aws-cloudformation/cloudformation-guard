@@ -1,0 +1,10 @@
+#
+# A string function fed a key the template does not have. The report must name the missing key, as the
+# bare query would, rather than saying the variable resolved to nothing.
+#
+let m = Resources.Fn.Properties.NoSuchKey
+
+rule REPLACE_OVER_MISSING_KEY {
+    let r = regex_replace(%m, "database", "db")
+    %r == "db"
+}

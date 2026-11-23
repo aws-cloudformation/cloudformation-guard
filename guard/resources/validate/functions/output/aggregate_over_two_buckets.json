@@ -1,0 +1,89 @@
+[
+  {
+    "name": "two_buckets.yaml",
+    "metadata": {},
+    "status": "FAIL",
+    "not_compliant": [
+      {
+        "Rule": {
+          "name": "three_buckets",
+          "metadata": {},
+          "messages": {
+            "custom_message": null,
+            "error_message": null
+          },
+          "checks": [
+            {
+              "Clause": {
+                "Binary": {
+                  "context": " %n EQUALS  3",
+                  "messages": {
+                    "custom_message": " Violation: expected exactly three buckets ",
+                    "error_message": "Check was not compliant as property value [Path=/Resources[L:3,C:5] Value=2] not equal to value [Path=[L:0,C:0] Value=3]."
+                  },
+                  "check": {
+                    "Resolved": {
+                      "from": {
+                        "path": "/Resources",
+                        "value": 2
+                      },
+                      "to": {
+                        "path": "",
+                        "value": 3
+                      },
+                      "comparison": [
+                        "Eq",
+                        false
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          ]
+        }
+      },
+      {
+        "Rule": {
+          "name": "joined_names",
+          "metadata": {},
+          "messages": {
+            "custom_message": null,
+            "error_message": null
+          },
+          "checks": [
+            {
+              "Clause": {
+                "Binary": {
+                  "context": " %j EQUALS  \"x\"",
+                  "messages": {
+                    "custom_message": " Violation: joined names differ ",
+                    "error_message": "Check was not compliant as property value [Path=/Resources[L:0,C:0] Value=\"a,b\"] not equal to value [Path=[L:0,C:0] Value=\"x\"]."
+                  },
+                  "check": {
+                    "Resolved": {
+                      "from": {
+                        "path": "/Resources",
+                        "value": "a,b"
+                      },
+                      "to": {
+                        "path": "",
+                        "value": "x"
+                      },
+                      "comparison": [
+                        "Eq",
+                        false
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          ]
+        }
+      }
+    ],
+    "not_applicable": [],
+    "compliant": []
+  }
+]
