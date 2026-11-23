@@ -542,6 +542,52 @@ mod validate_tests {
         );
     }
 
+    /// Two keys spelled the same way in one template must compare equal, and must not compare
+    /// unequal.
+    ///
+    /// `f64::from_str` accepts `nan`, `inf` and `infinity`, so `Threshold: nan` loaded as
+    /// `Float(NaN)` -- while YAML's own spellings for those values, `.nan` and `.inf`, were already
+    /// loading as strings. `Float(NaN)` is not equal to itself, and `PathAwareValue` asserts `Eq`
+    /// while hashing its own contents, so `Threshold == Ceiling` failed on two identical scalars
+    /// and the negation of it passed. A rule of the form "these two fields must differ" was
+    /// satisfied by two fields that do not.
+    ///
+    /// Measured on the merge-base: the equality exits 19 and the negation exits 0, both backwards.
+    /// The finite pair in `identical_scalars_compare_equal.guard` is the control -- it shares the
+    /// clause shape and was always right, so it fails if the fix breaks ordinary floats.
+    #[test]
+    fn identical_scalars_do_not_compare_unequal() {
+        let mut reader = Reader::default();
+        let mut writer = Writer::new(WBVec(vec![])).expect("Failed to create writer.");
+
+        let status_code = ValidateTestRunner::default()
+            .data(vec!["non-finite-scalars-template.yaml"])
+            .rules(vec!["identical_scalars_compare_equal.guard"])
+            .show_summary(vec!["all"])
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(
+            StatusCode::SUCCESS,
+            status_code,
+            "two keys holding the same scalar must compare equal"
+        );
+
+        let mut reader = Reader::default();
+        let mut writer = Writer::new(WBVec(vec![])).expect("Failed to create writer.");
+
+        let status_code = ValidateTestRunner::default()
+            .data(vec!["non-finite-scalars-template.yaml"])
+            .rules(vec!["identical_scalars_are_not_unequal.guard"])
+            .show_summary(vec!["all"])
+            .run(&mut writer, &mut reader);
+
+        assert_eq!(
+            StatusCode::VALIDATION_ERROR,
+            status_code,
+            "two keys holding the same scalar must not satisfy a clause asserting they differ"
+        );
+    }
+
     /// Two skip reasons in one junit report stay two reasons.
     ///
     /// `serialize_text_events` wrote one text event per reason, and XML concatenates adjacent text
