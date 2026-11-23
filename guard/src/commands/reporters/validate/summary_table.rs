@@ -1,5 +1,4 @@
 use crate::commands::reporters::validate::common::colored_string;
-use crate::commands::tracker::StatusContext;
 use crate::commands::validate::{OutputFormatType, Reporter};
 use crate::rules::eval_context::{find_skip_reason, EventRecord};
 use crate::rules::parser::get_rule_name;
@@ -33,25 +32,6 @@ impl<'a> SummaryTable<'a> {
     ) -> SummaryTable<'_> {
         SummaryTable { summary_type, next }
     }
-}
-
-fn print_partition(
-    writer: &mut dyn Write,
-    rules_file_name: &str,
-    part: &[&StatusContext],
-    longest: usize,
-) -> crate::rules::Result<()> {
-    for container in part {
-        writeln!(
-            writer,
-            "{filename}/{context:<0$}{status}",
-            longest + 4,
-            filename = rules_file_name,
-            context = get_rule_name(rules_file_name, &container.context),
-            status = super::common::colored_string(container.status)
-        )?;
-    }
-    Ok(())
 }
 
 fn print_summary(
