@@ -355,38 +355,33 @@ function download_file_to_path {
     $delay = $script:BaseDelaySeconds
     $waited = 0
 
-    # WebClient has no timeout of its own, so a stalled connection would hang the install. This
-    # subclass bounds the connect/response wait and every stream read to 30 seconds, which a slow
-    # but moving download never reaches and a stall always does.
-    if (-not ('GuardTimeoutWebClient' -as [type])) {
-      Add-Type -TypeDefinition @"
-using System;
-using System.Net;
-public class GuardTimeoutWebClient : WebClient {
-  protected override WebRequest GetWebRequest(Uri address) {
-    WebRequest request = base.GetWebRequest(address);
-    request.Timeout = 30000;
-    HttpWebRequest http = request as HttpWebRequest;
-    if (http != null) { http.ReadWriteTimeout = 30000; }
-    return request;
-  }
-}
-"@
-    }
+    # The progress bar makes Invoke-WebRequest several times slower on Windows PowerShell 5.1.
+    $ProgressPreference = 'SilentlyContinue'
 
     while ($true) {
       try {
         Write-Host "Downloading $url to $outputFile"
-        $webClient = New-Object GuardTimeoutWebClient
-        $webClient.DownloadFile($url, $outputFile)
+        if ($url.StartsWith("file://", [System.StringComparison]::OrdinalIgnoreCase)) {
+          # Invoke-WebRequest does not support file:// on PowerShell 7, so a local source is copied.
+          $localPath = [System.Uri]::UnescapeDataString($url.Substring(7))
+          if ($localPath -match '^/[A-Za-z]:') { $localPath = $localPath.Substring(1) }
+          Copy-Item -LiteralPath $localPath -Destination $outputFile -Force -ErrorAction Stop
+        }
+        else {
+          # No Authorization header is sent. -TimeoutSec bounds the whole request, since PowerShell has
+          # no stall-only bound; 300 seconds lets a large archive on a slow link finish while still
+          # ending a stalled connection.
+          Invoke-WebRequest -Uri $url -OutFile $outputFile -TimeoutSec 300 -UseBasicParsing -ErrorAction Stop
+        }
         return
       } catch {
-        # DownloadFile surfaces the WebException as the inner exception of the invocation error.
+        # PowerShell 7 raises HttpResponseException and Windows PowerShell 5.1 a WebException; both
+        # carry the response. A transport failure or timeout carries none, which reads as status 0.
         $failure = $_.Exception
-        if ($failure.InnerException) { $failure = $failure.InnerException }
         $response = $failure.Response
+        if (-not $response -and $failure.InnerException) { $response = $failure.InnerException.Response }
         $status = 0
-        if ($response) { $status = [int]$response.StatusCode }
+        if ($response -and $response.StatusCode) { $status = [int]$response.StatusCode }
 
         # Only transient failures are retried: no response, 429, 5xx, and a rate-limited 403. Any
         # other 4xx will not change on retry. A local file:// source that fails is final too.
