@@ -2349,6 +2349,182 @@ rule check_rest_api_is_private_and_has_access {
 }
 
 #[test]
+fn cfn_template_query_selections() -> Result<()> {
+    let content = std::fs::read_to_string("assets/cfn-template.json")?;
+    let value = PathAwareValue::try_from(content.as_str())?;
+    let mut eval = BasicQueryTesting {
+        root: Rc::new(value),
+        recorder: None,
+    };
+
+    // Every resource in the template.
+    let query = AccessQuery::try_from("Resources.*")?;
+    let selected = eval.query(&query.query)?;
+    assert_eq!(selected.len(), 17);
+    for each in selected {
+        match each {
+            QueryResult::Resolved(res) => assert!(res.is_map()),
+            _ => unreachable!(),
+        }
+    }
+
+    // The single IAM role.
+    let query = AccessQuery::try_from("Resources.*[ Type == \"AWS::IAM::Role\" ]")?;
+    let selected = eval.query(&query.query)?;
+    assert_eq!(selected.len(), 1);
+    let iam_role = match &selected[0] {
+        QueryResult::Resolved(res) => res.clone(),
+        _ => unreachable!(),
+    };
+
+    // Statements with Effect Allow, queried from the role itself.
+    let mut role_eval = BasicQueryTesting {
+        root: iam_role,
+        recorder: None,
+    };
+    let query = AccessQuery::try_from(
+        "Properties.Policies.*.PolicyDocument.Statement[ Effect == \"Allow\" ]",
+    )?;
+    let selected = role_eval.query(&query.query)?;
+    assert_eq!(selected.len(), 2);
+
+    Ok(())
+}
+
+#[test]
+fn cfn_template_iam_wildcard_action_fails() -> Result<()> {
+    let content = std::fs::read_to_string("assets/cfn-template.json")?;
+    let value = PathAwareValue::try_from(content.as_str())?;
+
+    // The template's role allows Action "*" and Resource "*" in both policy statements.
+    let rule_str = r#"
+    rule iam_statements_are_not_wildcards {
+        AWS::IAM::Role {
+            let statements = Properties.Policies.*.PolicyDocument.Statement[ Effect == "Allow" ]
+
+            %statements.Action.* != "*"
+            %statements.Resource != "*"
+        }
+    }
+    "#;
+    let rule = RulesFile::try_from(rule_str)?;
+    let mut root = root_scope(&rule, Rc::new(value.clone()));
+    let status = eval_rules_file(&rule, &mut root, None)?;
+    assert_eq!(status, Status::FAIL);
+
+    let clause_rule_str = r#"
+    rule iam_action_is_not_wildcard {
+        AWS::IAM::Role {
+            Properties.Policies.*.PolicyDocument.Statement[ Effect == "Allow" ].Action.* != "*"
+        }
+    }
+    "#;
+    let rule = RulesFile::try_from(clause_rule_str)?;
+    let mut root = root_scope(&rule, Rc::new(value));
+    let status = eval_rules_file(&rule, &mut root, None)?;
+    assert_eq!(status, Status::FAIL);
+
+    Ok(())
+}
+
+#[test]
+fn cfn_template_subnet_rules_with_vpc_condition_and_variants() -> Result<()> {
+    let content = std::fs::read_to_string("assets/cfn-template.json")?;
+    let value = PathAwareValue::try_from(content.as_str())?;
+
+    let gated_rule_str = r#"
+    rule check_subnets when Resources.*[ Type == "AWS::EC2::VPC" ] !EMPTY {
+        # Ensure that Zone is always set
+        AWS::EC2::Subnet Properties.AvailabilityZone NOT EMPTY
+
+        # Check if either IPv6 is correctly on or IPv4
+        AWS::EC2::Subnet {
+            Properties.AssignIpv6AddressOnCreation EXISTS
+            Properties.AssignIpv6AddressOnCreation == true
+            Properties.Ipv6CidrBlock EXISTS
+            Properties.CidrBlock NOT EXISTS
+        } OR
+        AWS::EC2::Subnet {
+            Properties.AssignIpv6AddressOnCreation !EXISTS or
+            Properties.AssignIpv6AddressOnCreation == false
+            Properties.CidrBlock EXISTS
+            Properties.Ipv6CidrBlock NOT EXISTS
+        }
+    }
+    "#;
+    let rule = RulesFile::try_from(gated_rule_str)?;
+    let mut root = root_scope(&rule, Rc::new(value.clone()));
+    let status = eval_rules_file(&rule, &mut root, None)?;
+    assert_eq!(status, Status::PASS);
+
+    let rule_str = r###"
+    rule check_subnets {
+        # Ensure that Zone is always set
+        AWS::EC2::Subnet Properties.AvailabilityZone NOT EMPTY
+
+        # Check if either IPv6 is correctly on or IPv4
+        AWS::EC2::Subnet {
+            Properties.AssignIpv6AddressOnCreation EXISTS
+            Properties.AssignIpv6AddressOnCreation == true
+            Properties.Ipv6CidrBlock EXISTS
+            Properties.CidrBlock NOT EXISTS
+        } OR
+        AWS::EC2::Subnet {
+            Properties.AssignIpv6AddressOnCreation !EXISTS or
+            Properties.AssignIpv6AddressOnCreation == false
+            Properties.CidrBlock EXISTS
+            Properties.Ipv6CidrBlock NOT EXISTS
+        }
+    }
+    "###;
+    let rule = RulesFile::try_from(rule_str)?;
+    let mut root = root_scope(&rule, Rc::new(value));
+    let status = eval_rules_file(&rule, &mut root, None)?;
+    assert_eq!(status, Status::PASS);
+
+    // IPv6 flag on, but the subnet carries an IPv4 CidrBlock and no Ipv6CidrBlock: neither branch holds.
+    let ipv6_flag_with_ipv4_cidr = r#"
+    {
+       "Resources": {
+           "subnet": {
+              "Type": "AWS::EC2::Subnet",
+              "Properties": {
+                  "AvailabilityZone": "us-east-2a",
+                  "AssignIpv6AddressOnCreation": true,
+                  "CidrBlock": "10.0.0.0/12"
+              }
+           }
+       }
+    }
+    "#;
+    let value = PathAwareValue::try_from(ipv6_flag_with_ipv4_cidr)?;
+    let mut root = root_scope(&rule, Rc::new(value));
+    let status = eval_rules_file(&rule, &mut root, None)?;
+    assert_eq!(status, Status::FAIL);
+
+    // Plain IPv4 subnet: the second branch holds.
+    let ipv4_only = r#"
+    {
+       "Resources": {
+           "subnet": {
+              "Type": "AWS::EC2::Subnet",
+              "Properties": {
+                  "AvailabilityZone": "us-east-2a",
+                  "CidrBlock": "10.0.0.0/12"
+              }
+           }
+       }
+    }
+    "#;
+    let value = PathAwareValue::try_from(ipv4_only)?;
+    let mut root = root_scope(&rule, Rc::new(value));
+    let status = eval_rules_file(&rule, &mut root, None)?;
+    assert_eq!(status, Status::PASS);
+
+    Ok(())
+}
+
+#[test]
 fn ensure_all_list_value_access_on_empty_fails() -> Result<()> {
     let resources = r#"Tags: []"#;
     let values = PathAwareValue::try_from(serde_yaml::from_str::<serde_yaml::Value>(resources)?)?;

@@ -3348,6 +3348,43 @@ fn test_complex_predicate_clauses() -> Result<(), Error> {
 }
 
 #[test]
+fn some_clause_with_in_regex_list_parses_to_expected_shape() -> Result<(), Error> {
+    let clause =
+        "SOME Resources.*.Properties.SecurityGroupIds[*].'Fn::GetAtt'.* IN [/aa/, /bb/] #;";
+    let clause_statement = GuardClause::try_from(clause)?;
+    let expected = GuardClause::Clause(GuardAccessClause {
+        negation: false,
+        access_clause: AccessClause {
+            query: AccessQuery {
+                query: vec![
+                    QueryPart::Key(String::from("Resources")),
+                    QueryPart::AllValues(None),
+                    QueryPart::Key("Properties".to_string()),
+                    QueryPart::Key("SecurityGroupIds".to_string()),
+                    QueryPart::AllIndices(None),
+                    QueryPart::Key("Fn::GetAtt".to_string()),
+                    QueryPart::AllValues(None),
+                ],
+                match_all: false,
+            },
+            compare_with: Some(LetValue::Value(PathAwareValue::try_from("[/aa/, /bb/]")?)),
+            location: FileLocation {
+                line: 1,
+                column: 1,
+                file_name: "",
+            },
+            comparator: (CmpOperator::In, false),
+            custom_message: None,
+        },
+    });
+    assert_eq!(expected, clause_statement);
+
+    let assignment = r#"let var = ANY Resources.*.Properties.SecurityGroupIds[*].'Fn::GetAtt'.*"#;
+    let _let_statement = LetExpr::try_from(assignment)?;
+    Ok(())
+}
+
+#[test]
 fn select_any_one_from_list_clauses() -> Result<(), Error> {
     let clause = "this == /\\{\\{resolve:secretsmanager/";
     let parsed = super::clause(from_str2(clause))?.1;

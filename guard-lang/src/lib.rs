@@ -376,11 +376,3 @@ pub(crate) fn short_form_to_long(fn_ref: &str) -> &'static str {
         _ => unreachable!(),
     }
 }
-
-#[cfg(test)]
-pub(crate) fn read_file_content(file: std::fs::File) -> Result<String> {
-    use std::io::Read;
-    let mut content = String::new();
-    std::io::BufReader::new(file).read_to_string(&mut content)?;
-    Ok(content)
-}

@@ -1550,9 +1550,9 @@ pub(crate) fn eval_guard_access_clause<'value, 'loc: 'value>(
         // report still displayed the `not`.
         //
         // `comparator.1` is the operator's own not-flag (from `!=` / `not in`).
-        // The two negations compose by XOR, matching invert_closure in the
-        // superseded evaluator (evaluate.rs:293-307), which applies `clause_not`
-        // and `not` as independent flips.
+        // The two negations compose by XOR. The earlier, now removed, evaluator
+        // did the same: it applied the clause-level `not` and the operator's own
+        // not-flag as two independent flips of the result.
         let comparator = (
             gac.access_clause.comparator.0,
             gac.access_clause.comparator.1 ^ gac.negation,
