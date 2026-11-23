@@ -346,7 +346,7 @@ function check_cmd_present {
     }
 }
 
-# Fetch the release archive, retried. Never authenticated: the archive redirects to a separate
+# Fetch the release archive, retrying transient failures only. Never authenticated: the archive redirects to a separate
 # download host and a credential has no business travelling there.
 function download_file_to_path {
     param($url, $outputFile)
@@ -381,8 +381,30 @@ public class GuardTimeoutWebClient : WebClient {
         $webClient.DownloadFile($url, $outputFile)
         return
       } catch {
-        if ($attempt -ge $script:MaxAttempts -or ($waited + $delay) -gt $script:MaxTotalWaitSeconds) {
-          err "Failed to download cfn-guard release from $url after $attempt attempt(s)."
+        # DownloadFile surfaces the WebException as the inner exception of the invocation error.
+        $failure = $_.Exception
+        if ($failure.InnerException) { $failure = $failure.InnerException }
+        $response = $failure.Response
+        $status = 0
+        if ($response) { $status = [int]$response.StatusCode }
+
+        # Only transient failures are retried: no response, 429, 5xx, and a rate-limited 403. Any
+        # other 4xx will not change on retry. A local file:// source that fails is final too.
+        $retryable = $false
+        if ($url.StartsWith("file://", [System.StringComparison]::OrdinalIgnoreCase)) {
+          $retryable = $false
+        }
+        elseif ($status -eq 0 -or $status -eq 429 -or $status -ge 500) {
+          $retryable = $true
+        }
+        elseif ($status -eq 403) {
+          $remaining = Get-HeaderValue -Response $response -Name "X-RateLimit-Remaining"
+          $retryAfterHeader = Get-HeaderValue -Response $response -Name "Retry-After"
+          if ($remaining -eq "0" -or $retryAfterHeader) { $retryable = $true }
+        }
+
+        if (-not $retryable -or $attempt -ge $script:MaxAttempts -or ($waited + $delay) -gt $script:MaxTotalWaitSeconds) {
+          err "Failed to download cfn-guard release from $url after $attempt attempt(s) (HTTP $status)."
         }
         Write-Host "attempt $attempt of $($script:MaxAttempts) failed; retrying in $delay s"
         Start-Sleep -Seconds $delay

@@ -67,6 +67,11 @@ SCENARIOS = {
         {"status": 429},
         {"status": 200},
     ],
+    # A 404 for whatever is asked. Used against the archive download, where it must fail on the
+    # first request.
+    "not-found": [
+        {"status": 404},
+    ],
     # A bare 403: no rate-limit or retry-after header, so it is a permission answer that retrying
     # cannot change. The caller must fail on the first request.
     "forbidden": [

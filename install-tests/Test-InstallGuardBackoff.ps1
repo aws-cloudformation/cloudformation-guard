@@ -168,14 +168,18 @@ function stop_stub {
 #
 # GITHUB_TOKEN is set deliberately. The stub is not api.github.com, so a correct script sends no
 # Authorization header to it, and the log records whether one arrived.
+#
+# -DownloadBaseUri and -ScriptArgs let a case point the archive download at the stub and pin a
+# version (skipping the API lookup), which is how the archive path is exercised.
 function run_installer {
-    param($Stub)
+    param($Stub, [string]$DownloadBaseUri = '', [string[]]$ScriptArgs = @())
 
     $installHome = Join-Path $Stub.Dir 'home'
     New-Item -ItemType Directory -Force -Path $installHome | Out-Null
     $stdoutPath = Join-Path $Stub.Dir 'stdout'
     $stderrPath = Join-Path $Stub.Dir 'stderr'
     $artifactsUri = 'file://' + ((Join-Path $script:Work 'artifacts') -replace '\\', '/')
+    if ($DownloadBaseUri) { $artifactsUri = $DownloadBaseUri }
 
     # Set on this process and restored afterwards, rather than passed with Start-Process
     # -Environment: that parameter arrived in PowerShell 7.4 and this script has to run on whatever
@@ -197,7 +201,7 @@ function run_installer {
 
         $proc = Start-Process -FilePath (Get-Process -Id $PID).Path -PassThru -Wait -NoNewWindow `
             -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath `
-            -ArgumentList @('-NoProfile', '-File', $script:InstallScript)
+            -ArgumentList (@('-NoProfile', '-File', $script:InstallScript) + $ScriptArgs)
     }
     finally {
         foreach ($name in $vars.Keys) {
@@ -445,6 +449,44 @@ function test_bare_403_fails_fast {
 }
 
 # -------------------------------------------------------------------------------------------------
+# A 404 on the archive download fails at once.
+#
+# The version is pinned with -Version, so the API is never asked and the stub is contacted only for
+# the archive. A missing archive will not appear on retry: one request, a nonzero exit, and the
+# one-attempt message.
+# -------------------------------------------------------------------------------------------------
+function test_archive_404_fails_fast {
+    $stub = start_stub 'not-found'
+    try {
+        $run = run_installer $stub -DownloadBaseUri $stub.Uri -ScriptArgs @('-Version', '3.1.4-stub')
+        $requests = @(stub_requests $stub)
+        $output = "$($run.Stdout)`n$($run.Stderr)"
+
+        if ($run.ExitCode -eq 0) {
+            fail 'archive-404: a missing archive must fail the install, got exit 0'
+        }
+        else {
+            pass "archive-404: exited $($run.ExitCode)"
+        }
+
+        if ($requests.Count -ne 1) {
+            fail "archive-404: the stub saw $($requests.Count) requests, expected exactly 1 -- a 404 is not retried."
+        }
+        else {
+            pass 'archive-404: exactly one request'
+        }
+
+        if ($output -notmatch [regex]::Escape('after 1 attempt(s) (HTTP 404)')) {
+            fail "archive-404: output did not report the single failed attempt; output:`n$output"
+        }
+        else {
+            pass 'archive-404: reported HTTP 404 after 1 attempt'
+        }
+    }
+    finally { stop_stub $stub }
+}
+
+# -------------------------------------------------------------------------------------------------
 # Retries are bounded, and exhaustion is reported as a rate limit.
 #
 # A 429 to every request. The script must stop at MaxAttempts -- exactly 5 requests, not 4 and not a
@@ -626,6 +668,7 @@ try {
     test_ratelimit_reset_is_honoured
     test_exponential_fallback
     test_bare_403_fails_fast
+    test_archive_404_fails_fast
     test_exhaustion_is_bounded_and_explained
     test_single_429_is_survived
     test_an_unusable_reset_header_still_explains_itself
