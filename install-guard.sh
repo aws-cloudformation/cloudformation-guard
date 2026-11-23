@@ -260,6 +260,31 @@ api_token_for() {
 	esac
 }
 
+# True when $1 is a run of digits and nothing else, so `$(( ))` on it cannot abort.
+#
+# A `case` pattern rather than `[ "$x" -ge 0 ] 2>/dev/null`, which is not a portable numeric test.
+# `[` compares its operands arithmetically, and what happens to a non-numeric one is per-shell:
+#
+#   bash, dash   `[` fails, so the guard rejects the value. This is the case that was measured, and
+#                it is why the numeric-test spelling looked like it worked.
+#   ksh          `[` evaluates the operands as arithmetic expressions. `not-a-number` parses as the
+#                three unset names `not - a - number`, sums to 0, and `0 -ge 0` is true -- so the
+#                guard returned success for exactly the input it existed to reject, the `2>/dev/null`
+#                swallowed the only hint, and the fatal arithmetic below ran anyway. Measured: five
+#                attempts in 22ms against a quota that was already spent, which is the same loss of
+#                backoff the guard was added to prevent, reached through the guard rather than past
+#                it.
+#
+# A pattern match reads the value as text and asks nothing of the shell's arithmetic, so all three
+# agree. The empty string is rejected here, which is what lets the callers drop their separate
+# `[ -n ... ]` test.
+is_digits() {
+	case "${1:-}" in
+	'' | *[!0-9]*) return 1 ;;
+	*) return 0 ;;
+	esac
+}
+
 # Seconds to wait before the next attempt, from the response headers when they say, else $2.
 backoff_seconds() {
 	_hdrfile="$1"
@@ -267,7 +292,7 @@ backoff_seconds() {
 
 	# retry-after is authoritative and is what a secondary limit returns.
 	_retry_after=$(header_value "$_hdrfile" retry-after)
-	if [ -n "$_retry_after" ] && [ "$_retry_after" -gt 0 ] 2>/dev/null; then
+	if is_digits "$_retry_after" && [ "$_retry_after" -gt 0 ]; then
 		echo "$_retry_after"
 		return 0
 	fi
@@ -283,7 +308,11 @@ backoff_seconds() {
 	# Under bash, `$((_reset - _now + 1))` with `_reset=not-a-number` evaluates the words as unset names
 	# and yields a negative result, so the fallback runs and removing this guard changes nothing. Under
 	# dash -- which is `#!/bin/sh` on Debian and Ubuntu, so most Linux callers and most CI runners --
-	# the same expression is `Illegal number: not-a-number` and the arithmetic aborts.
+	# the same expression is `Illegal number: not-a-number` and the arithmetic aborts. Under ksh it
+	# aborts too, with `not: parameter not set`.
+	#
+	# So the guard is what has to be portable, not just present, and see is_digits for why the numeric
+	# test this used to be was not: ksh admitted the value through it and aborted anyway.
 	#
 	# The abort is contained, which is what makes it dangerous rather than loud. It happens inside the
 	# command substitution that calls this function, so the subshell dies, the caller gets an empty
@@ -302,7 +331,7 @@ backoff_seconds() {
 	# where roughly 2000ms is required.
 	_remaining=$(header_value "$_hdrfile" x-ratelimit-remaining)
 	_reset=$(header_value "$_hdrfile" x-ratelimit-reset)
-	if [ "$_remaining" = "0" ] && [ -n "$_reset" ] && [ "$_reset" -ge 0 ] 2>/dev/null; then
+	if [ "$_remaining" = "0" ] && is_digits "$_reset"; then
 		_now=$(date +%s)
 		_until=$((_reset - _now + 1))
 		if [ "$_until" -gt 0 ]; then
