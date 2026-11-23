@@ -18,7 +18,8 @@
 #                           GitHub releases URL. Set it to a file:// or https:// prefix to install
 #                           an archive built locally, which is how the install scripts are tested
 #                           against the code under review rather than against the last release, and
-#                           what makes an air-gapped install possible. An http:// origin also works
+#                           what makes an air-gapped install possible. A file:// prefix is read
+#                           directly with cp, so it needs neither curl nor wget. An http:// origin also works
 #                           but nothing here verifies a checksum or a signature, so whatever this
 #                           points at is installed as-is: over plaintext that is anyone on the
 #                           network path, not just the host you meant.
@@ -28,7 +29,8 @@
 #                           when its quota is already spent, which is not a state a test can ask
 #                           for, so the responses have to come from somewhere a test controls.
 #                           GITHUB_TOKEN is deliberately NOT sent when this points anywhere other
-#                           than api.github.com -- see api_token_for.
+#                           than api.github.com -- see api_token_for. A file:// value is read
+#                           directly, and setting this variable skips the `gh` lookup.
 
 # Total seconds we are willing to spend waiting across all retries. A primary rate limit can be up
 # to an hour from reset, and an installer that appears to hang for an hour is worse than one that
@@ -145,12 +147,12 @@ get_version() {
 
 # Resolve the latest release tag, preferring whichever mechanism needs the least from the caller.
 #
-# 1. `gh`, if installed and authenticated. It reuses credentials the caller already has, so it is
-#    both authenticated and free of any setup on our part.
+# 1. `gh`, if installed and authenticated, and GUARD_API_BASE_URL is unset (a configured mirror is
+#    never bypassed). It reuses credentials the caller already has.
 # 2. The REST API with GITHUB_TOKEN, when one is in the environment.
 # 3. The REST API anonymously, which is the path subject to the 60/hour per-IP limit.
 get_latest_release() {
-	if check_cmd gh && gh auth status >/dev/null 2>&1; then
+	if [ -z "${GUARD_API_BASE_URL:-}" ] && check_cmd gh && gh auth status >/dev/null 2>&1; then
 		if _tag=$(gh release view --repo aws-cloudformation/cloudformation-guard \
 			--json tagName --jq '.tagName' 2>/dev/null) && [ -n "$_tag" ]; then
 			echo "$_tag"
@@ -177,17 +179,21 @@ github_api() {
 	_delay="$BASE_DELAY"
 	_waited=0
 
-	# Resolved before the wget branch below, not after it. This used to sit under that branch, so a
-	# host with wget and no curl never read it: the request went out anonymously with GITHUB_TOKEN set
-	# in the environment, kept the 60-per-hour anonymous quota, and then failed with a message telling
-	# the caller to set the variable they had already set.
+	# A file:// origin is read directly, so it works without curl or wget.
+	case "$_url" in
+	file://*)
+		cat -- "${_url#file://}"
+		return $?
+		;;
+	esac
+
+	# Resolved before the wget branch so both transports authenticate.
 	_token=$(api_token_for "$_url")
 
-	# Header inspection needs curl. With only wget available we still retry, just without the
-	# server's guidance, which is strictly better than one attempt.
+	# Header-driven backoff needs curl; with only wget we retry transient failures without it.
 	if ! check_cmd curl; then
 		_body=$(retry_wget "$_url" "$_token") || return 1
-		echo "$_body"
+		printf '%s\n' "$_body"
 		return 0
 	fi
 
@@ -219,12 +225,32 @@ github_api() {
 			return 0
 		fi
 
+		# A rejected token is not retried: drop it and ask once anonymously.
+		if [ "$_code" = "401" ] && [ -n "$_token" ]; then
+			echo "GitHub rejected the token (HTTP 401); retrying without it" >&2
+			_token=""
+			continue
+		fi
+
+		# Only transient failures are retried: no response, 429, 5xx, and a 403 that is a rate limit
+		# (remaining 0 or a retry-after). Any other 4xx will not change on retry.
+		_retry=0
+		if is_transient_status "$_code"; then
+			_retry=1
+		elif [ "$_code" = "403" ]; then
+			_remaining=$(header_value "$_hdr" x-ratelimit-remaining)
+			_retry_after=$(header_value "$_hdr" retry-after)
+			if [ "$_remaining" = "0" ] || [ -n "$_retry_after" ]; then
+				_retry=1
+			fi
+		fi
+
 		_sleep=$(backoff_seconds "$_hdr" "$_delay")
 
-		if [ "$_attempt" -ge "$MAX_ATTEMPTS" ] ||
+		if [ "$_retry" -eq 0 ] || [ "$_attempt" -ge "$MAX_ATTEMPTS" ] ||
 			[ $((_waited + _sleep)) -gt "$MAX_TOTAL_WAIT" ]; then
 			echo "GitHub API request failed with HTTP $_code after ${_attempt} attempt(s)." >&2
-			if [ "$_code" = "403" ] || [ "$_code" = "429" ]; then
+			if [ "$_retry" -eq 1 ] && { [ "$_code" = "403" ] || [ "$_code" = "429" ]; }; then
 				echo "This is a rate limit rather than a problem with the release." >&2
 				echo "Authenticate to raise it: set GITHUB_TOKEN, or run 'gh auth login'," >&2
 				echo "or pass an explicit version with -v to skip the lookup entirely." >&2
@@ -262,22 +288,8 @@ api_token_for() {
 
 # True when $1 is a run of digits and nothing else, so `$(( ))` on it cannot abort.
 #
-# A `case` pattern rather than `[ "$x" -ge 0 ] 2>/dev/null`, which is not a portable numeric test.
-# `[` compares its operands arithmetically, and what happens to a non-numeric one is per-shell:
-#
-#   bash, dash   `[` fails, so the guard rejects the value. This is the case that was measured, and
-#                it is why the numeric-test spelling looked like it worked.
-#   ksh          `[` evaluates the operands as arithmetic expressions. `not-a-number` parses as the
-#                three unset names `not - a - number`, sums to 0, and `0 -ge 0` is true -- so the
-#                guard returned success for exactly the input it existed to reject, the `2>/dev/null`
-#                swallowed the only hint, and the fatal arithmetic below ran anyway. Measured: five
-#                attempts in 22ms against a quota that was already spent, which is the same loss of
-#                backoff the guard was added to prevent, reached through the guard rather than past
-#                it.
-#
-# A pattern match reads the value as text and asks nothing of the shell's arithmetic, so all three
-# agree. The empty string is rejected here, which is what lets the callers drop their separate
-# `[ -n ... ]` test.
+# A `case` pattern rather than `[ "$x" -ge 0 ]`: ksh evaluates `[` operands as arithmetic, so a
+# non-numeric value can pass that test. The empty string is rejected too.
 is_digits() {
 	case "${1:-}" in
 	'' | *[!0-9]*) return 1 ;;
@@ -299,36 +311,9 @@ backoff_seconds() {
 
 	# A primary limit is exhausted when remaining is 0; reset is an epoch second.
 	#
-	# `_reset` is checked for being a number before it reaches the arithmetic below, the same way
-	# `_retry_after` is above. It is a response header, so it is text this script did not write.
-	#
-	# What this guard prevents is the loss of the backoff itself, and the harm is bigger than the
-	# diagnostic. Both halves are now measured.
-	#
-	# Under bash, `$((_reset - _now + 1))` with `_reset=not-a-number` evaluates the words as unset names
-	# and yields a negative result, so the fallback runs and removing this guard changes nothing. Under
-	# dash -- which is `#!/bin/sh` on Debian and Ubuntu, so most Linux callers and most CI runners --
-	# the same expression is `Illegal number: not-a-number` and the arithmetic aborts. Under ksh it
-	# aborts too, with `not: parameter not set`.
-	#
-	# So the guard is what has to be portable, not just present, and see is_digits for why the numeric
-	# test this used to be was not: ksh admitted the value through it and aborted anyway.
-	#
-	# The abort is contained, which is what makes it dangerous rather than loud. It happens inside the
-	# command substitution that calls this function, so the subshell dies, the caller gets an empty
-	# string, and the retry loop carries on. The rate-limit guidance still prints. What is gone is the
-	# wait: `sleep ""` fails, and all five attempts fire back to back in under a second against a quota
-	# that is already spent. So the script hammers the limiter it exists to respect while its output
-	# still reads as correct. Measured, unguarded under dash, four times over:
-	#
-	#     install-guard.sh: Illegal number: not-a-number
-	#     attempt 2 of 5 got HTTP 403; retrying in s
-	#     sleep: invalid time interval ''
-	#
-	# That is why the test asserts the measured gap between requests and not just that the guidance
-	# appeared -- the guidance survives the defect intact, so watching it cannot detect this. The dash
-	# CI job is what exercises the case; removing this guard makes the first retry arrive in about 27ms
-	# where roughly 2000ms is required.
+	# `_reset` is a response header, so it is checked as digits before the arithmetic. dash and ksh
+	# abort `$(( ))` on a non-number, which would kill the command substitution, return an empty
+	# delay, and fire every retry back to back against an exhausted quota.
 	_remaining=$(header_value "$_hdrfile" x-ratelimit-remaining)
 	_reset=$(header_value "$_hdrfile" x-ratelimit-reset)
 	if [ "$_remaining" = "0" ] && is_digits "$_reset"; then
@@ -363,39 +348,56 @@ header_value() {
 	' "$1"
 }
 
-# Fetch $1 to stdout with wget, retrying blind. $2 is the bearer token, empty for none.
-#
-# Authenticated when a token is passed, which it was not before: the caller resolved the token after
-# choosing this branch, so a host without curl always asked anonymously and kept the per-IP quota that
-# a token exists to raise.
-#
-# The token goes on the command line here, where curl's `-K -` lets it go on stdin instead. `wget` has
-# no equivalent that avoids argv -- `--header` is the only way to set one -- so on a shared host the
-# value is briefly visible to `ps`. That is worse than the curl path and better than sending no token
-# at all, and it is reached only when curl is absent.
+# The HTTP status of the last response in a `wget -S` stderr dump $1, empty when there was none.
+wget_status() {
+	awk '/^ *HTTP\// { code = $2 } END { print code }' "$1"
+}
+
+# True when the `wget -S` dump $1 shows an exhausted rate limit (remaining 0, or a retry-after).
+wget_rate_limited() {
+	awk 'tolower($0) ~ /x-ratelimit-remaining: *0/ || tolower($0) ~ /retry-after:/ { f = 1 } END { exit !f }' "$1"
+}
+
+# Fetch $1 to stdout with wget. $2 is the bearer token, empty for none. Retries transient failures
+# only, without the server's backoff hints since wget does not expose them. The token is visible to
+# `ps` here because wget can only take it as an argument; this path is reached only without curl.
 retry_wget() {
 	_url="$1"
 	_wget_token="$2"
 	_attempt=1
 	_delay="$BASE_DELAY"
 	_waited=0
+	_errf=$(mktemp) || err "unable to create a temporary file"
 	while :; do
-		# The exit status decides, not whether anything came back. Reading emptiness as failure
-		# would misreport a successful fetch of an empty body, and `$?` has to be captured on the
-		# line after the assignment because the assignment itself resets it.
+		# The exit status decides, not emptiness; `$?` is captured on the next line.
 		if [ -n "$_wget_token" ]; then
-			_out=$(wget -qO- --header="Authorization: Bearer $_wget_token" -- "$_url" 2>/dev/null)
+			_out=$(wget -S -qO- --header="Authorization: Bearer $_wget_token" -- "$_url" 2>"$_errf")
 			_rc=$?
 		else
-			_out=$(wget -qO- -- "$_url" 2>/dev/null)
+			_out=$(wget -S -qO- -- "$_url" 2>"$_errf")
 			_rc=$?
 		fi
 		if [ "$_rc" -eq 0 ]; then
-			echo "$_out"
+			rm -f "$_errf"
+			printf '%s\n' "$_out"
 			return 0
 		fi
-		if [ "$_attempt" -ge "$MAX_ATTEMPTS" ] || [ $((_waited + _delay)) -gt "$MAX_TOTAL_WAIT" ]; then
-			echo "unable to fetch $_url after ${_attempt} attempt(s)" >&2
+		_code=$(wget_status "$_errf")
+		if [ "$_code" = "401" ] && [ -n "$_wget_token" ]; then
+			echo "GitHub rejected the token (HTTP 401); retrying without it" >&2
+			_wget_token=""
+			continue
+		fi
+		_retry=0
+		if [ -z "$_code" ] || is_transient_status "$_code"; then
+			_retry=1
+		elif [ "$_code" = "403" ] && wget_rate_limited "$_errf"; then
+			_retry=1
+		fi
+		if [ "$_retry" -eq 0 ] ||
+			[ "$_attempt" -ge "$MAX_ATTEMPTS" ] || [ $((_waited + _delay)) -gt "$MAX_TOTAL_WAIT" ]; then
+			echo "unable to fetch $_url after ${_attempt} attempt(s) (HTTP ${_code:-none})" >&2
+			rm -f "$_errf"
 			return 1
 		fi
 		echo "attempt ${_attempt} of ${MAX_ATTEMPTS} failed; retrying in ${_delay}s" >&2
@@ -421,25 +423,62 @@ check_cmd() {
 	command -v "$1" >/dev/null 2>&1
 }
 
-# Fetch a release archive to the given path. Retried, and never authenticated: the archive
-# redirects to a separate download host and a credential has no business travelling there.
-#
-# The destination is an argument rather than a redirect on the caller's side. A redirect is opened
-# once, before this function is entered, so every attempt would write to the same already-advanced
-# descriptor: a retry after a transfer that died partway would append to the bytes the failed
-# attempt left behind and hand back a corrupt archive. Passing the path lets each attempt truncate
-# it, which is the only way the retry helps for the failure it exists for.
+# True when HTTP status $1 is worth retrying: no response (000), 429, or any 5xx.
+is_transient_status() {
+	case "$1" in
+	000 | 429 | 5??) return 0 ;;
+	*) return 1 ;;
+	esac
+}
+
+# Fetch a release archive to the given path. Never authenticated: the archive redirects to a
+# separate download host and a credential has no business travelling there. Only transient
+# failures are retried; a 404 or other client error fails at once. The destination is a path, not a
+# redirect, so each retry truncates it instead of appending to a partial transfer.
 download() {
 	_url="$1"
 	_out="$2"
 	_attempt=1
 	_delay="$BASE_DELAY"
 	_waited=0
+	case "$_url" in
+	file://*)
+		cp -- "${_url#file://}" "$_out"
+		return $?
+		;;
+	esac
 	while :; do
+		_retry=0
 		if check_cmd curl; then
-			curl -fsSL -o "$_out" "$_url" && return 0
+			_code=$(curl -sSL -o "$_out" -w '%{http_code}' -- "$_url" 2>/dev/null)
+			_rc=$?
+			if [ "$_rc" -eq 0 ]; then
+				case "$_code" in
+				2??) return 0 ;;
+				esac
+				is_transient_status "$_code" && _retry=1
+			else
+				# Transport failures: resolve, connect, timeout, TLS, reset mid-transfer.
+				case "$_rc" in
+				6 | 7 | 18 | 28 | 35 | 52 | 55 | 56) _retry=1 ;;
+				esac
+			fi
 		else
-			wget -qO "$_out" "$_url" && return 0
+			_errf=$(mktemp) || err "unable to create a temporary file"
+			wget -S -qO "$_out" -- "$_url" 2>"$_errf" && {
+				rm -f "$_errf"
+				return 0
+			}
+			_code=$(wget_status "$_errf")
+			rm -f "$_errf"
+			# No parseable status (busybox wget, a connection that never answered) is treated as transient.
+			if [ -z "$_code" ] || is_transient_status "$_code"; then
+				_retry=1
+			fi
+		fi
+		if [ "$_retry" -eq 0 ]; then
+			echo "error attempting to download from the github repository: $_url" >&2
+			return 1
 		fi
 		if [ "$_attempt" -ge "$MAX_ATTEMPTS" ] || [ $((_waited + _delay)) -gt "$MAX_TOTAL_WAIT" ]; then
 			echo "error attempting to download from the github repository: $_url" >&2
