@@ -110,7 +110,7 @@
     "@typescript-eslint/eslint-plugin": "^8.58.0",
     "@typescript-eslint/parser": "^8.31.0",
     "@vercel/ncc": "^0.38.4",
-    "eslint": "^9.25.1",
+    "eslint": "^10.15.0",
     "eslint-plugin-github": "^5.1.8",
     "eslint-plugin-jest": "^28.11.0",
     "eslint-plugin-jsonc": "^2.20.0",
