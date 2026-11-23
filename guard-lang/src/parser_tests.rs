@@ -1,6 +1,5 @@
 use crate::path_value::PathAwareValue;
 use crate::values::WithinRange;
-use crate::{EvaluationContext, EvaluationType, Status};
 use pretty_assertions::assert_eq;
 use std::vec;
 
@@ -3348,31 +3347,6 @@ fn test_complex_predicate_clauses() -> Result<(), Error> {
     Ok(())
 }
 
-struct DummyEval {}
-impl EvaluationContext for DummyEval {
-    fn resolve_variable(&self, _variable: &str) -> crate::Result<Vec<&PathAwareValue>> {
-        unimplemented!()
-    }
-
-    fn rule_status(&self, _rule_name: &str) -> crate::Result<Status> {
-        unimplemented!()
-    }
-
-    fn end_evaluation(
-        &self,
-        _eval_type: EvaluationType,
-        _context: &str,
-        _msg: String,
-        _from: Option<PathAwareValue>,
-        _to: Option<PathAwareValue>,
-        _status: Option<Status>,
-        _cmp: Option<(CmpOperator, bool)>,
-    ) {
-    }
-
-    fn start_evaluation(&self, _eval_type: EvaluationType, _context: &str) {}
-}
-
 #[test]
 fn select_any_one_from_list_clauses() -> Result<(), Error> {
     let clause = "this == /\\{\\{resolve:secretsmanager/";
@@ -3437,7 +3411,6 @@ fn select_any_one_from_list_clauses() -> Result<(), Error> {
         "#,
     ];
 
-    let _dummy = DummyEval {};
     let _clause = GuardClause::try_from(
         r#"Resources.*[ this.Type == "AWS::RDS::DBInstance" ].Properties.MasterUserPassword.'Fn::Join'[1][ this == /\{\{resolve:secretsmanager/ ] !EMPTY"#,
     )?;
