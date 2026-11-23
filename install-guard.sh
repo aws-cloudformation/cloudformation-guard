@@ -177,10 +177,16 @@ github_api() {
 	_delay="$BASE_DELAY"
 	_waited=0
 
+	# Resolved before the wget branch below, not after it. This used to sit under that branch, so a
+	# host with wget and no curl never read it: the request went out anonymously with GITHUB_TOKEN set
+	# in the environment, kept the 60-per-hour anonymous quota, and then failed with a message telling
+	# the caller to set the variable they had already set.
+	_token=$(api_token_for "$_url")
+
 	# Header inspection needs curl. With only wget available we still retry, just without the
 	# server's guidance, which is strictly better than one attempt.
 	if ! check_cmd curl; then
-		_body=$(retry_wget "$_url") || return 1
+		_body=$(retry_wget "$_url" "$_token") || return 1
 		echo "$_body"
 		return 0
 	fi
@@ -188,17 +194,23 @@ github_api() {
 	_hdr=$(mktemp) || err "unable to create a temporary file"
 	_body=$(mktemp) || err "unable to create a temporary file"
 
-	_token=$(api_token_for "$_url")
-
 	while :; do
 		# The token goes in a config file on stdin rather than on the command line. An
 		# Authorization header in argv is readable from `ps` by anyone else on the host for
 		# the life of the request, which matters on shared build machines.
+		#
+		# `--` before the URL, so a value of GUARD_API_BASE_URL that begins with a dash is read as
+		# an operand rather than as a curl option. Caller-controlled rather than remote, so this is
+		# tidiness rather than a hole, but the terminator is free.
+		#
+		# No `-L`. A redirect out of api.github.com would otherwise carry the Authorization header
+		# to whatever host the Location named; the archive download is a separate function and
+		# sends no token, so nothing here needs to follow one.
 		if [ -n "$_token" ]; then
 			_code=$(printf 'header = "Authorization: Bearer %s"\n' "$_token" |
-				curl -sS -K - -o "$_body" -D "$_hdr" -w '%{http_code}' "$_url" 2>/dev/null)
+				curl -sS -K - -o "$_body" -D "$_hdr" -w '%{http_code}' -- "$_url" 2>/dev/null)
 		else
-			_code=$(curl -sS -o "$_body" -D "$_hdr" -w '%{http_code}' "$_url" 2>/dev/null)
+			_code=$(curl -sS -o "$_body" -D "$_hdr" -w '%{http_code}' -- "$_url" 2>/dev/null)
 		fi
 
 		if [ "$_code" = "200" ]; then
@@ -254,16 +266,28 @@ backoff_seconds() {
 	_fallback="$2"
 
 	# retry-after is authoritative and is what a secondary limit returns.
-	_retry_after=$(awk 'tolower($1) ~ /^retry-after:/ { gsub(/\r/, "", $2); print $2; exit }' "$_hdrfile")
+	_retry_after=$(header_value "$_hdrfile" retry-after)
 	if [ -n "$_retry_after" ] && [ "$_retry_after" -gt 0 ] 2>/dev/null; then
 		echo "$_retry_after"
 		return 0
 	fi
 
 	# A primary limit is exhausted when remaining is 0; reset is an epoch second.
-	_remaining=$(awk 'tolower($1) ~ /^x-ratelimit-remaining:/ { gsub(/\r/, "", $2); print $2; exit }' "$_hdrfile")
-	_reset=$(awk 'tolower($1) ~ /^x-ratelimit-reset:/ { gsub(/\r/, "", $2); print $2; exit }' "$_hdrfile")
-	if [ "$_remaining" = "0" ] && [ -n "$_reset" ]; then
+	#
+	# `_reset` is checked for being a number before it reaches the arithmetic below, the same way
+	# `_retry_after` is above. It is a response header, so it is text this script did not write.
+	#
+	# How much this guard buys depends on the shell, and only one half is measured. Under bash,
+	# `$((_reset - _now + 1))` with `_reset=not-a-number` evaluates the words as unset names, yields a
+	# negative result, and falls through to the exponential fallback -- so removing this guard changes
+	# nothing there, measured. A stricter POSIX shell treats the same expression as a syntax error, and
+	# `#!/bin/sh` is dash on Debian and Ubuntu, where an aborted script would end the install with an
+	# arithmetic complaint instead of the rate-limit guidance this function exists to feed. That is the
+	# case the guard is for and it is not reproducible on a host whose `/bin/sh` is bash; the ubuntu CI
+	# job is what exercises it.
+	_remaining=$(header_value "$_hdrfile" x-ratelimit-remaining)
+	_reset=$(header_value "$_hdrfile" x-ratelimit-reset)
+	if [ "$_remaining" = "0" ] && [ -n "$_reset" ] && [ "$_reset" -ge 0 ] 2>/dev/null; then
 		_now=$(date +%s)
 		_until=$((_reset - _now + 1))
 		if [ "$_until" -gt 0 ]; then
@@ -275,13 +299,54 @@ backoff_seconds() {
 	echo "$_fallback"
 }
 
+# One header's value from a `curl -D` dump, by lowercased name.
+#
+# Split on the first colon rather than on whitespace. HTTP allows no space after the colon, so
+# `Retry-After:120` is a valid spelling -- and taking awk's `$2` on a whitespace split returned empty
+# for it, which the callers above read as "the header is absent" and answered with exponential backoff
+# instead of the delay the server had just named. Leading and trailing whitespace and the trailing CR
+# are stripped here so the callers can compare the value directly.
+header_value() {
+	awk -v name="$2" '
+		BEGIN { pattern = "^" name ":" }
+		tolower($0) ~ pattern {
+			value = substr($0, index($0, ":") + 1)
+			gsub(/\r/, "", value)
+			gsub(/^[ \t]+|[ \t]+$/, "", value)
+			print value
+			exit
+		}
+	' "$1"
+}
+
+# Fetch $1 to stdout with wget, retrying blind. $2 is the bearer token, empty for none.
+#
+# Authenticated when a token is passed, which it was not before: the caller resolved the token after
+# choosing this branch, so a host without curl always asked anonymously and kept the per-IP quota that
+# a token exists to raise.
+#
+# The token goes on the command line here, where curl's `-K -` lets it go on stdin instead. `wget` has
+# no equivalent that avoids argv -- `--header` is the only way to set one -- so on a shared host the
+# value is briefly visible to `ps`. That is worse than the curl path and better than sending no token
+# at all, and it is reached only when curl is absent.
 retry_wget() {
 	_url="$1"
+	_wget_token="$2"
 	_attempt=1
 	_delay="$BASE_DELAY"
 	_waited=0
 	while :; do
-		if _out=$(wget -qO- "$_url" 2>/dev/null); then
+		# The exit status decides, not whether anything came back. Reading emptiness as failure
+		# would misreport a successful fetch of an empty body, and `$?` has to be captured on the
+		# line after the assignment because the assignment itself resets it.
+		if [ -n "$_wget_token" ]; then
+			_out=$(wget -qO- --header="Authorization: Bearer $_wget_token" -- "$_url" 2>/dev/null)
+			_rc=$?
+		else
+			_out=$(wget -qO- -- "$_url" 2>/dev/null)
+			_rc=$?
+		fi
+		if [ "$_rc" -eq 0 ]; then
 			echo "$_out"
 			return 0
 		fi

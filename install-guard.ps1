@@ -175,7 +175,19 @@ function Invoke-GitHubApiWithBackoff {
 
   while ($true) {
     try {
-      return Invoke-RestMethod -Uri $Uri -Headers $headers -ErrorAction Stop
+      # -MaximumRedirection 0, so a redirect cannot carry the Authorization header to another host.
+      #
+      # Invoke-RestMethod follows redirects by default. PowerShell 6 and later strip Authorization
+      # across a cross-host redirect; Windows PowerShell 5.1 does not, and Get-HeaderValue exists
+      # precisely because this script has to run under both. So on 5.1 a 30x out of api.github.com
+      # would hand the bearer token to whatever host the Location named. Get-ApiTokenFor already keeps
+      # the token off every host but api.github.com on the way out; this keeps it there afterwards.
+      #
+      # Refusing to follow costs nothing on this call. The releases API answers 200 directly -- it is
+      # the release *asset* that redirects to a storage host, and that download is a separate function
+      # which sends no token. A redirect here would be a change at the API, and failing loudly on one
+      # is better than following it with a credential attached.
+      return Invoke-RestMethod -Uri $Uri -Headers $headers -MaximumRedirection 0 -ErrorAction Stop
     } catch {
       $response = $_.Exception.Response
       $status = 0
@@ -226,22 +238,46 @@ function Get-ApiTokenFor {
 function Get-BackoffDelay {
   param($Response, [int]$Fallback)
 
+  # Every value read here is a response header, which is to say text this script did not write and
+  # cannot constrain. Each one is parsed with TryParse before it is used in arithmetic, and none is
+  # cast directly.
+  #
+  # The reason is sharper than defensiveness. This function is called from inside the `catch` block in
+  # Invoke-GitHubApiWithBackoff, so a throw raised here is NOT caught by that catch: it leaves the
+  # function as a terminating error, and the caller never reaches the rate-limit guidance it exists to
+  # print. `X-RateLimit-Reset: not-a-number` used to end the install with
+  # "Cannot convert value ... to type System.Int32" -- a message about a cast, for a condition whose
+  # remedy is to set a token -- and the explanation went with it. So did any value past Int32.MaxValue.
+  #
+  # [long] rather than [int] throughout, because an epoch second fits Int32 only until 2038 and
+  # nothing stops a server or a proxy sending a larger number today.
+
   # retry-after is authoritative and is what a secondary limit returns.
   $retryAfter = Get-HeaderValue -Response $Response -Name "Retry-After"
-  if ($retryAfter -and [int]::TryParse($retryAfter, [ref]$null)) {
-    $seconds = [int]$retryAfter
-    if ($seconds -gt 0) { return $seconds }
+  $retrySeconds = [long]0
+  if ($retryAfter -and [long]::TryParse($retryAfter, [ref]$retrySeconds) -and $retrySeconds -gt 0) {
+    return $retrySeconds
   }
 
   # A primary limit is exhausted when remaining is 0; reset is an epoch second.
   $remaining = Get-HeaderValue -Response $Response -Name "X-RateLimit-Remaining"
   $reset = Get-HeaderValue -Response $Response -Name "X-RateLimit-Reset"
-  if ($remaining -eq "0" -and $reset) {
-    $now = [int][double]::Parse((Get-Date -UFormat %s))
-    $until = [int]$reset - $now + 1
+  $resetEpoch = [long]0
+  if ($remaining -eq "0" -and $reset -and [long]::TryParse($reset, [ref]$resetEpoch)) {
+    # InvariantCulture, because `-UFormat %s` can carry a fractional part on some hosts and a culture
+    # that reads `.` as a group separator would turn 1757451234.5 into 17574512345 -- a reset date
+    # centuries out, which then reads as a wait this script would refuse rather than one it honours.
+    $now = [long][double]::Parse(
+      (Get-Date -UFormat %s),
+      [System.Globalization.CultureInfo]::InvariantCulture)
+    $until = $resetEpoch - $now + 1
     if ($until -gt 0) { return $until }
   }
 
+  # Returned unclamped, and the caller is what bounds it: Invoke-GitHubApiWithBackoff compares
+  # `$waited + $sleep` against MaxTotalWaitSeconds *before* sleeping, so an hour-long reset reports the
+  # guidance immediately instead of hanging. Clamping here would turn that into a short sleep followed
+  # by a retry into the same exhausted quota.
   return $Fallback
 }
 
