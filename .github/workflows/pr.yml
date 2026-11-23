@@ -156,6 +156,11 @@ jobs:
             exit 1
           fi
           echo "installed binary matches this branch's build ($BUILT)"
+      - name: Test install script on ${{ matrix.os }}
+        run: |
+          set -e
+          cd cloudformation-guard
+          sh install-guard.sh
 
   installScriptWindows:
     runs-on: windows-latest
@@ -198,6 +203,10 @@ jobs:
             throw "installed binary ($installed) does not match this branch's build ($built)"
           }
           Write-Host "installed binary matches this branch's build ($built)"
+      - name: Test install script on windows-latest
+        run: |
+          cd cloudformation-guard
+          ./install-guard.ps1
 
   # The two jobs above pin the installer to an explicit version and a local archive, which is what
   # makes them independent of the network -- and also what makes them blind to the rate-limit
@@ -248,6 +257,35 @@ jobs:
       - name: Assert the backoff paths hold under a strict POSIX shell
         env:
           GUARD_TEST_SH: dash
+        run: sh install-tests/test-install-guard-backoff.sh
+
+  # A third shell, because dash and bash between them do not cover how `[` behaves.
+  #
+  # The header guards in backoff_seconds have to reject a non-numeric value before `$(( ))` sees it.
+  # Spelled as the numeric test `[ "$_reset" -ge 0 ] 2>/dev/null`, that worked on both shells above --
+  # bash and dash each make `[` fail on a non-numeric operand -- and did not work on ksh, which
+  # evaluates test operands arithmetically: `not-a-number` parses as the three unset names
+  # `not - a - number`, sums to 0, `0 -ge 0` is true, and the value went straight through the guard
+  # into the arithmetic that aborts on it. Five attempts in 22ms against an exhausted quota, which is
+  # the defect the guard exists to prevent, reached through the guard rather than past it.
+  #
+  # So this job is not about ksh being a popular `/bin/sh`. It is the only runner here that can tell a
+  # portable guard from one that happens to suit the two shells it was written against, and the numeric
+  # spelling passed every other job in this workflow while being wrong.
+  installScriptBackoffKsh:
+    runs-on: ubuntu-latest
+    name: Install script rate-limit handling (install-guard.sh under ksh)
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+      # Not preinstalled on ubuntu-latest, unlike dash.
+      - name: Install ksh
+        run: sudo apt-get update && sudo apt-get install -y ksh
+      - name: Assert the backoff paths hold where `[` evaluates its operands arithmetically
+        env:
+          GUARD_TEST_SH: ksh
         run: sh install-tests/test-install-guard-backoff.sh
 
   installScriptBackoffWindows:

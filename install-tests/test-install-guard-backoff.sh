@@ -33,6 +33,16 @@ SCRIPT="$REPO/install-guard.sh"
 # Measured, with the probe `_reset=not-a-number; _now=100; echo $((_reset - _now + 1))`:
 # bash prints -99 and exits 0; dash 0.5.13.5 exits 2 with "Illegal number: not-a-number"; ksh exits 1
 # with "not: parameter not set".
+#
+# That probe is only half of it, and the half it leaves out is why there is a ksh job as well as a dash
+# one. How each shell reacts to bad arithmetic decides how much a missing guard costs; how each shell's
+# `[` reacts to a non-numeric operand decides whether a guard written as a numeric test works at all.
+# Probe two, `_reset=not-a-number; [ "$_reset" -ge 0 ]`: bash and dash both fail it, so the guard holds,
+# while ksh evaluates the operands arithmetically -- `not - a - number` is three unset names, sums to 0,
+# and `0 -ge 0` is true -- so the guard passed the value through to the arithmetic that then aborted.
+# A suite running only bash and dash reported the guard working on every shell it tried and still had
+# the defect. is_digits in install-guard.sh is the portable form; GUARD_TEST_SH=ksh is what holds it
+# to being portable rather than merely present.
 INSTALLER_SH="${GUARD_TEST_SH:-sh}"
 command -v "$INSTALLER_SH" >/dev/null 2>&1 || {
 	echo "FAIL: GUARD_TEST_SH=$INSTALLER_SH is not executable" >&2
@@ -52,6 +62,58 @@ command -v curl >/dev/null 2>&1 || {
 
 WORK=$(mktemp -d)
 FAILURES=0
+
+# What this run can and cannot discriminate, measured on the shell in hand rather than assumed from
+# its name.
+#
+# Two independent shell properties decide that, and the cases below depend on both. Whether the
+# reset-not-a-number case is a live control depends on the arithmetic: on a shell that aborts, a
+# missing guard costs the backoff outright and the case fails; on one that shrugs, the case passes
+# whether the guard is there or not. Whether that case can tell a *portable* guard from a numeric test
+# depends on `[`: the old `[ "$_reset" -ge 0 ]` spelling was rejected by bash and dash and admitted by
+# ksh, so only a shell in the second group ever saw the value reach the arithmetic anyway.
+#
+# The combination matters because three of the four are green and only one of those three proved
+# anything. A vacuous pass and a discriminating one are the same exit code, so the distinction has to
+# be written down where a reader of the CI log will see it.
+#
+# Reported rather than asserted. No single answer is the correct one -- a bash runner is not
+# misconfigured, it is just covering something else -- so pinning a value here would only encode
+# whichever runner happened to be first.
+report_shell_semantics() {
+	# Single-quoted deliberately, which is the whole point rather than an oversight: the arithmetic
+	# has to be evaluated by the shell under test, not expanded by this one before it gets there.
+	# shellcheck disable=SC2016
+	if "$INSTALLER_SH" -c '_r=not-a-number; _n=100; : $((_r - _n + 1))' 2>/dev/null; then
+		_arith=shrugs_at
+	else
+		_arith=aborts_on
+	fi
+
+	if "$INSTALLER_SH" -c '[ "not-a-number" -ge 0 ]' 2>/dev/null; then
+		_numtest=admits
+	else
+		_numtest=rejects
+	fi
+
+	echo "shell under test: $INSTALLER_SH"
+	echo "  arithmetic ${_arith} a non-numeric value; '[ x -ge 0 ]' ${_numtest} one"
+	if [ "$_arith" = aborts_on ]; then
+		echo "  -> reset-not-a-number is a live control here: without a working guard the backoff"
+		echo "     is lost and all attempts fire back to back"
+		if [ "$_numtest" = admits ]; then
+			echo "  -> and this shell is the one that separates a pattern-match guard from a"
+			echo "     numeric test, which passes the value straight through to the arithmetic"
+		else
+			echo "  -> a numeric-test guard would also hold on this shell, so it does not"
+			echo "     distinguish the two spellings; that needs a shell where '[' admits the value"
+		fi
+	else
+		echo "  -> reset-not-a-number cannot fail here whichever guard is in place; the dash and"
+		echo "     ksh jobs are what cover it"
+	fi
+	echo
+}
 
 cleanup() {
 	# Kill anything still listening before the directory holding its port file goes away.
@@ -587,6 +649,7 @@ $(cat "$WORK/redirect-elsewhere/stdout")"
 	stop_stub
 }
 
+report_shell_semantics
 make_gh_absent
 stage_archive 3.1.4-stub
 
