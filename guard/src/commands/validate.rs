@@ -17,7 +17,6 @@ use crate::commands::reporters::validate::structured::StructuredEvaluator;
 use crate::commands::reporters::validate::summary_table::{self, SummaryType};
 use crate::commands::reporters::validate::tf::TfAware;
 use crate::commands::reporters::validate::{cfn, generic_summary};
-use crate::commands::tracker::StatusContext;
 use crate::commands::{
     Executable, ALPHABETICAL, DATA_FILE_SUPPORTED_EXTENSIONS, ERROR_STATUS_CODE,
     FAILURE_STATUS_CODE, LAST_MODIFIED, PAYLOAD, PRINT_JSON, REQUIRED_FLAGS, RULES,
@@ -112,19 +111,6 @@ impl From<&str> for OutputFormatType {
 
 #[allow(clippy::too_many_arguments)]
 pub(crate) trait Reporter: Debug {
-    fn report(
-        &self,
-        writer: &mut dyn Write,
-        status: Option<Status>,
-        failed_rules: &[&StatusContext],
-        passed_or_skipped: &[&StatusContext],
-        longest_rule_name: usize,
-        rules_file: &str,
-        data_file: &str,
-        data: &Traversal<'_>,
-        output_type: OutputFormatType,
-    ) -> Result<()>;
-
     fn report_eval<'value>(
         &self,
         _write: &mut dyn Write,

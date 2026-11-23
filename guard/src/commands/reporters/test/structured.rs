@@ -70,7 +70,7 @@ impl TestResult {
         }
     }
 
-    pub fn build_test_suite(&self) -> TestSuite {
+    pub fn build_test_suite(&self) -> TestSuite<'_> {
         match self {
             TestResult::Err(Err {
                 rule_file,
@@ -140,7 +140,7 @@ impl TestCase {
         self.failed_rules.len()
     }
 
-    fn build_junit_test_cases(&self) -> Vec<JunitTestCase> {
+    fn build_junit_test_cases(&self) -> Vec<JunitTestCase<'_>> {
         let mut test_cases = vec![];
 
         for test_case in &self.passed_rules {
