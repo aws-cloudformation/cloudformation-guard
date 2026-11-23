@@ -421,6 +421,119 @@ $(cat "$WORK/succeed-after-one-429/stdout")"
 	stop_stub
 }
 
+# ---------------------------------------------------------------------------------------------
+# A malformed or oversized reset header still reaches the rate-limit guidance.
+#
+# The assertion is that the guidance is PRINTED, not that the run failed. Both of these fail either
+# way -- the point is that one fails with an explanation and the other failed on the arithmetic, and
+# only the message tells them apart. An assertion on a nonzero exit passes on the bug and on the fix.
+# ---------------------------------------------------------------------------------------------
+# The two cases differ in attempt count, and the difference is the behavior rather than an accident:
+#
+#   reset-not-a-number    5 -- the value is not a number, so it is rejected before the arithmetic and
+#                              the exponential fallback runs to the attempt ceiling.
+#   reset-overflows-int32 1 -- the value IS a number and names a reset about three thousand years out.
+#                              Nothing is wrong with it arithmetically; the wait it implies is longer
+#                              than MAX_TOTAL_WAIT, and that cap is checked before sleeping, so the
+#                              guidance is reported at once instead of after four pointless retries.
+#
+# Asserting 5 for both was the first version of this test and it failed on the second case, which is
+# how the distinction got measured rather than assumed.
+test_an_unusable_reset_header_still_explains_itself() {
+	for _case in "reset-not-a-number 5" "reset-overflows-int32 1"; do
+		# shellcheck disable=SC2086
+		set -- $_case
+		_scenario="$1"
+		_expected_requests="$2"
+
+		start_stub "$_scenario"
+		run_installer "$WORK/$_scenario"
+
+		if [ "$RUN_STATUS" -eq 0 ]; then
+			fail "$_scenario: expected a nonzero exit once the lookup gave up"
+		fi
+
+		if ! grep -q "rate limit rather than a problem with the release" "$WORK/$_scenario/stderr"; then
+			fail "$_scenario: the rate-limit guidance was not printed, so an unusable header \
+turned a quota problem into some other failure; stderr:
+$(cat "$WORK/$_scenario/stderr")"
+		else
+			pass "$_scenario: reported the rate limit rather than failing on the header"
+		fi
+
+		_requests=$(request_count "$STUB_LOG")
+		if [ "$_requests" -ne "$_expected_requests" ]; then
+			fail "$_scenario: the stub saw $_requests requests, expected $_expected_requests; see \
+the table above this function for why the two cases differ"
+		else
+			pass "$_scenario: made $_requests request(s), which is what this header implies"
+		fi
+
+		stop_stub
+	done
+}
+
+# ---------------------------------------------------------------------------------------------
+# `Retry-After:1` with no space is honoured rather than discarded.
+#
+# HTTP permits the no-space form. Parsing the value as the second whitespace-separated field returned
+# empty for it, which read as an absent header and fell back to the 2s exponential delay -- so the
+# discriminating assertion is that the announced delay is 1 and not 2.
+# ---------------------------------------------------------------------------------------------
+test_a_header_with_no_space_is_read() {
+	start_stub retry-after-no-space
+	run_installer "$WORK/retry-after-no-space"
+
+	if [ "$RUN_STATUS" -ne 0 ]; then
+		fail "no-space: expected the install to recover, got $RUN_STATUS; stderr:
+$(cat "$WORK/retry-after-no-space/stderr")"
+		stop_stub
+		return
+	fi
+
+	_delays=$(announced_delays "$WORK/retry-after-no-space")
+	if [ "$_delays" != "1" ]; then
+		fail "no-space: announced '$_delays', expected '1'. A 2 means \`Retry-After:1\` was parsed \
+as an empty value and the exponential fallback was used instead."
+	else
+		pass "no-space: honoured the delay from a header written without a space"
+	fi
+
+	stop_stub
+}
+
+# ---------------------------------------------------------------------------------------------
+# A redirect to another host is not followed.
+#
+# This script passes no `-L` on the API call, so it does not follow one today, and nothing stopped a
+# later edit from adding it. A redirect that WERE followed would carry the Authorization header to
+# whatever host the Location named -- the same hole `-MaximumRedirection 0` closes on the PowerShell
+# side, where the default is to follow.
+#
+# The stub answers 302 to a reserved documentation name, so a run that followed it fails to resolve
+# rather than reaching anything.
+# ---------------------------------------------------------------------------------------------
+test_a_redirect_is_not_followed() {
+	start_stub redirect-elsewhere
+	run_installer "$WORK/redirect-elsewhere"
+
+	if [ "$RUN_STATUS" -eq 0 ]; then
+		fail "redirect: a 302 out of the API must not produce a successful install; stdout:
+$(cat "$WORK/redirect-elsewhere/stdout")"
+	else
+		pass "redirect: refused to treat a redirect as a release lookup"
+	fi
+
+	if [ "$(request_count "$STUB_LOG")" -lt 1 ]; then
+		fail "redirect: the stub saw no request, so the case did not run"
+	else
+		pass "redirect: the request reached the stub and stopped there"
+	fi
+
+	assert_no_auth_reached_stub "redirect" "$STUB_LOG"
+	stop_stub
+}
+
 make_gh_absent
 stage_archive 3.1.4-stub
 
@@ -429,6 +542,9 @@ test_ratelimit_reset_is_honoured
 test_exponential_fallback
 test_exhaustion_is_bounded_and_explained
 test_single_429_is_survived
+test_an_unusable_reset_header_still_explains_itself
+test_a_header_with_no_space_is_read
+test_a_redirect_is_not_followed
 
 echo
 if [ "$FAILURES" -ne 0 ]; then

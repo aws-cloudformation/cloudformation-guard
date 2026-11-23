@@ -485,6 +485,100 @@ function test_single_429_is_survived {
     finally { stop_stub $stub }
 }
 
+# -------------------------------------------------------------------------------------------------
+# A reset header that cannot be used still reaches the rate-limit guidance.
+#
+# This is the case that mattered here more than on the shell side. Get-BackoffDelay is called from
+# inside the `catch` in Invoke-GitHubApiWithBackoff, so a throw raised in it is not caught by that
+# catch: it leaves the function as a terminating error and the guidance at the bottom of the retry loop
+# never runs. `X-RateLimit-Reset: not-a-number` ended the install with a complaint about converting a
+# value to Int32 -- a message about a cast, for a condition whose remedy is to set a token -- and any
+# value past Int32.MaxValue did the same.
+#
+# The assertion is that the guidance is PRINTED. Both the broken and the fixed version exit nonzero, so
+# an assertion on the exit code alone passes on either and measures nothing.
+#
+# The two cases differ in attempt count and the difference is the behavior: a value that is not a number
+# is rejected before the arithmetic and the exponential fallback runs to the ceiling, while a value that
+# IS a number and names a reset three thousand years out implies a wait longer than MaxTotalWaitSeconds,
+# which is checked before sleeping, so the guidance is reported at once.
+# -------------------------------------------------------------------------------------------------
+function test_an_unusable_reset_header_still_explains_itself {
+    foreach ($case in @(
+            @{ Scenario = 'reset-not-a-number'; Requests = 5 },
+            @{ Scenario = 'reset-overflows-int32'; Requests = 1 }
+        )) {
+        $stub = start_stub $case.Scenario
+        try {
+            $run = run_installer $stub
+            $requests = @(stub_requests $stub)
+            $output = "$($run.Stdout)`n$($run.Stderr)"
+
+            if ($run.ExitCode -eq 0) {
+                fail "$($case.Scenario): expected a nonzero exit once the lookup gave up"
+            }
+
+            if ($output -notmatch 'rate limit rather than a problem with the release') {
+                fail "$($case.Scenario): the rate-limit guidance was not printed. An unusable header must not turn a quota problem into a different failure -- a cast that throws inside Get-BackoffDelay escapes the catch and loses this message; output:`n$output"
+            }
+            else {
+                pass "$($case.Scenario): reported the rate limit rather than failing on the header"
+            }
+
+            if ($output -match 'Cannot convert value') {
+                fail "$($case.Scenario): the run failed on a type conversion, which is the defect this case exists for; output:`n$output"
+            }
+
+            if ($requests.Count -ne $case.Requests) {
+                fail "$($case.Scenario): the stub saw $($requests.Count) requests, expected $($case.Requests); see the comment above this function for why the two cases differ"
+            }
+            else {
+                pass "$($case.Scenario): made $($requests.Count) request(s), which is what this header implies"
+            }
+
+            assert_no_auth_reached_stub $case.Scenario $requests
+        }
+        finally { stop_stub $stub }
+    }
+}
+
+# -------------------------------------------------------------------------------------------------
+# A redirect to another host is not followed.
+#
+# Invoke-RestMethod follows redirects by default, and Windows PowerShell 5.1 does not strip the
+# Authorization header across a cross-host redirect. So without -MaximumRedirection 0 a 30x out of the
+# API would hand the bearer token to the target. The stub answers 302 to a reserved documentation name,
+# so a run that followed it would fail to resolve rather than reach anything.
+#
+# The assertion is on the request count at the stub plus the absence of a success: the token check in
+# assert_no_auth_reached_stub cannot see a request that went to a different host, which is exactly why
+# not following is what has to be asserted.
+# -------------------------------------------------------------------------------------------------
+function test_a_redirect_is_not_followed {
+    $stub = start_stub 'redirect-elsewhere'
+    try {
+        $run = run_installer $stub
+        $requests = @(stub_requests $stub)
+
+        if ($run.ExitCode -eq 0) {
+            fail "redirect: a 302 out of the API must not produce a successful install; output:`n$($run.Stdout)"
+        }
+        else {
+            pass "redirect: refused to treat a redirect as a release lookup"
+        }
+
+        if ($requests.Count -lt 1) {
+            fail 'redirect: the stub saw no request at all, so the case did not run'
+        }
+        else {
+            pass "redirect: the request reached the stub and stopped there"
+        }
+
+        assert_no_auth_reached_stub 'redirect' $requests
+    }
+    finally { stop_stub $stub }
+}
+
 try {
     disable_gh_cli
     stage_archive -Version $script:StubTag
@@ -494,6 +588,8 @@ try {
     test_exponential_fallback
     test_exhaustion_is_bounded_and_explained
     test_single_429_is_survived
+    test_an_unusable_reset_header_still_explains_itself
+    test_a_redirect_is_not_followed
 }
 finally {
     Remove-Item -Recurse -Force $script:Work -ErrorAction SilentlyContinue

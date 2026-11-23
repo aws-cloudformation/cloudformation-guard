@@ -78,6 +78,49 @@ SCENARIOS = {
         {"status": 429, "headers": {"Retry-After": "1"}},
         {"status": 200},
     ],
+    # A reset header that is not a number. The scripts must fall back to exponential backoff and still
+    # reach their rate-limit guidance, rather than failing on the arithmetic.
+    #
+    # This is the shape that mattered on PowerShell: Get-BackoffDelay is called from inside a `catch`,
+    # so a throw raised there escapes the function instead of being handled, and the caller never
+    # prints the guidance. The failure looked like a type-conversion complaint about Int32, for a
+    # condition whose remedy is to set a token.
+    "reset-not-a-number": [
+        {
+            "status": 403,
+            "headers": {"X-RateLimit-Remaining": "0", "X-RateLimit-Reset": "not-a-number"},
+        },
+    ],
+    # A reset header past what a 32-bit signed integer can hold. Same requirement, different cause:
+    # the value parses as digits and then overflows the cast. An epoch second fits Int32 only until
+    # 2038, so this is also the shape that starts arriving on its own.
+    "reset-overflows-int32": [
+        {
+            "status": 403,
+            "headers": {"X-RateLimit-Remaining": "0", "X-RateLimit-Reset": "99999999999"},
+        },
+    ],
+    # `Retry-After` with no space after the colon, which HTTP permits. The delay must be honoured
+    # rather than discarded: a whitespace-split parse returned an empty field for this and the callers
+    # read that as "no header", falling back to a delay the server had not asked for.
+    "retry-after-no-space": [
+        {"status": 429, "raw_headers": [("Retry-After", "1")], "no_space": True},
+        {"status": 200},
+    ],
+    # A redirect naming a different host. It must not be followed, because an Authorization header
+    # that travelled with it would be handed to whoever controls the target. The shell script never
+    # followed one -- it passes no `-L` on this call -- while `Invoke-RestMethod` follows by default and
+    # PowerShell 5.1 does not strip the header across hosts, so this is the case
+    # `-MaximumRedirection 0` closes.
+    #
+    # The target is a name reserved for documentation, so a run that did follow the redirect fails to
+    # resolve rather than reaching anything.
+    "redirect-elsewhere": [
+        {
+            "status": 302,
+            "headers": {"Location": "https://example.invalid/elsewhere"},
+        },
+    ],
 }
 
 # The tag a 200 carries. Asserted by the callers, so a body that parsed but came from somewhere
@@ -133,6 +176,15 @@ def build_handler(responses, log_path, counter):
             self.send_response(status)
             for name, value in spec.get("headers", {}).items():
                 self.send_header(name, value)
+
+            # `Name:value` with no space, which HTTP permits and `send_header` cannot produce -- it
+            # always writes `Name: value`. Appended to the same buffer `send_header` fills, so it goes
+            # out in order with the rest and `end_headers` flushes it.
+            if spec.get("no_space"):
+                for name, value in spec.get("raw_headers", []):
+                    self._headers_buffer.append(
+                        f"{name}:{value}\r\n".encode("latin-1", "strict")
+                    )
             if "reset_in" in spec:
                 self.send_header("X-RateLimit-Reset", str(int(time.time()) + spec["reset_in"]))
             self.send_header("Content-Type", "application/json")
