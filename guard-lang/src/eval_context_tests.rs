@@ -638,3 +638,211 @@ fn test_handle_function_call() -> Result<()> {
 
     Ok(())
 }
+
+const SECURITY_GROUP_TEMPLATE: &str = r#"{
+  "Resources": {
+   "NewSecurityGroupACA21D0A": {
+        "Type": "AWS::EC2::SecurityGroup",
+        "Properties": {
+          "GroupDescription": "Allow ssh access to ec2 instances",
+          "SecurityGroupEgress": [
+            {
+              "CidrIp": "0.0.0.0/0",
+              "Description": "Allow all outbound traffic by default",
+              "IpProtocol": "-1"
+            }
+          ],
+          "SecurityGroupIngress": [
+            {
+              "CidrIp": "0.0.0.0/0",
+              "Description": "allow ssh access from the world",
+              "FromPort": 22,
+              "IpProtocol": "tcp",
+              "ToPort": 22
+            }
+          ],
+          "VpcId": {
+            "Ref": "TheVPC92636AB0"
+          }
+        },
+        "Metadata": {
+          "aws:cdk:path": "FtCdkSecurityGroupStack/NewSecurityGroup/Resource"
+        }
+    },
+    "myInstanceUsingNewSG": {
+      "Type": "AWS::EC2::Instance",
+      "Properties": {
+        "ImageId": " ami-0f5dbc86dd9cbf7a8",
+        "InstanceType": "t2.micro",
+        "NetworkInterfaces": [
+          {
+            "DeviceIndex": "0",
+            "SubnetId": {
+              "Ref": "TheVPCapplicationSubnet1Subnet2149DB21"
+            }
+          }
+        ],
+        "SecurityGroupIds": [
+          {
+            "Fn::GetAtt": [
+              "NewSecurityGroupACA21D0A",
+              "GroupId"
+            ]
+          }
+        ],
+        "Tags": [
+          {
+            "Key": "Name",
+            "Value": "my-new-ec2-myInstanceUsingNewSG"
+          }
+        ]
+      },
+      "Metadata": {
+        "aws:cdk:path": "FtCdkSecurityGroupStack/myInstanceUsingNewSG"
+      }
+    }
+  }
+}
+"#;
+
+/// Number of query results that resolved to a value. Unresolved entries are not selections.
+fn resolved_count(results: &[QueryResult]) -> usize {
+    results
+        .iter()
+        .filter(|each| matches!(each, QueryResult::Resolved(_)))
+        .count()
+}
+
+#[test]
+fn filter_exists_selection_over_security_group_template() -> Result<()> {
+    let value = PathAwareValue::try_from(SECURITY_GROUP_TEMPLATE)?;
+    let mut eval = BasicQueryTesting {
+        root: Rc::new(value),
+        recorder: None,
+    };
+
+    // No resource carries Properties.SecurityGroups, so nothing is selected.
+    let query = AccessQuery::try_from("Resources.*[ Properties.SecurityGroups EXISTS ]")?;
+    let selected = eval.query(&query.query)?;
+    assert_eq!(resolved_count(&selected), 0);
+
+    // One resource carries Properties.SecurityGroupIds.
+    let query = AccessQuery::try_from("Resources.*[ Properties.SecurityGroupIds EXISTS ]")?;
+    let selected = eval.query(&query.query)?;
+    assert_eq!(resolved_count(&selected), 1);
+
+    // Both elements of its Fn::GetAtt list.
+    let get_att_refs = r#"Resources.*[ Properties.SecurityGroupIds EXISTS ].Properties.SecurityGroupIds[ 'Fn::GetAtt' EXISTS ].'Fn::GetAtt'.*"#;
+    let query = AccessQuery::try_from(get_att_refs)?;
+    let selected = eval.query(&query.query)?;
+    assert_eq!(resolved_count(&selected), 2);
+
+    // The same two values through a SOME query without filters.
+    let get_att_refs = r#"SOME Resources.*.Properties.SecurityGroupIds[*].'Fn::GetAtt'.*"#;
+    let query = AccessQuery::try_from(get_att_refs)?;
+    let selected = eval.query(&query.query)?;
+    assert_eq!(resolved_count(&selected), 2);
+
+    Ok(())
+}
+
+#[test]
+fn some_query_drops_elements_missing_the_key() -> Result<()> {
+    let query_str = r#"some Resources.*.Properties.SecurityGroups[*].'Fn::GetAtt'"#;
+    let resources_str = r#"{
+        Resources: {
+            ec2: {
+                Properties: {
+                    SecurityGroups: ["sg-1234"]
+                }
+            },
+            ec22: {
+                Properties: {
+                    SecurityGroups: [{ 'Fn::GetAtt': ["sg", "GroupId"] }]
+                }
+            }
+        }
+    }"#;
+    let query = AccessQuery::try_from(query_str)?;
+    let resources = PathAwareValue::try_from(resources_str)?;
+    let mut eval = BasicQueryTesting {
+        root: Rc::new(resources),
+        recorder: None,
+    };
+    // The scalar element in ec2 has no Fn::GetAtt and is dropped, not raised as an error.
+    let selected = eval.query(&query.query)?;
+    assert_eq!(resolved_count(&selected), 1);
+    Ok(())
+}
+
+#[test]
+fn filter_comparing_a_whole_map_selects_only_the_equal_element() -> Result<()> {
+    let tags = r#"Tags[ this == { Key: "Hi", Value: "There" } ]"#;
+    let parsed_tags = AccessQuery::try_from(tags)?;
+    let values = r#"{
+        Tags: [
+            { Key: "Hi", Value: "There" },
+            { Key: "NotHi", Value: "NotThere" }
+        ]
+    }"#;
+    let parsed_values = PathAwareValue::try_from(values)?;
+    let mut eval = BasicQueryTesting {
+        root: Rc::new(parsed_values),
+        recorder: None,
+    };
+    let selected = eval.query(&parsed_tags.query)?;
+    assert_eq!(resolved_count(&selected), 1);
+    let resolved: Vec<_> = selected
+        .iter()
+        .filter_map(|each| match each {
+            QueryResult::Resolved(res) => Some(res.clone()),
+            _ => None,
+        })
+        .collect();
+    match &*resolved[0] {
+        PathAwareValue::Map((p, _map)) => {
+            assert_eq!(p, &Path::try_from("/Tags/0")?);
+        }
+        _ => unreachable!(),
+    }
+    Ok(())
+}
+
+#[test]
+fn map_keys_regex_filter_selects_matching_key_values() -> Result<()> {
+    let condition_str = r#"{
+        Condition: {
+            'aws:SourceVpc': ['vpc-123454'],
+            'aws:IsSecure': false
+        }
+    }"#;
+    let value = PathAwareValue::try_from(condition_str)?;
+    let mut eval = BasicQueryTesting {
+        root: Rc::new(value),
+        recorder: None,
+    };
+    let selection_str = r#"Condition[ keys == /aws:[Ss]ource(Vpc|VPC|VpcE|VPCE)/ ]"#;
+    let access = AccessQuery::try_from(selection_str)?;
+    let selected = eval.query(&access.query)?;
+    assert_eq!(selected.len(), 1);
+    match &selected[0] {
+        QueryResult::Resolved(res) => {
+            assert_eq!(res.self_path().0.as_str(), "/Condition/aws:SourceVpc");
+            match &**res {
+                PathAwareValue::List((_, list)) => {
+                    assert_eq!(list.len(), 1);
+                    match &list[0] {
+                        PathAwareValue::String((p, v)) => {
+                            assert_eq!(p.0.as_str(), "/Condition/aws:SourceVpc/0");
+                            assert_eq!(v, "vpc-123454");
+                        }
+                        _ => unreachable!(),
+                    }
+                }
+                _ => unreachable!(),
+            }
+        }
+        _ => unreachable!(),
+    }
+    Ok(())
+}

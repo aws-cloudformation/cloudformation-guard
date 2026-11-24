@@ -4,7 +4,6 @@ pub mod display;
 pub mod errors;
 pub mod eval;
 pub mod eval_context;
-mod evaluate;
 pub mod exprs;
 mod functions;
 mod libyaml;
@@ -140,36 +139,6 @@ impl Status {
             },
             Status::SKIP => status,
         }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Copy, Serialize)]
-pub enum EvaluationType {
-    File,
-    Rule,
-    Type,
-    Condition,
-    ConditionBlock,
-    Filter,
-    Conjunction,
-    BlockClause,
-    Clause,
-}
-
-impl std::fmt::Display for EvaluationType {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        match self {
-            EvaluationType::File => f.write_str("File")?,
-            EvaluationType::Rule => f.write_str("Rule")?,
-            EvaluationType::Type => f.write_str("Type")?,
-            EvaluationType::Condition => f.write_str("Condition")?,
-            EvaluationType::ConditionBlock => f.write_str("ConditionBlock")?,
-            EvaluationType::Filter => f.write_str("Filter")?,
-            EvaluationType::Conjunction => f.write_str("Conjunction")?,
-            EvaluationType::BlockClause => f.write_str("BlockClause")?,
-            EvaluationType::Clause => f.write_str("Clause")?,
-        }
-        Ok(())
     }
 }
 
@@ -401,45 +370,9 @@ pub(crate) trait EvalContext<'value, 'loc: 'value>: RecordTracer<'value> {
     fn record_deprecation(&mut self, _notice: String) {}
 }
 
-pub trait EvaluationContext {
-    fn resolve_variable(&self, variable: &str) -> Result<Vec<&PathAwareValue>>;
-
-    fn rule_status(&self, rule_name: &str) -> Result<Status>;
-
-    #[allow(clippy::too_many_arguments)]
-    fn end_evaluation(
-        &self,
-        eval_type: EvaluationType,
-        context: &str,
-        msg: String,
-        from: Option<PathAwareValue>,
-        to: Option<PathAwareValue>,
-        status: Option<Status>,
-        comparator: Option<(CmpOperator, bool)>,
-    );
-
-    fn start_evaluation(&self, eval_type: EvaluationType, context: &str);
-}
-
-pub(crate) trait Evaluate {
-    fn evaluate<'s>(
-        &self,
-        context: &'s PathAwareValue,
-        var_resolver: &'s dyn EvaluationContext,
-    ) -> Result<Status>;
-}
-
 pub(crate) fn short_form_to_long(fn_ref: &str) -> &'static str {
     match SHORT_FORM_TO_LONG_MAPPING.get(fn_ref) {
         Some(fn_ref) => fn_ref,
         _ => unreachable!(),
     }
-}
-
-#[cfg(test)]
-pub(crate) fn read_file_content(file: std::fs::File) -> Result<String> {
-    use std::io::Read;
-    let mut content = String::new();
-    std::io::BufReader::new(file).read_to_string(&mut content)?;
-    Ok(content)
 }

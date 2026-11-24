@@ -1,6 +1,5 @@
 use crate::path_value::PathAwareValue;
 use crate::values::WithinRange;
-use crate::{EvaluationContext, EvaluationType, Status};
 use pretty_assertions::assert_eq;
 use std::vec;
 
@@ -3348,29 +3347,41 @@ fn test_complex_predicate_clauses() -> Result<(), Error> {
     Ok(())
 }
 
-struct DummyEval {}
-impl EvaluationContext for DummyEval {
-    fn resolve_variable(&self, _variable: &str) -> crate::Result<Vec<&PathAwareValue>> {
-        unimplemented!()
-    }
+#[test]
+fn some_clause_with_in_regex_list_parses_to_expected_shape() -> Result<(), Error> {
+    let clause =
+        "SOME Resources.*.Properties.SecurityGroupIds[*].'Fn::GetAtt'.* IN [/aa/, /bb/] #;";
+    let clause_statement = GuardClause::try_from(clause)?;
+    let expected = GuardClause::Clause(GuardAccessClause {
+        negation: false,
+        access_clause: AccessClause {
+            query: AccessQuery {
+                query: vec![
+                    QueryPart::Key(String::from("Resources")),
+                    QueryPart::AllValues(None),
+                    QueryPart::Key("Properties".to_string()),
+                    QueryPart::Key("SecurityGroupIds".to_string()),
+                    QueryPart::AllIndices(None),
+                    QueryPart::Key("Fn::GetAtt".to_string()),
+                    QueryPart::AllValues(None),
+                ],
+                match_all: false,
+            },
+            compare_with: Some(LetValue::Value(PathAwareValue::try_from("[/aa/, /bb/]")?)),
+            location: FileLocation {
+                line: 1,
+                column: 1,
+                file_name: "",
+            },
+            comparator: (CmpOperator::In, false),
+            custom_message: None,
+        },
+    });
+    assert_eq!(expected, clause_statement);
 
-    fn rule_status(&self, _rule_name: &str) -> crate::Result<Status> {
-        unimplemented!()
-    }
-
-    fn end_evaluation(
-        &self,
-        _eval_type: EvaluationType,
-        _context: &str,
-        _msg: String,
-        _from: Option<PathAwareValue>,
-        _to: Option<PathAwareValue>,
-        _status: Option<Status>,
-        _cmp: Option<(CmpOperator, bool)>,
-    ) {
-    }
-
-    fn start_evaluation(&self, _eval_type: EvaluationType, _context: &str) {}
+    let assignment = r#"let var = ANY Resources.*.Properties.SecurityGroupIds[*].'Fn::GetAtt'.*"#;
+    let _let_statement = LetExpr::try_from(assignment)?;
+    Ok(())
 }
 
 #[test]
@@ -3437,7 +3448,6 @@ fn select_any_one_from_list_clauses() -> Result<(), Error> {
         "#,
     ];
 
-    let _dummy = DummyEval {};
     let _clause = GuardClause::try_from(
         r#"Resources.*[ this.Type == "AWS::RDS::DBInstance" ].Properties.MasterUserPassword.'Fn::Join'[1][ this == /\{\{resolve:secretsmanager/ ] !EMPTY"#,
     )?;
