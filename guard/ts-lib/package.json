@@ -1,6 +1,6 @@
 {
   "name": "@aws/cloudformation-guard",
-  "version": "3.3.0",
+  "version": "3.4.0",
   "description": "TypeScript and JavaScript bindings for AWS CloudFormation Guard.",
   "author": {
     "name": "Amazon Web Services",
