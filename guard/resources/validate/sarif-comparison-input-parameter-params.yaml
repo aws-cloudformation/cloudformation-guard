@@ -1,0 +1,15 @@
+# The parameter sits below the last line of the template, so a region taken from
+# this file cannot be mistaken for one taken from the template.
+#
+#
+#
+#
+#
+#
+#
+ExpectedStatus: Enabled
+AllowedStatuses:
+  - Enabled
+CurrentStatus: Suspended
+ForbiddenStatuses:
+  - Suspended

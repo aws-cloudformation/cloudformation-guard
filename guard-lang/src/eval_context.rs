@@ -15,25 +15,57 @@ use crate::Result;
 use crate::Status::SKIP;
 use crate::{
     BlockCheck, ClauseCheck, ComparisonClauseCheck, EvalContext, InComparisonCheck, NamedStatus,
-    QueryResult, RecordTracer, RecordType, Status, TypeBlockCheck, UnResolved, UnaryValueCheck,
-    ValueCheck,
+    QueryResult, RecordTracer, RecordType, ReportProvenance, Status, TypeBlockCheck, UnResolved,
+    UnaryValueCheck, ValueCheck, ValueOrigin,
 };
 use cruet::case::{camel, class, kebab, pascal, snake, title, train};
 use lazy_static::lazy_static;
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::convert::TryFrom;
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
 use std::vec::Vec;
 
 use super::functions::date_time::{now, parse_epoch};
 
 pub(crate) struct Scope<'value, 'loc: 'value> {
     root: Rc<PathAwareValue>,
+    root_origin: ValueOrigin,
     resolved_variables: HashMap<&'value str, Vec<QueryResult>>,
     literals: HashMap<&'value str, Rc<PathAwareValue>>,
     variable_queries: HashMap<&'value str, &'value AccessQuery<'loc>>,
     function_expressions: HashMap<&'value str, &'value FunctionExpr<'loc>>,
+}
+
+/// The origin of each value a query returned, keyed by the value's allocation. A `Weak` holds that
+/// allocation, so its address cannot be reused by another value while the entry exists.
+#[derive(Default)]
+struct ValueOrigins {
+    origins: HashMap<*const PathAwareValue, (Weak<PathAwareValue>, ValueOrigin)>,
+    prune_at: usize,
+}
+
+impl ValueOrigins {
+    fn record(&mut self, value: &Rc<PathAwareValue>, origin: ValueOrigin) {
+        if self.origins.len() >= self.prune_at {
+            self.origins
+                .retain(|_, (value, _)| value.strong_count() > 0);
+            self.prune_at = (self.origins.len() * 2).max(1024);
+        }
+        self.origins
+            .insert(Rc::as_ptr(value), (Rc::downgrade(value), origin));
+    }
+
+    fn get(&self, value: &QueryResult) -> ValueOrigin {
+        match value {
+            QueryResult::Literal(_) => ValueOrigin::RulesFile,
+            QueryResult::Resolved(value) => self
+                .origins
+                .get(&Rc::as_ptr(value))
+                .map_or(ValueOrigin::Unknown, |(_, origin)| *origin),
+            QueryResult::UnResolved(_) => ValueOrigin::Unknown,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Default)]
@@ -49,6 +81,11 @@ pub struct RootScope<'value, 'loc: 'value> {
     rules_status: HashMap<(&'value str, super::eval::ClauseRole), Status>,
     parameterized_rules: HashMap<&'value str, &'value ParameterizedRule<'loc>>,
     recorder: RecordTracker<'value>,
+    /// `None` unless provenance tracking was enabled, so plain evaluation records no origins.
+    value_origins: Option<ValueOrigins>,
+    /// Paths of the values `--input-parameters` merged into the root. They are input, but not the
+    /// data file a report locates results in.
+    input_parameter_paths: HashSet<String>,
     /// Notices about behaviour that changes in a later release, collected during evaluation.
     ///
     /// A set rather than a list: a clause inside a type block is evaluated once per matched resource,
@@ -69,13 +106,42 @@ impl<'value, 'loc: 'value> RootScope<'value, 'loc> {
         )
     }
 
+    /// Tracks where evaluated values came from, so the report `RecordTracker::into_file_report`
+    /// builds locates failed comparisons at the data-file value. Call it before evaluating; without
+    /// it evaluation records no provenance and `into_file_report` matches `simplified_json_from_root`.
+    pub fn enable_provenance_tracking(&mut self) {
+        self.value_origins.get_or_insert_with(ValueOrigins::default);
+        self.recorder.track_provenance = true;
+    }
+
+    /// Marks the values of `parameters`, which were merged into the root, as input parameters
+    /// rather than values of the data file.
+    pub fn register_input_parameters(&mut self, parameters: &PathAwareValue) {
+        fn collect(value: &PathAwareValue, paths: &mut HashSet<String>) {
+            match value {
+                PathAwareValue::Map((_, map)) => {
+                    for each in map.keys.iter().chain(map.values.values()) {
+                        paths.insert(each.self_path().0.clone());
+                        collect(each, paths);
+                    }
+                }
+                PathAwareValue::List((_, list)) => {
+                    for each in list {
+                        paths.insert(each.self_path().0.clone());
+                        collect(each, paths);
+                    }
+                }
+                _ => {}
+            }
+        }
+        collect(parameters, &mut self.input_parameter_paths);
+    }
+
     pub fn reset_recorder(&mut self) -> RecordTracker<'value> {
+        let track_provenance = self.recorder.track_provenance;
         std::mem::replace(
             &mut self.recorder,
-            RecordTracker {
-                final_event: None,
-                events: vec![],
-            },
+            RecordTracker::with_provenance_tracking(track_provenance),
         )
     }
 }
@@ -87,7 +153,15 @@ pub(crate) struct BlockScope<'value, 'loc: 'value, 'eval> {
 
 pub(crate) struct ValueScope<'value, 'eval, 'loc: 'value> {
     pub(crate) root: Rc<PathAwareValue>,
+    pub(crate) root_origin: ValueOrigin,
     pub(crate) parent: &'eval mut dyn EvalContext<'value, 'loc>,
+}
+
+/// Delegates everything to `parent` but reports `root_origin` as the origin of the value being
+/// traversed, so scopes created during the traversal inherit the right origin.
+struct TraversalScope<'value, 'eval, 'loc: 'value> {
+    root_origin: ValueOrigin,
+    parent: &'eval mut dyn EvalContext<'value, 'loc>,
 }
 
 type ExtractedStatements<'value, 'loc> = (
@@ -219,10 +293,12 @@ where
     }
 
     let mut resolved = Vec::with_capacity(map.values.len());
+    let root_origin = resolver.root_origin();
 
     for (key, each) in map.keys.iter().zip(map.values.values()) {
         let mut val_resolver = ValueScope {
             root: Rc::new(each.clone()),
+            root_origin,
             parent: resolver,
         };
         resolved.extend(func(
@@ -296,6 +372,8 @@ fn check_and_delegate<'value, 'loc: 'value>(
                 eval_context.end_record(&context, RecordType::Filter(status))?;
                 if let Some(key_name) = name {
                     if status == Status::PASS {
+                        let origin = eval_context.root_origin();
+                        eval_context.record_value_origin(&key, origin);
                         eval_context
                             .add_variable_capture_key(key_name.as_ref(), Rc::clone(&key))?;
                     }
@@ -350,6 +428,8 @@ fn query_retrieval_with_converter<'value, 'loc: 'value>(
     converter: Option<&dyn Fn(&str) -> String>,
 ) -> Result<Vec<QueryResult>> {
     if query_index >= query.len() {
+        let origin = resolver.root_origin();
+        resolver.record_value_origin(&current, origin);
         return Ok(vec![QueryResult::Resolved(Rc::clone(&current))]);
     }
 
@@ -372,8 +452,10 @@ fn query_retrieval_with_converter<'value, 'loc: 'value>(
                     };
 
                     if index < query.len() {
+                        let root_origin = resolver.value_origin(&each);
                         let mut scope = ValueScope {
                             root: Rc::clone(value),
+                            root_origin,
                             parent: resolver,
                         };
                         resolved.extend(query_retrieval_with_converter(
@@ -657,6 +739,8 @@ fn query_retrieval_with_converter<'value, 'loc: 'value>(
                             resolver,
                             converter,
                             |index, query, key, value, context, converter| {
+                                let origin = context.root_origin();
+                                context.record_value_origin(&key, origin);
                                 context.add_variable_capture_key(name, Rc::clone(&key))?;
                                 query_retrieval_with_converter(
                                     index,
@@ -713,6 +797,8 @@ fn query_retrieval_with_converter<'value, 'loc: 'value>(
                         converter,
                         |index, query, key, value, context, converter| {
                             if report {
+                                let origin = context.root_origin();
+                                context.record_value_origin(&key, origin);
                                 context.add_variable_capture_key(name, Rc::clone(&key))?;
                             }
                             query_retrieval_with_converter(
@@ -778,8 +864,10 @@ fn query_retrieval_with_converter<'value, 'loc: 'value>(
                 for each in list {
                     let context = format!("Filter/List#{}", conjunctions.len());
                     resolver.start_record(&context)?;
+                    let root_origin = resolver.root_origin();
                     let mut val_resolver = ValueScope {
                         root: Rc::new(each.clone()),
+                        root_origin,
                         parent: resolver,
                     };
                     let result = match super::eval::eval_conjunction_clauses(
@@ -818,8 +906,10 @@ fn query_retrieval_with_converter<'value, 'loc: 'value>(
 
             _ => {
                 if let QueryPart::AllIndices(_) = &query[query_index - 1] {
+                    let root_origin = resolver.root_origin();
                     let mut val_resolver = ValueScope {
                         root: Rc::clone(&current),
+                        root_origin,
                         parent: resolver,
                     };
                     match super::eval::eval_conjunction_clauses(
@@ -886,6 +976,12 @@ fn query_retrieval_with_converter<'value, 'loc: 'value>(
                     .map(Rc::new)
                     .map(QueryResult::Resolved)
                     .collect::<Vec<QueryResult>>();
+                let key_origin = resolver.root_origin();
+                for key in &lhs {
+                    if let QueryResult::Resolved(key) = key {
+                        resolver.record_value_origin(key, key_origin);
+                    }
+                }
 
                 let results = super::eval::real_binary_operation(
                     &lhs,
@@ -992,6 +1088,7 @@ pub(crate) fn root_scope_with<'value, 'loc: 'value>(
     RootScope {
         scope: Scope {
             root,
+            root_origin: ValueOrigin::Input,
             literals,
             variable_queries: queries,
             //resolved_variables: std::cell::RefCell::new(HashMap::new()),
@@ -1001,10 +1098,9 @@ pub(crate) fn root_scope_with<'value, 'loc: 'value>(
         rules: lookup_cache,
         parameterized_rules,
         rules_status: HashMap::new(),
-        recorder: RecordTracker {
-            final_event: None,
-            events: vec![],
-        },
+        recorder: RecordTracker::with_provenance_tracking(false),
+        value_origins: None,
+        input_parameter_paths: HashSet::new(),
         deprecations: BTreeSet::new(),
     }
 }
@@ -1012,6 +1108,7 @@ pub(crate) fn root_scope_with<'value, 'loc: 'value>(
 pub(crate) fn block_scope<'value, 'block, 'loc: 'value, 'eval, T>(
     block: &'value Block<'loc, T>,
     root: Rc<PathAwareValue>,
+    root_origin: ValueOrigin,
     parent: &'eval mut dyn EvalContext<'value, 'loc>,
 ) -> BlockScope<'value, 'loc, 'eval> {
     let (literals, variable_queries, function_expressions) = extract_variables(&block.assignments);
@@ -1020,6 +1117,7 @@ pub(crate) fn block_scope<'value, 'block, 'loc: 'value, 'eval, T>(
             literals,
             variable_queries,
             root,
+            root_origin,
             //resolved_variables: std::cell::RefCell::new(HashMap::new()),
             resolved_variables: HashMap::new(),
             function_expressions,
@@ -1031,32 +1129,62 @@ pub(crate) fn block_scope<'value, 'block, 'loc: 'value, 'eval, T>(
 pub struct RecordTracker<'value> {
     pub(crate) events: Vec<EventRecord<'value>>,
     pub final_event: Option<EventRecord<'value>>,
+    track_provenance: bool,
+    provenance: Vec<ProvenanceRecord>,
+    final_provenance: Option<ProvenanceRecord>,
+}
+
+/// Mirrors the shape of the `EventRecord` tree, holding the provenance each record was ended with.
+#[derive(Debug, Default)]
+struct ProvenanceRecord {
+    context: String,
+    provenance: Option<ReportProvenance>,
+    children: Vec<ProvenanceRecord>,
 }
 
 impl<'value> RecordTracker<'value> {
     #[cfg(test)]
     pub(crate) fn new() -> RecordTracker<'value> {
+        RecordTracker::with_provenance_tracking(false)
+    }
+
+    fn with_provenance_tracking(track_provenance: bool) -> RecordTracker<'value> {
         RecordTracker {
             events: vec![],
             final_event: None,
+            track_provenance,
+            provenance: vec![],
+            final_provenance: None,
         }
     }
     pub fn extract(mut self) -> EventRecord<'value> {
         self.final_event.take().unwrap()
     }
-}
 
-impl<'value> RecordTracer<'value> for RecordTracker<'value> {
-    fn start_record(&mut self, context: &str) -> Result<()> {
-        self.events.push(EventRecord {
-            context: context.to_string(),
-            container: None,
-            children: vec![],
-        });
-        Ok(())
+    /// The report `simplified_json_from_root` builds from the extracted record, except that failed
+    /// comparisons are located using where their values came from: at the input value rather than at
+    /// a value written in the rules file. When `final_event` no longer has the shape it was recorded
+    /// with, or provenance tracking was not enabled, the report falls back to the record alone.
+    pub fn into_file_report(mut self) -> Result<FileReport<'value>> {
+        let root = self.final_event.take().ok_or_else(|| {
+            Error::IncompatibleError("no evaluation was recorded to report on".to_string())
+        })?;
+        let provenance = self
+            .final_provenance
+            .as_ref()
+            .filter(|provenance| provenance.mirrors(&root));
+        file_report(&root, provenance)
     }
 
-    fn end_record(&mut self, context: &str, record: RecordType<'value>) -> Result<()> {
+    fn finish_record(
+        &mut self,
+        context: &str,
+        record: RecordType<'value>,
+        provenance: Option<ReportProvenance>,
+    ) -> Result<()> {
+        if self.track_provenance {
+            self.finish_provenance(provenance);
+        }
         let matched = match self.events.pop() {
             Some(mut event) => {
                 if event.context != context {
@@ -1088,6 +1216,59 @@ impl<'value> RecordTracer<'value> for RecordTracker<'value> {
             }
         }
         Ok(())
+    }
+
+    fn finish_provenance(&mut self, provenance: Option<ReportProvenance>) {
+        let mut matched = self.provenance.pop().unwrap_or_default();
+        matched.provenance = provenance;
+        match self.provenance.last_mut() {
+            Some(parent) => parent.children.push(matched),
+            None => {
+                self.final_provenance.replace(matched);
+            }
+        }
+    }
+}
+
+impl ProvenanceRecord {
+    fn mirrors(&self, event: &EventRecord<'_>) -> bool {
+        self.context == event.context
+            && self.children.len() == event.children.len()
+            && self
+                .children
+                .iter()
+                .zip(&event.children)
+                .all(|(provenance, event)| provenance.mirrors(event))
+    }
+}
+
+impl<'value> RecordTracer<'value> for RecordTracker<'value> {
+    fn start_record(&mut self, context: &str) -> Result<()> {
+        self.events.push(EventRecord {
+            context: context.to_string(),
+            container: None,
+            children: vec![],
+        });
+        if self.track_provenance {
+            self.provenance.push(ProvenanceRecord {
+                context: context.to_string(),
+                ..Default::default()
+            });
+        }
+        Ok(())
+    }
+
+    fn end_record(&mut self, context: &str, record: RecordType<'value>) -> Result<()> {
+        self.finish_record(context, record, None)
+    }
+
+    fn end_record_with_provenance(
+        &mut self,
+        context: &str,
+        record: RecordType<'value>,
+        provenance: ReportProvenance,
+    ) -> Result<()> {
+        self.finish_record(context, record, Some(provenance))
     }
 }
 
@@ -1243,6 +1424,29 @@ impl<'value, 'loc: 'value> EvalContext<'value, 'loc> for RootScope<'value, 'loc>
             .or_default()
             .push(QueryResult::Resolved(Rc::clone(&key)));
         Ok(())
+    }
+
+    fn root_origin(&mut self) -> ValueOrigin {
+        self.scope.root_origin
+    }
+
+    fn record_value_origin(&mut self, value: &Rc<PathAwareValue>, origin: ValueOrigin) {
+        if let Some(value_origins) = &mut self.value_origins {
+            let origin = match origin {
+                ValueOrigin::Input if self.input_parameter_paths.contains(&value.self_path().0) => {
+                    ValueOrigin::InputParameter
+                }
+                origin => origin,
+            };
+            value_origins.record(value, origin)
+        }
+    }
+
+    fn value_origin(&mut self, value: &QueryResult) -> ValueOrigin {
+        match &self.value_origins {
+            Some(value_origins) => value_origins.get(value),
+            None => ValueOrigin::Unknown,
+        }
     }
 }
 
@@ -1578,6 +1782,16 @@ impl<'value, 'loc: 'value> RecordTracer<'value> for RootScope<'value, 'loc> {
     fn end_record(&mut self, context: &str, record: RecordType<'value>) -> Result<()> {
         self.recorder.end_record(context, record)
     }
+
+    fn end_record_with_provenance(
+        &mut self,
+        context: &str,
+        record: RecordType<'value>,
+        provenance: ReportProvenance,
+    ) -> Result<()> {
+        self.recorder
+            .end_record_with_provenance(context, record, provenance)
+    }
 }
 
 impl<'value, 'loc: 'value, 'eval> EvalContext<'value, 'loc> for ValueScope<'value, 'eval, 'loc> {
@@ -1586,7 +1800,12 @@ impl<'value, 'loc: 'value, 'eval> EvalContext<'value, 'loc> for ValueScope<'valu
     }
 
     fn query(&mut self, query: &'value [QueryPart<'loc>]) -> Result<Vec<QueryResult>> {
-        query_retrieval(0, query, self.root(), self.parent)
+        let root = self.root();
+        let mut traversal = TraversalScope {
+            root_origin: self.root_origin,
+            parent: &mut *self.parent,
+        };
+        query_retrieval(0, query, root, &mut traversal)
     }
 
     fn find_parameterized_rule(
@@ -1619,6 +1838,18 @@ impl<'value, 'loc: 'value, 'eval> EvalContext<'value, 'loc> for ValueScope<'valu
     ) -> Result<()> {
         self.parent.add_variable_capture_key(variable_name, key)
     }
+
+    fn root_origin(&mut self) -> ValueOrigin {
+        self.root_origin
+    }
+
+    fn record_value_origin(&mut self, value: &Rc<PathAwareValue>, origin: ValueOrigin) {
+        self.parent.record_value_origin(value, origin)
+    }
+
+    fn value_origin(&mut self, value: &QueryResult) -> ValueOrigin {
+        self.parent.value_origin(value)
+    }
 }
 
 impl<'value, 'loc: 'value, 'eval> RecordTracer<'value> for ValueScope<'value, 'eval, 'loc> {
@@ -1628,6 +1859,91 @@ impl<'value, 'loc: 'value, 'eval> RecordTracer<'value> for ValueScope<'value, 'e
 
     fn end_record(&mut self, context: &str, record: RecordType<'value>) -> Result<()> {
         self.parent.end_record(context, record)
+    }
+
+    fn end_record_with_provenance(
+        &mut self,
+        context: &str,
+        record: RecordType<'value>,
+        provenance: ReportProvenance,
+    ) -> Result<()> {
+        self.parent
+            .end_record_with_provenance(context, record, provenance)
+    }
+}
+
+impl<'value, 'loc: 'value, 'eval> EvalContext<'value, 'loc>
+    for TraversalScope<'value, 'eval, 'loc>
+{
+    fn record_deprecation(&mut self, notice: String) {
+        self.parent.record_deprecation(notice)
+    }
+
+    fn query(&mut self, query: &'value [QueryPart<'loc>]) -> Result<Vec<QueryResult>> {
+        self.parent.query(query)
+    }
+
+    fn find_parameterized_rule(
+        &mut self,
+        rule_name: &str,
+    ) -> Result<&'value ParameterizedRule<'loc>> {
+        self.parent.find_parameterized_rule(rule_name)
+    }
+
+    fn root(&mut self) -> Rc<PathAwareValue> {
+        self.parent.root()
+    }
+
+    fn rule_status(
+        &mut self,
+        rule_name: &'value str,
+        role: super::eval::ClauseRole,
+    ) -> Result<Status> {
+        self.parent.rule_status(rule_name, role)
+    }
+
+    fn resolve_variable(&mut self, variable_name: &'value str) -> Result<Vec<QueryResult>> {
+        self.parent.resolve_variable(variable_name)
+    }
+
+    fn add_variable_capture_key(
+        &mut self,
+        variable_name: &'value str,
+        key: Rc<PathAwareValue>,
+    ) -> Result<()> {
+        self.parent.add_variable_capture_key(variable_name, key)
+    }
+
+    fn root_origin(&mut self) -> ValueOrigin {
+        self.root_origin
+    }
+
+    fn record_value_origin(&mut self, value: &Rc<PathAwareValue>, origin: ValueOrigin) {
+        self.parent.record_value_origin(value, origin)
+    }
+
+    fn value_origin(&mut self, value: &QueryResult) -> ValueOrigin {
+        self.parent.value_origin(value)
+    }
+}
+
+impl<'value, 'loc: 'value, 'eval> RecordTracer<'value> for TraversalScope<'value, 'eval, 'loc> {
+    fn start_record(&mut self, context: &str) -> Result<()> {
+        self.parent.start_record(context)
+    }
+
+    fn end_record(&mut self, context: &str, record: RecordType<'value>) -> Result<()> {
+        self.parent.end_record(context, record)
+    }
+
+    fn end_record_with_provenance(
+        &mut self,
+        context: &str,
+        record: RecordType<'value>,
+        provenance: ReportProvenance,
+    ) -> Result<()> {
+        self.parent
+            .end_record_with_provenance(context, record, provenance)
     }
 }
 
@@ -1710,6 +2026,18 @@ impl<'value, 'loc: 'value, 'eval> EvalContext<'value, 'loc> for BlockScope<'valu
     ) -> Result<()> {
         self.parent.add_variable_capture_key(variable_name, key)
     }
+
+    fn root_origin(&mut self) -> ValueOrigin {
+        self.scope.root_origin
+    }
+
+    fn record_value_origin(&mut self, value: &Rc<PathAwareValue>, origin: ValueOrigin) {
+        self.parent.record_value_origin(value, origin)
+    }
+
+    fn value_origin(&mut self, value: &QueryResult) -> ValueOrigin {
+        self.parent.value_origin(value)
+    }
 }
 
 impl<'value, 'loc: 'value, 'eval> RecordTracer<'value> for BlockScope<'value, 'loc, 'eval> {
@@ -1719,6 +2047,16 @@ impl<'value, 'loc: 'value, 'eval> RecordTracer<'value> for BlockScope<'value, 'l
 
     fn end_record(&mut self, context: &str, record: RecordType<'value>) -> Result<()> {
         self.parent.end_record(context, record)
+    }
+
+    fn end_record_with_provenance(
+        &mut self,
+        context: &str,
+        record: RecordType<'value>,
+        provenance: ReportProvenance,
+    ) -> Result<()> {
+        self.parent
+            .end_record_with_provenance(context, record, provenance)
     }
 }
 
@@ -2163,11 +2501,17 @@ pub fn cmp_str(cmp: (CmpOperator, bool)) -> &'static str {
     }
 }
 
+/// `provenance`, when given, mirrors `checks` and locates failed comparisons by where their values
+/// came from. Without it a failed comparison is located as the record alone allows.
 fn report_all_failed_clauses_for_rules<'value>(
     checks: &[EventRecord<'value>],
+    provenance: Option<&[ProvenanceRecord]>,
 ) -> Vec<ClauseReport<'value>> {
     let mut clauses = Vec::with_capacity(checks.len());
-    for current in checks {
+    for (index, current) in checks.iter().enumerate() {
+        let current_provenance = provenance.and_then(|records| records.get(index));
+        let children_provenance = current_provenance.map(|record| record.children.as_slice());
+        let comparison_provenance = current_provenance.and_then(|record| record.provenance);
         match &current.container {
             Some(RecordType::RuleCheck(NamedStatus {
                 name,
@@ -2176,7 +2520,10 @@ fn report_all_failed_clauses_for_rules<'value>(
             })) => {
                 clauses.push(ClauseReport::Rule(RuleReport {
                     name,
-                    checks: report_all_failed_clauses_for_rules(&current.children),
+                    checks: report_all_failed_clauses_for_rules(
+                        &current.children,
+                        children_provenance,
+                    ),
                     messages: Messages {
                         custom_message: message.clone(),
                         error_message: None,
@@ -2208,7 +2555,10 @@ fn report_all_failed_clauses_for_rules<'value>(
                         unresolved: None,
                     }));
                 } else {
-                    clauses.extend(report_all_failed_clauses_for_rules(&current.children));
+                    clauses.extend(report_all_failed_clauses_for_rules(
+                        &current.children,
+                        children_provenance,
+                    ));
                 }
             }
 
@@ -2222,7 +2572,8 @@ fn report_all_failed_clauses_for_rules<'value>(
                 message,
                 ..
             })) => {
-                let nested = report_all_failed_clauses_for_rules(&current.children);
+                let nested =
+                    report_all_failed_clauses_for_rules(&current.children, children_provenance);
                 if nested.is_empty() {
                     if let Some(explanation) = message {
                         clauses.push(ClauseReport::Block(GuardBlockReport {
@@ -2273,7 +2624,8 @@ fn report_all_failed_clauses_for_rules<'value>(
                 message,
                 ..
             })) => {
-                let nested = report_all_failed_clauses_for_rules(&current.children);
+                let nested =
+                    report_all_failed_clauses_for_rules(&current.children, children_provenance);
                 if nested.is_empty() {
                     if let Some(explanation) = message {
                         clauses.push(ClauseReport::Block(GuardBlockReport {
@@ -2293,7 +2645,10 @@ fn report_all_failed_clauses_for_rules<'value>(
 
             // TypeBlock carries a bare Status with no message, so there is nothing to fall back to.
             Some(RecordType::TypeBlock(Status::FAIL)) => {
-                clauses.extend(report_all_failed_clauses_for_rules(&current.children));
+                clauses.extend(report_all_failed_clauses_for_rules(
+                    &current.children,
+                    children_provenance,
+                ));
             }
 
             Some(RecordType::ClauseValueCheck(clause)) => match clause {
@@ -2546,6 +2901,17 @@ fn report_all_failed_clauses_for_rules<'value>(
                                 match to {
                                     QueryResult::Literal(_) => unreachable!(),
                                     QueryResult::Resolved(to_res) => {
+                                        let location = match comparison_provenance {
+                                            Some(ReportProvenance {
+                                                report_location: Some(location),
+                                                ..
+                                            }) => location,
+                                            Some(ReportProvenance {
+                                                from_origin: ValueOrigin::Input,
+                                                ..
+                                            }) => res.self_path().1,
+                                            _ => to_res.self_path().1,
+                                        };
                                         let message = format!(
                                                 "Check was not compliant as property value [{from}] {op_msg} value [{to}].{err}",
                                                 from=res,
@@ -2570,7 +2936,7 @@ fn report_all_failed_clauses_for_rules<'value>(
                                                 }),
                                                 context: current.context.to_string(),
                                                 messages: Messages {
-                                                    location: Some(to_res.clone().self_path().1),
+                                                    location: Some(location),
                                                     error_message: Some(message),
                                                     custom_message: Some(custom_message),
                                                 },
@@ -2621,13 +2987,35 @@ fn report_all_failed_clauses_for_rules<'value>(
                         from.resolved().unwrap().self_path(),
                         SliceDisplay(to)
                     );
+                    let (from_origin, report_location) = comparison_provenance
+                        .map_or((ValueOrigin::Unknown, None), |provenance| {
+                            (provenance.from_origin, provenance.report_location)
+                        });
+                    let compared_with = match from_origin {
+                        ValueOrigin::RulesFile => to.first().map(|to| match to {
+                            QueryResult::Literal(value) | QueryResult::Resolved(value) => {
+                                Rc::clone(value)
+                            }
+                            QueryResult::UnResolved(unresolved) => {
+                                Rc::clone(&unresolved.traversed_to)
+                            }
+                        }),
+                        _ => None,
+                    };
+                    let location = report_location.unwrap_or_else(|| {
+                        compared_with
+                            .or_else(|| from.resolved())
+                            .unwrap()
+                            .self_path()
+                            .1
+                    });
                     clauses.push(ClauseReport::Clause(GuardClauseReport::Binary(
                         BinaryReport {
                             context: current.context.to_string(),
                             messages: Messages {
                                 custom_message: custom_message.clone(),
                                 error_message: Some(error_message),
-                                location: Some(from.resolved().unwrap().self_path().1),
+                                location: Some(location),
                             },
                             check: BinaryCheck::InResolved(InComparison {
                                 from: match from.resolved() {
@@ -2661,6 +3049,13 @@ fn report_all_failed_clauses_for_rules<'value>(
 }
 
 pub fn simplified_json_from_root<'value>(root: &EventRecord<'value>) -> Result<FileReport<'value>> {
+    file_report(root, None)
+}
+
+fn file_report<'value>(
+    root: &EventRecord<'value>,
+    provenance: Option<&ProvenanceRecord>,
+) -> Result<FileReport<'value>> {
     Ok(match &root.container {
         Some(RecordType::FileCheck(NamedStatus { name, status, .. })) => {
             let mut pass: BTreeSet<String> = BTreeSet::new();
@@ -2687,7 +3082,10 @@ pub fn simplified_json_from_root<'value>(root: &EventRecord<'value>) -> Result<F
             FileReport {
                 status: *status,
                 name,
-                not_compliant: report_all_failed_clauses_for_rules(&root.children),
+                not_compliant: report_all_failed_clauses_for_rules(
+                    &root.children,
+                    provenance.map(|record| record.children.as_slice()),
+                ),
                 not_applicable: skip,
                 not_applicable_reasons: skip_reasons,
                 compliant: pass,
@@ -2698,6 +3096,9 @@ pub fn simplified_json_from_root<'value>(root: &EventRecord<'value>) -> Result<F
     })
 }
 
+/// Records the origin of each result. An element-wise function's result is derived from, and
+/// keeps the path of, the matching value of the first argument. An aggregate result shares the
+/// origin of all of those values, and `now()` and an aggregate of nothing have no input origin.
 pub(crate) fn resolve_function<'value, 'eval, 'loc: 'value>(
     name: &FunctionName,
     parameters: &'value [LetValue<'loc>],
@@ -2726,13 +3127,39 @@ pub(crate) fn resolve_function<'value, 'eval, 'loc: 'value>(
                 Ok(args)
             })?;
 
-    Ok(name
-        .call(&args)?
-        .into_iter()
-        .flatten()
-        .map(Rc::new)
-        .map(QueryResult::Resolved)
-        .collect::<Vec<_>>())
+    let first_arg_origins = args.first().map_or_else(Vec::new, |first| {
+        first
+            .iter()
+            .map(|value| resolver.value_origin(value))
+            .collect::<Vec<_>>()
+    });
+    let outputs = name.call(&args)?;
+    let aggregate_origin = match name {
+        FunctionName::Now => ValueOrigin::RulesFile,
+        _ => first_arg_origins
+            .iter()
+            .copied()
+            .reduce(ValueOrigin::merge)
+            .unwrap_or(ValueOrigin::RulesFile),
+    };
+    let element_wise = !matches!(
+        name,
+        FunctionName::Count | FunctionName::Join | FunctionName::Now
+    ) && outputs.len() == first_arg_origins.len();
+
+    let mut results = Vec::with_capacity(outputs.len());
+    for (index, output) in outputs.into_iter().enumerate() {
+        if let Some(output) = output {
+            let output = Rc::new(output);
+            let origin = match element_wise {
+                true => first_arg_origins[index],
+                false => aggregate_origin,
+            };
+            resolver.record_value_origin(&output, origin);
+            results.push(QueryResult::Resolved(output));
+        }
+    }
+    Ok(results)
 }
 
 //

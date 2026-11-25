@@ -1,0 +1,3 @@
+rule TOP_LEVEL_KEYS_MATCH_EXPECTED {
+    this[ keys == Expected ] !empty
+}

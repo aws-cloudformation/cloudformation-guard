@@ -1130,3 +1130,79 @@ fn test_operator_not_eq() -> crate::Result<()> {
 
     Ok(())
 }
+
+fn resolved_strings(path: &str, values: &[&str]) -> Vec<QueryResult> {
+    values
+        .iter()
+        .enumerate()
+        .map(|(index, value)| {
+            QueryResult::Resolved(Rc::new(PathAwareValue::String((
+                Path::new(format!("{}/{}", path, index), index, 0),
+                (*value).to_string(),
+            ))))
+        })
+        .collect()
+}
+
+fn failed_query_in(result: EvalResult) -> QueryIn {
+    match result {
+        EvalResult::Result(mut results) => match results.pop() {
+            Some(ValueEvalResult::ComparisonResult(ComparisonResult::Fail(Compare::QueryIn(
+                qin,
+            )))) if results.is_empty() => qin,
+            other => panic!("expected one failed query comparison, got {:?}", other),
+        },
+        other => panic!("expected comparison results, got {:?}", other),
+    }
+}
+
+#[test]
+fn query_equality_reports_which_side_the_difference_was_taken_from() -> crate::Result<()> {
+    let longer = resolved_strings("/Longer", &["a", "b"]);
+    let shorter = resolved_strings("/Shorter", &["c"]);
+
+    let from_lhs = failed_query_in((CmpOperator::Eq, false).compare(&longer, &shorter)?);
+    let from_rhs = failed_query_in((CmpOperator::Eq, false).compare(&shorter, &longer)?);
+
+    assert!(!from_lhs.diff_from_rhs);
+    assert!(from_lhs
+        .diff
+        .iter()
+        .all(|v| v.self_path().0.starts_with("/Longer")));
+    assert!(from_rhs.diff_from_rhs);
+    assert!(from_rhs
+        .diff
+        .iter()
+        .all(|v| v.self_path().0.starts_with("/Longer")));
+    Ok(())
+}
+
+#[test]
+fn negated_query_equality_reports_which_side_the_difference_was_taken_from() -> crate::Result<()> {
+    let lhs = resolved_strings("/Lhs", &["a"]);
+    let rhs = resolved_strings("/Rhs", &["a", "b"]);
+
+    let qin = failed_query_in((CmpOperator::Eq, true).compare(&lhs, &rhs)?);
+
+    assert!(qin.diff_from_rhs);
+    assert!(qin.diff.iter().all(|v| v.self_path().0.starts_with("/Rhs")));
+    Ok(())
+}
+
+#[test]
+fn query_membership_takes_the_difference_from_the_left() -> crate::Result<()> {
+    let lhs = resolved_strings("/Lhs", &["a", "z"]);
+    let rhs = resolved_strings("/Rhs", &["a", "b", "c"]);
+
+    let qin = failed_query_in((CmpOperator::In, false).compare(&lhs, &rhs)?);
+    let negated = failed_query_in((CmpOperator::In, true).compare(&lhs, &rhs)?);
+
+    assert!(!qin.diff_from_rhs);
+    assert!(qin.diff.iter().all(|v| v.self_path().0.starts_with("/Lhs")));
+    assert!(!negated.diff_from_rhs);
+    assert!(negated
+        .diff
+        .iter()
+        .all(|v| v.self_path().0.starts_with("/Lhs")));
+    Ok(())
+}

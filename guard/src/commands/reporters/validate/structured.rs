@@ -74,6 +74,7 @@ impl<'eval> StructuredEvaluator<'eval> {
             OutputFormatType::JSON | OutputFormatType::YAML | OutputFormatType::Sarif => {
                 Box::new(CommonStructuredReporter {
                     rules,
+                    input_params: self.input_params.as_ref(),
                     data: merged_data,
                     writer: self.writer,
                     exit_code: self.exit_code,
@@ -89,6 +90,7 @@ impl<'eval> StructuredEvaluator<'eval> {
 
 struct CommonStructuredReporter<'reporter> {
     rules: Vec<(RulesFile<'reporter>, &'reporter str)>,
+    input_params: Option<&'reporter PathAwareValue>,
     data: Vec<DataFile>,
     writer: &'reporter mut crate::utils::writer::Writer,
     exit_code: i32,
@@ -106,13 +108,23 @@ impl<'reporter> StructuredReporter for CommonStructuredReporter<'reporter> {
 
             for (rule, _) in &self.rules {
                 let mut root_scope = root_scope(rule, Rc::new(each.path_value.clone()));
+                let provenance_aware = matches!(self.output, OutputFormatType::Sarif);
+                if provenance_aware {
+                    root_scope.enable_provenance_tracking();
+                    if let Some(input_params) = self.input_params {
+                        root_scope.register_input_parameters(input_params);
+                    }
+                }
 
                 if let Status::FAIL = eval_rules_file(rule, &mut root_scope, Some(&each.name))? {
                     self.exit_code = FAILURE_STATUS_CODE;
                 }
 
-                let root_record = root_scope.reset_recorder().extract();
-                let report = simplified_json_from_root(&root_record)?;
+                let recorder = root_scope.reset_recorder();
+                let report = match provenance_aware {
+                    true => recorder.into_file_report()?,
+                    false => simplified_json_from_root(&recorder.extract())?,
+                };
                 file_report.combine(report);
             }
 

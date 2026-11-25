@@ -25,6 +25,7 @@ pub use parser::{rules_file, Span};
 pub use errors::Error;
 
 use crate::exprs::{ParameterizedRule, QueryPart};
+use crate::path_value::Location;
 pub use crate::path_value::{Path, PathAwareValue};
 use crate::values::CmpOperator;
 use colored::*;
@@ -203,6 +204,38 @@ impl QueryResult {
     }
 }
 
+/// Where an evaluated value came from. Rules-file values carry placeholder locations, so only a
+/// value proven to come from the input data may supply a report location.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ValueOrigin {
+    Input,
+    /// Input merged in from `--input-parameters`. Its locations are in the parameter file, so it
+    /// never supplies a report location for the data file.
+    InputParameter,
+    RulesFile,
+    Unknown,
+}
+
+impl ValueOrigin {
+    pub(crate) fn merge(self, other: ValueOrigin) -> ValueOrigin {
+        if self == other {
+            self
+        } else {
+            ValueOrigin::Unknown
+        }
+    }
+}
+
+/// Evaluator-private detail that locates a failed comparison record in a report. It is kept beside
+/// the record rather than in it, so the public record types stay as they were.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ReportProvenance {
+    pub(crate) from_origin: ValueOrigin,
+    /// Overrides where the report locates the record. `Location::default()` means no data-file
+    /// value was compared, which a SARIF report shows at the start of the artifact.
+    pub(crate) report_location: Option<Location>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct ComparisonClauseCheck {
     pub comparison: (CmpOperator, bool),
@@ -368,6 +401,16 @@ pub enum RecordType<'value> {
 pub(crate) trait RecordTracer<'value> {
     fn start_record(&mut self, context: &str) -> Result<()>;
     fn end_record(&mut self, context: &str, record: RecordType<'value>) -> Result<()>;
+    /// Like `end_record`, also keeping `provenance` for the provenance-aware report. Scopes that
+    /// forward records must forward this too, or the report falls back to the record alone.
+    fn end_record_with_provenance(
+        &mut self,
+        context: &str,
+        record: RecordType<'value>,
+        _provenance: ReportProvenance,
+    ) -> Result<()> {
+        self.end_record(context, record)
+    }
 }
 
 pub(crate) trait EvalContext<'value, 'loc: 'value>: RecordTracer<'value> {
@@ -392,6 +435,16 @@ pub(crate) trait EvalContext<'value, 'loc: 'value>: RecordTracer<'value> {
         variable_name: &'value str,
         key: Rc<PathAwareValue>,
     ) -> Result<()>;
+    /// Origin of the values `root` returns.
+    fn root_origin(&mut self) -> ValueOrigin {
+        ValueOrigin::Unknown
+    }
+    /// Remembers where `value` came from, for as long as `value` is alive.
+    fn record_value_origin(&mut self, _value: &Rc<PathAwareValue>, _origin: ValueOrigin) {}
+    /// Where `value` came from, as recorded by `record_value_origin`.
+    fn value_origin(&mut self, _value: &QueryResult) -> ValueOrigin {
+        ValueOrigin::Unknown
+    }
     /// Note that a clause took a path whose answer is going to change, without changing this run's
     /// answer.
     ///

@@ -7349,3 +7349,36 @@ fn probe_vacuous_pass_record_shape() -> Result<()> {
     }
     Ok(())
 }
+
+#[test]
+fn an_operand_value_whose_path_is_shared_across_origins_has_no_known_origin() -> Result<()> {
+    let rules_file = RulesFile::try_from("rule r { this exists }")?;
+    let mut scope = root_scope(&rules_file, Rc::new(PathAwareValue::try_from("{}")?));
+    scope.enable_provenance_tracking();
+    let string = |path: &str, line, col, value: &str| {
+        Rc::new(PathAwareValue::String((
+            Path::new(path.to_string(), line, col),
+            value.to_string(),
+        )))
+    };
+    let input = string("", 0, 0, "Wrong");
+    let rules = string("", 0, 0, "RuleKey");
+    let other_input = string("/Other", 3, 2, "Other");
+    scope.record_value_origin(&input, ValueOrigin::Input);
+    scope.record_value_origin(&rules, ValueOrigin::RulesFile);
+    scope.record_value_origin(&other_input, ValueOrigin::Input);
+
+    let origins = OperandOrigins::new(
+        &[
+            QueryResult::Resolved(Rc::clone(&input)),
+            QueryResult::Resolved(Rc::clone(&rules)),
+            QueryResult::Resolved(Rc::clone(&other_input)),
+        ],
+        &mut scope,
+    );
+
+    assert_eq!(ValueOrigin::Unknown, origins.of(&input));
+    assert_eq!(ValueOrigin::Unknown, origins.of(&rules));
+    assert_eq!(ValueOrigin::Input, origins.of(&(*other_input).clone()));
+    Ok(())
+}
